@@ -288,6 +288,7 @@ class MemoryDeleteRequest(BaseModel):
     apply: StrictBool = False
     receipt_operation_id: StrictStr | None = None
     receipt_operation_ids: dict[str, StrictStr] | None = None
+    required_grants: list[StrictStr] | None = None
 
     @model_validator(mode="after")
     def _ids_match_revisions(self) -> MemoryDeleteRequest:
@@ -307,6 +308,7 @@ _MUTATION = {
     "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
     "apply": (StrictBool, _OPTIONAL),
     "receipt_operation_id": (StrictStr | None, _OPTIONAL),
+    "required_grants": (list[StrictStr] | None, _OPTIONAL),
 }
 
 _INTENT_KEYS = {

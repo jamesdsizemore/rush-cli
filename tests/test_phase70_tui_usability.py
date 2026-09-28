@@ -386,7 +386,8 @@ _SECTION_MARKERS = {
     "overview": "Overview",
     "map": "Map",
     "scans": "Scan history",
-    "memory": "press / to search",
+    # T28-D browses on entry (no query needed), so the body is the admin panel.
+    "memory": "Memory Administration",
     "tokens": "Tokens",
     "git": "has_git=",
     "artifacts": "Captured (",

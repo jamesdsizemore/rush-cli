@@ -231,6 +231,16 @@ def readonly_state_code(state: str, db: Path) -> str:
     return "E_STORE_BUSY"
 
 
+def readonly_preview_error(state: str, db: Path) -> MemoryStoreUnreadableError:
+    """T28-D: a read-only preview's unusable-open error, worded like
+    `open_readonly_view()`'s reason -- a corrupt store is never called retryable."""
+    code = readonly_state_code(state, db)
+    return MemoryStoreUnreadableError(
+        readonly_view_reason("corrupt" if code == "E_STORE_CORRUPT" else "busy"),
+        code=code,
+    )
+
+
 OwnerScopeKind = Literal["user", "project", "session", "agent"]
 _OWNER_SCOPE_KINDS: frozenset[str] = frozenset({"user", "project", "session", "agent"})
 
@@ -337,6 +347,9 @@ class MemoryArtifact:
     # owner declared"; `_prepare_write()` resolves it to `legacy_owner_scope(project_root)`
     # (subsection c) before storage, so a persisted row always has a real owner.
     owner_scope: OwnerScope | None = None
+    # T28-D: the stored archive timestamp (None = live), read-only on listed rows so a
+    # caller can tell archived rows from live ones. Never written from this field.
+    archived_at: float | None = None
 
 
 _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
@@ -735,6 +748,7 @@ def _row_to_artifact(
         expired=row["expired_at"] is not None,
         artifact_version=row["artifact_version"],
         owner_scope=owner_scope,
+        archived_at=_row_value(row, "archived_at"),
     )
 
 
@@ -1871,11 +1885,7 @@ class TypedArtifactStore:
         root = Path(project_root).resolve()
         opened = cls.open_readonly(root)
         if opened.state is not None:
-            db = root / ".rush" / "memory.db"
-            raise MemoryStoreUnreadableError(
-                f"{db} cannot be read without writing ({opened.state}); retry",
-                code=readonly_state_code(opened.state, db),
-            )
+            raise readonly_preview_error(opened.state, root / ".rush" / "memory.db")
         if not opened.available:
             raise KeyError(artifact_id)
         if opened.migration_required or opened.connection is None:

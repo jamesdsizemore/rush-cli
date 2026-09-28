@@ -32,7 +32,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, get_args
 
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -52,6 +52,8 @@ from rush.dashboard.terminal_input import (
     raw_terminal,
 )
 from rush.dashboard.theme import MOTION, THEME
+from rush.memory.maintenance import MaintenanceTask
+from rush.memory.store import MemorySubject
 from rush.permissions import ExecutionPermissions
 from rush.runtime.subprocesses import (
     OWNED_TERMINATION_TIMEOUT_SECONDS,
@@ -873,9 +875,31 @@ class TuiState:
     memory_selected_index: int = 0
     memory_selected_ids: set[str] = field(default_factory=set)
     memory_pending_delete: dict[str, Any] | None = None
+    memory_pending_maintain: list[dict[str, Any]] | None = None
     memory_expanded: dict[str, Any] | None = None
     memory_edit_buffer: str | None = None
+    memory_edit_field: str = "note"
+    memory_edit_conflict: dict[str, Any] | None = None
     memory_message: str = ""
+    memory_filter_trust: str | None = None
+    memory_filter_source: str | None = None
+    memory_filter_freshness: str | None = None
+    memory_filter_archived: bool = False
+    memory_filter_owner: str | None = None
+    # T28-D: the "f" filter form (mode == "memory_filter"): one text buffer per
+    # `_MEMORY_FILTER_FIELDS` entry; Enter applies every field, Escape discards.
+    memory_filter_buffer: dict[str, str] | None = None
+    memory_filter_field: str = "trust"
+    # T28-D: grants the user reviewed for the next promote (list of ExecutionPermissions field names).
+    memory_pending_promote: dict[str, Any] | None = None
+    # T28-D confirm step: the previewed edit/archive/restore/promote/write held
+    # for "y"; "n"/Escape clears it with zero writes. Keys: operation, verb,
+    # call (memory_run kwargs of the apply), required_grants, ids, versions,
+    # owner_scope, item (the selected row, edit/archive only).
+    memory_pending_mutation: dict[str, Any] | None = None
+    # T28-D: propose/create form fields {"subject","source","content"} (mode == "memory_create").
+    memory_create_buffer: dict[str, str] | None = None
+    memory_create_field: str = "content"
     # P69-07 CONNECT: the owner every memory mutation this admin session makes is
     # attributed to (mode == "memory_owner" is the selector). `project`/`session`
     # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
@@ -2686,32 +2710,33 @@ def _memory_refresh(
     scoped to every source this project's memory store has ever recorded.
     `announce=False` (used to refresh the list after a delete/edit already
     set its own outcome message) still updates `memory_items`/selection but
-    never overwrites that outcome message with a generic result count."""
+    never overwrites that outcome message with a generic result count.
+    Every held preview, selection and edit conflict is dropped first: each was
+    built for the row set this refresh replaces."""
+    _memory_clear_held(state)
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
-        return
-    query = state.memory_query_buffer.strip()
-    if not query:
-        state.memory_message = "type a query, then Enter"
         return
     sources, store_state = _memory_sources_and_state(project)
     if store_state is not None:
         from rush.memory.store import readonly_view_reason
 
         state.memory_items = []
-        state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
+        if announce:
+            state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
         return
     if not sources:
         state.memory_items = []
-        state.memory_message = "no memory recorded for this project yet"
+        if announce:
+            state.memory_message = "no memory recorded for this project yet"
         return
     try:
         result = actions.memory_run(
             project.root,
             operation="list",
             subject=state.memory_subject,
-            query=query,
             session_allowlist=sources,
+            **_memory_list_kwargs(state),
         )
     except Exception as exc:  # noqa: BLE001 -- injectable Phase61/63 memory
         # seam; a failure must render as a retryable message, never crash the
@@ -2726,10 +2751,101 @@ def _memory_refresh(
         return
     state.memory_items = list(result.get("raw") or [])
     state.memory_selected_index = 0
-    state.memory_selected_ids = set()
-    state.memory_pending_delete = None
     if announce:
         state.memory_message = f"{len(state.memory_items)} result(s)"
+
+
+def _memory_clear_held(state: TuiState) -> None:
+    """Drops every held preview, the selection and any edit conflict: each was
+    built for the project and row set on screen, which a refresh or a project
+    switch replaces."""
+    state.memory_pending_mutation = None
+    state.memory_pending_maintain = None
+    state.memory_pending_delete = None
+    state.memory_edit_conflict = None
+    state.memory_selected_ids = set()
+
+
+def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bool:
+    """True, after discarding them, when a held preview was built for a project
+    other than `project`: "y" never applies a preview to a different root."""
+    held = [
+        state.memory_pending_mutation,
+        state.memory_pending_delete,
+        *(state.memory_pending_maintain or []),
+    ]
+    active = project_key(project)
+    if all(entry is None or entry.get("project_key") == active for entry in held):
+        return False
+    _memory_clear_held(state)
+    state.memory_message = (
+        "held preview was built for another project -- discarded, 0 records written"
+    )
+    return True
+
+
+_MEMORY_FILTER_FIELDS = ("trust", "source", "freshness", "archived", "owner")
+_MEMORY_PAGE_ROWS = 20
+
+
+def _memory_filter_values(state: TuiState) -> dict[str, str]:
+    """Each filter as the form edits and the render shows it ("" = unset)."""
+    return {
+        "trust": state.memory_filter_trust or "",
+        "source": state.memory_filter_source or "",
+        "freshness": state.memory_filter_freshness or "",
+        "archived": "true" if state.memory_filter_archived else "",
+        "owner": state.memory_filter_owner or "",
+    }
+
+
+def _memory_list_kwargs(state: TuiState) -> dict[str, Any]:
+    """The `list` call's query and filters. No query is sent when none is typed,
+    so entering Memory browses every row instead of requiring a search."""
+    kwargs: dict[str, Any] = {}
+    query = state.memory_query_buffer.strip()
+    if query:
+        kwargs["query"] = query
+    for key, value in (
+        ("trust_filter", state.memory_filter_trust),
+        ("source_filter", state.memory_filter_source),
+        ("freshness_filter", state.memory_filter_freshness),
+        ("owner_filter", state.memory_filter_owner),
+    ):
+        if value is not None:
+            kwargs[key] = value
+    if state.memory_filter_archived:
+        kwargs["archived_filter"] = True
+    return kwargs
+
+
+def _memory_targets(state: TuiState) -> list[dict[str, Any]]:
+    """The rows archive/promote/delete act on: every space-selected row (in list
+    order) when any is selected, otherwise the cursor row."""
+    if state.memory_selected_ids:
+        return [
+            item
+            for item in state.memory_items
+            if item.get("id") in state.memory_selected_ids
+        ]
+    item = _memory_selected_item(state)
+    return [] if item is None else [item]
+
+
+def _memory_row_owner(
+    state: TuiState, artifact_id: str, fallback: dict[str, Any] | None
+) -> str:
+    """`kind:id` of a listed row's own owner, else the owner the preview used."""
+    scope = next(
+        (
+            item["owner_scope"]
+            for item in state.memory_items
+            if item.get("id") == artifact_id
+            and isinstance(item.get("owner_scope"), dict)
+        ),
+        fallback or {},
+    )
+    return f"{scope.get('kind')}:{scope.get('id')}"
 
 
 _MEMORY_OWNER_SCOPE_KINDS = ("project", "user", "session", "agent")
@@ -2818,15 +2934,29 @@ def _memory_promote_selected(
     """Real `promote` dispatch on the selected row's own content/source
     (never a fabricated candidate) -- corroboration is evaluated by the
     canonical `evaluate_promotion` gate, so a lone source is correctly
-    denied (`insufficient_corroboration`), matching the CLI/MCP behavior."""
-    item = _memory_selected_item(state)
-    if item is None or actions.memory_run is None:
+    denied (`insufficient_corroboration`), matching the CLI/MCP behavior.
+    Acts on every targeted row (`_memory_targets`); one row's refused preview
+    holds nothing at all."""
+    items = _memory_targets(state)
+    if not items or actions.memory_run is None:
         state.memory_message = "no row selected"
         return
-    try:
-        result = actions.memory_run(
-            project.root,
-            operation="promote",
+    pending = state.memory_pending_promote or {}
+    state.memory_pending_promote = None
+    held: list[dict[str, Any]] = []
+    for item in items:
+        state.memory_pending_mutation = None
+        _memory_write_preview(
+            state,
+            project,
+            actions,
+            "promote",
+            "promote",
+            list(pending.get("required_grants") or []),
+            request_extra={
+                "source_id": item["id"],
+                "expected_version": item.get("artifact_version"),
+            },
             subject=state.memory_subject,
             content=item.get("content") or {},
             source=item.get("source", ""),
@@ -2834,35 +2964,171 @@ def _memory_promote_selected(
             source_kind="local_tool",
             user_stated=False,
             candidate_sources=[item.get("source", "")],
+        )
+        if state.memory_pending_mutation is None:
+            return  # the refusal message is already set; nothing is held
+        held.append(state.memory_pending_mutation)
+    state.memory_pending_mutation = {
+        **held[0],
+        "items": items,
+        "calls": [call for entry in held for call in entry["calls"]],
+        "drafts": [draft for entry in held for draft in entry["drafts"]],
+        "consequences": [c for entry in held for c in entry["consequences"]],
+        "required_grants": sorted(
+            {g for entry in held for g in entry["required_grants"]}
+        ),
+        "ids": [item["id"] for item in items],
+        "versions": {item["id"]: item.get("artifact_version") for item in items},
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_write_preview(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    operation: str,
+    verb: str,
+    grants: list[str],
+    request_extra: dict[str, Any] | None = None,
+    **fields: Any,
+) -> None:
+    """Preview a memory write with the requested grants, refuse on a non-ok
+    preview or missing grants, else hold it for "y" with the grants the preview
+    actually reported as required (never the caller's raw guess).
+    `request_extra` rides on both the preview and the held apply request (a
+    promote names its reviewed source row and version there)."""
+    extra = dict(request_extra or {})
+    if actions.memory_run is None:
+        state.memory_message = "memory backend unavailable"
+        return
+    requested = sorted({"cache_write", *grants})
+    try:
+        preview = actions.memory_run(
+            project.root,
+            operation=operation,
             owner_scope=_memory_owner_scope(state, project),
-            permissions=ExecutionPermissions(cache_write=True),
+            request={"apply": False, "required_grants": requested, **extra},
+            permissions=ExecutionPermissions(**{g: True for g in requested}),
+            **fields,
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"promote failed: {exc}"
+        state.memory_message = f"{operation} preview failed: {exc}"
         return
-    raw = result.get("raw") or {}
-    if raw.get("promoted"):
-        state.memory_message = f"promoted to {raw.get('new_tier')}"
-    else:
-        state.memory_message = f"promotion denied: {raw.get('denial_reason')}"
+    praw = preview.get("raw") or {}
+    if preview.get("status", "ok") != "ok" or praw.get("missing_grants"):
+        state.memory_message = (
+            f"{operation} preview refused: "
+            f"{praw.get('message') or praw.get('missing_grants')}"
+        )
+        return
+    reviewed = list(praw.get("required_grants") or requested)
+    owner_scope = _memory_owner_scope(state, project)
+    draft = praw.get("draft")
+    state.memory_pending_mutation = {
+        "operation": operation,
+        "verb": verb,
+        "items": [],
+        "calls": [
+            {
+                "operation": operation,
+                "owner_scope": owner_scope,
+                "request": {"apply": True, "required_grants": reviewed, **extra},
+                **fields,
+            }
+        ],
+        "drafts": [draft] if isinstance(draft, dict) and draft else [],
+        "consequences": [str(preview.get("summary") or "")],
+        "required_grants": reviewed,
+        "ids": list(praw.get("target_ids") or []),
+        "versions": dict(praw.get("expected_revisions") or {}),
+        "owner_scope": praw.get("owner_scope") or owner_scope,
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_create_commit(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """Validate required fields, then preview a `write` via
+    `_memory_write_preview` and hold it for "y" so create shares the same reviewed-grants
+    path as every other mutating form."""
+    buf = state.memory_create_buffer or {}
+    missing = [
+        f for f in ("subject", "source", "content") if not (buf.get(f) or "").strip()
+    ]
+    if missing:
+        state.memory_message = f"required: {', '.join(missing)}"
+        return
+    subjects = get_args(MemorySubject)
+    if buf["subject"] not in subjects:
+        state.memory_message = (
+            f"unknown subject {buf['subject']!r}; valid subjects: {', '.join(subjects)}"
+        )
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    _memory_write_preview(
+        state,
+        project,
+        actions,
+        "write",
+        "propose",
+        [],
+        subject=buf["subject"],
+        content={"note": buf["content"]},
+        source=buf["source"],
+        symbol_ref=None,
+        source_kind="local_tool",
+    )
+    if state.memory_pending_mutation is not None:
+        state.mode = "memory"  # "y"/"n"/Esc are read by _handle_memory_key
+
+
+def _handle_memory_create_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_create_buffer = None
+        state.memory_message = "create cancelled -- 0 records written"
+        return
+    if key == "tab":
+        fields = ("subject", "source", "content")
+        idx = (
+            fields.index(state.memory_create_field)
+            if state.memory_create_field in fields
+            else 0
+        )
+        state.memory_create_field = fields[(idx + 1) % len(fields)]
+        return
+    if key == "enter":
+        _memory_create_commit(state, state.active_project, actions)
+        return
+    buf = state.memory_create_buffer or {}
+    current = buf.get(state.memory_create_field, "")
+    if key == "backspace":
+        buf[state.memory_create_field] = current[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[state.memory_create_field] = current + key
+    state.memory_create_buffer = buf
 
 
 def _memory_delete_preview(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    if not state.memory_selected_ids:
-        state.memory_message = "select at least one row (space) before delete"
+    items = _memory_targets(state)
+    if not items:
+        state.memory_message = "select a row before delete"
         return
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
         return
-    ids = sorted(state.memory_selected_ids)
-    revisions = {
-        item["id"]: item["artifact_version"]
-        for item in state.memory_items
-        if item.get("id") in state.memory_selected_ids
-    }
+    ids = sorted(item["id"] for item in items)
+    revisions = {item["id"]: item["artifact_version"] for item in items}
     owner_scope = _memory_owner_scope(state, project)
+    # Reviewed grants: cache_write (required, memory.py:2568) and artifact_write (unlinks handoff blobs, memory.py:2616) -- the same pair the apply used to hardcode.
+    grants = ["cache_write", "artifact_write"]
     try:
         result = actions.memory_run(
             project.root,
@@ -2872,6 +3138,7 @@ def _memory_delete_preview(
                 "expected_revisions": revisions,
                 "scope": state.memory_subject,
                 "owner_scope": owner_scope,
+                "required_grants": grants,
                 "apply": False,
             },
         )
@@ -2880,12 +3147,21 @@ def _memory_delete_preview(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
+    code = raw.get("code") if isinstance(raw, dict) else None
+    if code != "OK":
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
+        return
     state.memory_pending_delete = {
         "artifact_ids": ids,
         "expected_revisions": revisions,
         "scope": state.memory_subject,
         "owner_scope": owner_scope,
+        "required_grants": grants,
         "affected": (data or {}).get("affected", []),
+        "project_key": project_key(project),
     }
     state.memory_message = (
         f"preview: {len(ids)} record(s) selected -- [y] delete, [n]/[esc] cancel"
@@ -2914,9 +3190,12 @@ def _memory_delete_apply(
                 # a scope change between preview and apply must not silently widen
                 # what the confirmed 'y' actually deletes.
                 "owner_scope": pending["owner_scope"],
+                "required_grants": pending["required_grants"],
                 "apply": True,
             },
-            permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+            permissions=ExecutionPermissions(
+                **{grant: True for grant in pending["required_grants"]}
+            ),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"delete failed: {exc}"
@@ -2924,55 +3203,435 @@ def _memory_delete_apply(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
-    deleted = len((data or {}).get("affected") or [])
+    code = raw.get("code") if isinstance(raw, dict) else None
     state.memory_pending_delete = None
     state.memory_selected_ids = set()
-    state.memory_message = f"deleted {deleted} record(s)"
+    if code == "OK":
+        deleted = [
+            row.get("id") if isinstance(row, dict) else row
+            for row in (data or {}).get("affected") or []
+        ]
+        state.memory_message = f"deleted {len(deleted)} record(s): {deleted}"
+    elif code == "E_VERSION":
+        state.memory_message = (
+            "delete refused: a reviewed record changed since the preview "
+            f"({(data or {}).get('message')}); nothing was deleted, list "
+            "refreshed -- review it and press d again"
+        )
+    else:
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
     _memory_refresh(state, project, actions, announce=False)
+
+
+def _memory_archive_selected(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: archive/restore share one form, over every targeted row
+    (`_memory_targets`); a row with `archived_at` set is restored, any other
+    archived. Each row previews (apply=False) with its own id, expected_version,
+    owner_scope and required_grants; only when every preview is OK is the set
+    held for "y", which applies each with exactly those grants."""
+    items = _memory_targets(state)
+    if not items:
+        state.memory_message = "select a row before archive/restore"
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    grants = ["cache_write"]
+    owner_scope = _memory_owner_scope(state, project)
+    calls: list[dict[str, Any]] = []
+    for item in items:
+        archived = not item.get("archived_at")
+        verb = "archive" if archived else "restore"
+        request: dict[str, Any] = {
+            "scope": state.memory_subject,
+            "id": item["id"],
+            "expected_version": item["artifact_version"],
+            "owner_scope": owner_scope,
+            "archived": archived,
+            "required_grants": grants,
+            "apply": False,
+        }
+        try:
+            preview = actions.memory_run(
+                project.root, operation="archive", request=request
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            state.memory_message = f"{verb} preview failed: {exc}"
+            return
+        raw = preview.get("raw") or {}
+        if raw.get("code") != "OK":
+            state.memory_message = (
+                f"{verb} preview refused: {item['id']}: "
+                f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
+            )
+            return
+        calls.append({"operation": "archive", "request": {**request, "apply": True}})
+    verbs = {"archive" if call["request"]["archived"] else "restore" for call in calls}
+    state.memory_pending_mutation = {
+        "operation": "archive",
+        "verb": "/".join(sorted(verbs)),
+        "items": items,
+        "calls": calls,
+        "drafts": [],
+        "consequences": [],
+        "required_grants": grants,
+        "ids": [item["id"] for item in items],
+        "versions": {item["id"]: item["artifact_version"] for item in items},
+        "owner_scope": owner_scope,
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_maintain_preview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: read-only preview of every maintenance task; 'y' applies exactly
+    the previewed candidate IDs at their previewed versions with the reviewed
+    grants, 'n'/'esc' cancels. A corrupt or busy store shows its read-only
+    reason instead of any preview."""
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    _sources, store_state = _memory_sources_and_state(project)
+    if store_state in ("corrupt", "busy"):
+        from rush.memory.store import readonly_view_reason
+
+        state.memory_message = (
+            f"maintenance unavailable -- {store_state}: "
+            f"{readonly_view_reason(store_state)}"
+        )
+        return
+    owner_scope = _memory_owner_scope(state, project)
+    pending: list[dict[str, Any]] = []
+    for task in get_args(MaintenanceTask):
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=task,
+                owner_scope=owner_scope,
+                request={"apply": False, "required_grants": ["cache_write"]},
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            state.memory_message = f"maintenance preview failed: {exc}"
+            return
+        if result.get("status") == "error":
+            state.memory_message = (
+                f"maintenance preview failed: {result.get('summary')}"
+            )
+            return
+        raw = result.get("raw") or {}
+        pending.append(
+            {
+                "task": task,
+                "owner_scope": owner_scope,
+                "candidate_ids": list(raw.get("candidate_ids") or []),
+                "expected_revisions": dict(raw.get("expected_revisions") or {}),
+                "required_grants": list(raw.get("required_grants") or ["cache_write"]),
+                "consequence": str(result.get("summary") or ""),
+                "project_key": project_key(project),
+            }
+        )
+    state.memory_pending_maintain = pending
+    counts = ", ".join(f"{p['task']} {len(p['candidate_ids'])}" for p in pending)
+    state.memory_message = (
+        f"maintenance preview: {counts} -- [y] apply, [n]/[esc] cancel"
+    )
+
+
+def _memory_maintain_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    pending = state.memory_pending_maintain
+    state.memory_pending_maintain = None
+    if pending is None:
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    summaries: list[str] = []
+    for entry in pending:
+        if not entry["candidate_ids"]:
+            continue  # nothing previewed for this task: nothing to apply
+        try:
+            result = actions.memory_run(
+                project.root,
+                operation="maintain",
+                task=entry["task"],
+                owner_scope=entry["owner_scope"],
+                permissions=_permissions_of(entry["required_grants"]),
+                request={
+                    "apply": True,
+                    "required_grants": entry["required_grants"],
+                    "candidate_ids": entry["candidate_ids"],
+                    **(
+                        {"expected_revisions": entry["expected_revisions"]}
+                        if entry["expected_revisions"]
+                        else {}
+                    ),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            summaries.append(f"{entry['task']} failed: {exc}")
+            continue
+        raw = result.get("raw") or {}
+        refused = [
+            f"{c.get('id')} changed v{c.get('expected')} -> "
+            + ("deleted" if c.get("actual") is None else f"v{c.get('actual')}")
+            for c in raw.get("refused") or []
+            if isinstance(c, dict)
+        ]
+        outcome = (
+            f"changed {raw.get('changed', 0)}"
+            if refused
+            else result.get("summary") or result.get("status")
+        )
+        summaries.append("; ".join([f"{entry['task']}: {outcome}", *refused]))
+    state.memory_message = "; ".join(summaries) or "maintenance: nothing to apply"
+    _memory_refresh(state, project, actions, announce=False)
+
+
+def _memory_pending_mutation_text(pending: dict[str, Any]) -> str:
+    owner = pending.get("owner_scope") or {}
+    target = (
+        f"ids {pending['ids']} versions {pending['versions']}"
+        if pending["ids"]
+        else "new record"
+    )
+    return (
+        f"{pending['verb']} preview: {target} "
+        f"owner {owner.get('kind')}:{owner.get('id')} "
+        f"grants {pending['required_grants']} -- [y] apply, [n]/[esc] cancel"
+    )
+
+
+def _memory_edit_outcome(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    item: dict[str, Any],
+    code: Any,
+) -> None:
+    """Shared by the edit preview (non-OK) and the confirmed apply. OK clears
+    the buffer and refreshes; E_VERSION records `memory_edit_conflict` for
+    `_memory_edit_refresh_and_rereview` (never a blind retry); any other code
+    keeps the entered content."""
+    if code == "OK":
+        state.memory_message = "edit applied"
+        state.memory_edit_buffer = None
+        state.memory_edit_conflict = None
+        _memory_refresh(state, project, actions, announce=False)
+        return
+    if code == "E_VERSION":
+        state.memory_edit_conflict = {
+            "id": item["id"],
+            "expected_version": item["artifact_version"],
+        }
+        state.memory_message = (
+            f"edit conflict on {item['id']} v{item['artifact_version']} -- "
+            "[r] refresh and re-review"
+        )
+        return
+    state.memory_message = f"edit denied: {code}"
+
+
+def _memory_mutation_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D confirm step ("y"): apply exactly the held preview's calls (one per
+    previewed row) with the grants that preview reviewed, then report each
+    row's own outcome, naming the version an archive/restore committed."""
+    pending = state.memory_pending_mutation
+    state.memory_pending_mutation = None
+    if pending is None:
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    verb = pending["verb"]
+    operation = pending["operation"]
+    permissions = _permissions_of(pending["required_grants"])
+    messages: list[str] = []
+    refresh = False
+    for index, call in enumerate(pending["calls"]):
+        try:
+            result = actions.memory_run(project.root, **call, permissions=permissions)
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            messages.append(f"{verb} failed: {exc}")
+            continue
+        raw = result.get("raw") or {}
+        if operation == "edit":
+            _memory_edit_outcome(
+                state, project, actions, pending["items"][0], raw.get("code")
+            )
+            return
+        if operation == "archive":
+            item_id = pending["items"][index]["id"]
+            row_verb = "archive" if call["request"]["archived"] else "restore"
+            data = raw.get("data") or {}
+            if raw.get("code") == "OK":
+                revision = data.get("revision")
+                committed = "" if revision is None else f" (v{revision})"
+                messages.append(f"{row_verb}d {item_id}{committed}")
+                refresh = True
+            else:
+                messages.append(
+                    f"{row_verb} refused: {item_id}: "
+                    f"{data.get('message') or raw.get('code') or 'no result'}"
+                )
+        elif operation == "promote":
+            item_id = pending["items"][index]["id"]
+            created = raw.get("artifact") or {}
+            candidate = (
+                f" (candidate {created.get('id')} v{created.get('artifact_version')})"
+                if created.get("id")
+                else ""
+            )
+            if raw.get("code") == "E_VERSION":
+                messages.append(
+                    f"{item_id} promotion refused: changed since review "
+                    f"({raw.get('reason')}); list refreshed, review it again"
+                )
+                refresh = True
+            elif raw.get("promoted"):
+                messages.append(
+                    f"{item_id} promoted to {raw.get('new_tier')}{candidate}"
+                )
+                refresh = True
+            else:
+                messages.append(
+                    f"{item_id} promotion denied: {raw.get('denial_reason')}{candidate}"
+                )
+                refresh = bool(candidate) or refresh
+        elif result.get("status", "ok") == "ok":
+            state.memory_create_buffer = None
+            state.mode = "memory"
+            messages.append(f"proposed {raw.get('id')}")
+            refresh = True
+        else:
+            messages.append(
+                f"write refused: {raw.get('message') or result.get('summary')}"
+            )
+    state.memory_message = "; ".join(messages)
+    if refresh:
+        _memory_refresh(state, project, actions, announce=False)
 
 
 def _memory_edit_commit(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    """ponytail: the keyboard editor commits one fixed `note` content field
-    rather than a full structured-content form -- a real, testable single-
-    field edit; upgrade to a multi-field form if admin content needs more
-    than one editable field."""
+    """T28-D: previews the edit (apply=False) carrying id, expected_version,
+    owner_scope and required_grants, and holds the OK preview in
+    `memory_pending_mutation`; "y" applies it with exactly those reviewed grants. Any non-OK result
+    keeps the entered content; E_VERSION also records `memory_edit_conflict`
+    for `_memory_edit_refresh_and_rereview` -- never a blind retry."""
     item = _memory_selected_item(state)
     if item is None or state.memory_edit_buffer is None or actions.memory_run is None:
+        return
+    grants = ["cache_write"]
+    request = {
+        "scope": state.memory_subject,
+        "id": item["id"],
+        "expected_version": item["artifact_version"],
+        "content": {
+            **(item.get("content") or {}),
+            state.memory_edit_field: state.memory_edit_buffer,
+        },
+        "owner_scope": _memory_owner_scope(state, project),
+        "required_grants": grants,
+    }
+    try:
+        preview = actions.memory_run(
+            project.root, operation="edit", request={**request, "apply": False}
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"edit failed: {exc}"
+        return
+    code = (preview.get("raw") or {}).get("code")
+    if code != "OK":
+        _memory_edit_outcome(state, project, actions, item, code)
+        return
+    state.memory_pending_mutation = {
+        "operation": "edit",
+        "verb": "edit",
+        "items": [item],
+        "calls": [{"operation": "edit", "request": {**request, "apply": True}}],
+        "drafts": [],
+        "consequences": [],
+        "required_grants": grants,
+        "ids": [item["id"]],
+        "versions": {item["id"]: item["artifact_version"]},
+        "owner_scope": request["owner_scope"],
+        "project_key": project_key(project),
+    }
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _memory_edit_refresh_and_rereview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D conflict recovery: re-fetch the conflicted row, replace the
+    stale copy in `memory_items`, and reopen the editor with the kept
+    content for review. Never re-submits."""
+    conflict = state.memory_edit_conflict
+    if conflict is None or actions.memory_run is None:
         return
     try:
         result = actions.memory_run(
             project.root,
-            operation="edit",
-            request={
-                "scope": state.memory_subject,
-                "id": item["id"],
-                "expected_version": item["artifact_version"],
-                "content": {
-                    **(item.get("content") or {}),
-                    "note": state.memory_edit_buffer,
-                },
-                "owner_scope": _memory_owner_scope(state, project),
-                "apply": True,
-            },
-            permissions=ExecutionPermissions(cache_write=True),
+            operation="list",
+            subject=state.memory_subject,
+            session_allowlist=_memory_known_sources(project),
+            **_memory_list_kwargs(state),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"edit failed: {exc}"
-        state.memory_edit_buffer = None
+        state.memory_message = f"refresh failed: {exc}"
         return
-    raw = result.get("raw") or {}
-    if raw.get("code") == "OK":
-        state.memory_message = "edit applied"
-        _memory_refresh(state, project, actions, announce=False)
+    rows = result.get("raw") if result.get("status") == "ok" else None
+    fresh = next(
+        (
+            row
+            for row in rows or []
+            if isinstance(row, dict) and row.get("id") == conflict["id"]
+        ),
+        None,
+    )
+    if fresh is None:
+        state.memory_message = f"{conflict['id']} not found on refresh"
+        return
+    ids = [row.get("id") for row in state.memory_items]
+    if conflict["id"] in ids:
+        index = ids.index(conflict["id"])
+        state.memory_items[index] = fresh
     else:
-        state.memory_message = f"edit denied: {raw.get('code')}"
-    state.memory_edit_buffer = None
+        state.memory_items.append(fresh)
+        index = len(state.memory_items) - 1
+    state.memory_selected_index = index
+    state.memory_edit_conflict = None
+    state.mode = "memory_edit"
+    state.memory_message = (
+        f"refreshed {conflict['id']} to v{fresh.get('artifact_version')} -- "
+        "review, then Enter to submit"
+    )
 
 
 def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
+    if key in ("n", "escape") and state.memory_pending_mutation is not None:
+        verb = state.memory_pending_mutation["verb"]
+        state.memory_pending_mutation = None
+        state.memory_message = f"{verb} cancelled -- 0 records written"
+        return
+    if key in ("n", "escape") and state.memory_pending_maintain is not None:
+        state.memory_pending_maintain = None
+        state.memory_message = "maintenance cancelled"
+        return
     if key == "escape":
         if state.memory_pending_delete is not None:
             state.memory_pending_delete = None
@@ -2985,6 +3644,18 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         state.memory_pending_delete = None
         state.memory_message = "delete cancelled -- 0 records removed"
         return
+    if key == "n":
+        state.mode = "memory_create"
+        state.memory_create_field = "content"
+        state.memory_create_buffer = {
+            "subject": state.memory_subject,
+            "source": "tui",
+            "content": "",
+        }
+        state.memory_message = (
+            "new memory: [tab] field  [enter] preview+submit  [esc] cancel"
+        )
+        return
     if key in ("down", "j"):
         if state.memory_items:
             state.memory_selected_index = (state.memory_selected_index + 1) % len(
@@ -2996,6 +3667,26 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             state.memory_selected_index = (state.memory_selected_index - 1) % len(
                 state.memory_items
             )
+        return
+    if key in ("]", "["):
+        if state.memory_items:
+            page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+            page += 1 if key == "]" else -1
+            if 0 <= page * _MEMORY_PAGE_ROWS < len(state.memory_items):
+                state.memory_selected_index = page * _MEMORY_PAGE_ROWS
+        return
+    if key == "f":
+        state.mode = "memory_filter"
+        state.memory_filter_field = _MEMORY_FILTER_FIELDS[0]
+        state.memory_filter_buffer = _memory_filter_values(state)
+        state.memory_message = "filters: [tab] field  [enter] apply  [esc] cancel"
+        return
+    if key == "S":
+        subjects = list(get_args(MemorySubject))
+        current = state.memory_subject
+        index = subjects.index(current) if current in subjects else -1
+        state.memory_subject = subjects[(index + 1) % len(subjects)]
+        _memory_refresh(state, project, actions)
         return
     if key == "/":
         state.mode = "memory_search"
@@ -3016,10 +3707,15 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "p":
         _memory_promote_selected(state, project, actions)
         return
+    if key == "r" and state.memory_edit_conflict is not None:
+        _memory_edit_refresh_and_rereview(state, project, actions)
+        return
     if key == "e":
         if _memory_selected_item(state) is not None:
             state.mode = "memory_edit"
             state.memory_edit_buffer = ""
+            state.memory_edit_field = "note"
+            state.memory_edit_conflict = None
         return
     if key == "o":
         state.mode = "memory_owner"
@@ -3027,11 +3723,24 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             _default_owner_scope_id(state.memory_owner_scope_kind, project)
         )
         return
+    if key == "a":
+        _memory_archive_selected(state, project, actions)
+        return
     if key == "d":
         _memory_delete_preview(state, project, actions)
         return
+    if key == "w":
+        _memory_maintain_preview(state, project, actions)
+        return
     if key == "y":
-        _memory_delete_apply(state, project, actions)
+        if _memory_held_for_other_project(state, project):
+            return
+        if state.memory_pending_mutation is not None:
+            _memory_mutation_apply(state, project, actions)
+        elif state.memory_pending_maintain is not None:
+            _memory_maintain_apply(state, project, actions)
+        else:
+            _memory_delete_apply(state, project, actions)
         return
 
 
@@ -3048,6 +3757,47 @@ def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -
         return
     if len(key) == 1 and key.isprintable():
         state.memory_query_buffer += key
+
+
+def _handle_memory_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """T28-D: the "f" filter form. Tab cycles `_MEMORY_FILTER_FIELDS`, typed text
+    edits the field under the cursor, Enter applies every field (empty = unset)
+    and refreshes, Escape discards the form and keeps the active filters."""
+    buf = state.memory_filter_buffer or _memory_filter_values(state)
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_filter_buffer = None
+        state.memory_message = "filter cancelled"
+        return
+    if key == "tab":
+        fields_ = _MEMORY_FILTER_FIELDS
+        index = (
+            fields_.index(state.memory_filter_field)
+            if state.memory_filter_field in fields_
+            else -1
+        )
+        state.memory_filter_field = fields_[(index + 1) % len(fields_)]
+        return
+    if key == "enter":
+        archived = buf["archived"].strip().lower()
+        if archived not in ("", "true", "false"):
+            state.memory_message = "archived filter takes true or false"
+            return
+        state.memory_filter_trust = buf["trust"].strip() or None
+        state.memory_filter_source = buf["source"].strip() or None
+        state.memory_filter_freshness = buf["freshness"].strip() or None
+        state.memory_filter_archived = archived == "true"
+        state.memory_filter_owner = buf["owner"].strip() or None
+        state.memory_filter_buffer = None
+        state.mode = "memory"
+        _memory_refresh(state, state.active_project, actions)
+        return
+    current = buf.get(state.memory_filter_field, "")
+    if key == "backspace":
+        buf[state.memory_filter_field] = current[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[state.memory_filter_field] = current + key
+    state.memory_filter_buffer = buf
 
 
 def _handle_memory_owner_key(state: TuiState, key: str, actions: ScanActions) -> None:
@@ -3102,6 +3852,16 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
     if key == "enter":
         _memory_edit_commit(state, state.active_project, actions)
         state.mode = "memory"
+        return
+    if key == "tab":
+        item = _memory_selected_item(state)
+        fields = sorted({*((item or {}).get("content") or {}), "note"})
+        position = (
+            fields.index(state.memory_edit_field)
+            if state.memory_edit_field in fields
+            else -1
+        )
+        state.memory_edit_field = fields[(position + 1) % len(fields)]
         return
     if key == "backspace":
         state.memory_edit_buffer = (state.memory_edit_buffer or "")[:-1]
@@ -3897,8 +4657,7 @@ def _handle_project_selector_key(
             state.active_project.invalidate()
         state.active_index = state.project_selector_index
         state.memory_items = []
-        state.memory_selected_ids = set()
-        state.memory_pending_delete = None
+        _memory_clear_held(state)
         state.memory_expanded = None
         state.memory_message = ""
         state.git_data = None
@@ -3917,7 +4676,7 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     if section == "git":
         _load_git_view(state, project, actions)
     elif section == "memory":
-        state.memory_message = f"press / to search {state.memory_subject} memories"
+        _memory_refresh(state, project, actions)
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
@@ -4675,7 +5434,9 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
+        "memory_create": _handle_memory_create_key,
         "memory_owner": _handle_memory_owner_key,
+        "memory_filter": _handle_memory_filter_key,
         "memory": _handle_memory_key,
         "quit_confirm": _handle_quit_confirm_key,
         "project_selector": _handle_project_selector_key,
@@ -5422,6 +6183,39 @@ def _render_grant_review(grant: dict[str, Any]) -> Panel:
     )
 
 
+def _memory_expanded_panel(expanded: dict[str, Any]) -> Panel:
+    """T28-D: the exact expanded record as labelled sections -- record fields,
+    Relationships and Receipts, one row per item with its own id and version --
+    never a Python dict repr. Every cell goes through _safe (X3)."""
+    fields = Table(title="Record", expand=True, show_header=False)
+    fields.add_column("field", style="cyan")
+    fields.add_column("value")
+    for key, value in expanded.items():
+        if key in ("relationships", "receipts"):
+            continue
+        shown = (
+            json.dumps(value, sort_keys=True, default=str)
+            if isinstance(value, (dict, list))
+            else value
+        )
+        fields.add_row(_safe(key), _safe(shown))
+    parts: list[Any] = [fields]
+    for key, title in (("relationships", "Relationships"), ("receipts", "Receipts")):
+        section = Table(title=title, expand=True)
+        section.add_column("id", style="cyan")
+        section.add_column("version")
+        section.add_column("kind")
+        for row in expanded.get(key) or []:
+            if isinstance(row, dict):
+                section.add_row(
+                    _safe(row.get("id", "")),
+                    _safe(row.get("artifact_version", "")),
+                    _safe(row.get("kind", "")),
+                )
+        parts.append(section)
+    return Panel(Group(*parts), title="expanded")
+
+
 def _render_memory_admin(state: TuiState) -> Panel:
     """P66-05: real search results, selection, expansion, and pending-delete
     state -- never a static/example row. Render failures already surface via
@@ -5444,12 +6238,33 @@ def _render_memory_admin(state: TuiState) -> Panel:
                 "bold yellow",
             )
         )
+    active_filters = [
+        f"{name}={value}"
+        for name, value in _memory_filter_values(state).items()
+        if value
+    ]
+    if active_filters:
+        lines.append(_safe("filters: " + "  ".join(active_filters), "cyan"))
+    if state.mode == "memory_filter":
+        buf = state.memory_filter_buffer or {}
+        for name in _MEMORY_FILTER_FIELDS:
+            marker = ">" if name == state.memory_filter_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
+        lines.append(_safe("[tab] field  [enter] apply  [esc] cancel", "bold yellow"))
     if state.mode == "memory_search":
         lines.append(_safe(f"/{state.memory_query_buffer}", "bold yellow"))
     if state.mode == "memory_edit":
         lines.append(
-            _safe(f"edit note> {state.memory_edit_buffer or ''}", "bold yellow")
+            _safe(
+                f"edit {state.memory_edit_field}> {state.memory_edit_buffer or ''}",
+                "bold yellow",
+            )
         )
+    if state.mode == "memory_create":
+        buf = state.memory_create_buffer or {}
+        for name in ("subject", "source", "content"):
+            marker = ">" if name == state.memory_create_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
 
     table = Table(expand=True)
     table.add_column("", width=4)
@@ -5457,7 +6272,12 @@ def _render_memory_admin(state: TuiState) -> Panel:
     table.add_column("trust", width=14)
     table.add_column("source")
     table.add_column("stale", width=6)
-    for idx, item in enumerate(state.memory_items):
+    page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+    pages = max(1, -(-len(state.memory_items) // _MEMORY_PAGE_ROWS))
+    start = page * _MEMORY_PAGE_ROWS
+    for idx, item in enumerate(
+        state.memory_items[start : start + _MEMORY_PAGE_ROWS], start
+    ):
         cursor = ">" if idx == state.memory_selected_index else " "
         checked = "x" if item.get("id") in state.memory_selected_ids else " "
         table.add_row(
@@ -5468,7 +6288,67 @@ def _render_memory_admin(state: TuiState) -> Panel:
             "yes" if item.get("stale") else "no",
         )
     lines.append(table)
+    lines.append(
+        _safe(f"page {page + 1}/{pages}  ] next page  [ previous page", "cyan")
+    )
 
+    if state.memory_pending_mutation is not None:
+        pending_mutation = state.memory_pending_mutation
+        lines.append(
+            _safe(_memory_pending_mutation_text(pending_mutation), "bold yellow")
+        )
+        for artifact_id in pending_mutation["ids"]:
+            owner_text = _memory_row_owner(
+                state, artifact_id, pending_mutation.get("owner_scope")
+            )
+            lines.append(
+                _safe(
+                    f"  {artifact_id}  "
+                    f"version={pending_mutation['versions'].get(artifact_id, '?')}  "
+                    f"owner={owner_text}",
+                    "yellow",
+                )
+            )
+        for draft in pending_mutation.get("drafts") or []:
+            fields_text = "  ".join(
+                f"{name}="
+                + (
+                    json.dumps(value, sort_keys=True, default=str)
+                    if isinstance(value, (dict, list))
+                    else str(value)
+                )
+                for name, value in draft.items()
+            )
+            lines.append(_safe(f"  draft {fields_text}", "yellow"))
+        for consequence in pending_mutation.get("consequences") or []:
+            if consequence:
+                lines.append(_safe(f"  consequence: {consequence}", "yellow"))
+    if state.memory_pending_maintain is not None:
+        lines.append(
+            Text(
+                "pending maintenance -- [y] apply  [n]/[esc] cancel",
+                style="bold yellow",
+            )
+        )
+        for entry in state.memory_pending_maintain:
+            lines.append(
+                _safe(
+                    f"  {entry['task']}: {len(entry['candidate_ids'])} candidate(s)  "
+                    f"grants {entry['required_grants']}  "
+                    f"consequence: {entry.get('consequence', '')}",
+                    "yellow",
+                )
+            )
+            revisions = entry.get("expected_revisions") or {}
+            for artifact_id in entry["candidate_ids"]:
+                owner_text = _memory_row_owner(state, artifact_id, entry["owner_scope"])
+                lines.append(
+                    _safe(
+                        f"    {entry['task']} {artifact_id}  "
+                        f"version={revisions.get(artifact_id, '?')}  owner={owner_text}",
+                        "yellow",
+                    )
+                )
     if state.memory_pending_delete is not None:
         count = len(state.memory_pending_delete["artifact_ids"])
         lines.append(
@@ -5477,8 +6357,33 @@ def _render_memory_admin(state: TuiState) -> Panel:
                 style="bold red",
             )
         )
+        pending = state.memory_pending_delete
+        affected = {
+            row.get("id"): row
+            for row in pending.get("affected") or []
+            if isinstance(row, dict)
+        }
+        lines.append(
+            _safe(
+                f"  grants {pending['required_grants']}  "
+                f"consequence: permanently deletes {count} record(s)",
+                "red",
+            )
+        )
+        for artifact_id in pending["artifact_ids"]:
+            row = affected.get(artifact_id, {})
+            owner_text = _memory_row_owner(state, artifact_id, pending["owner_scope"])
+            lines.append(
+                _safe(
+                    f"  {artifact_id}  version={pending['expected_revisions'].get(artifact_id, '?')}"
+                    f"  owner={owner_text}"
+                    f"  family={row.get('family', '?')}"
+                    f"  references={row.get('references', '?')}",
+                    "red",
+                )
+            )
     if state.memory_expanded is not None:
-        lines.append(Panel(_safe(state.memory_expanded), title="expanded"))
+        lines.append(_memory_expanded_panel(state.memory_expanded))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
@@ -5889,7 +6794,14 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
         return _render_section_chooser(state)
     if state.overlay == "form":
         return _render_form(state)
-    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
+    if state.mode in (
+        "memory",
+        "memory_search",
+        "memory_edit",
+        "memory_owner",
+        "memory_create",
+        "memory_filter",
+    ):
         return _with_view_state(state, project, "memory", _render_memory_admin(state))
     if state.mode == "git":
         return _with_view_state(state, project, "git", _render_git_panel(state))
