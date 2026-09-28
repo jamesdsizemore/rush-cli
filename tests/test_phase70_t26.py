@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _process_children import spawn_pty_child
 from click.testing import CliRunner
 
 from rush.cli import cli
@@ -1252,6 +1253,17 @@ def test_claude_local_registration_is_recorded_and_disconnect_mirrors_local_scop
 # ===========================================================================
 
 
+def _child_run_guided_setup(root: str, marker: str) -> None:
+    read_end, write_end = os.pipe()
+    os.write(write_end, b"y\ny\ny\ny\n")
+    os.close(write_end)
+    os.dup2(read_end, 0)
+    from rush.tools.setup_wizard import run_guided_setup
+
+    payload, code = run_guided_setup(Path(root), "codex")
+    Path(marker).write_text(json.dumps({"payload": payload, "code": code}))
+
+
 def test_guided_setup_reads_consent_from_terminal_not_piped_stdin(
     tmp_path: Path, _isolated_home: Path
 ) -> None:
@@ -1260,26 +1272,17 @@ def test_guided_setup_reads_consent_from_terminal_not_piped_stdin(
     answers. Here stdin says "y" and the terminal (a real PTY) says "n", so
     setup is declined and nothing is written."""
     import contextlib
-    import pty
     import select
     import time
 
     root = tmp_path / "project"
     root.mkdir()
     marker = tmp_path / "result.json"
-    pid, master_fd = pty.fork()
-    if pid == 0:
-        try:
-            read_end, write_end = os.pipe()
-            os.write(write_end, b"y\ny\ny\ny\n")
-            os.close(write_end)
-            os.dup2(read_end, 0)
-            from rush.tools.setup_wizard import run_guided_setup
-
-            payload, code = run_guided_setup(root.resolve(), "codex")
-            marker.write_text(json.dumps({"payload": payload, "code": code}))
-        finally:
-            os._exit(0)
+    pid, master_fd = spawn_pty_child(
+        "test_phase70_t26",
+        "_child_run_guided_setup",
+        [str(root.resolve()), str(marker)],
+    )
     output = b""
     answered = False
     deadline = time.monotonic() + 60

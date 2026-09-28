@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _process_children import spawn_child
 
 from rush.dashboard import state as dashboard_state
 from rush.dashboard.server import (
@@ -236,37 +237,33 @@ def _serve(server) -> threading.Thread:
     return thread
 
 
-def _child_hold_owner_lock(owner_id: str, data_root: Path, hold_seconds: float) -> None:
-    """Forked-child target (P69-01 subsection h): acquire a real
+def _child_hold_owner_lock(owner_id: str, data_root: str, hold_seconds: float) -> None:
+    """Child-process target (P69-01 subsection h): acquire a real
     owner-liveness lock and sleep, so the parent can SIGKILL this process
     to simulate a genuine crash (the lock's own `finally`/context-manager
     release never runs -- only the kernel's on-exit release does)."""
     from rush.dashboard.state import OwnerLock
 
-    OwnerLock(owner_id, data_root=data_root)
+    OwnerLock(owner_id, data_root=Path(data_root))
     time.sleep(hold_seconds)
 
 
-def _child_hold_scan_lock(project_root: Path, hold_seconds: float) -> None:
-    """Forked-child target: hold the real scan-exclusion lock and sleep, so
+def _child_hold_scan_lock(project_root: str, hold_seconds: float) -> None:
+    """Child-process target: hold the real scan-exclusion lock and sleep, so
     the parent can SIGKILL this process to prove the lock releases on real
     process death, not on any staleness timer."""
-    with _run_lock(project_root, timeout=10):
+    with _run_lock(Path(project_root), timeout=10):
         time.sleep(hold_seconds)
 
 
 def _fork_and_run(target, *args) -> int:
-    """Fork a real child process running `target(*args)`; return its pid.
+    """Run `target(*args)` in a real child process; return its pid.
     Callers use `_kill_and_reap` for an unclean (SIGKILL) death, which is
     the real crash scenario P69-01 subsection h's lock semantics defend
     against -- no reliance on the child's own cleanup code ever running."""
-    pid = os.fork()
-    if pid == 0:
-        try:
-            target(*args)
-        finally:
-            os._exit(0)
-    return pid
+    json_args = [str(a) if isinstance(a, Path) else a for a in args]
+    proc = spawn_child(target.__module__, target.__name__, json_args)
+    return proc.pid
 
 
 def _kill_and_reap(pid: int) -> None:
@@ -318,7 +315,7 @@ def test_second_server_can_acquire_lock_only_after_first_servers_real_process_ex
     project_root.mkdir()
     pid = _fork_and_run(_child_hold_scan_lock, project_root, 30.0)
     try:
-        time.sleep(0.3)
+        time.sleep(1.5)  # real subprocess startup + import is slower than a fork
         with pytest.raises(ScanBusyError), _run_lock(project_root, timeout=0.3):
             pass
     finally:
@@ -334,7 +331,7 @@ def test_slow_but_alive_owner_holding_the_lock_blocks_recovery_claim(tmp_path) -
     owner_id = "server:slow-owner"
     pid = _fork_and_run(_child_hold_owner_lock, owner_id, tmp_path, 2.0)
     try:
-        time.sleep(0.3)
+        time.sleep(1.5)  # real subprocess startup + import is slower than a fork
         with claim_dead_owner(owner_id, data_root=tmp_path) as claimed:
             assert claimed is False
     finally:

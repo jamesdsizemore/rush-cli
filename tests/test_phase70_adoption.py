@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from _process_children import spawn_pty_child
 from click.testing import CliRunner
 
 from rush.integrations import agents as agents_mod
@@ -183,42 +184,40 @@ def test_t03_second_host_updates_hosts_field_and_preserves_unrelated_content(
 # --- Consent: interactive TTY (accept / decline / EOF) ----------------------
 
 
+def _child_run_agent_connect(project_root: str, session_id: str) -> None:
+    from rush.cli import cli
+
+    try:
+        cli.main(
+            [
+                "agent",
+                "connect",
+                "claude-code",
+                "--session",
+                session_id,
+                "--project",
+                project_root,
+                "--rush-binary",
+                RUSH_BINARY,
+                "--allow-cache-write",
+                "--allow-artifact-write",
+            ],
+            standalone_mode=False,
+        )
+    except BaseException as exc:  # noqa: BLE001 -- child diagnostics only
+        # This is the child process's last chance to see any failure
+        # before it exits silently; there is no parent-side channel for
+        # it (the pty carries the CLI's own stdout/stderr, which the
+        # tests already assert on).
+        print(f"harness child failed: {exc!r}")
+
+
 def _fork_interactive_connect(
     project_root: Path, *, session_id: str = "sess-tty"
 ) -> tuple[int, int]:
-    import pty
-
-    pid, master_fd = pty.fork()
-    if pid == 0:
-        try:
-            from rush.cli import cli
-
-            try:
-                cli.main(
-                    [
-                        "agent",
-                        "connect",
-                        "claude-code",
-                        "--session",
-                        session_id,
-                        "--project",
-                        str(project_root),
-                        "--rush-binary",
-                        RUSH_BINARY,
-                        "--allow-cache-write",
-                        "--allow-artifact-write",
-                    ],
-                    standalone_mode=False,
-                )
-            except BaseException as exc:  # noqa: BLE001 -- child diagnostics only
-                # This is the forked test child's last chance to see any
-                # failure before os._exit(0) discards it silently; there is
-                # no parent-side channel for it (the pty carries the CLI's
-                # own stdout/stderr, which the tests already assert on).
-                print(f"harness child failed: {exc!r}")
-        finally:
-            os._exit(0)
-    return pid, master_fd
+    return spawn_pty_child(
+        __name__, "_child_run_agent_connect", [str(project_root), session_id]
+    )
 
 
 def _send(master_fd: int, text: str) -> None:
