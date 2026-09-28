@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -815,6 +816,18 @@ def _memory_state(tmp_path: Path):
     return state
 
 
+def _drain(state, actions) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    from rush.tui import _pump
+
+    deadline = time.monotonic() + 2
+    _pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        _pump(state, actions)
+
+
 def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) -> None:
     from rush.tui import (
         _handle_memory_key,
@@ -832,6 +845,7 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
 
     _memory_edit_commit(state, state.active_project, actions)
     _handle_memory_key(state, "y", actions)
+    _drain(state, actions)
     # T28-D: the applied edit refreshes the list and clears the selection
     # (these fake actions list no rows), so the delete is previewed on a
     # listed, reselected row -- never on one the refresh dropped.

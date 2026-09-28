@@ -34,7 +34,7 @@ from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.retrieval import recall_page
 from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
 from rush.token_economy.telemetry import TelemetryStore
-from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
+from rush.tui import ProjectState, TuiState, _dispatch_key, _pump, default_scan_actions
 from rush.workflows import projects as projects_module
 from rush.workflows.projects import register_project
 
@@ -1509,6 +1509,21 @@ def _tui_state(root: Path) -> TuiState:
     return TuiState(projects=[project])
 
 
+def _drain(state: TuiState, actions: Any) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    deadline = time.monotonic() + 2
+    _pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        _pump(state, actions)
+
+
+def _key(state: TuiState, key: str, actions: Any) -> None:
+    _dispatch_key(state, key, actions)
+    _drain(state, actions)
+
+
 def test_tui_memory_search_lists_real_results(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
@@ -1519,13 +1534,13 @@ def test_tui_memory_search_lists_real_results(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
+    _key(state, "M", actions)
     assert state.mode == "memory"
-    _dispatch_key(state, "/", actions)
+    _key(state, "/", actions)
     assert state.mode == "memory_search"
     for ch in "widget":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
 
     assert state.mode == "memory"
     assert len(state.memory_items) == 1
@@ -1541,19 +1556,19 @@ def test_tui_memory_delete_preview_cancel_deletes_zero(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "doomed":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 2
 
-    _dispatch_key(state, " ", actions)  # select first row
-    _dispatch_key(state, "d", actions)  # preview delete
+    _key(state, " ", actions)  # select first row
+    _key(state, "d", actions)  # preview delete
     assert state.memory_pending_delete is not None
     assert len(state.memory_pending_delete["artifact_ids"]) == 1
 
-    _dispatch_key(state, "n", actions)  # cancel
+    _key(state, "n", actions)  # cancel
     assert state.memory_pending_delete is None
     assert "0 records removed" in state.memory_message
 
@@ -1570,22 +1585,22 @@ def test_tui_memory_delete_confirm_deletes_only_selected(tmp_path: Path) -> None
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "batch":  # matches both seeded rows
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 2
 
     doomed_index = next(
         i for i, item in enumerate(state.memory_items) if item["id"] == doomed.id
     )
     state.memory_selected_index = doomed_index
-    _dispatch_key(state, " ", actions)
-    _dispatch_key(state, "d", actions)
+    _key(state, " ", actions)
+    _key(state, "d", actions)
     assert state.memory_pending_delete["artifact_ids"] == [doomed.id]
 
-    _dispatch_key(state, "y", actions)
+    _key(state, "y", actions)
     assert state.memory_pending_delete is None
     assert "deleted 1 record" in state.memory_message
 
@@ -1601,15 +1616,15 @@ def test_tui_memory_promote_denied_without_corroboration(tmp_path: Path) -> None
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "lonely":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "p", actions)
-    _dispatch_key(state, "y", actions)
+    _key(state, "p", actions)
+    _key(state, "y", actions)
     assert "promotion denied" in state.memory_message
     assert "insufficient_corroboration" in state.memory_message
 
@@ -1622,14 +1637,14 @@ def test_tui_memory_expand_shows_full_content(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "expand":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "x", actions)
+    _key(state, "x", actions)
     assert state.memory_expanded is not None
     decoded = base64.b64decode(state.memory_expanded["content_base64"]).decode("utf-8")
     assert "full body" in decoded
@@ -1645,19 +1660,19 @@ def test_tui_memory_edit_commits_new_content(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "editable":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "e", actions)
+    _key(state, "e", actions)
     assert state.mode == "memory_edit"
     for ch in "hello":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
-    _dispatch_key(state, "y", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
+    _key(state, "y", actions)
 
     assert state.mode == "memory"
     assert state.memory_message == "edit applied"
