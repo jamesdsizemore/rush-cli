@@ -2961,10 +2961,15 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "p":
         _memory_promote_selected(state, project, actions)
         return
+    if key == "r" and state.memory_edit_conflict is not None:
+        _memory_edit_refresh_and_rereview(state, project, actions)
+        return
     if key == "e":
         if _memory_selected_item(state) is not None:
             state.mode = "memory_edit"
             state.memory_edit_buffer = ""
+            state.memory_edit_field = "note"
+            state.memory_edit_conflict = None
         return
     if key == "o":
         state.mode = "memory_owner"
@@ -3058,6 +3063,16 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
     if key == "enter":
         _memory_edit_commit(state, state.active_project, actions)
         state.mode = "memory"
+        return
+    if key == "tab":
+        item = _memory_selected_item(state)
+        fields = sorted({*((item or {}).get("content") or {}), "note"})
+        position = (
+            fields.index(state.memory_edit_field)
+            if state.memory_edit_field in fields
+            else -1
+        )
+        state.memory_edit_field = fields[(position + 1) % len(fields)]
         return
     if key == "backspace":
         state.memory_edit_buffer = (state.memory_edit_buffer or "")[:-1]
@@ -4515,7 +4530,10 @@ def _render_memory_admin(state: TuiState) -> Panel:
         lines.append(_safe(f"/{state.memory_query_buffer}", "bold yellow"))
     if state.mode == "memory_edit":
         lines.append(
-            _safe(f"edit note> {state.memory_edit_buffer or ''}", "bold yellow")
+            _safe(
+                f"edit {state.memory_edit_field}> {state.memory_edit_buffer or ''}",
+                "bold yellow",
+            )
         )
     if state.mode == "memory_create":
         buf = state.memory_create_buffer or {}

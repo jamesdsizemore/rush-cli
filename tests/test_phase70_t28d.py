@@ -1187,3 +1187,67 @@ def test_t28d_pending_mutation_panel_shows_ids_versions_owner_grants(
     text = console.export_text()
     assert "archive preview: ids ['a1'] versions {'a1': 1} owner " in text
     assert "grants ['cache_write']" in text and "[n]/[esc] cancel" in text
+
+
+def test_t28d_r_key_refreshes_recorded_conflict(tmp_path: Path) -> None:
+    """Plan line 419 "offers refresh/review": with a recorded edit conflict,
+    [r] re-fetches the row and reopens the editor on the fresh version."""
+    state, _project = _state_and_project(tmp_path)
+    state.memory_items = [{"id": "a1", "artifact_version": 3, "content": {"note": "o"}}]
+    state.memory_selected_index = 0
+    state.memory_edit_conflict = {"id": "a1", "expected_version": 3}
+    spy = _MemoryRunSpy(
+        {"list": [{"status": "ok", "raw": [{"id": "a1", "artifact_version": 4}]}]}
+    )
+    tui_mod._handle_memory_key(state, "r", _actions(spy))
+    assert state.mode == "memory_edit"
+    assert state.memory_items[0]["artifact_version"] == 4
+    assert state.memory_edit_conflict is None
+
+
+def test_t28d_e_key_resets_edit_field_and_conflict(tmp_path: Path) -> None:
+    """Opening the editor starts on `note` and drops a stale conflict."""
+    state, _project = _state_and_project(tmp_path)
+    state.memory_items = [
+        {"id": "a1", "artifact_version": 3, "content": {"title": "t", "note": "n"}}
+    ]
+    state.memory_selected_index = 0
+    state.memory_edit_field = "title"
+    state.memory_edit_conflict = {"id": "a1", "expected_version": 3}
+    tui_mod._handle_memory_key(state, "e", _actions(_MemoryRunSpy()))
+    assert state.mode == "memory_edit"
+    assert state.memory_edit_field == "note"
+    assert state.memory_edit_conflict is None
+
+
+def test_t28d_edit_tab_cycles_content_fields(tmp_path: Path) -> None:
+    """[tab] in the editor reaches every structured-content key plus note."""
+    state, _project = _state_and_project(tmp_path)
+    state.memory_items = [
+        {"id": "a1", "artifact_version": 3, "content": {"title": "t", "note": "n"}}
+    ]
+    state.memory_selected_index = 0
+    state.mode = "memory_edit"
+    state.memory_edit_field = "note"
+    actions = _actions(_MemoryRunSpy())
+    tui_mod._handle_memory_edit_key(state, "tab", actions)
+    assert state.memory_edit_field == "title"
+    tui_mod._handle_memory_edit_key(state, "tab", actions)
+    assert state.memory_edit_field == "note"
+
+
+def test_t28d_edit_prompt_names_selected_field(tmp_path: Path) -> None:
+    """The editor prompt shows which content field Enter commits."""
+    from rich.console import Console
+
+    state, _project = _state_and_project(tmp_path)
+    state.memory_items = [
+        {"id": "a1", "artifact_version": 3, "content": {"title": "t", "note": "n"}}
+    ]
+    state.memory_selected_index = 0
+    state.mode = "memory_edit"
+    state.memory_edit_field = "title"
+    state.memory_edit_buffer = "abc"
+    console = Console(record=True, width=400)
+    console.print(tui_mod._render_memory_admin(state))
+    assert "edit title> abc" in console.export_text()
