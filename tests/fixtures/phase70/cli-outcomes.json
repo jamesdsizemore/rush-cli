@@ -407,6 +407,13 @@
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n"
+      },
+      "seed": [
+        "git-repo"
+      ],
+      "processes": "git",
       "json_paths": {},
       "human_contains": [
         "ApiDiff: No breaking"
@@ -418,6 +425,13 @@
         "api-diff",
         "--json"
       ],
+      "setup": {
+        "example.py": "def example() -> int:\n    return 1\n"
+      },
+      "seed": [
+        "git-repo"
+      ],
+      "processes": "git",
       "json_paths": {
         "breaking_changes": []
       },
@@ -430,7 +444,18 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "api-diff",
+        "--base",
+        "no-such-ref-phase70",
+        "--json"
+      ],
+      "processes": "git",
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--base'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -8069,9 +8094,12 @@
     "family": "service",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        ".github/workflows/ci.yml": "on: push\njobs:\n  build:\n    runs-on: x\n    steps:\n      - run: echo phase70\n"
+      },
       "json_paths": {},
       "human_contains": [
-        "SimulateCI: Workflow 'ci.yml'"
+        "SimulateCI: Workflow 'ci.yml' passed (0 steps)."
       ],
       "exit": 0
     },
@@ -8082,7 +8110,16 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "simulate-ci",
+        "--workflow",
+        "missing.yml"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--workflow'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []

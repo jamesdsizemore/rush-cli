@@ -251,7 +251,7 @@ _GIT_ENV = {
 def _seed_git_repo(cwd: Path) -> dict[str, str]:
     env = {**os.environ, **_GIT_ENV}
     with _process_stub({"processes": "git"}):
-        for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "seed"]):
+        for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "seed"]):
             _REAL_RUN(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
     return {}
 
