@@ -85,7 +85,7 @@ flowchart TB
 - **Git Hotspots & Defect Risk Analytics (Phase 37)**:
   - Commit churn velocity and McCabe cyclomatic complexity correlation matrix (`src/rush/hotspots/`).
 - **Multi-IDE Agent Governance & Repo Scaffolding (Phase 38)**:
-  - Canonical `AGENTS.md` instruction compiler (`src/rush/governance/`) emitting synchronized `.cursorrules`, `.clinerules`, and Claude instructions.
+  - Canonical `AGENTS.md` instruction compiler (`src/rush/governance/`) emitting synchronized `.clinerules` and Claude instructions.
 - **Git Pre-Commit Intelligence & Hook Guard (Phase 39)**:
   - Sub-second staged AST parser, Trojan Source Unicode detector, and cryptographic hook tamper guard (`src/rush/hook/`).
 - **Multi-Model Consensus & Composite Quality Scorecard (Phase 40)**:

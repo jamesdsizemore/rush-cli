@@ -17,7 +17,7 @@ Welcome to the **Agentic Rush** knowledge base. This section details the complet
 5. [Codebase Hygiene & 3-Way AST Merges](codebase-hygiene-and-ast-merging.md)
    - How `rush hygiene` hunts down dead code and `rush conflict` reconciles parallel AI branch modifications.
 6. [Agent Governance & Multi-IDE Rules](governance-and-multi-ide-rules.md)
-   - How `rush governance` compiles canonical `AGENTS.md` instructions into `.cursorrules`, `.clinerules`, and Windsurf rules.
+   - How `rush governance` compiles canonical `AGENTS.md` instructions into `.clinerules` and Windsurf rules.
 7. [Pre-Commit Intelligence & Hook Guard](pre-commit-intelligence.md)
    - How `rush hook` prevents Trojan Source Unicode vulnerabilities and blocks broken commit markers.
 8. [Multi-Model Consensus & Quality Scorecards](multi-model-consensus-and-scoring.md)

@@ -335,7 +335,7 @@ rush hotspots analyze
 
 ### Synchronize Multi-IDE Agent Governance & Scaffold Projects
 ```bash
-# Compile canonical AGENTS.md to .cursorrules, .clinerules, etc.
+# Compile canonical AGENTS.md to .clinerules, etc.
 rush governance sync
 
 # Initialize new repository with canonical AI governance templates

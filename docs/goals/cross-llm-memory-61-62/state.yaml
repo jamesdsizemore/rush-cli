@@ -716,7 +716,7 @@ tasks:
     constraints:
       - "Depends on: T002 (P61.0.1)."
       - "This is wholly new code — never modifies src/rush/continuity/providers.py or tools/continuity.py's provider_resume operation (Drift 6: those are session-resume CLI dispatch, a separate concern)."
-      - "Tier 3 never writes to AGENTS.md/CLAUDE.md/.cursorrules/.windsurfrules/rush.toml/.rush/trust.json/.rush/hooks.json/SECURITY.md."
+      - "Tier 3 never writes to AGENTS.md/CLAUDE.md/.windsurfrules/rush.toml/.rush/trust.json/.rush/hooks.json/SECURITY.md."
     expected_output:
       - "tests/test_phase61_transport.py (4 tests)"
       - "src/rush/memory/transport.py"

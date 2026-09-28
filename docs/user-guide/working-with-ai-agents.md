@@ -124,7 +124,7 @@ If your team uses multiple AI tools across different developers (Cline, Windsurf
 ```bash
 uv run rush governance sync
 ```
-Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
+Rush automatically updates `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
 
 ---
 

@@ -22,7 +22,7 @@ A comprehensive reference for terms, architectural concepts, and acronyms used a
 
 **Heuristic Review** — Deterministic Python AST and structure analysis for code maintainability, function lengths, and scaffold markers without requiring an external AI provider.
 
-**Model Context Protocol (MCP)** — An open protocol that enables AI coding assistants (Cursor, Claude Code, Windsurf) to securely query local tools over stdio.
+**Model Context Protocol (MCP)** — An open protocol that enables AI coding assistants (Claude Code, Windsurf) to securely query local tools over stdio.
 
 **Maturity Level** — Status classification for catalog tools (`real_adapter`, `importer`, `browser_runtime`, `catalog_only`, `guarded_placeholder`).
 

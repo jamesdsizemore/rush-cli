@@ -22,7 +22,7 @@ Commands assume the editable source checkout and run through `uv`. Treat returne
 
 ## 🤖 Golden Prompt Templates for Your AI Assistant
 
-Copy and paste these prompt templates directly into **Cursor, Claude Code, Cline, Windsurf, or ChatGPT**:
+Copy and paste these prompt templates directly into **Claude Code, Cline, Windsurf, or ChatGPT**:
 
 ### 1. The "Clean Feature" Prompt (Best for new modules)
 ```text

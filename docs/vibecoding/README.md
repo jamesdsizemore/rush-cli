@@ -15,7 +15,7 @@ These guides will teach you how to set up Rush as your AI copilot's automated sa
 2. [The Vibecoder Workflow](the-vibecoder-workflow.md)
    - Step-by-step walkthrough of a friction-free vibecoding session from initial prompt to green tests.
 3. [Setting Up Your AI Agent](setting-up-your-agent.md)
-   - How to connect Rush to Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot via FastMCP.
+   - How to connect Rush to Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot via FastMCP.
 4. [Slop-Busting & Hallucination Defense](slop-busting-and-hallucination-defense.md)
    - How `rush slop`, `rush tdd`, and `rush review` catch AI mistakes, empty placeholder stubs, and redundant comments.
 5. [Fix command: bounded Ruff remediation](instant-fix-and-auto-remediation.md)

@@ -428,7 +428,14 @@ _SECTION_81_DOCS = tuple(
 )
 
 _INLINE_CITATION_RE = re.compile(r"`(rush [^`\n]*)`")
-_CURSOR_RE = re.compile(r"(?<!--)(?<!`)\bcursor\b(?![=:])", re.IGNORECASE)
+_CURSOR_RE = re.compile(
+    r"\bCursor\b"
+    r"|(?<![A-Za-z0-9_])CURSOR(?![A-Za-z0-9_])"
+    r"|\.cursor(?:rules|-plugin)?(?![A-Za-z0-9_(])"
+    r"|cursor-agent"
+    r"|(?i:claude|codex|zed|windsurf)[`'\"]?\s*[,/|]\s*[`'\"]?cursor\b"
+    r"|\bcursor[`'\"]?\s*(?:\((?:JSON|JSONC)\))?\s*[,/|]\s*[`'\"]?(?i:claude|codex|zed|windsurf)"
+)
 
 
 def _extract_rush_citations(text: str) -> list[str]:
@@ -524,6 +531,72 @@ def test_doc_reconciliation(doc_path):
     assert not cursor_hits, (
         f"{len(cursor_hits)} Cursor mention(s) (owner removed Cursor)"
     )
+
+
+_CURSOR_PATTERN_CASES = (
+    ("Claude Code, Cursor and Codex", True),
+    ("AgentType.CURSOR", True),
+    (".cursorrules", True),
+    ("~/.cursor/mcp.json", True),
+    ("cursor-agent", True),
+    ("agents `claude`, `cursor`, `codex`", True),
+    ("cursor(JSON)/zed", True),
+    ("INVALID_CURSOR", False),
+    ("next_cursor", False),
+    ("cursor pagination", False),
+    ("cursor = conn.execute(", False),
+    ("cursor: pointer;", False),
+    ("ANSI cursor manager", False),
+    ("The pagination cursor is HMAC-signed", False),
+    ("pass `cursor` to page", False),
+    ("cur = conn.cursor()", False),
+    ("chunk.cursor_offset", False),
+    ("the cursor (opaque token)", False),
+)
+
+
+@pytest.mark.parametrize(("cursor_text", "expected"), _CURSOR_PATTERN_CASES)
+def test_cursor_product_pattern_matches_product_not_concept(cursor_text, expected):
+    """RED today: `_CURSOR_RE` flags the pagination/SQL/terminal cursor
+    concept and misses backticked product mentions -- it must match the
+    Cursor product only."""
+    assert bool(_CURSOR_RE.search(cursor_text)) is expected
+
+
+_CURSOR_SCAN_SUFFIXES = frozenset({".md", ".yaml", ".yml", ".txt", ".json", ".toml"})
+_CURSOR_SCAN_EXCLUDE_PREFIXES = ("docs/phase-plans/", "docs/reports/")
+
+
+def _cursor_scan_targets() -> list[Path]:
+    """Every doc-shaped file under `docs/` (plus the root `README.md`),
+    excluding `docs/phase-plans/` and `docs/reports/` (in-flight planning
+    and report artifacts, not shipped docs)."""
+    targets: list[Path] = []
+    for path in (_REPO_ROOT / "docs").rglob("*"):
+        if not path.is_file() or path.suffix not in _CURSOR_SCAN_SUFFIXES:
+            continue
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel.startswith(_CURSOR_SCAN_EXCLUDE_PREFIXES):
+            continue
+        targets.append(path)
+    readme = _REPO_ROOT / "README.md"
+    if readme.is_file():
+        targets.append(readme)
+    return targets
+
+
+def test_no_cursor_product_mention_in_docs():
+    """RED until every doc's Cursor product mention is removed (owner
+    decision, 2026-09-26: "FUCK CURSOR"). Other editors are removing Cursor
+    mentions from docs in parallel with this task, so any nonzero hit count
+    here is RED against the current, real repo tree."""
+    hits: list[str] = []
+    for path in _cursor_scan_targets():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if _CURSOR_RE.search(line):
+                hits.append(f"{rel}:{lineno}: {line.strip()[:120]}")
+    assert not hits, "Cursor product mention(s):\n" + "\n".join(hits)
 
 
 # ---------------------------------------------------------------------------

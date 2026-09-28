@@ -24,7 +24,7 @@ Welcome to the **Rush User Guide**! Whether you are writing your first line of c
 - [Security & Supply Chain Protection](security-and-supply-chain.md)
   *Scanning for leaked API keys, auditing vulnerable open-source dependencies, and generating software bills of materials (SBOM).*
 - [Pair Programming with AI Agents](working-with-ai-agents.md)
-  *How to use Rush alongside Cursor, Claude Code, Cline, and Windsurf to catch hallucinations, sandbox changes, and save tokens.*
+  *How to use Rush alongside Claude Code, Cline, and Windsurf to catch hallucinations, sandbox changes, and save tokens.*
 - [Advanced Checks & Monorepos](advanced-checks.md)
   *Managing multi-package monorepos, tracking Git defect hotspots, and compiling multi-IDE governance rules.*
 - [Troubleshooting & FAQs](troubleshooting.md)

@@ -6,7 +6,7 @@ Current status: historical decision; The daemon and semantic-reconciliation outc
 Accepted (v0.2.0 / Phase 46)
 
 ## Context
-When multiple AI agents (e.g. Claude Code, Cursor Composer, Windsurf) execute concurrently on the same workspace, they produce file write race conditions, cache invalidation thrashing, and corrupted Git conflict markers.
+When multiple AI agents (e.g. Claude Code, Windsurf) execute concurrently on the same workspace, they produce file write race conditions, cache invalidation thrashing, and corrupted Git conflict markers.
 
 ## Decision
 1. Implement `rush mcp mesh` (`src/rush/mcp/mesh.py`) as a local domain socket / named pipe background daemon.

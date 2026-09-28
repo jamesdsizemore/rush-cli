@@ -24,16 +24,6 @@ uv run --directory /absolute/path/to/rush-cli rush governance sync
 
 Rush includes a built-in stdio FastMCP server. Configure clients with an absolute Rush source-checkout path.
 
-### A. Cursor Setup
-1. Open Cursor **Settings** (`Cmd+,` or `Ctrl+,`).
-2. Navigate to **Features** → **MCP Servers** → **Add New MCP Server**.
-3. Fill in:
-   - **Name**: `rush`
-   - **Type**: `command`
-   - **Command**: `uv run --directory /absolute/path/to/rush-cli rush mcp serve`
-
----
-
 ### B. Claude Code / Claude Desktop Setup
 Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_config.json`):
 

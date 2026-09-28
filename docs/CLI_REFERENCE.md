@@ -207,7 +207,7 @@ Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envel
 | `codegraph slice SYMBOL` | Extract verbatim symbol source slice with line numbers from CPG database. | none | none |
 | `bundle analyze DIST_DIR` | Measure build chunk transfer sizes (raw, gzip, brotli) and evaluate budget gates. | none | none |
 | `hotspots analyze` | Compute composite defect risk scores combining commit churn and McCabe complexity. | none | none |
-| `governance sync` | Compile canonical `AGENTS.md` into multi-IDE rule files (`.cursorrules`, `.clinerules`, etc.). | none | Writes IDE rule files |
+| `governance sync` | Compile canonical `AGENTS.md` into multi-IDE rule files (`.clinerules`, etc.). | none | Writes IDE rule files |
 | `scaffold init` | Initialize repository with canonical `AGENTS.md` and `rush.toml` templates. | none | Writes scaffold templates |
 | `hook run` | Sub-second pre-commit intelligence suite across staged files (AST lint, Trojan Source, conflict markers). | none | none |
 | `score compute` | Calculate deterministic 0–100% 6-pillar repository health score and letter grade. | `--type-safety`, `--test-coverage`, `--code-health`, `--security`, `--token-economy`, `--governance` | none |
