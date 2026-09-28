@@ -1116,15 +1116,15 @@ An exhaustive audit of the entire `docs/` tree (216 files across all subdirector
 | 16 | `docs/MIGRATION_GUIDE.md` | Document v0.2.0 $\rightarrow$ v0.3.0 configuration changes and new SQLite database paths (`.rush/memory.db`). | Phase 41–46 |
 | 17 | `docs/agentic-rush/memory.md` | Detail the 4-tier taxonomy, SQLite FTS5 search, and AST Merkle reactive invalidation mechanics. | Phase 41A–41B |
 | 18 | `docs/agentic-rush/workflows.md` | Detail the 6 end-to-end autonomous agent workflows (Swarm merge, pre-flight, self-heal). | Phase 41–46 |
-| 20 | `docs/integrations/claude.md` | Update Claude Code project setup, MCP registration, and prompt memory injection. | Phase 41, 42 |
-| 21 | `docs/integrations/windsurf.md` | Update Windsurf Cascade tool integration and shared SQLite cache protocols. | Phase 41, 46 |
-| 22 | `docs/integrations/cline.md` | Update Cline MCP configuration and mutual exclusion file locking behavior. | Phase 41, 46 |
-| 23 | `docs/vibecoding/README.md` | Update VibeCoder ecosystem overview with pre-flight cockpit and instant feedback loops. | Phase 41–46 |
-| 24 | `docs/vibecoding/fast-loop.md` | Document sub-second AST hallucination guards and real-time environment sync. | Phase 41–42 |
-| 25 | `docs/vibecoding/tools.md` | Detail the complete VibeCoder tool suite including `rush simplify` and `rush strictify`. | Phase 43–44 |
-| 26 | `docs/maintainers/release-checklist.md` | Update the maintainer release checklist to require `rush ship gate` and SLSA attestation. | Phase 41C, 45 |
-| 27 | `docs/maintainers/adr/README.md` | Update maintainer ADR index to cross-reference ADR-0030 through ADR-0037. | Dependencies |
-| 28 | `docs/adr/README.md` | Update root ADR implementation cross-reference table. | Dependencies |
+| 19 | `docs/integrations/claude.md` | Update Claude Code project setup, MCP registration, and prompt memory injection. | Phase 41, 42 |
+| 20 | `docs/integrations/windsurf.md` | Update Windsurf Cascade tool integration and shared SQLite cache protocols. | Phase 41, 46 |
+| 21 | `docs/integrations/cline.md` | Update Cline MCP configuration and mutual exclusion file locking behavior. | Phase 41, 46 |
+| 22 | `docs/vibecoding/README.md` | Update VibeCoder ecosystem overview with pre-flight cockpit and instant feedback loops. | Phase 41–46 |
+| 23 | `docs/vibecoding/fast-loop.md` | Document sub-second AST hallucination guards and real-time environment sync. | Phase 41–42 |
+| 24 | `docs/vibecoding/tools.md` | Detail the complete VibeCoder tool suite including `rush simplify` and `rush strictify`. | Phase 43–44 |
+| 25 | `docs/maintainers/release-checklist.md` | Update the maintainer release checklist to require `rush ship gate` and SLSA attestation. | Phase 41C, 45 |
+| 26 | `docs/maintainers/adr/README.md` | Update maintainer ADR index to cross-reference ADR-0030 through ADR-0037. | Dependencies |
+| 27 | `docs/adr/README.md` | Update root ADR implementation cross-reference table. | Dependencies |
 
 ---
 
