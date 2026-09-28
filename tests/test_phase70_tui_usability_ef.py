@@ -691,7 +691,7 @@ def _artifacts_journey(
         raise OSError("simulated interruption")
 
     with monkeypatch.context() as patched:
-        patched.setattr(os, "replace", _boom)
+        patched.setattr(os, "link", _boom)
         _keys(state, actions, "y")
     assert not interrupted.exists()
     assert not list(interrupted.parent.glob(f"{interrupted.name}*partial*"))
