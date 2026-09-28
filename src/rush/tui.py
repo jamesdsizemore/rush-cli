@@ -2572,6 +2572,65 @@ def _memory_delete_apply(
     _memory_refresh(state, project, actions, announce=False)
 
 
+def _memory_archive_selected(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """T28-D: archive/restore share one form. Previews (apply=False)
+    carrying id, expected_version, owner_scope and required_grants, and
+    applies with exactly those reviewed grants only when the preview
+    returns OK."""
+    item = _memory_selected_item(state)
+    if item is None:
+        state.memory_message = "select a row before archive/restore"
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    archived = not item.get("archived_at")
+    verb = "archive" if archived else "restore"
+    grants = ["cache_write"]
+    request: dict[str, Any] = {
+        "scope": state.memory_subject,
+        "id": item["id"],
+        "expected_version": item["artifact_version"],
+        "owner_scope": _memory_owner_scope(state, project),
+        "archived": archived,
+        "required_grants": grants,
+        "apply": False,
+    }
+    try:
+        preview = actions.memory_run(project.root, operation="archive", request=request)
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"{verb} preview failed: {exc}"
+        return
+    raw = preview.get("raw") or {}
+    if raw.get("code") != "OK":
+        state.memory_message = (
+            f"{verb} preview refused: "
+            f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
+        )
+        return
+    try:
+        result = actions.memory_run(
+            project.root,
+            operation="archive",
+            request={**request, "apply": True},
+            permissions=_permissions_of(grants),
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"{verb} failed: {exc}"
+        return
+    raw = result.get("raw") or {}
+    if raw.get("code") == "OK":
+        state.memory_message = f"{verb}d {item['id']} (v{item['artifact_version']})"
+        _memory_refresh(state, project, actions, announce=False)
+    else:
+        state.memory_message = (
+            f"{verb} refused: "
+            f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
+        )
+
+
 def _memory_edit_commit(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
@@ -2757,6 +2816,9 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         state.memory_owner_buffer = state.memory_owner_scope_id or (
             _default_owner_scope_id(state.memory_owner_scope_kind, project)
         )
+        return
+    if key == "a":
+        _memory_archive_selected(state, project, actions)
         return
     if key == "d":
         _memory_delete_preview(state, project, actions)
