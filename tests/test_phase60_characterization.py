@@ -322,7 +322,8 @@ def test_continuity_dispatch_provider_receipt_characterization(
     )
 
     missing_res = tool.run(tmp_path, operation="restore", name="nonexistent_ckpt")
-    assert missing_res["status"] == "skipped"
+    # Phase 70 T27 (R27.1): restoring an unknown checkpoint is an error.
+    assert missing_res["status"] == "error"
 
     # 4. Operation 'context_pack'
     module_path = tmp_path / "app_service.py"

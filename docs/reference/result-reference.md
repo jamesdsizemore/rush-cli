@@ -10,7 +10,7 @@ Provider resume returns canonical `ToolResult`: `ok` only for a successful suppo
 
 ## Continuity outcome rules
 
-The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save or absent checkpoint, and `error` for invalid operations or checkpoint names. `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` carrying a `trust_tier` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag), dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
+The `continuity` tool uses `ok` for successful save/list/restore and empty lists, `skipped` for a denied save, and `error` for invalid operations, invalid checkpoint names, and a restore of a checkpoint that does not exist ("Session checkpoint 'NAME' was not found."). `metadata.execution` shows that only the save operation requested cache-write permission. Save/restore additionally return `metadata.handoff`: redacted current goal/open work, `historic_instruction` carrying a `trust_tier` (Phase 61's unified typed-artifact schema — never `STATED` on entry, replacing the earlier binary quarantine flag), dependency snapshots with `freshness`, and a failure receipt or tombstone; CLI and MCP use the same statuses and fields.
 
 Context operations use `ok` for a bounded pack or recovered handle and `skipped` for insufficient budget or a missing handle. Their `metadata.context_envelope` identifies selected evidence, local token values, omissions, and recovery state.
 

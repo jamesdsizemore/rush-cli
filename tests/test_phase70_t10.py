@@ -321,7 +321,8 @@ class TestT10ProjectStateUsesLogicalRoot:
         result = SessionContinuityTool().run(
             tmp_path, operation="restore", name="ghost"
         )
-        assert result["status"] == "skipped", result
+        # Phase 70 T27 (R27.1): an unknown name is an error; still no writes.
+        assert result["status"] == "error", result
         assert not (tmp_path / ".rush").exists()
         assert _snapshot(tmp_path) == before
 
