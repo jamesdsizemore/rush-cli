@@ -65,6 +65,7 @@ def _artifact_state(
     actions = tui.default_scan_actions(ExecutionPermissions())
     state = _state(root, project_id, data_root)
     _section(state, actions, "7")
+    _settle(state, actions, "artifacts")
     return project_id, root, data_root, state, actions, item
 
 
