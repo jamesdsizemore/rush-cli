@@ -7548,12 +7548,15 @@
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "setup": {
+        ".rush/sessions/phase70-fixture.json": "{\"checkpoint_id\":\"phase70-fixture\",\"created_at\":1790554294,\"files\":[],\"metadata\":{\"cwd\":\"/tmp/x\",\"handoff\":{\"current_goal\":null,\"dependencies\":{},\"diff\":null,\"failure_receipt\":null,\"freshness\":\"current\",\"historic_instruction\":{\"present\":false,\"trust_tier\":\"EXTERNAL_WRITE\"},\"open_work\":[],\"redaction_count\":0,\"session_memory\":{\"authority\":\"historical_evidence\",\"count\":0,\"records\":[],\"state\":\"absent\"},\"target_provider\":null,\"version\":1}},\"name\":\"phase70-fixture\",\"schema_version\":\"1.0.0\",\"status\":\"ok\"}"
+      },
       "json_paths": {
         "tool": "continuity",
-        "status": "skipped"
+        "status": "ok"
       },
       "human_contains": [
-        "continuity skipped"
+        "continuity ok"
       ],
       "exit": 0
     },
@@ -7564,7 +7567,20 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "session",
+        "restore",
+        "never-saved",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "error"
+      },
+      "human_contains": [
+        "continuity error"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7618,7 +7634,25 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "session",
+        "resume",
+        "never-saved",
+        "--provider",
+        "claude_code",
+        "--allow-network",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "error"
+      },
+      "human_contains": [
+        "continuity error"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -7668,7 +7702,22 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "session",
+        "save",
+        "nested/name",
+        "--allow-cache-write",
+        "--allow-artifact-write",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "error"
+      },
+      "human_contains": [
+        "continuity error"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
