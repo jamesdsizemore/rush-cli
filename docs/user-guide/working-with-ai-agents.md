@@ -70,6 +70,70 @@ Upgrading to a new Rush version needs more than the host's own `update` command,
 
 `rush agent hook claude|codex` is the post-edit hook entrypoint the installed plugin's `hooks.json` invokes; it reads the host's JSON event on stdin and always exits 0, so a hook never changes the edit's result.
 
+### What the installed skill teaches (Phase 70 T1)
+
+`rush install --agent-plugin claude` and `rush install --agent-plugin codex` each bundle an
+identical copy of the canonical guidance (`src/rush/integrations/agent_assets/claude/skills/rush/SKILL.md`
+and `.../codex/skills/rush/SKILL.md`, both copies of `agent_assets/skills/rush/SKILL.md`) as the
+host's `rush:rush` skill. It teaches, in the model's own context: when to call Rush (before every
+commit; after every code change; whenever the user asks about quality, lint, formatting, types,
+tests, security, secrets or dead code); the `core`/`full` profile tool lists and that a tool outside
+the connected profile fails as an unknown tool; path resolution against the declared project root;
+the five result statuses (`ok`, `warn`, `fail`, `error`, `skipped`) and that `skipped` never means
+the code passed; the seven permission grants and that a grant is never implied by a profile or a
+previous call; compact-result recovery (`result_view="compact"`, `rush_status(operation="result",
+result_handle=...)`); memory scope (`rush_memory` reads only sessions named in a non-empty
+`session_allowlist`); and verification limits (a registered server is not proof it ran; a result
+covers only the files and engines it lists). A manual `rush agent connect` without the native plugin
+gets the same contract a different way: the MCP server's own `instructions` field (Phase 70 T5,
+`build_server_instructions`) carries the identical triggers, statuses, grants, compact recovery,
+memory scope and verification-limit text, generated from the same source as the skill.
+
+### Truthful tool descriptions and guarantees (Phase 70 T5)
+
+Every core tool's MCP description and the server's `instructions` state only what that tool
+actually verifies, current source:
+- `rush_check`: "Before commit/after edits: format-check, lint, typecheck, dead, slop, test at
+  `<path>`. Test step runs only with `allow_build`; else it is skipped and the result is never `ok`
+  (`warn` if all else passes)."
+- `rush_status`: "Call first each session. Read-only, no grant: `<path>` project setup, engines,
+  scans, results, agents, memory. Agent registration is not verified activity. `operation=result`
+  reads a stored result."
+- `rush_review`: "Before commit: heuristic review of `<path>`; engines are deterministic. ...
+  `use_llm=true` sends findings to a configured external LLM; no Rush grant gates it." Turning on
+  `use_llm` is a data-egress decision the caller makes explicitly, not a permission Rush enforces.
+- `rush_memory`: reads need a non-empty `session_allowlist`; writes and other mutations need
+  `allow_cache_write`.
+- `rush_test`: runs only with `allow_build`; without it, nothing runs.
+
+### Opt-in post-edit checks (Phase 70 T7)
+
+Post-edit checks are off until you opt in per host and per project:
+
+```bash
+rush agent connect claude-code --session ID --project /absolute/path/to/project \
+  --allow-cache-write --allow-artifact-write --enable-agent-hooks
+```
+
+The native plugin's own hook approval still applies -- `rush agent connect --enable-agent-hooks`
+records project-level consent, but the check only actually runs through the plugin installed by
+`rush install --agent-plugin claude` (or `codex`) and that host's own hook acceptance. Once both are
+in place, every `Write`/`Edit`/`MultiEdit` in Claude Code (or `apply_patch`/`Edit`/`Write` in Codex)
+runs the plugin's `PostToolUse` hook, which calls `rush agent hook claude` (or `rush agent hook
+codex`) with the host's event on stdin. The hook only checks an edit inside the activated,
+registered project; an edited path outside that project, or reached through a symlink, is excluded
+and named as such, and Rush's own tool calls are never rechecked (no recursion). The host wraps the
+hook in a 30-second timeout; Rush's own check stops around 25 seconds and reports the steps that did
+not run rather than hang. The model sees a bounded plain-text report (at most 8,192 bytes) in its
+context: an invocation ID, the checked scope, the overall status (with an incomplete-step count when
+the deadline or a cancellation cut steps short), each of the six check steps (`format`, `lint`,
+`typecheck`, `dead`, `slop`, `test`) with its own status, and findings (or `findings: none`). Add
+`--hook-result-cache` to also let the check store its full result, so the report includes a
+`result_handle` you can pass to `rush_status(operation="result", result_handle=...)` or `rush status
+PATH --result HANDLE --json`. `--disable-agent-hooks`, or `rush agent disconnect claude-code
+--project /absolute/path/to/project`, removes the activation; loading or installing the plugin alone
+never runs a check.
+
 ---
 
 ## 2. The 3-Step AI Workflow Loop

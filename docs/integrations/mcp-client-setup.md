@@ -163,6 +163,8 @@ No restart needed -- Codex CLI re-reads `config.toml` per invocation.
   a later `rush agent doctor`) -- writing the config file is necessary but not sufficient for
   `connected` to be true.
 - **Guidance consent**: pass `--install-guidance` to `rush install --agent-plugin claude|codex` to write the Rush instruction block into the project's AGENTS.md file. Without it, the instruction block is not written.
+- **Post-edit hook consent**: pass `--enable-agent-hooks` to `rush agent connect <agent-id> --project <path>` to opt that host's installed plugin into Rush's post-edit check for that project; without it, the plugin's hook never runs a check. `--disable-agent-hooks` removes the activation.
+- **Post-edit hook result caching**: add `--hook-result-cache` alongside `--enable-agent-hooks` to also store each check's full result, so the report the model sees includes a `result_handle` it can pass to `rush_status(operation="result", result_handle=...)` or `rush status PATH --result HANDLE --json`. Without it, the model sees only the bounded report.
 - **Disconnecting**: `rush agent disconnect <agent-id>` removes Rush's MCP entry, instruction block, and Rush-owned skill/hook resources for that agent. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
 - `rush agent doctor [--session <id>] [--project <path>]` re-probes every client's real on-disk
   config and reports the memory scope's current state for that session, without writing anything.
@@ -186,3 +188,15 @@ Readiness progresses through explicit states: `configured` (host config written)
 3. Invoke `rush_review` with an absolute project path and verify structured `ToolResult` JSON output.
 
 See [MCP Overview](mcp-overview.md) and [MCP Reference](../reference/mcp-tool-reference.md).
+
+---
+
+## 5. Post-edit hook checks (Phase 70 T7)
+
+Post-edit checks are opt-in and run only once two things are both true: the host's installed Rush plugin (`rush install --agent-plugin claude` or `codex`) and that host's own hook acceptance are in place, and `--enable-agent-hooks` has been passed to `rush agent connect <agent-id> --project <path>` for this project. With both in place, every `Write`/`Edit`/`MultiEdit` in Claude Code (or `apply_patch`/`Edit`/`Write` in Codex) runs the plugin's `PostToolUse` hook, which calls `rush agent hook claude` (or `rush agent hook codex`) with the host's event on stdin; Rush's own MCP tool calls are excluded, so a hook never recurses into itself.
+
+- **Scope**: the hook only checks an edit inside the activated, registered project; an edited path outside that project, or reached through a symlink, is excluded and named as such rather than silently skipped.
+- **Timeout**: the host wraps the hook call in a 30-second timeout; Rush's own check stops at an internal ~25-second deadline and reports whichever of the six steps (`format`, `lint`, `typecheck`, `dead`, `slop`, `test`) did not run, rather than hang or block the edit.
+- **Byte budget**: the report the model sees is bounded to at most 8,192 bytes in the host's context field: an invocation ID, the checked scope, overall status (plus an incomplete-step count when the deadline or a cancellation cut it short), each step's status, and findings (or `findings: none`). Add `--hook-result-cache` to also store the full result, so the report includes a `result_handle`.
+- **Disabling**: `--disable-agent-hooks` on `rush agent connect`, or `rush agent disconnect <agent-id> --project <path>`, removes the activation; loading or installing the plugin alone never runs a check.
+

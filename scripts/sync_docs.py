@@ -237,6 +237,12 @@ def _json_default(value: Any) -> Any:
         return text
     if type(value).__name__ == "Sentinel":
         return {"sentinel": value.name}
+    if callable(value):
+        # A callable default (e.g. a lazy Click default) has no stable str():
+        # its repr carries a memory address. Record its dotted name instead.
+        module = getattr(value, "__module__", None) or type(value).__module__
+        name = getattr(value, "__qualname__", None) or type(value).__qualname__
+        return {"callable": f"{module}.{name}"}
     return str(value)
 
 
