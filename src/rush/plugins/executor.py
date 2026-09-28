@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +36,7 @@ from rush.plugins.trust_store import (
     TrustedPluginRecord,
     UntrustedPluginError,
 )
+from rush.runtime.project_python import PYTHON_PREREQUISITE, project_python
 
 __all__ = [
     "ClosureTamperedError",
@@ -214,7 +214,19 @@ class HardenedPluginExecutor:
             cmd.append(str(snapshot_entry))
 
         if cmd and cmd[0] in ("python", "python3"):
-            cmd[0] = sys.executable
+            python = project_python(paths[0] if paths else self.repo_root)
+            if python is None:
+                return ToolResultV1(
+                    schema_version="1.0.0",
+                    tool="plugin",
+                    engine=plugin.name,
+                    engine_version=None,
+                    status="skipped",
+                    duration_ms=0,
+                    summary=f"Plugin '{plugin.name}': {PYTHON_PREREQUISITE}",
+                    findings=[],
+                )
+            cmd[0] = python
 
         target_args = [str(p) for p in paths]
         full_command = [*cmd, *target_args]

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
-import importlib.util
 import json
 import re
 import shutil
@@ -24,9 +22,43 @@ from .common import (
     skipped_result,
 )
 
+_ATHERIS_PROBE = (
+    "import importlib.util,sys; "
+    "sys.exit(0 if importlib.util.find_spec('atheris') else 1)"
+)
 
-def atheris_available() -> bool:
-    return importlib.util.find_spec("atheris") is not None
+
+def atheris_available(python: str) -> bool:
+    """Whether the interpreter the harness runs with can import atheris."""
+    try:
+        probe = subprocess.run(
+            [python, "-c", _ATHERIS_PROBE],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return probe.returncode == 0
+
+
+_ATHERIS_VERSION_PROBE = "import importlib.metadata as m; print(m.version('atheris'))"
+
+
+def _atheris_version(python: str) -> str | None:
+    """The atheris version installed in the harness interpreter, not Rush's own."""
+    try:
+        probe = subprocess.run(
+            [python, "-c", _ATHERIS_VERSION_PROBE],
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if probe.returncode != 0:
+        return None
+    return probe.stdout.decode("utf-8", errors="replace").strip() or None
 
 
 class FuzzTool(ToolFn):
@@ -288,11 +320,12 @@ class FuzzTool(ToolFn):
                 duration_ms=elapsed_ms(start),
             )
 
-        if not atheris_available():
+        python = project_python(root)
+        if python is None:
             return skipped_result(
                 self.name,
                 "atheris",
-                "fuzz: atheris module not available",
+                f"fuzz: {PYTHON_PREREQUISITE}",
                 duration_ms=elapsed_ms(start),
                 metadata={
                     "execution": build_execution_metadata(
@@ -304,12 +337,11 @@ class FuzzTool(ToolFn):
                 },
             )
 
-        python = project_python(root)
-        if python is None:
+        if not atheris_available(python):
             return skipped_result(
                 self.name,
                 "atheris",
-                f"fuzz: {PYTHON_PREREQUISITE}",
+                "fuzz: atheris module not available",
                 duration_ms=elapsed_ms(start),
                 metadata={
                     "execution": build_execution_metadata(
@@ -451,10 +483,7 @@ class FuzzTool(ToolFn):
                 duration_ms=elapsed_ms(start),
                 metadata=metadata,
             )
-        try:
-            version = importlib.metadata.version("atheris")
-        except importlib.metadata.PackageNotFoundError:
-            version = None
+        version = _atheris_version(python)
         return sanitize_value(
             ToolResult(
                 tool=self.name,

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
-from rush.tools.common import elapsed_ms, finding_fingerprint
+from rush.runtime.result_helpers import elapsed_ms, finding_fingerprint
+
+if TYPE_CHECKING:
+    from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
 
 
 def _consumed(target: Path) -> bool:
@@ -110,6 +112,8 @@ def assemble_review_result(
     review_provider: str | None = None,
 ) -> ToolResult:
     """Assemble and validate canonical ToolResult for the review pipeline."""
+    from rush.tools.base import ToolResult
+
     normalized: list[Finding] = [
         f if isinstance(f, dict) else f.to_dict() for f in findings
     ]
@@ -144,6 +148,8 @@ def assemble_review_result(
 
 def build_error_review_result(error_msg: str, start_ms: int) -> ToolResult:
     """Build canonical ToolResult for a review configuration or collection error."""
+    from rush.tools.base import ToolResult
+
     return ToolResult(
         tool="review",
         engine="heuristic-v1",
@@ -163,6 +169,8 @@ def build_empty_review_result(
     path: Path, scope: dict[str, Any], start_ms: int
 ) -> ToolResult:
     """Build canonical ToolResult when no reviewable Python files are discovered."""
+    from rush.tools.base import ToolResult
+
     return ToolResult(
         tool="review",
         engine="heuristic-v1",

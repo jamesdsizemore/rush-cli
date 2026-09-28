@@ -28,26 +28,19 @@ def _venv_python(venv: Path) -> str | None:
     return None
 
 
-def project_python(start: Path | None = None) -> str | None:
-    """The interpreter for the project at or above ``start``.
+def _project_venv_python(start: Path) -> str | None:
+    base = start if start.is_dir() else start.parent
+    for directory in (base, *base.parents):
+        for name in _VENV_DIRS:
+            found = _venv_python(directory / name)
+            if found is not None:
+                return found
+        if any((directory / marker).exists() for marker in _PROJECT_MARKERS):
+            break
+    return None
 
-    Order: the project's own ``.venv``/``venv`` python (searched upward to the
-    nearest project marker); from source, Rush's own interpreter; frozen, the
-    active virtualenv (uv and virtualenv set ``VIRTUAL_ENV``), then
-    ``python3``/``python`` on PATH. None when no interpreter exists -- callers
-    report `PYTHON_PREREQUISITE`, never a garbage exit code.
-    """
-    if start is not None:
-        base = start if start.is_dir() else start.parent
-        for directory in (base, *base.parents):
-            for name in _VENV_DIRS:
-                found = _venv_python(directory / name)
-                if found is not None:
-                    return found
-            if any((directory / marker).exists() for marker in _PROJECT_MARKERS):
-                break
-    if not getattr(sys, "frozen", False):
-        return sys.executable
+
+def _frozen_fallback_python() -> str | None:
     active = os.environ.get("VIRTUAL_ENV")
     if active:
         found = _venv_python(Path(active))
@@ -58,3 +51,21 @@ def project_python(start: Path | None = None) -> str | None:
         if on_path is not None:
             return on_path
     return None
+
+
+def project_python(start: Path | None = None) -> str | None:
+    """The interpreter for the project at or above ``start``.
+
+    Order: the project's own ``.venv``/``venv`` python (searched upward to the
+    nearest project marker); from source, Rush's own interpreter; frozen, the
+    active virtualenv (uv and virtualenv set ``VIRTUAL_ENV``), then
+    ``python3``/``python`` on PATH. None when no interpreter exists -- callers
+    report `PYTHON_PREREQUISITE`, never a garbage exit code.
+    """
+    if start is not None:
+        found = _project_venv_python(start)
+        if found is not None:
+            return found
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    return _frozen_fallback_python()

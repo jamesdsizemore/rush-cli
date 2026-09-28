@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import urllib.error
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rush.providers import (
     APPROVED_PROVIDER_ORIGINS,
     ProviderOutcome,
     get_configured_provider,
 )
-from rush.tools.base import Finding, LlmStatus
+
+if TYPE_CHECKING:
+    from rush.tools.base import Finding, LlmStatus
 
 
 def _is_valid_llm_response(
@@ -100,6 +102,8 @@ def format_review_prompt(findings: list[Finding] | list[dict[str, Any]]) -> str:
 
 def parse_llm_findings(llm_summary: dict[str, Any]) -> list[Finding]:
     """Parse synthetic findings from LLM summary response."""
+    from rush.tools.base import Finding
+
     summary = llm_summary.get("summary", "")
     if not summary:
         return []

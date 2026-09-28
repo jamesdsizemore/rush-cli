@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Any
 
 from ..permissions import build_execution_metadata, check_permissions
 from ..safety.redactor import SecretRedactor
-from ..tools.base import ToolResult
 from .binaries import (
     AnalysisScope,
     analysis_scope,
@@ -38,6 +37,7 @@ from .result_helpers import elapsed_ms, error_result, now_ms, skipped_result
 if TYPE_CHECKING:
     from ..engines.base import Engine
     from ..permissions import ExecutionPermissions
+    from ..tools.base import ToolResult
 
 MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
 
@@ -110,6 +110,25 @@ _WINDOWS_GATE_SCRIPT = (
     "    sys.exit(1)\n"
     "sys.exit(subprocess.Popen(sys.argv[2:]).wait())\n"
 )
+
+# A frozen (PyInstaller) rush.exe has no `-c`, so there the gate runs as
+# rush's own hidden entry (`rush.entry.main`) calling `windows_gate`.
+WINDOWS_GATE_ARG = "__rush_windows_gate__"
+
+
+def windows_gate(argv: list[str]) -> int:
+    """`_WINDOWS_GATE_SCRIPT`'s exact logic; `argv` is its `sys.argv[1:]`."""
+    if sys.platform != "win32":
+        raise RuntimeError("Windows-only gate called on a non-Windows platform")
+    import msvcrt
+
+    fd = msvcrt.open_osfhandle(int(argv[0]), os.O_RDONLY)
+    data = os.read(fd, 1)
+    os.close(fd)
+    if not data:
+        return 1
+    return subprocess.Popen(argv[1:]).wait()
+
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOBOBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
@@ -666,14 +685,13 @@ def _launch_gated_process_windows(  # pragma: no cover -- Windows-only; no
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.lpAttributeList = {"handle_list": [handle_value]}
         gate_env = dict(os.environ if env is None else env)
+        gate_entry = (
+            [WINDOWS_GATE_ARG]
+            if getattr(sys, "frozen", False)
+            else ["-c", _WINDOWS_GATE_SCRIPT]
+        )
         proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                _WINDOWS_GATE_SCRIPT,
-                str(handle_value),
-                *exec_argv,
-            ],
+            [sys.executable, *gate_entry, str(handle_value), *exec_argv],
             **{
                 **popen_kwargs,
                 "env": gate_env,
