@@ -1766,7 +1766,15 @@ def _start_rescan_thread(
         # `rescan`'s real argument name is `run_id` (the baseline run being
         # re-executed), per the server's own argument allowlist.
         _start_dashboard_owned(
-            project, owner, "rescan", {"run_id": baseline_run_id or ""}
+            project,
+            owner,
+            "rescan",
+            {
+                "run_id": baseline_run_id or "",
+                # T28-B: the reviewed attempt travels with the request; the
+                # server refuses a rescan of a run that changed since review.
+                "expected_attempt_id": expected_attempt_id,
+            },
         )
         return
 
@@ -1798,6 +1806,10 @@ def _start_rescan_thread(
     project.operation_id = operation_id
     project.run_resolved = True
     project.ledger_admitted = False
+    # T28-B: the rescan's own run id is allocated here, so a cancel targets
+    # the run that is actually executing, never the finished baseline.
+    new_run_id = str(uuid.uuid4())
+    project.run_id = new_run_id
 
     def _worker() -> None:
         try:
@@ -1806,6 +1818,7 @@ def _start_rescan_thread(
                 baseline_run_id,
                 owner_instance_id=owner_instance_id,
                 expected_attempt_id=expected_attempt_id,
+                new_run_id=new_run_id,
             )
             run = outcome.get("run") if isinstance(outcome, dict) else None
             comparison = (
@@ -1826,7 +1839,16 @@ def _start_rescan_thread(
                     # Phase65's real `ScanRun.aggregate`, `ToolResult`-shaped
                     # at runtime.
                     project.results = [cast(ToolResult, aggregate)]
-            project.status = "complete"
+            run_status = run.get("status") if isinstance(run, dict) else None
+            project.status = (
+                "cancelled"
+                if run_status == "cancelled"
+                else "error"
+                if run_status in ("error", "failed")
+                else "complete"
+            )
+            if project.status == "error":
+                project.last_message = f"rescan {run_status}"
         except Exception as exc:  # noqa: BLE001 -- same contract as
             # `_start_scan_thread._worker` above: `actions.rescan_project_run`
             # is an injectable Phase65 seam whose failure space this
