@@ -483,6 +483,21 @@ def _isolated_home(
         monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
 
 
+@pytest.fixture(scope="session")
+def _session_download_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return tmp_path_factory.mktemp("shared-cache", numbered=False)
+
+
+@pytest.fixture(autouse=True)
+def _shared_download_cache(
+    _session_download_cache: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every per-test HOME shares one session npm cache: the engine npm
+    downloads (~370 MB into `$HOME/.npm`) happen once, not once per test.
+    Separate from `_isolated_home` so a module that overrides that keeps it."""
+    monkeypatch.setenv("npm_config_cache", str(_session_download_cache))
+
+
 _ENTRIES_BEFORE = pytest.StashKey[set[str]]()
 _THREADS_BEFORE = pytest.StashKey[set[threading.Thread]]()
 # Shared deadline for joining the threads a test started and left running.

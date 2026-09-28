@@ -574,6 +574,69 @@ def test_per_test_guard_fails_a_late_thread_write(
     )
 
 
+def test_isolated_homes_share_one_engine_cache(
+    pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-test HOMEs share one session npm cache (the engine download that
+    filled ~370 MB per test), including a module that overrides
+    `_isolated_home` with its own HOME the way tests/test_phase70_t5.py does."""
+    pytester.makeconftest(_CONFTEST.read_text(encoding="utf-8"))
+    record = """
+        import json, os, uuid
+        from pathlib import Path
+
+
+        def _record():
+            out = Path(os.environ["CACHE_RECORD_DIR"]) / f"{uuid.uuid4().hex}.json"
+            out.write_text(json.dumps({
+                "HOME": os.environ["HOME"],
+                "npm_config_cache": os.environ.get("npm_config_cache"),
+            }))
+        """
+    pytester.makepyfile(
+        test_default=record
+        + """
+
+        def test_one():
+            _record()
+
+
+        def test_two():
+            _record()
+        """,
+        test_override=record
+        + """
+        import pytest
+
+
+        @pytest.fixture(autouse=True)
+        def _isolated_home(tmp_path, monkeypatch):
+            home = tmp_path / "autouse-home"
+            home.mkdir()
+            monkeypatch.setenv("HOME", str(home))
+
+
+        def test_three():
+            _record()
+        """,
+    )
+    record_dir = pytester.path / "records"
+    record_dir.mkdir()
+    monkeypatch.setenv("CACHE_RECORD_DIR", str(record_dir))
+    result = pytester.runpytest_subprocess("-p", "no:cacheprovider")
+    result.assert_outcomes(passed=3)
+    envs = [json.loads(f.read_text()) for f in sorted(record_dir.glob("*.json"))]
+    assert len(envs) == 3
+    homes = [Path(env["HOME"]).resolve() for env in envs]
+    assert len(set(homes)) == 3
+    caches = {env["npm_config_cache"] for env in envs}
+    assert len(caches) == 1 and None not in caches, caches
+    cache = Path(caches.pop()).resolve()
+    assert cache.is_dir()
+    for home in homes:
+        assert not cache.is_relative_to(home), (cache, home)
+
+
 def _data_root_for(home: Path) -> Path:
     if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "Rush"
