@@ -577,6 +577,7 @@ def _artifacts_journey(
     actions = tui.default_scan_actions(ExecutionPermissions(artifact_write=True))
     state = _state(root, project_id, data_root)
     _section(state, actions, "7")
+    _settle(state, actions, "artifacts")
     assert state.section == "artifacts"
     key = (tui.project_key(state.active_project), "artifacts")
 

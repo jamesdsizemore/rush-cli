@@ -1489,6 +1489,7 @@ def test_tui_f3_digit_or_alias_reaches_tokens_git_artifacts_sections(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     assert state.section == "artifacts"
     rendered = _render_text(state)
     assert "report.txt" in rendered, (
@@ -1560,6 +1561,7 @@ def test_tui_artifacts_section_inspects_via_bounded_continuation(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     assert state.section == "artifacts"
 
     inspect = _find_action("artifacts", "inspect")
@@ -1612,6 +1614,7 @@ def test_tui_export_review_writes_only_after_approval(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     export_action = _find_action("artifacts", "export")
     export_action.run(state, actions)
 
@@ -1666,6 +1669,7 @@ def test_tui_export_review_declined_writes_nothing(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     export_action = _find_action("artifacts", "export")
     export_action.run(state, actions)
     assert state.overlay == "grant_review"

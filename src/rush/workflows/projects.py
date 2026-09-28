@@ -34,6 +34,7 @@ agent-workflow-plan.md §6.1, "P65-03 owns registry/envelope tests"):
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -42,6 +43,7 @@ import re
 import sqlite3
 import stat
 import subprocess
+import threading
 import time
 import uuid
 from collections.abc import Iterator, Mapping
@@ -1961,6 +1963,103 @@ def project_token_usage(
     )
 
 
+_TOKEN_USAGE_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_TOKEN_USAGE_CACHE_LOCK = threading.Lock()
+_TOKEN_USAGE_CACHE_SIZE = 16
+
+
+def token_usage_signature(root: Path) -> tuple[Any, ...]:
+    """Every input `root_token_usage` reads, as (path, size, st_mtime_ns): the
+    telemetry DB and its WAL, every attempt's JSON records (manifest and the
+    attempt header the latest-attempt selector reads) and every handoff. An
+    equal signature means an identical read, so the Tokens view and `rush
+    gain` re-read only when it changes. Stats only; never creates anything."""
+    root = Path(root)
+    telemetry = root / ".rush" / "telemetry" / "tokens.db"
+    paths = [
+        telemetry,
+        telemetry.with_name("tokens.db-wal"),
+        *sorted(root.glob(".rush/runs/*/attempts/*/*.json")),
+        *sorted(root.glob(".rush/handoffs/*.json")),
+    ]
+    entries: list[tuple[str, int | None, int | None]] = []
+    for path in paths:
+        try:
+            info = path.stat()
+        except OSError:
+            entries.append((path.as_posix(), None, None))
+        else:
+            entries.append((path.as_posix(), info.st_size, info.st_mtime_ns))
+    return tuple(entries)
+
+
+def _has_identity(record: Mapping[str, Any], key: str) -> bool:
+    """A stored identity value; absent, empty and the telemetry default
+    `'unscoped'` are all no identity."""
+    value = record.get(key)
+    return value is not None and value not in ("", "unscoped")
+
+
+def _event_time(value: Any) -> datetime | None:
+    """A stored event time (ISO string or Unix seconds) as aware UTC."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return datetime.fromtimestamp(value, UTC)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _readonly_telemetry_scope(
+    root: Path, filters: Mapping[str, str], identity_keys: list[str]
+) -> tuple[int, list[datetime]]:
+    """Telemetry rows (token and memory events) without a stored value for
+    one of `identity_keys`, and the earliest/latest stored time of the rows
+    in this selection. A legacy table without an identity column holds only
+    unscoped rows. Read-only, like `_readonly_memory_event_totals`."""
+
+    def _read(conn: sqlite3.Connection) -> tuple[int, list[datetime]]:
+        unscoped = 0
+        times: list[datetime] = []
+        for table in ("token_events", "memory_events"):
+            if not sqlite_has_table(conn, table):
+                continue
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not set(identity_keys) <= columns:
+                unscoped += int(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                )
+                selected = None if filters else ""
+            else:
+                missing = " OR ".join(
+                    f"{key} IS NULL OR {key} IN ('', 'unscoped')"
+                    for key in identity_keys
+                )
+                unscoped += int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {missing}"
+                    ).fetchone()[0]
+                )
+                selected = " AND ".join(f"{column} = ?" for column in filters)
+            if selected is None or "timestamp" not in columns:
+                continue
+            bounds = conn.execute(
+                f"SELECT MIN(timestamp), MAX(timestamp) FROM {table}"
+                + (f" WHERE {selected}" if selected else ""),
+                list(filters.values()) if selected else [],
+            ).fetchone()
+            times.extend(t for t in map(_event_time, bounds) if t is not None)
+        return unscoped, times
+
+    db = Path(root).resolve() / ".rush" / "telemetry" / "tokens.db"
+    return read_sqlite_readonly(db, _read) or (0, [])
+
+
 def root_token_usage(
     root: Path,
     *,
@@ -1970,7 +2069,10 @@ def root_token_usage(
 ) -> dict[str, Any]:
     """`project_token_usage` over an already-resolved project root: the one
     token authority shared by the Tokens section and `rush gain`, which may
-    run against an unregistered root. Read-only."""
+    run against an unregistered root. Read-only. The result is cached by
+    root, filters and `token_usage_signature`, taken before the read, so an
+    unchanged selection is never re-read and a write during a read triggers
+    one more."""
     filters = {
         key: value
         for key, value in (
@@ -1980,31 +2082,66 @@ def root_token_usage(
         )
         if value is not None
     }
+    key = (
+        str(Path(root).resolve()),
+        tuple(sorted(filters.items())),
+        token_usage_signature(root),
+    )
+    with _TOKEN_USAGE_CACHE_LOCK:
+        cached = _TOKEN_USAGE_CACHE.get(key)
+    if cached is None:
+        cached = _read_root_token_usage(root, filters)
+        with _TOKEN_USAGE_CACHE_LOCK:
+            _TOKEN_USAGE_CACHE[key] = cached
+            while len(_TOKEN_USAGE_CACHE) > _TOKEN_USAGE_CACHE_SIZE:
+                _TOKEN_USAGE_CACHE.pop(next(iter(_TOKEN_USAGE_CACHE)))
+    return copy.deepcopy(cached)
+
+
+def _read_root_token_usage(root: Path, filters: Mapping[str, str]) -> dict[str, Any]:
+    # A scoped selection's unscoped events are those missing one of its
+    # identities; an unscoped view's are those with no stored run identity.
+    identity_keys = list(filters) or ["run_id"]
+    times: list[datetime] = []
 
     provider_total: int | None = None
     provider_events = 0
     provider_by_tool: dict[str, int] = {}
+    unscoped_provider = 0
     for manifest in _iter_run_manifests(root):
-        if not _identity_matches(manifest, filters):
-            continue
+        matches = _identity_matches(manifest, filters)
+        scoped = all(_has_identity(manifest, k) for k in identity_keys)
         for item in manifest.get("scheduled") or []:
             metrics = (item.get("child") or {}).get("metrics") or {}
             reported = metrics.get("total_tokens")
-            if isinstance(reported, int) and not isinstance(reported, bool):
-                provider_total = (provider_total or 0) + reported
-                provider_events += 1
-                tool = str(item.get("candidate_id") or "unknown")
-                provider_by_tool[tool] = provider_by_tool.get(tool, 0) + reported
+            if not isinstance(reported, int) or isinstance(reported, bool):
+                continue
+            unscoped_provider += not scoped
+            if not matches:
+                continue
+            provider_total = (provider_total or 0) + reported
+            provider_events += 1
+            tool = str(item.get("candidate_id") or "unknown")
+            provider_by_tool[tool] = provider_by_tool.get(tool, 0) + reported
+            stamp = _event_time(manifest.get("created_at"))
+            if stamp is not None:
+                times.append(stamp)
 
     tokenizer_total = 0
     tokenizer_packets = 0
+    unscoped_packets = 0
     for handoff in _iter_handoffs(root):
+        tokens = (handoff.get("packet") or {}).get("tokens")
+        if not isinstance(tokens, int) or isinstance(tokens, bool):
+            continue
+        unscoped_packets += not all(_has_identity(handoff, k) for k in identity_keys)
         if not _identity_matches(handoff, filters):
             continue
-        tokens = (handoff.get("packet") or {}).get("tokens")
-        if isinstance(tokens, int) and not isinstance(tokens, bool):
-            tokenizer_total += tokens
-            tokenizer_packets += 1
+        tokenizer_total += tokens
+        tokenizer_packets += 1
+        stamp = _event_time(handoff.get("created_at"))
+        if stamp is not None:
+            times.append(stamp)
 
     # T28-A: read-only; `TelemetryStore(root)` creates/migrates tokens.db.
     # A corrupt or unreadable DB is an unavailable measurement with its
@@ -2013,9 +2150,14 @@ def root_token_usage(
     try:
         recorded = _readonly_memory_event_totals(root, filters)
         avoided = read_summary_readonly(root, **filters)
+        unscoped_telemetry, telemetry_times = _readonly_telemetry_scope(
+            root, filters, identity_keys
+        )
+        times.extend(telemetry_times)
     except (MemoryStoreUnreadableError, sqlite3.DatabaseError) as exc:
         telemetry_error = f"token telemetry unreadable: {exc}"
         recorded = {}
+        unscoped_telemetry = 0
         avoided = {
             "events_count": 0,
             "total_raw_tokens": 0,
@@ -2046,6 +2188,15 @@ def root_token_usage(
     if telemetry_error is not None:
         cache_hits.update(available=False, reason=telemetry_error)
 
+    unscoped: dict[str, Any] = {
+        "event_count": unscoped_provider + unscoped_packets + unscoped_telemetry,
+        "provider_events": unscoped_provider,
+        "tokenizer_packets": unscoped_packets,
+        "telemetry_events": unscoped_telemetry,
+        "identity_keys": identity_keys,
+    }
+    if telemetry_error is not None:
+        unscoped["reason"] = telemetry_error
     usage: dict[str, Any] = {
         "provider_reported": provider,
         "tokenizer_counted": {
@@ -2055,6 +2206,13 @@ def root_token_usage(
         },
         "cache_hits": cache_hits,
         "estimated_avoided": avoided,
+        "unscoped": unscoped,
+        # The measurement interval: earliest/latest stored time of an event
+        # in this selection (None when none carries a time).
+        "interval": {
+            "earliest": min(times).isoformat() if times else None,
+            "latest": max(times).isoformat() if times else None,
+        },
     }
     # Unfiltered callers keep the original key set; only a scoped selection
     # reports the identities it was filtered by.
