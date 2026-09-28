@@ -8,6 +8,7 @@ from typing import Any
 from rush.memory.migration import (
     read_origin,
     read_origin_kind,
+    read_origin_readonly,
     replace_origin_content,
 )
 from rush.memory.store import TypedArtifactStore
@@ -91,3 +92,19 @@ class PreferenceStore:
             if key is not None and key not in data:
                 data[key] = entry.get("value")
         return data
+
+
+def get_preference_readonly(project_root: Path, key: str, default: Any = None) -> Any:
+    """Non-creating `PreferenceStore.get`: never creates `.rush/`, the
+    preference file, the memory store or its cache, and never migrates an
+    existing `memory.db`."""
+    root = Path(project_root).resolve()
+    data = (
+        CASMapTransaction(file_path=root / ".rush" / "preferences.json", root_path=root)
+        .read(allow_missing=True)
+        .data
+    )
+    if key in data:
+        return data[key]
+    migrated = read_origin_readonly(root, "preference", key)
+    return migrated.get("value", default) if migrated is not None else default

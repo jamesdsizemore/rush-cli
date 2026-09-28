@@ -552,6 +552,8 @@ class MemoryTool(ToolFn):
         }
         with collect_committed_writes() as committed:
             result = dispatch_table[operation]()
+        if operation in _MUTATION_VIEW_OPERATIONS:
+            result = _with_mutation_view(root, result, committed)
         return cast(
             ToolResult,
             attach_memory_attribution(
@@ -2587,6 +2589,69 @@ def _read_refs(operation: str, result: ToolResult) -> list[_Ref]:
     if isinstance(raw, dict) and isinstance(raw.get("data"), dict):
         return _envelope_read_refs(operation, raw.get("code"), raw["data"])
     return []
+
+
+_MUTATION_VIEW_OPERATIONS = frozenset({"write", "promote", "archive", "edit", "delete"})
+
+
+def _with_mutation_view(
+    root: Path, result: ToolResult, committed: list[dict[str, Any]]
+) -> ToolResult:
+    """T27: `changed` (the revisions this call committed, per id) plus
+    `readback` (each changed id's current row, re-read after the write), or
+    `unchanged` with the reason when nothing was committed. Added to
+    `raw.data` for an operation envelope, else to `raw`."""
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        return result
+    envelope = "operation" in raw and "data" in raw
+    payload = raw["data"] if envelope else raw
+    if not isinstance(payload, dict):
+        return result
+    view: dict[str, Any]
+    if committed:
+        changed: dict[str, dict[str, Any]] = {}
+        for entry in committed:
+            prior = changed.get(entry["id"])
+            kind = (
+                entry["kind"] if prior is None else f"{prior['kind']}, {entry['kind']}"
+            )
+            changed[entry["id"]] = {"revision": entry["revision"], "kind": kind}
+        store = TypedArtifactStore(root)
+        memories, _generation = store.snapshot_memories(include_internal=True)
+        archived = {m["id"]: m["archived"] for m in memories if m["id"] in changed}
+        view = {
+            "changed": changed,
+            "readback": {
+                i: _readback_row(store.get_current(i), archived.get(i)) for i in changed
+            },
+        }
+    elif payload.get("applied") is False:
+        view = {"unchanged": "preview only (apply=false); nothing committed"}
+    elif payload.get("promoted") is False:
+        view = {"unchanged": f"promotion denied: {payload.get('denial_reason')}"}
+    else:
+        view = {"unchanged": str(payload.get("message") or result.get("summary"))}
+    updated = {**payload, **view}
+    new_raw = {**raw, "data": updated} if envelope else updated
+    return cast(ToolResult, {**result, "raw": new_raw})
+
+
+def _readback_row(
+    artifact: MemoryArtifact | None, archived: bool | None
+) -> dict[str, Any]:
+    """`archived` comes from the archived-aware inventory reader
+    (`snapshot_memories`); a row that reader no longer lists is not present."""
+    if artifact is None or archived is None:
+        return {"present": False}
+    return {
+        "present": True,
+        "archived": archived,
+        "revision": artifact.artifact_version,
+        "subject": artifact.subject,
+        "trust_tier": artifact.trust_tier,
+        "source": artifact.source,
+    }
 
 
 def _memory_attribution(

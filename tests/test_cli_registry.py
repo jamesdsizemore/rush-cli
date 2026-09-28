@@ -133,7 +133,8 @@ def test_session_continuity_lifecycle_is_permission_gated_and_canonical(
     missing = tool.run(tmp_path, operation="restore", name="missing")
 
     assert {result["status"] for result in (saved, listed, restored)} == {"ok"}
-    assert missing["status"] == "skipped"
+    # T27 (R27.1): restoring an unknown checkpoint is an error, never skipped.
+    assert missing["status"] == "error"
     assert saved["raw"]["name"] == restored["raw"]["name"] == "handoff"
     assert listed["raw"] == [restored["raw"]]
     invalid = tool.run(

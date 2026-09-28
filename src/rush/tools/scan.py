@@ -125,6 +125,19 @@ _REQUEST_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
+_WORK_STATUSES = ("ok", "warn", "fail", "error", "skipped")
+
+
+def executed_work_status(data: Any) -> ToolStatus:
+    """T27/R27.1: an executed run or rescan reports its own aggregate outcome
+    (a run with failed or unavailable candidates is never a bare ok)."""
+    run = data.get("run") if isinstance(data, dict) else None
+    source = run if isinstance(run, dict) else data
+    aggregate = source.get("aggregate") if isinstance(source, dict) else None
+    status = aggregate.get("status") if isinstance(aggregate, dict) else None
+    return status if status in _WORK_STATUSES else "ok"
+
+
 class ScanTool(ToolFn):
     """Plan, execute, and report a full-project scan through one contract."""
 
@@ -220,10 +233,11 @@ class ScanTool(ToolFn):
         except ValueError as exc:
             return self._result(started, "error", f"scan {action}: {exc}")
 
+        status = executed_work_status(raw) if action == "run" else "ok"
         return self._result(
             started,
-            "ok",
-            f"scan {action}: ok{suffix}",
+            status,
+            f"scan {action}: {status}{suffix}",
             raw=raw,
             metadata={"memory": memory} if memory else None,
         )
@@ -317,7 +331,9 @@ class ScanTool(ToolFn):
         return self._envelope_result(
             started,
             str(operation),
-            status="ok",
+            status=(
+                executed_work_status(data) if operation in ("run", "rescan") else "ok"
+            ),
             data=data,
             compatibility=compatibility,
             summary_suffix=suffix,
@@ -441,7 +457,7 @@ class ScanTool(ToolFn):
             "error": error_payload,
         }
         summary = (
-            f"scan {operation}: ok{summary_suffix}"
+            f"scan {operation}: {status}{summary_suffix}"
             if error is None
             else f"scan {operation}: {error}"
         )

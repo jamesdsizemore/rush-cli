@@ -129,6 +129,13 @@ class ApiDiffer:
         return None
 
     def diff_public_api(self, base_ref: str = "main") -> dict[str, Any]:
+        # T27: an unknown ref would otherwise diff nothing and report "passed".
+        probe = run_subprocess(
+            ["git", "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}"],
+            cwd=self.project_root,
+        )
+        if probe.returncode != 0:
+            raise ValueError(f"base ref {base_ref!r} does not resolve to a commit")
         all_breaking: list[dict[str, Any]] = []
         for py_file in (self.project_root / "src").glob("**/*.py"):
             breaking = self.diff_file(py_file, base_ref=base_ref)

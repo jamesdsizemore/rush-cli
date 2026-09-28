@@ -38,6 +38,7 @@ from rush.integrations.agent_hooks import (
     set_hook_activation,
 )
 from rush.integrations.agents import (
+    ADAPTERS,
     MCP_PROFILES,
     AgentConnectionError,
     AgentTransactionError,
@@ -49,6 +50,7 @@ from rush.integrations.agents import (
     disconnect_agent,
     discover_agents,
     read_agent_memory_state,
+    read_registration_entry,
 )
 from rush.permissions import ExecutionPermissions, check_permissions
 
@@ -68,6 +70,17 @@ _DISCONNECT_FIELDS = frozenset(
         "allow_artifact_write",
     }
 )
+
+
+def _registration_failure(raw: Any) -> str | None:
+    """The cause when a connect's host registration (`apply`) failed and no
+    profile migration owns the outcome; None when it succeeded."""
+    apply = raw.get("apply") if isinstance(raw, dict) else None
+    if not isinstance(apply, dict) or apply.get("ok") is not False:
+        return None
+    if raw.get("migration") is not None:
+        return None
+    return str(apply.get("error") or "the host rejected the registration")
 
 
 class AgentConnectionTool(ToolFn):
@@ -216,6 +229,15 @@ class AgentConnectionTool(ToolFn):
         only, declined, conflict, or a failed native add whose prior entry was
         restored); one needing a manual restore is `error`."""
         migration = raw.get("migration")
+        failure = _registration_failure(raw)
+        if migration is None and failure is not None:
+            # T27: the host registration itself did not happen.
+            return self._result(
+                started,
+                "error",
+                f"agent connect: registration failed: {failure}",
+                raw=raw,
+            )
         if migration is None:
             guidance_state = raw["guidance"]["state"]
             return self._result(
@@ -280,7 +302,8 @@ class AgentConnectionTool(ToolFn):
                 raise ValueError("connect requires agent_id")
             if not session_id:
                 raise ValueError("connect requires session_id")
-            return connect_agent(
+            before = _host_readback(agent_id, home)
+            connected = connect_agent(
                 agent_id,
                 session_id=session_id,
                 rush_binary=rush_binary,
@@ -294,13 +317,12 @@ class AgentConnectionTool(ToolFn):
                 profile=profile,
                 profile_consent=confirm_profile,
             )
+            return _connect_view(connected, before, _host_readback(agent_id, home))
 
         if action == "disconnect":
             if not agent_id:
                 raise ValueError("disconnect requires agent_id")
-            return disconnect_agent(
-                agent_id, project_root=project_root, data_root=data_root, home=home
-            ).to_dict()
+            return _disconnect(agent_id, project_root, data_root, home)
 
         if action == "doctor":
             statuses = discover_agents(home=home, rush_binary=rush_binary)
@@ -340,7 +362,10 @@ class AgentConnectionTool(ToolFn):
                 started, str(operation), status="skipped", error=denied
             )
 
-        return self._envelope_result(started, str(operation), status="ok", data=data)
+        failed = operation == "connect" and _registration_failure(data) is not None
+        return self._envelope_result(
+            started, str(operation), status="error" if failed else "ok", data=data
+        )
 
     def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
         if not isinstance(request, dict):
@@ -418,10 +443,9 @@ class AgentConnectionTool(ToolFn):
         )
         if not allowed:
             raise _ScopeDenied(f"missing permission(s): {', '.join(missing)}")
-        return disconnect_agent(
-            agent_id,
-            project_root=Path(project_root) if project_root else None,
-        ).to_dict()
+        return _disconnect(
+            agent_id, Path(project_root) if project_root else None, None, None
+        )
 
     def _envelope_result(
         self,
@@ -554,6 +578,85 @@ class _AgentInvalidRequestError(AgentConnectionError):
 class _ScopeDenied(AgentConnectionError):
     code = "SCOPE_DENIED"
     retryable = False
+
+
+# --- T27: changed/readback for the human mutation view ------------------------
+
+
+def _host_readback(agent_id: str, home: Path | None) -> dict[str, Any] | None:
+    """The host config's current `rush` entry, re-read from disk; None for a
+    host with no known config location."""
+    if agent_id not in ADAPTERS:
+        return None
+    try:
+        path, entry = read_registration_entry(agent_id, home=home)
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {"error": f"host config unreadable: {exc}"}
+    return {
+        "config_path": str(path),
+        "registered": entry is not None,
+        "rush_entry": entry,
+    }
+
+
+_NOTHING_WRITTEN_MIGRATION = {
+    "pending": "preview only, nothing written",
+    "declined": "preview only, nothing written",
+    "conflict": "config changed since the preview, nothing written",
+    "failed": "previous entry restored, nothing written",
+}
+
+
+def _connect_view(
+    raw: dict[str, Any],
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """`changed` = the host entry, instruction block and resources this
+    connect actually wrote, else `unchanged` with the reason; `readback` =
+    the host entry re-read after the write."""
+    view: dict[str, Any] = {} if after is None else {"readback": after}
+    state = (raw.get("migration") or {}).get("state")
+    if state in _NOTHING_WRITTEN_MIGRATION:
+        reason = _NOTHING_WRITTEN_MIGRATION[state]
+        return {**raw, **view, "unchanged": f"profile migration {state}; {reason}"}
+    changed: dict[str, Any] = {}
+    applied = raw.get("apply") or {}
+    if applied.get("ok") and after is not None and before != after:
+        changed["mcp_entry"] = applied.get("config_path") or after.get("config_path")
+    guidance = raw.get("guidance") or {}
+    if guidance.get("state") == "applied":
+        changed["instruction_block"] = guidance.get("target_path")
+    written = [
+        r["path"] for r in raw.get("resources", []) if r.get("state") == "applied"
+    ]
+    if written:
+        changed["resources"] = written
+    if changed:
+        return {**raw, **view, "changed": changed}
+    return {**raw, **view, "unchanged": "already connected; nothing written"}
+
+
+def _disconnect(
+    agent_id: str,
+    project_root: Path | None,
+    data_root: Path | None,
+    home: Path | None,
+) -> dict[str, Any]:
+    """Disconnect plus `changed` (the components removed) or `unchanged` with
+    the reason, and `readback` = the host entry re-read after removal."""
+    result = disconnect_agent(
+        agent_id, project_root=project_root, data_root=data_root, home=home
+    ).to_dict()
+    readback = _host_readback(agent_id, home)
+    view: dict[str, Any] = {} if readback is None else {"readback": readback}
+    if result["removed"]:
+        view["changed"] = {"removed": result["removed"]}
+    elif result["conflicts"]:
+        view["unchanged"] = f"{len(result['conflicts'])} conflict(s); nothing removed"
+    else:
+        view["unchanged"] = "nothing Rush-owned to remove"
+    return {**result, **view}
 
 
 __all__ = ["AgentConnectionTool"]

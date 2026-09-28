@@ -61,7 +61,10 @@ from rush.memory.store import (
 )
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
-from rush.token_economy.telemetry import read_summary_readonly
+from rush.token_economy.telemetry import (
+    read_memory_event_totals_readonly,
+    read_summary_readonly,
+)
 from rush.tools.routing import detect_project_languages
 
 REGISTRY_FILE = "projects.json"
@@ -422,6 +425,25 @@ def register_project(
     If the descriptor write fails after the registry save, the new entry is
     removed again under the same lock before the error propagates.
     """
+    return register_project_outcome(
+        path,
+        name=name,
+        data_root=data_root,
+        lock_timeout=lock_timeout,
+        expect_new=expect_new,
+    )[0]
+
+
+def register_project_outcome(
+    path: Path | str,
+    *,
+    name: str | None = None,
+    data_root: Path | None = None,
+    lock_timeout: float = 5.0,
+    expect_new: bool = False,
+) -> tuple[ProjectRecord, bool]:
+    """`register_project`, plus whether this call wrote the registry entry
+    (`False`: the root was already registered and nothing was written)."""
     data_root = data_root or default_data_root()
     root = _canonical_root(path)
     if not root.is_dir():
@@ -445,7 +467,7 @@ def register_project(
                     created_at=entry.get("created_at", ""),
                     configured=bool(entry.get("configured", False)),
                     revision=int(entry.get("revision", 1)),
-                )
+                ), False
 
         descriptor = _read_descriptor(root)
         descriptor_id = descriptor.get("project_id") if descriptor else None
@@ -469,7 +491,7 @@ def register_project(
             del projects[project_id]
             _save_registry(data_root, registry)
             raise
-        return record
+        return record, True
 
 
 def _descriptor_bytes(record: ProjectRecord) -> bytes:
@@ -1619,23 +1641,6 @@ def _readonly_memory_refs(
     return refs if refs is not None else ([], [])
 
 
-def _readonly_memory_event_totals(root: Path) -> dict[str, int]:
-    """Recorded memory-event token totals by kind, read without creating or
-    migrating `.rush/telemetry/tokens.db`. Missing DB/table is no events."""
-
-    def _read(conn: sqlite3.Connection) -> dict[str, int]:
-        if not sqlite_has_table(conn, "memory_events"):
-            return {}
-        rows = conn.execute(
-            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events GROUP BY kind"
-        ).fetchall()
-        return {str(kind): int(total) for kind, total in rows}
-
-    db = Path(root).resolve() / ".rush" / "telemetry" / "tokens.db"
-    totals = read_sqlite_readonly(db, _read)
-    return totals or {}
-
-
 def list_project_artifacts(
     project: str | Path,
     *,
@@ -1811,10 +1816,10 @@ def project_token_usage(
             tokenizer_total += tokens
             tokenizer_packets += 1
 
-    # T28-A: read-only; `TelemetryStore(root)` creates/migrates tokens.db.
-    recorded = _readonly_memory_event_totals(root)
+    # T27/T28-A: a read never constructs the telemetry store (no DB is
+    # created or migrated).
     cache_kinds = ("retrieval", "expansion", "packing", "handoff", "embedding")
-    cache_by_kind = {kind: recorded.get(kind, 0) for kind in cache_kinds}
+    cache_by_kind = read_memory_event_totals_readonly(root, cache_kinds)
 
     return {
         "provider_reported": {

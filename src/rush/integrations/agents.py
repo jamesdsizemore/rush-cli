@@ -2337,7 +2337,13 @@ def connect_agent(
     leaves the ledger untouched. A component changed concurrently is kept
     and reported in `AgentTransactionError.recovery` as
     `{component, path, expected, actual}`.
+
+    The host and project checks run before the binary is resolved, so their
+    outcome never depends on where rush itself is installed.
     """
+    _resolve_adapter(agent_id, config_path=None, config_format=None, servers_key=None)
+    if project_root is not None and not Path(project_root).is_dir():
+        raise AgentConnectionError(f"project root not found: {project_root}")
     binary = resolve_rush_binary(rush_binary)
     step = plan_agent_registration(
         agent_id, rush_binary=binary, home=home, profile=profile

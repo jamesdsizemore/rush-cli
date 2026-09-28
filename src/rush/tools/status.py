@@ -22,10 +22,13 @@ import shlex
 import stat
 import time
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
 from rush.invocation.models import InvocationContext, InvocationError
 from rush.tools.base import ToolFn, ToolResult, ToolResultV1
+
+if TYPE_CHECKING:
+    from rush.invocation.targets import RootSelection
 
 StatusOperation = Literal["status", "result"]
 _ACTIVITY = {"alive": "running", "dead": "owner_dead"}
@@ -140,6 +143,39 @@ def _index(registry: dict[str, Any] | None) -> dict[str, str]:
     }
 
 
+class _TargetNotFoundError(InvocationError):
+    """An explicit target that does not exist: reported for that target, never
+    walked up to the nearest existing project (T27)."""
+
+    def __init__(self, target: str) -> None:
+        super().__init__(f"target not found: {target}")
+        self.target = target
+
+
+def _walk(raw: str | None, anchor: Path, index: dict[str, str]) -> RootSelection:
+    from rush.invocation.targets import select_root
+
+    walked = select_root("." if raw is None else raw, anchor=anchor, index=index)
+    if raw is not None and not os.path.lexists(walked.target):
+        raise _TargetNotFoundError(raw)
+    return walked
+
+
+def _not_found_result(exc: _TargetNotFoundError) -> ToolResult:
+    from rush.invocation.executor import target_error_result
+
+    return cast(
+        ToolResult,
+        target_error_result(
+            "status",
+            "TARGET_NOT_FOUND",
+            str(exc),
+            target=exc.target,
+            reason="target_not_found",
+        ),
+    )
+
+
 def _select(
     raw: str | None,
     source: str,
@@ -151,7 +187,6 @@ def _select(
     """Explicit target > `session_id` binding > the invocation cwd. A bound
     session names a registered root directly; everything else takes the T8
     ROOT-ENTRY walk. Raises `InvocationError` for an unusable target."""
-    from rush.invocation.targets import select_root
     from rush.workflows.projects import read_session_selections_strict
 
     selection: dict[str, Any] = {
@@ -170,7 +205,7 @@ def _select(
         if isinstance(bound, str) and bound in index:
             selection.update(source="session", logical_root=index[bound])
             return selection
-    walked = select_root("." if raw is None else raw, anchor=anchor, index=index)
+    walked = _walk(raw, anchor, index)
     selection.update(observed_root=str(walked.root), logical_root=str(walked.root))
     return selection
 
@@ -598,6 +633,8 @@ def collect_status(
     index = _index(registry.registry)
     try:
         selection = _select(raw, source, anchor, session_id, data_root, index)
+    except _TargetNotFoundError as exc:
+        return _not_found_result(exc)
     except (InvocationError, OSError) as exc:
         return _envelope(started, "status", None, _selection_error(exc))
     root = Path(selection["logical_root"])
@@ -701,7 +738,6 @@ def _result_operation(
     """The stored result through the continuity retrieval behind `rush
     context retrieve --view` (T16). Never reruns anything; a delivery error
     also carries the status envelope's `raw.error`."""
-    from rush.invocation.targets import select_root
     from rush.tools.continuity import SessionContinuityTool
 
     if not handle:
@@ -712,7 +748,9 @@ def _result_operation(
             _error("RESULT_HANDLE_REQUIRED", "operation=result needs result_handle"),
         )
     try:
-        root = select_root("." if raw is None else raw, anchor=anchor, index=index).root
+        root = _walk(raw, anchor, index).root
+    except _TargetNotFoundError as exc:
+        return _not_found_result(exc)
     except (InvocationError, OSError) as exc:
         return _envelope(started, "result", None, _selection_error(exc))
     page_result = SessionContinuityTool().run(

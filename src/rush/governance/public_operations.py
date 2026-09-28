@@ -12,7 +12,6 @@ from enum import Enum
 
 from rush.catalog import TOOL_SPECS
 from rush.cli import cli
-from rush.mcp import mcp_server
 from rush.tools import ALL_TOOLS
 
 
@@ -65,7 +64,12 @@ def build_operations_inventory() -> list[PublicOperation]:
             click_leaves.append(name)
 
     # 2. Discover all FastMCP registered tools (the module-level server
-    # `rush mcp serve` runs; building a second one costs about a second)
+    # `rush mcp serve` runs; building a second one costs about a second).
+    # T27: imported here, not at module load, so `rush governance check` /
+    # `rush scaffold init` (which import the `rush.governance` package) never
+    # load the MCP server and SDK they do not use.
+    from rush.mcp import mcp_server
+
     async def get_mcp_tools():
         return [t.name for t in await mcp_server.list_tools()]
 
