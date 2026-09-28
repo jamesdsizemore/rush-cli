@@ -474,7 +474,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     expanded_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "2", "down", "+", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -489,7 +489,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     collapsed_again_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "2", "down", "+", "-", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "h", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -1702,9 +1702,9 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
             )
         ],
     )
-    keys: list[str | None] = ["f3", "2", "down", "+", None, None, "q"]
+    keys: list[str | None] = ["f3", "2", "down", "l", None, None, "q"]
     # The launch read consumes the first size, so ticks 1-4 (every key up
-    # to "+") run at 120x40 and the shrink to 60x18 happens afterwards.
+    # to "l") run at 120x40 and the shrink to 60x18 happens afterwards.
     # Below 60x20 only q/c/F2/Escape are accepted (T28 shared design).
     sizes = [
         (120, 40),

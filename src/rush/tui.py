@@ -976,6 +976,8 @@ class TuiState:
     # re-entering Map via F3, so both survive either.
     map_expanded: set[str] = field(default_factory=set)
     map_selected_index: int = 0
+    # T28-F: `+`/`-` -- the Detail pane takes the list pane's place.
+    detail_expanded: bool = False
     # T28-C: the `/` query typed in `mode == "map_search"`.
     map_query: str = ""
     # T28-F: the overlay `resize_guidance` covers while the terminal is below
@@ -5551,6 +5553,24 @@ def _goto(section: str) -> Callable[[TuiState, ScanActions], None]:
     return run
 
 
+def _set_detail(expanded: bool) -> Callable[[TuiState, ScanActions], None]:
+    """`+`/`-`: expand/collapse the selected item's detail. Git draws a
+    full-width panel, so there `+` shows the selected commit's detail (as
+    Enter does) and `-` drops it, a still-loading one included."""
+
+    def run(state: TuiState, actions: ScanActions) -> None:
+        state.detail_expanded = expanded
+        if state.mode != "git":
+            return
+        if expanded:
+            _git_expand_commit(state)
+        else:
+            state.active_project.pending.pop("git_diff", None)
+            state.git_expanded = None
+
+    return run
+
+
 def _set_mode(mode: str) -> Callable[[TuiState, ScanActions], None]:
     def run(state: TuiState, actions: ScanActions) -> None:
         state.mode = mode
@@ -5750,6 +5770,8 @@ ACTIONS: tuple[Action, ...] = (
     Action("cycle_pane_reverse", "Prev pane", "Navigation", (), _cycle_focus(-1)),
     Action("map_expand", "Expand", "Navigation", ("map",), _map_expand),
     Action("map_collapse", "Collapse", "Navigation", ("map",), _map_collapse),
+    Action("detail_expand", "Expand detail", "Navigation", (), _set_detail(True)),
+    Action("detail_collapse", "Collapse detail", "Navigation", (), _set_detail(False)),
     Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
     Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
     Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
@@ -5944,6 +5966,18 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         or (key == "n" and state.mode == "memory")
     ):
         _memory_cancel_request(state)
+        return
+    if state.mode == "memory" and key in ("+", "-"):
+        # The Memory list is not a text field: `+` expands the selected
+        # record exactly as `x` does, `-` collapses it (dropping an expand
+        # still in flight).
+        state.detail_expanded = key == "+"
+        if key == "+":
+            _handle_memory_key(state, "x", actions)
+        else:
+            if (state.memory_request or {}).get("operation") == "expand":
+                _memory_cancel_request(state)
+            state.memory_expanded = None
         return
     handler = modal.get(state.mode)
     if handler is not None:
@@ -7534,7 +7568,19 @@ def render_app(state: TuiState) -> Layout:
     # no distinct 80-99/narrow behavior.
     branch = _width_branch(state.terminal_size[0])
     in_pane_mode = state.mode in ("list", "map", "map_search") and state.overlay is None
-    if branch == "wide" and in_pane_mode:
+    if state.detail_expanded and in_pane_mode:
+        # `+`: the Detail pane fills the list/detail area beside the nav.
+        body = _render_detail(project, state.data_root)
+        if branch in ("wide", "compact"):
+            layout["main"].split_row(
+                Layout(name="nav", size=24 if branch == "wide" else 20),
+                Layout(name="detail", ratio=1),
+            )
+            layout["main"]["nav"].update(_render_nav_pane(state))
+            layout["main"]["detail"].update(body)
+        else:
+            layout["main"].update(body)
+    elif branch == "wide" and in_pane_mode:
         overview = state.mode == "list" and state.section == "overview"
         layout["main"].split_row(
             Layout(name="nav", size=24),

@@ -653,8 +653,8 @@ def test_resize_below_minimum_and_back_keeps_map_selection_and_expanded(
         ("f3", big),
         ("2", big),
         ("down", big),
-        ("+", big),  # expands file:a.py
-        ("-", small),  # waits: below 60x20
+        ("l", big),  # expands file:a.py
+        ("h", small),  # waits: below 60x20
         ("down", small),  # waits: below 60x20
         (None, big),
         ("down", big),  # acts again at full size
