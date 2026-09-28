@@ -1191,10 +1191,11 @@ def _map_nodes(
                 nodes.append(
                     {
                         "key": f"{file_key}:finding:{idx}",
-                        "label": str(finding.get("message", "")),
+                        "label": _map_finding_label(finding),
                         "depth": depth + 1,
                         "kind": "finding",
                         "parent": file_key,
+                        "finding": finding,
                     }
                 )
         if len(shown) < len(files):
@@ -1214,6 +1215,7 @@ def _map_nodes(
 
     emit("", 1)
     snapshot = project.map_snapshot or {}
+    relations = _map_relations(snapshot)
     for kind, field_name, title in (
         ("memory", "memories", "Memories"),
         ("agent", "agents", "Agents"),
@@ -1244,17 +1246,72 @@ def _map_nodes(
             }
         )
         for idx, item in enumerate(leaves):
-            related = item.get("cites") if kind == "memory" else item.get("assigned_to")
+            if relations is None:
+                targets = ["(relations unavailable)"]
+            else:
+                targets = relations.get(f"{kind}:{item.get('id')}") or [
+                    "(no recorded relation)"
+                ]
             nodes.append(
                 {
                     "key": f"{branch_key}:{idx}",
-                    "label": f"{item.get('id')} -> {', '.join(map(str, related or []))}",
+                    "label": f"{item.get('id')} -> {', '.join(targets)}",
                     "depth": 2,
                     "kind": kind,
                     "parent": branch_key,
+                    "record": item,
+                    "relation": "cites" if kind == "memory" else "assigned_to",
+                    "targets": targets,
                 }
             )
     return nodes
+
+
+def _map_finding_label(finding: Mapping[str, Any]) -> str:
+    """T28-C: a Map finding row keeps its provenance -- severity, tool,
+    rule, path:line and finding id -- next to the message."""
+    line = _finding_line(finding)
+    parts = [
+        str(finding.get("severity") or ""),
+        str(finding.get("tool") or finding.get("provenance") or ""),
+        str(finding.get("rule") or finding.get("rule_id") or ""),
+        f"{_finding_path(finding)}:{line}" if line else _finding_path(finding),
+        str(finding.get("finding_id") or finding.get("id") or ""),
+    ]
+    provenance = " ".join(part for part in parts if part)
+    message = str(finding.get("message", ""))
+    return f"{message} [{provenance}]" if provenance else message
+
+
+def _map_relations(snapshot: dict[str, Any]) -> dict[str, list[str]] | None:
+    """T28-C: memory `cites` and agent `assigned_to` relations exactly as
+    the shared dashboard projection records them (`build_project_map`'s
+    full graph, before its render-limit grouping), keyed by projected
+    node id ("memory:<id>"/"agent:<id>") -> target file paths / finding
+    ids. A target the projection drops (no recorded file/finding) is never
+    shown; a snapshot the projection cannot read is `None` (said so in the
+    row), never a raw-snapshot fallback."""
+    if "project_id" not in snapshot:
+        return {}
+    from rush.dashboard.project_map import _build_full_graph
+
+    try:
+        graph_nodes, edges = _build_full_graph(
+            snapshot, snapshot.get("source_identity", snapshot["project_id"])
+        )
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return None
+    display = {
+        node["id"]: node["path"] if node["kind"] == "file" else node["artifact_id"]
+        for node in graph_nodes
+    }
+    relations: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge["relation"] in ("cites", "assigned_to"):
+            relations.setdefault(edge["source"], []).append(
+                str(display.get(edge["target"], edge["target"]))
+            )
+    return relations
 
 
 def _map_visible_nodes(
@@ -1770,7 +1827,15 @@ def _start_rescan_thread(
         # `rescan`'s real argument name is `run_id` (the baseline run being
         # re-executed), per the server's own argument allowlist.
         _start_dashboard_owned(
-            project, owner, "rescan", {"run_id": baseline_run_id or ""}
+            project,
+            owner,
+            "rescan",
+            {
+                "run_id": baseline_run_id or "",
+                # T28-B: the reviewed attempt travels with the request; the
+                # server refuses a rescan of a run that changed since review.
+                "expected_attempt_id": expected_attempt_id,
+            },
         )
         return
 
@@ -1802,6 +1867,10 @@ def _start_rescan_thread(
     project.operation_id = operation_id
     project.run_resolved = True
     project.ledger_admitted = False
+    # T28-B: the rescan's own run id is allocated here, so a cancel targets
+    # the run that is actually executing, never the finished baseline.
+    new_run_id = str(uuid.uuid4())
+    project.run_id = new_run_id
 
     def _worker() -> None:
         try:
@@ -1810,6 +1879,7 @@ def _start_rescan_thread(
                 baseline_run_id,
                 owner_instance_id=owner_instance_id,
                 expected_attempt_id=expected_attempt_id,
+                new_run_id=new_run_id,
             )
             run = outcome.get("run") if isinstance(outcome, dict) else None
             comparison = (
@@ -1830,7 +1900,16 @@ def _start_rescan_thread(
                     # Phase65's real `ScanRun.aggregate`, `ToolResult`-shaped
                     # at runtime.
                     project.results = [cast(ToolResult, aggregate)]
-            project.status = "complete"
+            run_status = run.get("status") if isinstance(run, dict) else None
+            project.status = (
+                "cancelled"
+                if run_status == "cancelled"
+                else "error"
+                if run_status in ("error", "failed")
+                else "complete"
+            )
+            if project.status == "error":
+                project.last_message = f"rescan {run_status}"
         except Exception as exc:  # noqa: BLE001 -- same contract as
             # `_start_scan_thread._worker` above: `actions.rescan_project_run`
             # is an injectable Phase65 seam whose failure space this
@@ -5306,6 +5385,9 @@ def _select_row(state: TuiState, actions: ScanActions) -> None:
     if state.mode == "git":
         _git_expand_commit(state)
         return
+    if state.mode == "map":
+        _map_expand(state, actions)
+        return
     project = state.active_project
     if project.visible_findings() or _outcome_results(project):
         state.active_project.detail_scroll = None
@@ -6612,6 +6694,24 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    panel, start = _finding_panel(project, finding, data_root, start)
+    if project.detail_scroll is not None:
+        project.detail_scroll = start
+    return panel
+
+
+def _finding_panel(
+    project: ProjectState,
+    finding: dict[str, Any],
+    data_root: Path | None,
+    start: int,
+    provenance: str = "",
+) -> tuple[Panel, int]:
+    """One finding's evidence (captured artifact, else the bounded live
+    file) with the file text from `start`, clamped; returns the clamp."""
     body = _captured_detail(project, finding, data_root) or _bounded_local_detail(
         project.root, finding
     )
@@ -6621,13 +6721,9 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     lines = body.split("\n")
     pinned = 1 + (len(message.split("\n")) if message else 0)
     head, text_lines = lines[:pinned], lines[pinned:]
-    start = project.detail_scroll
-    if start is None:
-        start = _detail_default_scroll(project)
     start = min(start, max(0, len(text_lines) - 1))
-    if project.detail_scroll is not None:
-        project.detail_scroll = start
-    parts: list[Text] = [_safe("\n".join(head))]
+    parts: list[Text] = [_safe(provenance, "dim")] if provenance else []
+    parts.append(_safe("\n".join(head)))
     if start > 0:
         parts.append(
             _safe(f"... {start} earlier lines above (scroll up to see them)", "dim")
@@ -6638,7 +6734,47 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(Group(*parts), title=title, style="magenta")
+    return Panel(Group(*parts), title=title, style="magenta"), start
+
+
+def _render_map_detail(state: TuiState, project: ProjectState) -> Panel:
+    """T28-C: the wide detail pane in Map shows the selected Map node's own
+    evidence -- a finding's captured/live detail, a file's bounded live
+    text and its findings, a memory/agent record with its projected
+    relations -- never the Scans list selection."""
+    nodes = _map_visible_nodes(project, state.map_expanded)
+    if not 0 <= state.map_selected_index < len(nodes):
+        return Panel(Text("No map node selected."), title="Detail")
+    node = nodes[state.map_selected_index]
+    finding = node.get("finding")
+    if finding is not None:
+        line = finding.get("line")
+        start = max(0, line - 1 - _DETAIL_CONTEXT_LINES) if isinstance(line, int) else 0
+        panel, _ = _finding_panel(
+            project, finding, state.data_root, start, provenance=node["label"]
+        )
+        return panel
+    lines: list[str] = [str(node["label"])]
+    if node.get("kind") == "file":
+        children = node.get("children") or []
+        lines.append(f"findings: {len(children)}")
+        lines.extend(f"  {_map_finding_label(child)}" for child in children)
+        lines.append(_bounded_local_detail(project.root, {"path": node["path"]}))
+    elif "record" in node:
+        lines.append(f"{node['relation']}:")
+        lines.extend(f"  {target}" for target in node["targets"])
+        lines.extend(
+            f"{key}: {value}" for key, value in node["record"].items() if key != "id"
+        )
+    elif node.get("children"):
+        expanded = node["key"] in state.map_expanded
+        lines.append("expanded (Left collapses)" if expanded else "Enter/Right expands")
+    text = "\n".join(lines).split("\n")
+    return Panel(
+        _safe("\n".join(text[:_DETAIL_WINDOW_LINES])),
+        title=_safe(f"Map: {node.get('kind', '')}"),
+        style="magenta",
+    )
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -7349,7 +7485,11 @@ def render_app(state: TuiState) -> Layout:
         )
         layout["main"]["nav"].update(_render_nav_pane(state))
         layout["main"]["list"].update(body)
-        layout["main"]["detail"].update(_render_detail(project, state.data_root))
+        layout["main"]["detail"].update(
+            _render_map_detail(state, project)
+            if state.mode in ("map", "map_search")
+            else _render_detail(project, state.data_root)
+        )
     elif branch == "compact" and in_pane_mode:
         layout["main"].split_row(
             Layout(name="nav", size=20),
