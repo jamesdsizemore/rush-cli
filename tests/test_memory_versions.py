@@ -816,7 +816,11 @@ def _memory_state(tmp_path: Path):
 
 
 def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) -> None:
-    from rush.tui import _memory_delete_preview, _memory_edit_commit
+    from rush.tui import (
+        _handle_memory_key,
+        _memory_delete_preview,
+        _memory_edit_commit,
+    )
 
     calls: list[dict[str, object]] = []
     actions = _fake_actions(calls)
@@ -827,6 +831,7 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
     state.memory_selected_ids = {"a1"}
 
     _memory_edit_commit(state, state.active_project, actions)
+    _handle_memory_key(state, "y", actions)
     _memory_delete_preview(state, state.active_project, actions)
 
     assert [call["request"]["owner_scope"] for call in calls] == [

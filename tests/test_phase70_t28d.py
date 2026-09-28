@@ -358,6 +358,7 @@ def test_t28d_promote_previews_before_applying(tmp_path: Path) -> None:
         {"promote": [{"raw": {"promoted": True, "new_tier": "verified"}}]}
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
+    tui_mod._handle_memory_key(state, "y", _actions(spy))
     operations = [c["operation"] for c in spy.calls]
     assert "promote" in operations and len(spy.calls) >= 2, (
         "T28-D requires promote to preview (apply=False) before applying; "
@@ -379,6 +380,7 @@ def test_t28d_promote_uses_reviewed_grants_not_hardcoded(tmp_path: Path) -> None
         {"promote": [{"raw": {"promoted": True, "new_tier": "verified"}}]}
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
+    tui_mod._handle_memory_key(state, "y", _actions(spy))
     apply_calls = [c for c in spy.calls if c["operation"] == "promote"]
     assert apply_calls, "promote was never dispatched"
     permissions = apply_calls[-1].get("permissions")
@@ -406,9 +408,15 @@ def _preview_missing_fields(call: dict[str, Any]) -> list[str]:
             return ["apply=False"]
         payload = {**raw, "required_grants": request.get("required_grants")}
     missing = []
-    if not ("target_ids" in payload or payload.get("artifact_ids") or payload.get("id")):
+    if not (
+        "target_ids" in payload or payload.get("artifact_ids") or payload.get("id")
+    ):
         missing.append("ids")
-    if not ("expected_revisions" in payload or payload.get("expected_revisions") or payload.get("expected_version")):
+    if not (
+        "expected_revisions" in payload
+        or payload.get("expected_revisions")
+        or payload.get("expected_version")
+    ):
         missing.append("versions")
     if not payload.get("owner_scope"):
         missing.append("owner")
@@ -417,12 +425,11 @@ def _preview_missing_fields(call: dict[str, Any]) -> list[str]:
     return missing
 
 
-def _run_form(
+def _preview_form(
     form: str, state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
     if form == "delete":
         tui_mod._memory_delete_preview(state, project, actions)
-        tui_mod._memory_delete_apply(state, project, actions)
     elif form == "edit":
         tui_mod._memory_edit_commit(state, project, actions)
     elif form == "promote":
@@ -440,6 +447,14 @@ def _run_form(
         tui_mod._memory_create_commit(state, project, actions)
     else:
         raise AssertionError(f"unknown form {form!r}")
+
+
+def _run_form(
+    form: str, state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """Preview, then confirm with "y" (plan line 419: every form applies only on y)."""
+    _preview_form(form, state, project, actions)
+    tui_mod._handle_memory_key(state, "y", actions)
 
 
 @pytest.mark.parametrize(
@@ -472,12 +487,29 @@ def test_t28d_every_form_previews_with_reviewed_grants(
     state.memory_selected_index = 0
     state.memory_selected_ids = {"a1"}
     state.memory_edit_buffer = "y"
-    new_preview = {"status": "ok", "raw": {"apply": False, "target_ids": [], "expected_revisions": {}, "owner_scope": {"kind": "project", "id": "p"}, "required_grants": ["cache_write"], "missing_grants": [], "draft": {}}}
+    new_preview = {
+        "status": "ok",
+        "raw": {
+            "apply": False,
+            "target_ids": [],
+            "expected_revisions": {},
+            "owner_scope": {"kind": "project", "id": "p"},
+            "required_grants": ["cache_write"],
+            "missing_grants": [],
+            "draft": {},
+        },
+    }
     spy = _MemoryRunSpy(
         {
             "edit": [{"raw": {"code": "OK"}}],
-            "promote": [new_preview, {"raw": {"promoted": True, "new_tier": "verified"}}],
-            "write": [new_preview, {"status": "ok", "raw": {"id": "new-1", "artifact_version": 1}}],
+            "promote": [
+                new_preview,
+                {"raw": {"promoted": True, "new_tier": "verified"}},
+            ],
+            "write": [
+                new_preview,
+                {"status": "ok", "raw": {"id": "new-1", "artifact_version": 1}},
+            ],
             "archive": [{"raw": {"code": "OK"}}],
             "delete": [
                 {"raw": {"data": {"affected": ["a1"]}}},
@@ -645,6 +677,7 @@ def test_t28d_promote_denied_insufficient_corroboration_regression(
         }
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
+    tui_mod._handle_memory_key(state, "y", _actions(spy))
     assert "insufficient_corroboration" in state.memory_message
 
 
@@ -1051,3 +1084,106 @@ def test_t28d_expand_renders_relationships_and_receipts_as_structured_sections(
         "T28-D requires labelled Relationships/Receipts sections with one "
         f"row per item (ID + version); missing {missing!r} from:\n{rendered}"
     )
+
+
+_CONFIRM_FORMS = ["write_propose", "edit", "promote", "archive", "restore"]
+
+
+def _form_fixture(
+    form: str, tmp_path: Path
+) -> tuple[TuiState, ProjectState, _MemoryRunSpy]:
+    """The every-form setup, reused by the T28-D confirm-step tests."""
+    state, project = _state_and_project(tmp_path)
+    state.memory_items = [
+        {
+            "id": "a1",
+            "artifact_version": 1,
+            "content": {"note": "x"},
+            "source": "cli",
+            "archived_at": "2026-01-01" if form == "restore" else None,
+        }
+    ]
+    state.memory_selected_index = 0
+    state.memory_edit_buffer = "edited"
+    preview = {
+        "status": "ok",
+        "raw": {
+            "apply": False,
+            "target_ids": ["a1"],
+            "expected_revisions": {"a1": 1},
+            "owner_scope": {"kind": "project", "id": "p"},
+            "required_grants": ["cache_write"],
+            "missing_grants": [],
+            "draft": {},
+        },
+    }
+    spy = _MemoryRunSpy(
+        {
+            "edit": [{"raw": {"code": "OK"}}, {"raw": {"code": "OK"}}],
+            "archive": [{"raw": {"code": "OK"}}, {"raw": {"code": "OK"}}],
+            "promote": [preview, {"raw": {"promoted": True, "new_tier": "verified"}}],
+            "write": [
+                preview,
+                {"status": "ok", "raw": {"id": "new-1", "artifact_version": 1}},
+            ],
+        }
+    )
+    return state, project, spy
+
+
+@pytest.mark.parametrize("form", _CONFIRM_FORMS)
+def test_t28d_form_holds_preview_until_y(form: str, tmp_path: Path) -> None:
+    """Plan line 419: preview exact ids/versions/owner/grants before any write.
+    RED today: the form key previews and applies in one call."""
+    state, project, spy = _form_fixture(form, tmp_path)
+    actions = _actions(spy)
+    _preview_form(form, state, project, actions)
+    assert [(c.get("request") or {}).get("apply") for c in spy.calls] == [False], (
+        f"{form}: the form key must only preview; calls were {spy.calls!r}"
+    )
+    pending = getattr(state, "memory_pending_mutation", None)
+    assert pending is not None, f"{form}: no pending preview held for [y]"
+    assert pending["ids"] == ["a1"] and pending["versions"] == {"a1": 1}
+    assert pending["owner_scope"] and pending["required_grants"] == ["cache_write"]
+    assert "[y] apply" in state.memory_message
+    tui_mod._handle_memory_key(state, "y", actions)
+    applies = [c for c in spy.calls if (c.get("request") or {}).get("apply") is True]
+    assert len(applies) == 1, f"{form}: y must apply once; calls {spy.calls!r}"
+    permissions = applies[0].get("permissions")
+    assert isinstance(permissions, ExecutionPermissions) and permissions.cache_write
+    assert state.memory_pending_mutation is None
+
+
+@pytest.mark.parametrize("cancel_key", ["n", "escape"])
+@pytest.mark.parametrize("form", _CONFIRM_FORMS)
+def test_t28d_form_cancel_makes_zero_apply_calls(
+    form: str, cancel_key: str, tmp_path: Path
+) -> None:
+    """Plan line 419: "cancellation writes nothing". RED today: the apply
+    already ran inside the form key, before any cancel is possible."""
+    state, project, spy = _form_fixture(form, tmp_path)
+    actions = _actions(spy)
+    _preview_form(form, state, project, actions)
+    tui_mod._handle_memory_key(state, cancel_key, actions)
+    assert "0 records written" in state.memory_message
+    tui_mod._handle_memory_key(state, "y", actions)
+    applies = [c for c in spy.calls if (c.get("request") or {}).get("apply") is True]
+    assert not applies, f"{form}: cancel must make zero apply calls, got {applies!r}"
+    assert getattr(state, "memory_pending_mutation", None) is None
+
+
+def test_t28d_pending_mutation_panel_shows_ids_versions_owner_grants(
+    tmp_path: Path,
+) -> None:
+    """Plan line 419: the panel shows what [y] will write. RED today: no
+    pending mutation exists to render."""
+    from rich.console import Console
+
+    state, project, spy = _form_fixture("archive", tmp_path)
+    _preview_form("archive", state, project, _actions(spy))
+    state.memory_message = ""
+    console = Console(record=True, width=400)
+    console.print(tui_mod._render_memory_admin(state))
+    text = console.export_text()
+    assert "archive preview: ids ['a1'] versions {'a1': 1} owner " in text
+    assert "grants ['cache_write']" in text and "[n]/[esc] cancel" in text

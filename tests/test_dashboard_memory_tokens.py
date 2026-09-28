@@ -1609,6 +1609,7 @@ def test_tui_memory_promote_denied_without_corroboration(tmp_path: Path) -> None
     assert len(state.memory_items) == 1
 
     _dispatch_key(state, "p", actions)
+    _dispatch_key(state, "y", actions)
     assert "promotion denied" in state.memory_message
     assert "insufficient_corroboration" in state.memory_message
 
@@ -1656,6 +1657,7 @@ def test_tui_memory_edit_commits_new_content(tmp_path: Path) -> None:
     for ch in "hello":
         _dispatch_key(state, ch, actions)
     _dispatch_key(state, "enter", actions)
+    _dispatch_key(state, "y", actions)
 
     assert state.mode == "memory"
     assert state.memory_message == "edit applied"
