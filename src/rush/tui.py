@@ -252,6 +252,26 @@ def _reduced_motion() -> bool:
     return bool(os.environ.get("RUSH_REDUCED_MOTION"))
 
 
+def _motion_running(project: ProjectState | None, duration_ms: int) -> bool:
+    """T28-F: True while a transition of `duration_ms` that started when the
+    selection last moved is still running; never under reduced motion."""
+    if project is None or project.selection_started is None or _reduced_motion():
+        return False
+    return (time.monotonic() - project.selection_started) * 1000 < duration_ms
+
+
+def _selection_style(project: ProjectState | None) -> str:
+    """T28-F: the selected row's highlight -- dim reverse while it moves in
+    over `selection_ms`, then reverse."""
+    if _motion_running(project, _TERMINAL_MOTION["selection_ms"]):
+        return "dim reverse"
+    return "reverse"
+
+
+def _state_selection_style(state: TuiState) -> str:
+    return _selection_style(state.active_project if state.projects else None)
+
+
 def _row_reveal_progress(
     elapsed_ms: float, total_rows: int, *, reduced_motion: bool
 ) -> int:
@@ -771,6 +791,10 @@ class ProjectState:
     dashboard_owner_handle: Any = field(default=None, repr=False, compare=False)
     # T28-F: monotonic start of the findings-row reveal; None = final state.
     row_reveal_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: monotonic time the selection last moved -- the highlight moves
+    # in over `selection_ms` and the detail pane fades in over `detail_ms`;
+    # None = final state.
+    selection_started: float | None = field(default=None, repr=False, compare=False)
     # T28-B: the last rescan's `compare_runs` verdicts plus the reviewed
     # baseline attempt's findings (`baseline_findings`), shown while its
     # `current_run_id` is still this project's run.
@@ -1456,6 +1480,12 @@ class DashboardOwner:
     _session_cache: dict[str, tuple[str, str]] = field(
         default_factory=dict, compare=False, repr=False
     )
+    # T28-F: a failed session exchange, kept for this owner's lifetime so an
+    # unanswering dashboard is not re-contacted (and waited on) every poll; a
+    # newly found owner starts clean.
+    _session_failure: list[Exception] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
     def dispatch(self, operation: str, **arguments: Any) -> dict[str, Any]:
         from rush.dashboard.server import (
@@ -1489,15 +1519,9 @@ class DashboardOwner:
         a second failure is a visible disconnection, surfaced to the caller."""
         from urllib.error import HTTPError
 
-        from rush.dashboard.server import (
-            _control_session,
-            dispatch_dashboard_operation_status,
-        )
+        from rush.dashboard.server import dispatch_dashboard_operation_status
 
-        session = self._session_cache.get("session")
-        if session is None:
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
+        session = self._session_cache.get("session") or self._new_session()
         try:
             return dispatch_dashboard_operation_status(
                 self.base_url, self.project_id, operation_id, session=session
@@ -1505,11 +1529,26 @@ class DashboardOwner:
         except HTTPError as exc:
             if exc.code != 401:
                 raise
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
             return dispatch_dashboard_operation_status(
-                self.base_url, self.project_id, operation_id, session=session
+                self.base_url, self.project_id, operation_id, session=self._new_session()
             )
+
+    def _new_session(self) -> tuple[str, str]:
+        """Exchange the control capability for a session; a failure is
+        cached (T28-F) and re-raised without another exchange."""
+        from rush.dashboard.server import _control_session
+
+        if self._session_failure:
+            raise ConnectionError(
+                f"dashboard session failed: {self._session_failure[0]}"
+            )
+        try:
+            session = _control_session(self.base_url, self.control_capability)
+        except Exception as exc:
+            self._session_failure.append(exc)
+            raise
+        self._session_cache["session"] = session
+        return session
 
 
 def _find_live_dashboard_owner(root: Path) -> DashboardOwner | None:
@@ -1606,10 +1645,34 @@ def _start_dashboard_owned(
         project.last_message = (
             f"{operation} running in dashboard (operation {operation_id or '?'})"
         )
+        _observe_dashboard_operation(project, owner)
 
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
     thread.start()
+
+
+# T28-F: how often the dispatch worker re-reads a dashboard-owned run's
+# durable status (the 4 Hz idle refresh rate).
+_DASHBOARD_POLL_SECONDS = 0.25
+
+
+def _observe_dashboard_operation(project: ProjectState, owner: Any) -> None:
+    """T28-F: the dashboard-owned status poll runs here, on the dispatch
+    worker, never on the render/input loop: it posts each result to the
+    project until the operation is terminal or the project is no longer
+    observing this owner's run."""
+    operation_id = project.operation_id
+    while (
+        operation_id
+        and project.operation_id == operation_id
+        and project.status in ("scanning", "cancelling")
+        and project.dashboard_owner_handle is owner
+    ):
+        _poll_dashboard_status(project, owner)
+        if project.status not in ("scanning", "cancelling"):
+            return
+        time.sleep(_DASHBOARD_POLL_SECONDS)
 
 
 def _start_scan_thread(
@@ -1926,11 +1989,17 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
         owner = project.dashboard_owner_handle = _dashboard_owner_for(project, actions)
     if owner is None or not hasattr(owner, "operation_status"):
         return
+    _poll_dashboard_status(project, owner)
+
+
+def _poll_dashboard_status(project: ProjectState, owner: Any) -> None:
+    """One durable status read for a dashboard-owned run, posted to the
+    project (T28-F: `_observe_dashboard_operation` runs it on the worker)."""
     try:
         status_payload = owner.operation_status(project.operation_id)
     except Exception as exc:  # noqa: BLE001 -- a poll failure crosses a real
-        # network boundary; surface it and retry next tick, never crash the
-        # render loop.
+        # network boundary; surface it and retry on the next poll, never crash
+        # the worker.
         project.last_message = f"dashboard status poll failed: {exc}"
         return
     ledger_status = (
@@ -1938,8 +2007,6 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
     )
     if ledger_status != "terminal":
         return
-    if project.scan_thread is not None:
-        project.scan_thread.join(timeout=2.0)
     outcome_payload = (
         (status_payload.get("payload") or {})
         if isinstance(status_payload, dict)
@@ -1953,11 +2020,25 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
 
 
 def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
+    """One status read for every running project, dashboard-owned ones
+    included. The render loop calls `_poll_local_scans` instead: a
+    dashboard-owned run is polled by its own dispatch worker."""
+    for project in state.projects:
+        if project.owner == "dashboard" and project.status in (
+            "scanning",
+            "cancelling",
+        ):
+            _poll_dashboard_owned_scan(project, actions)
+    _poll_local_scans(state, actions)
+
+
+def _poll_local_scans(state: TuiState, actions: ScanActions) -> None:
+    """The loop's per-tick read of locally-owned runs' event files; it never
+    touches the network or waits on a thread."""
     for project in state.projects:
         if project.status not in ("scanning", "cancelling"):
             continue
         if project.owner == "dashboard":
-            _poll_dashboard_owned_scan(project, actions)
             continue
         if project.run_id is None or project.plan_total <= 0:
             continue  # rescan-style thread reports its own terminal status directly
@@ -1975,8 +2056,8 @@ def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
         if len(project.progress_history) > 500:
             del project.progress_history[:-500]
         if progress.status != "running":
-            if project.scan_thread is not None:
-                project.scan_thread.join(timeout=2.0)
+            if project.scan_thread is not None and project.scan_thread.is_alive():
+                continue  # T28-F: settle on a later tick, never join on the loop
             project.status = progress.status
 
 
@@ -4117,19 +4198,10 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         project.cancel_event.set()
         project.status = "cancelling"
         return
+    if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
+        _send_dashboard_cancel(project, actions)
+        return
     try:
-        if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
-            owner = project.dashboard_owner_handle or _dashboard_owner_for(
-                project, actions
-            )
-            if owner is None:
-                project.last_message = "cancel failed: dashboard owner not reachable"
-                return
-            owner.dispatch(
-                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
-            )
-            project.status = "cancelling"
-            return
         if not project.run_id:
             return
         actions.cancel_scan_run(project.root, project.run_id)
@@ -4139,6 +4211,41 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         # request must surface to the user, never crash the key-dispatch
         # path.
         project.last_message = f"cancel failed: {exc}"
+
+
+# T28-F: how long a dashboard cancel key waits for a prompt answer before
+# the request continues on its worker -- well inside the 50 ms input bound.
+_CANCEL_ANSWER_WAIT_SECONDS = 0.03
+
+
+def _send_dashboard_cancel(project: ProjectState, actions: ScanActions) -> None:
+    """T28-F: the owning dashboard's `cancel` crosses the network, so it runs
+    on a worker; the run shows `cancelling` at once and returns to
+    `scanning` with the reason if the request fails. A prompt answer lands
+    before this returns; an unanswering dashboard never holds the loop."""
+    project.status = "cancelling"
+    answered = threading.Event()
+
+    def _worker() -> None:
+        try:
+            owner = project.dashboard_owner_handle or _dashboard_owner_for(
+                project, actions
+            )
+            if owner is None:
+                raise ConnectionError("dashboard owner not reachable")
+            owner.dispatch(
+                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- the dispatch crosses a real
+            # network boundary into another process; surface the failure.
+            project.last_message = f"cancel failed: {exc}"
+            if project.status == "cancelling":
+                project.status = "scanning"
+        finally:
+            answered.set()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    answered.wait(_CANCEL_ANSWER_WAIT_SECONDS)
 
 
 def _wait_for_cancel_ack(
@@ -5728,6 +5835,7 @@ def _render_project_table(project: ProjectState) -> Panel:
             _safe(f"{path}:{_finding_line(row)}"),
             Text(sev, style=_severity_style(sev)),
             _safe(f"[{verdict}] {message}" if verdict else message),
+            style=_selection_style(project) if marker else None,
         )
     # T28-C: a tool outcome with no findings (clean/skipped/denied/error)
     # still gets its own selectable row with its status and reason; below
@@ -5745,6 +5853,7 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text("-"),
             Text(status, style=_severity_style(status)),
             _safe(reason),
+            style=_selection_style(project) if marker else None,
         )
         outcome_lines.append(
             _safe(
@@ -6157,12 +6266,14 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     table.add_column("run / attempt")
     table.add_column("size", width=10)
     for idx, row in enumerate(page_rows):
+        selected = page * PAGE_SIZE + idx == view.selection
         table.add_row(
-            Text(">" if page * PAGE_SIZE + idx == view.selection else ""),
+            Text(">" if selected else ""),
             _safe(f"{row.get('tool_id')}:{row.get('path')}"),
             _safe(f"{row.get('category')} {row.get('media_type') or 'unknown'}"),
             _safe(f"{row.get('run_id')} / {row.get('attempt_id')}"),
             _safe(row.get("size")),
+            style=_selection_style(project) if selected else None,
         )
     lines.append(table)
     data = view.data if isinstance(view.data, Mapping) else {}
@@ -6370,7 +6481,9 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(Group(*parts), title=title, style="magenta")
+    # T28-F: the pane fades in over `detail_ms` after the selection moved.
+    fading = _motion_running(project, _TERMINAL_MOTION["detail_ms"])
+    return Panel(Group(*parts), title=title, style="magenta dim" if fading else "magenta")
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -6491,6 +6604,7 @@ def _render_memory_admin(state: TuiState) -> Panel:
             _safe(item.get("trust_tier", "")),
             _safe(item.get("source", "")),
             "yes" if item.get("stale") else "no",
+            style=_state_selection_style(state) if cursor == ">" else None,
         )
     lines.append(table)
     lines.append(
@@ -6669,6 +6783,7 @@ def _render_git_panel(state: TuiState) -> Panel:
             _safe(commit.get("author", "")),
             _safe(commit.get("date", "")),
             _safe(commit.get("subject", "")),
+            style=_state_selection_style(state) if marker == ">" else None,
         )
     lines.append(history_table)
 
@@ -6732,12 +6847,10 @@ def _render_nav_pane(state: TuiState) -> Panel:
     for idx, section in enumerate(SECTIONS):
         current = section == state.section
         cursor = ">" if (focus_nav and idx == state.nav_index) or current else " "
-        lines.append(
-            Text(
-                f"{cursor}{idx + 1} {SECTION_LABELS[section]}",
-                style=THEME["blue"] if current else THEME["text_muted"],
-            )
-        )
+        style = THEME["blue"] if current else THEME["text_muted"]
+        if focus_nav and idx == state.nav_index:
+            style = f"{style} {_state_selection_style(state)}"
+        lines.append(Text(f"{cursor}{idx + 1} {SECTION_LABELS[section]}", style=style))
     lines.append(Text("Projects", style="bold"))
     lines.extend(
         _safe(
@@ -6754,28 +6867,45 @@ def _render_nav_pane(state: TuiState) -> Panel:
             cursor = (
                 ">" if state.focus == "actions" and idx == state.action_index else " "
             )
+            style = THEME["text"] if ok else THEME["text_muted"]
+            if cursor == ">":
+                style = f"{style} {_state_selection_style(state)}"
             lines.append(
                 Text(
                     f"{cursor}{action.label}" + ("" if ok else f" ({reason})"),
-                    style=THEME["text"] if ok else THEME["text_muted"],
+                    style=style,
                 )
             )
     return Panel(Group(*lines), title="Navigate", style=THEME["border"])
 
 
 def _render_section_chooser(state: TuiState) -> Panel:
+    rows = _chooser_rows()
+    # T28-F: at most the rows the main area holds (the 3-row header, the
+    # footer, the panel's 2 border rows and the blank + hint rows), scrolled
+    # so the cursor stays on screen and j/k reach every row.
+    footer = _footer_height(state, _footer_status_line(state, state.active_project))
+    window = max(1, state.terminal_size[1] - 3 - footer - 4)
+    start = min(max(0, state.chooser_index - window // 2), max(0, len(rows) - window))
     lines: list[Any] = []
-    for idx, (target, label) in enumerate(_chooser_rows()):
+    for idx, (target, label) in enumerate(rows[start : start + window], start):
         number = f"{idx + 1} " if target.startswith("section:") else "  "
+        selected = idx == state.chooser_index
         lines.append(
             Text(
-                f"{'>' if idx == state.chooser_index else ' '}{number}{label}",
-                style=THEME["blue"] if idx == state.chooser_index else THEME["text"],
+                f"{'>' if selected else ' '}{number}{label}",
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
     lines.append(Text("[1-8] go  [enter] choose  [escape] close", style="bold yellow"))
-    return Panel(Group(*lines), title="Sections", style=THEME["border"])
+    title = "Sections"
+    if window < len(rows):
+        end = min(len(rows), start + window)
+        title = f"Sections {start + 1}-{end} of {len(rows)} (j/k scroll)"
+    return Panel(Group(*lines), title=title, style=THEME["border"])
 
 
 def _render_form(state: TuiState) -> Panel:
@@ -6802,7 +6932,7 @@ def _render_project_selector(state: TuiState) -> Panel:
             safe_terminal_text(
                 f"{'>' if idx == state.project_selector_index else ' '}{p.name}"
             ),
-            style=THEME["blue"]
+            style=f"{THEME['blue']} {_state_selection_style(state)}"
             if idx == state.project_selector_index
             else THEME["text"],
         )
@@ -6814,7 +6944,9 @@ def _render_project_selector(state: TuiState) -> Panel:
         lines.append(
             Text(
                 f"{'>' if selected else ' '}{label}",
-                style=THEME["blue"] if selected else THEME["text"],
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
@@ -6842,7 +6974,12 @@ def _render_map(state: TuiState, project: ProjectState) -> Panel:
         glyph = ""
         if node.get("children"):
             glyph = "[-] " if node["key"] in state.map_expanded else "[+] "
-        lines.append(_safe(f"{marker}{indent}{glyph}{node['label']}"))
+        lines.append(
+            _safe(
+                f"{marker}{indent}{glyph}{node['label']}",
+                _selection_style(project) if marker == ">" else "",
+            )
+        )
     if not lines:
         lines.append(Text("No findings."))
     return Panel(Group(*lines), title="Map", style=THEME["blue"])
@@ -6895,12 +7032,19 @@ def _unavailable_line(state: TuiState) -> Text:
 def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
     """The status line above the keymap footer; the footer grows to the
     keymap's wrapped height so `?:Help` is never cut off."""
-    keymap = _keymap_footer(state)
+    layout["footer"].size = _footer_height(state, status)
+    layout["footer"].update(
+        Panel(Group(status, _keymap_footer(state)), style=_FOOTER_STYLE)
+    )
+
+
+def _footer_height(state: TuiState, status: Text) -> int:
+    """The footer's rows: its 2 border rows plus the status line and the
+    keymap line, each wrapped to the terminal width."""
     inner = max(1, state.terminal_size[0] - 4)
     measure = Console(width=inner, file=io.StringIO())
-    rows = sum(max(1, len(text.wrap(measure, inner))) for text in (status, keymap))
-    layout["footer"].size = 2 + rows
-    layout["footer"].update(Panel(Group(status, keymap), style=_FOOTER_STYLE))
+    texts = (status, _keymap_footer(state))
+    return 2 + sum(max(1, len(text.wrap(measure, inner))) for text in texts)
 
 
 def _render_resize_guidance(state: TuiState) -> Panel:
