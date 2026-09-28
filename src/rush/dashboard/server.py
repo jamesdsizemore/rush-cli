@@ -6,6 +6,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import secrets
 import socket
@@ -639,6 +640,12 @@ class _RateLimiter:
 # hang -- see `stop_all_dashboard_contexts` below.
 _live_dashboard_contexts: weakref.WeakSet = weakref.WeakSet()
 
+_LOG = logging.getLogger(__name__)
+
+# How long `server_close()` waits for still-running `_run_terminal_supervised`
+# workers before recording their terminal outcome itself.
+SUPERVISED_SHUTDOWN_JOIN_SECONDS = 5.0
+
 
 def stop_all_dashboard_contexts() -> None:
     """Test-support: stop every live `DashboardContext`'s background
@@ -723,6 +730,14 @@ class DashboardContext:
             target=self._recovery_loop, daemon=True, name="rush-dashboard-recovery"
         )
         self._recovery_thread.start()
+        # Every `_run_terminal_supervised` worker not yet terminalized, keyed
+        # by operation id, so `join_supervised()` can bound them at shutdown
+        # instead of letting one write into an already-released state store.
+        # `_supervised_abandoned`: operations shutdown terminalized itself;
+        # their worker must never write again.
+        self._supervised_lock = threading.Lock()
+        self._supervised: dict[str, threading.Thread] = {}
+        self._supervised_abandoned: set[str] = set()
         _live_dashboard_contexts.add(self)
 
     def _recovery_loop(self) -> None:
@@ -740,6 +755,91 @@ class DashboardContext:
         never a correctness requirement for process exit."""
         self._recovery_stop.set()
         self.outcomes.stop()
+
+    def start_terminal_supervised(
+        self, operation_id: str, body: Callable[[], dict[str, Any]]
+    ) -> threading.Thread:
+        """Launch and track one `_run_terminal_supervised` worker."""
+        thread = threading.Thread(
+            target=_run_terminal_supervised,
+            args=(self, operation_id, body),
+            daemon=True,
+            name=f"rush-supervised-{operation_id}",
+        )
+        with self._supervised_lock:
+            self._supervised[operation_id] = thread
+        try:
+            thread.start()
+        except BaseException:
+            with self._supervised_lock:
+                self._supervised.pop(operation_id, None)
+            raise
+        return thread
+
+    def record_supervised_terminal(
+        self, operation_id: str, payload: dict[str, Any]
+    ) -> None:
+        """A supervised worker's last act: record its terminal status. Never
+        raises -- a failed write is recorded as `terminal_write_failed`, or
+        logged when the store itself is unreachable. Skipped when shutdown
+        already terminalized this operation."""
+        with self._supervised_lock:
+            try:
+                if operation_id in self._supervised_abandoned:
+                    return
+                try:
+                    self.mutations.record_status_transition(
+                        operation_id, "terminal", payload
+                    )
+                except Exception as exc:  # noqa: BLE001 -- surfaced, never raised.
+                    _LOG.exception(
+                        "terminal status write failed for supervised operation %s",
+                        operation_id,
+                    )
+                    self._record_terminal_or_log(
+                        operation_id,
+                        {
+                            "status": "error",
+                            "code": "terminal_write_failed",
+                            "message": str(exc) or exc.__class__.__name__,
+                        },
+                    )
+            finally:
+                self._supervised.pop(operation_id, None)
+
+    def join_supervised(self, timeout: float) -> None:
+        """Join every running supervised worker within `timeout` seconds in
+        total; any still running is terminalized here as `server_shutdown`
+        and never writes to the state store afterwards."""
+        with self._supervised_lock:
+            running = list(self._supervised.values())
+        deadline = time.monotonic() + timeout
+        for thread in running:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        with self._supervised_lock:
+            for operation_id in list(self._supervised):
+                self._supervised_abandoned.add(operation_id)
+                del self._supervised[operation_id]
+                self._record_terminal_or_log(
+                    operation_id,
+                    {
+                        "status": "error",
+                        "code": "server_shutdown",
+                        "message": "dashboard shut down before the operation finished",
+                    },
+                )
+
+    def _record_terminal_or_log(
+        self, operation_id: str, payload: dict[str, Any]
+    ) -> None:
+        try:
+            self.mutations.record_status_transition(operation_id, "terminal", payload)
+        except Exception:  # noqa: BLE001 -- the log is the last surface left.
+            _LOG.exception(
+                "could not record %s terminal for supervised operation %s",
+                payload["code"],
+                operation_id,
+            )
 
     def live_secrets(self) -> tuple[str, ...]:
         """Every currently-live secret value this server can still redact by
@@ -969,7 +1069,7 @@ def _run_terminal_supervised(
             "message": str(exc) or exc.__class__.__name__,
         }
     finally:
-        ctx.mutations.record_status_transition(operation_id, "terminal", payload)
+        ctx.record_supervised_terminal(operation_id, payload)
 
 
 def _dispatch_provision_apply(
@@ -1039,10 +1139,7 @@ def _dispatch_provision_apply(
             "provision": applied.get("provision", {}),
         }
 
-    thread = threading.Thread(
-        target=_run_terminal_supervised, args=(ctx, operation_id, _body), daemon=True
-    )
-    thread.start()
+    ctx.start_terminal_supervised(operation_id, _body)
     return 202, {
         "operation_id": operation_id,
         "run_id": run_id,
@@ -2432,10 +2529,7 @@ def _dispatch_handoff_send(
             "attempt_id": attempt_id,
         }
 
-    thread = threading.Thread(
-        target=_run_terminal_supervised, args=(ctx, operation_id, _body), daemon=True
-    )
-    thread.start()
+    ctx.start_terminal_supervised(operation_id, _body)
     return 202, {
         "operation_id": operation_id,
         "run_id": run_id,
@@ -5712,6 +5806,9 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
         self, *args: Any, max_concurrent: int = MAX_CONCURRENT_REQUESTS, **kwargs: Any
     ) -> None:
         self._admission = threading.Semaphore(max_concurrent)
+        # Set by create_dashboard_server(); before super().__init__, whose
+        # bind-failure path already calls server_close().
+        self.dashboard_context: DashboardContext | None = None
         super().__init__(*args, **kwargs)
 
     def process_request(self, request: Any, client_address: Any) -> None:
@@ -5728,6 +5825,13 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
             super().shutdown_request(request)
         finally:
             self._admission.release()
+
+    def server_close(self) -> None:
+        """Close the socket, then bound every supervised worker before the
+        caller releases the state store."""
+        super().server_close()
+        if self.dashboard_context is not None:
+            self.dashboard_context.join_supervised(SUPERVISED_SHUTDOWN_JOIN_SECONDS)
 
 
 def create_dashboard_server(
@@ -5756,6 +5860,7 @@ def create_dashboard_server(
     # rather than closing and rebinding (which would race another process
     # for the freed port).
     server.RequestHandlerClass = _make_handler(ctx)
+    server.dashboard_context = ctx
     return server, ctx, bootstrap_token
 
 

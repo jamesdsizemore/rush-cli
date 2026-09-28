@@ -1450,6 +1450,9 @@ def test_handoff_202_response_includes_attempt_id_matching_preview_source_tuple(
         assert status == 202
         assert send_body["data"]["run_id"] == run_id
         assert send_body["data"]["attempt_id"] == attempt_id
+        _wait_operation_terminal(
+            base_url, project_id, cookie, send_body["data"]["operation_id"]
+        )
     finally:
         server.shutdown()
         server.server_close()
