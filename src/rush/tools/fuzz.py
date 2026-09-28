@@ -8,12 +8,12 @@ import json
 import re
 import shutil
 import subprocess
-import sys
 import uuid
 from collections.abc import Mapping
 from pathlib import Path
 
 from ..io.atomic_file import AtomicFile, AtomicWriteError
+from ..runtime.project_python import PYTHON_PREREQUISITE, project_python
 from ..safety.redactor import sanitize_value
 from .base import ToolFn, ToolResult
 from .common import (
@@ -304,6 +304,23 @@ class FuzzTool(ToolFn):
                 },
             )
 
+        python = project_python(root)
+        if python is None:
+            return skipped_result(
+                self.name,
+                "atheris",
+                f"fuzz: {PYTHON_PREREQUISITE}",
+                duration_ms=elapsed_ms(start),
+                metadata={
+                    "execution": build_execution_metadata(
+                        "executed",
+                        requested=required_perms,
+                        granted=permissions,
+                        producer="atheris",
+                    )
+                },
+            )
+
         from ..io.physical_paths import ContainmentError, PhysicalRoot
 
         metadata = {
@@ -338,7 +355,7 @@ class FuzzTool(ToolFn):
             crash_dir = run_root / "crashes"
             crash_dir.mkdir()
             argv = [
-                sys.executable,
+                python,
                 harness_rel,
                 corpus_rel,
                 f"-seed={seed}",
