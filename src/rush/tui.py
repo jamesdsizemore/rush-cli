@@ -847,6 +847,9 @@ class TuiState:
     # refresh the same result set afterward.
     memory_subject: str = "domain_knowledge"
     memory_query_buffer: str = ""
+    # T28-E: the Artifacts `/` query being typed (committed on Enter into
+    # the artifacts view's `filters["query"]`).
+    artifact_query_buffer: str = ""
     memory_items: list[dict[str, Any]] = field(default_factory=list)
     memory_selected_index: int = 0
     memory_selected_ids: set[str] = field(default_factory=set)
@@ -2059,6 +2062,27 @@ def _handle_search_key(state: TuiState, key: str) -> None:
         project.filter_text += key
         project.selected_index = 0
         project.detail_page = 0
+
+
+def _handle_artifact_search_key(state: TuiState, key: str) -> None:
+    """Artifacts `/`: printable keys type the query, Enter narrows the
+    captured index to it, Escape clears it; either returns to the list
+    with the first row selected."""
+    if key in ("enter", "escape"):
+        view = state.views.setdefault(
+            (project_key(state.active_project), "artifacts"), SectionView()
+        )
+        query = state.artifact_query_buffer.strip() if key == "enter" else ""
+        view.filters.pop("query", None)
+        if query:
+            view.filters["query"] = query
+        view.selection = 0
+        state.artifact_query_buffer = ""
+        state.mode = "list"
+    elif key == "backspace":
+        state.artifact_query_buffer = state.artifact_query_buffer[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.artifact_query_buffer += key
 
 
 def _execute_grant(
@@ -3377,9 +3401,25 @@ def _refresh_artifacts_view(state: TuiState, project: ProjectState) -> SectionVi
     return view
 
 
-def _captured_rows(view: SectionView) -> list[Mapping[str, Any]]:
+def _captured_rows(
+    view: SectionView, *, filtered: bool = True
+) -> list[Mapping[str, Any]]:
+    """The captured artifacts; with `filtered`, only those whose path or
+    type (category/media type) contains the committed `/` query,
+    case-insensitively."""
     data = view.data if isinstance(view.data, Mapping) else {}
-    return [row for row in data.get("captured") or [] if isinstance(row, Mapping)]
+    rows = [row for row in data.get("captured") or [] if isinstance(row, Mapping)]
+    query = str(view.filters.get("query") or "").lower() if filtered else ""
+    if not query:
+        return rows
+    return [
+        row
+        for row in rows
+        if any(
+            query in str(row.get(field) or "").lower()
+            for field in ("path", "category", "media_type")
+        )
+    ]
 
 
 def _selected_artifact(view: SectionView) -> Mapping[str, Any] | None:
@@ -4023,8 +4063,9 @@ def _map_expand(state: TuiState, actions: ScanActions) -> None:
 
 
 def _focus_filter(state: TuiState, actions: ScanActions) -> None:
-    """`/`: in Map it searches the map's own nodes (`map_search`),
-    elsewhere it filters findings (Tokens: its run-id filter)."""
+    """`/`: in Map it searches the map's own nodes (`map_search`), in
+    Artifacts it searches the captured index (`artifact_search`), in Tokens
+    it sets the run-id filter, elsewhere it filters findings."""
     if state.section == "tokens":
         state.tokens_filter_buffer = ""
         state.mode = "tokens_filter"
@@ -4032,6 +4073,9 @@ def _focus_filter(state: TuiState, actions: ScanActions) -> None:
     if state.mode == "map":
         state.map_query = ""
         state.mode = "map_search"
+    elif state.section == "artifacts":
+        state.artifact_query_buffer = ""
+        state.mode = "artifact_search"
     else:
         state.mode = "search"
 
@@ -4406,7 +4450,13 @@ ACTIONS: tuple[Action, ...] = (
         _relink_enabled,
     ),
     Action("choose_later", "Later", "Section", (), _choose_later, _add_enabled),
-    Action("focus_filter", "Filter", "Text input", ("scans", "tokens"), _focus_filter),
+    Action(
+        "focus_filter",
+        "Filter",
+        "Text input",
+        ("scans", "artifacts", "tokens"),
+        _focus_filter,
+    ),
     Action("confirm_grant", "Confirm", "Text input", (), lambda state, actions: None),
     Action(
         "cancel_scan",
@@ -4453,6 +4503,8 @@ def _insert_paste(state: TuiState, text: str) -> None:
         state.map_query += text
     elif state.mode == "tokens_filter":
         state.tokens_filter_buffer += text
+    elif state.mode == "artifact_search":
+        state.artifact_query_buffer += text
     elif state.mode == "memory_search":
         state.memory_query_buffer += text
     elif state.mode == "memory_edit":
@@ -4492,6 +4544,7 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         "search": lambda st, k, a: _handle_search_key(st, k),
         "map_search": lambda st, k, a: _handle_map_search_key(st, k),
         "tokens_filter": _handle_tokens_filter_key,
+        "artifact_search": lambda st, k, a: _handle_artifact_search_key(st, k),
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
@@ -4798,11 +4851,17 @@ def _setup_apply_line(project: ProjectState) -> Text | None:
 def _render_setup(state: TuiState, project: ProjectState) -> Panel:
     view = state.views.get((project_key(project), "setup"))
     data = view.data if view is not None and isinstance(view.data, dict) else {}
+    # The state recorded before this frame (loading, or a loader/seeded
+    # outcome and its reason) is shown even when this frame builds the
+    # review and replaces it.
+    lines: list[Any] = _view_state_lines("Setup", view)
     if "review" not in data and "review_error" not in data:
         _build_setup_view(state, project)
         view = state.views[(project_key(project), "setup")]
         data = view.data
-    lines: list[Any] = _view_state_lines("Setup", view)
+        built = _view_state_lines("Setup", view)
+        if [line.plain for line in built] != [line.plain for line in lines]:
+            lines.extend(built)
     if data.get("review_text"):
         lines.extend(_safe(line) for line in str(data["review_text"]).splitlines())
     toggles = data.get("stage_grants") or {}
@@ -4858,8 +4917,8 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
 
 _ARTIFACT_ERROR_GUIDANCE = {
     "immutable_content_unavailable": (
-        "the captured snapshot is missing or changed; rerun the scan to capture "
-        "it again (the live file is never substituted)"
+        "captured content unavailable -- rerun the scan to capture it again "
+        "(the live file is never substituted)"
     ),
     "not_found": "no captured snapshot is recorded for this artifact",
 }
@@ -4872,10 +4931,27 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     view = _refresh_artifacts_view(state, project)
     lines: list[Any] = list(_view_state_lines("Artifacts", view))
     rows = _captured_rows(view)
+    total = len(_captured_rows(view, filtered=False))
+    if state.mode == "artifact_search":
+        lines.append(
+            _safe(
+                f"search /{state.artifact_query_buffer}  Enter apply  Esc clear",
+                "bold yellow",
+            )
+        )
+    elif view.filters.get("query"):
+        lines.append(
+            _safe(
+                f"search {view.filters['query']!r}: {len(rows)} of {total} shown "
+                "(/ then Esc clears)",
+                "bold yellow",
+            )
+        )
     page = view.selection // PAGE_SIZE
     page_rows, total_pages = paginate(rows, page)
     table = Table(
-        expand=True, title=f"Captured ({len(rows)}) page {page + 1}/{total_pages}"
+        expand=True,
+        title=f"Captured ({len(rows)}) of {total} page {page + 1}/{total_pages}",
     )
     table.add_column("", width=2)
     table.add_column("identity (tool:path)")
@@ -4908,7 +4984,9 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     detail = data.get("_detail")
     if isinstance(detail, Mapping):
         lines.extend(_artifact_detail_lines(detail, view.scroll))
-    lines.append(Text("i:Inspect  e:Export  j/k:Select  F5:Refresh", style="dim"))
+    lines.append(
+        Text("i:Inspect  e:Export  j/k:Select  /:Search  F5:Refresh", style="dim")
+    )
     return Panel(Group(*lines), title="Artifacts", style=THEME["border"])
 
 
@@ -4927,7 +5005,10 @@ def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]
     if error:
         guidance = _ARTIFACT_ERROR_GUIDANCE.get(str(error), "")
         lines.append(
-            _safe(f"read failed: {error}" + (f" -- {guidance}" if guidance else ""))
+            _safe(
+                f"read failed: {error} for {item.get('path')}"
+                + (f" -- {guidance}" if guidance else "")
+            )
         )
     if detail.get("binary"):
         lines.append(
@@ -5425,8 +5506,8 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
             else "Detach: cancels with saved partial result (no dashboard running)"
         )
         return Text(
-            f"{detach_desc}  [d]  |  Cancel run, stay open  [c]  |  "
-            "Return, keep observing  [r]",
+            f"{detach_desc}  [d]\n"
+            "Cancel run, stay open  [c]  |  Return, keep observing  [r]",
             style="bold yellow",
         )
     if project.status in ("scanning", "cancelling") and project.progress:
@@ -5538,6 +5619,18 @@ def _render_detaching(state: TuiState) -> Panel:
     )
 
 
+def _with_view_state(
+    state: TuiState, project: ProjectState, section: str, body: Any
+) -> Any:
+    """Map, Memory and Git render their own data; a non-populated
+    SectionView recorded for them shows its state label and reason above
+    it, as every other section's renderer does."""
+    lines = _view_state_lines(
+        SECTION_LABELS[section], state.views.get((project_key(project), section))
+    )
+    return Group(*lines, body) if lines else body
+
+
 def _render_body(state: TuiState, project: ProjectState) -> Any:
     if state.overlay == "detaching":
         return _render_detaching(state)
@@ -5546,11 +5639,11 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
     if state.overlay == "form":
         return _render_form(state)
     if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
-        return _render_memory_admin(state)
+        return _with_view_state(state, project, "memory", _render_memory_admin(state))
     if state.mode == "git":
-        return _render_git_panel(state)
+        return _with_view_state(state, project, "git", _render_git_panel(state))
     if state.mode in ("map", "map_search"):
-        return _render_map(state, project)
+        return _with_view_state(state, project, "map", _render_map(state, project))
     if state.mode == "project_selector":
         return _render_project_selector(state)
     if state.mode == "grant_review" and state.pending_grant:
