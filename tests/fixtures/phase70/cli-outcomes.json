@@ -2710,7 +2710,17 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "flight-recorder",
+        "--replay",
+        "no-such-session-phase70"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for '--replay'",
+        "no recorded session 'no-such-session-phase70'"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -8874,7 +8884,18 @@
       "exit": 0
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "test-heal",
+        "--target",
+        "no-such-target-phase70.py",
+        "--allow-slow",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "invalid test target"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -9068,7 +9089,16 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "trust",
+        "no-such-target-phase70"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Invalid value for 'TARGET'",
+        "does not exist"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": [
