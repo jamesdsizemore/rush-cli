@@ -51,12 +51,12 @@ The interface is organized into eight sections, switchable at any time:
 | Section | Shows |
 |---|---|
 | Overview | Project registration state and the entry point for adding, creating, or relinking a project |
-| Map | The project's file/module tree, navigable and searchable |
+| Map | The project's file/module tree, navigable and searchable; a finding row keeps its provenance (severity, tool, path) next to the message, shown again in the expanded detail view |
 | Scans/Findings | Results from the last check or scan run, one finding per row |
 | Memory | Stored memory records: browse, search, create, edit, promote, archive, delete |
-| Tokens | Token-usage data for past runs, filterable by run ID |
+| Tokens | Token-usage data for past runs, filterable by run, agent, or session identity |
 | Git | Commit history and the current dirty working-tree diff |
-| Artifacts | Captured tool artifacts: inspect, search, and export them |
+| Artifacts | Captured tool artifacts plus other shared evidence (scan outputs, handoffs, memory records): inspect, search, and export them |
 | Setup/Agents | Agent setup stages and their grants, plus handoff preparation |
 
 ---
@@ -73,7 +73,7 @@ These work from anywhere in the interface unless a specific mode below overrides
 | `Tab` / `Shift+Tab` | Cycle panes forward / backward |
 | `↓`/`j`, `↑`/`k` | Move the selection down / up |
 | `→`/`l`, `←`/`h` | In Map: expand / collapse the selected node |
-| `+` / `-` | In Map: expand / collapse the selected node (same as `→`/`←`) |
+| `+` / `-` | Expand / collapse the detail pane — in every section (Map nodes also keep `→`/`l` and `←`/`h`; in Git, `+` shows the selected commit's diff detail; in Memory, `+` is the same as `x`) |
 | `Enter` | Inspect the selected row, or accept the highlighted choice in an overlay |
 | `Escape` | Back / dismiss the current overlay / decline |
 | `/` | Filter or search — see below, its effect depends on where you are |
@@ -85,8 +85,14 @@ These work from anywhere in the interface unless a specific mode below overrides
 | `F5` | Refresh the current section |
 
 `/` behaves differently per section: in Map it searches the map's own nodes, in Artifacts it
-searches the captured artifact index, in Tokens it opens a run-ID filter, and everywhere else
-(Scans/Findings) it filters the visible findings.
+searches the captured artifact index, in Tokens it opens a run/agent/session filter, and
+everywhere else (Scans/Findings) it filters the visible findings.
+
+In Scans/Findings, `/` matches against severity, step status, tool, engine, path, and message
+by default. Prefix the query with a field name to narrow to just that field:
+`severity:error`, `status:warn`, `tool:ruff`, `engine:bandit`, or `path:some/file.py`.
+`Escape` clears the filter back to the unfiltered list. While a filter is active, the section
+title shows the shown-versus-total count, for example `Findings (1 of 3)`.
 
 The project selector (`F2`) is navigated with `↓`/`j`, `↑`/`k`; `Enter` switches to the
 highlighted project, `Escape` cancels with no switch. Past the list of open projects it also
@@ -114,6 +120,10 @@ Inside the Overview or Scans/Findings sections:
 A reviewed action — scan, check, rescan, handoff, artifact export, setup apply/retry — opens
 a grant-review overlay first. Nothing runs until you accept it: `y` accepts, `Escape` or any
 other key declines.
+
+Pressing `c` is honored immediately even while a scan, rescan, or check is still starting (still
+resolving which process owns the run, before any work has been dispatched): the key returns in
+under 25ms and no local work, admission, or dashboard dispatch ever happens.
 
 ### Quitting while work is running
 
@@ -146,6 +156,8 @@ Inside the Memory section (`M`, or section `4`):
 | `Space` | Select/deselect the highlighted record for a bulk action |
 | `n` | Create a new memory record (`Tab` cycles fields, `Enter` previews and submits, `Escape` cancels) |
 | `x` | Expand the selected record |
+| `+` | Expand the selected record (same as `x`) |
+| `-` | Collapse the selected record's detail |
 | `e` | Edit the selected record |
 | `o` | Set the owner scope for the next mutation |
 | `a` | Preview archiving the selected record(s) |
@@ -166,8 +178,18 @@ you retry.
 
 ## 6. Tokens
 
-Inside the Tokens section (`m`, or section `5`), `/` opens a run-ID filter: type the ID,
-`Enter` filters the view to that run, `Escape` clears the filter.
+Inside the Tokens section (`m`, or section `5`), `/` opens a filter prompt: type `run:<id>`,
+`agent:<id>`, or `session:<id>` (a bare value with no prefix is treated as a run ID), `Enter`
+applies it, `Escape` clears every identity filter.
+
+The section always shows:
+
+- an `attribution:` line naming the current run/agent/session filter values (`all` when unset);
+- an `interval:` line with the earliest and latest event time in the current selection, or a
+  note that no stored event time exists in the selection;
+- an `unscoped:` line counting events with no stored run/agent/session identity — labelled
+  "excluded from this selection" while a filter is active, or "included in project totals"
+  when it isn't.
 
 ---
 
@@ -180,6 +202,8 @@ Inside the Git section (`G`, or section `6`):
 | `]` | Page to older commits |
 | `[` | Page to newer commits |
 | `d` | Expand the next dirty file's bounded diff |
+| `+` | Expand the selected commit's diff detail |
+| `-` | Collapse the diff detail |
 | `Enter` | Inspect the selected commit |
 
 ---
@@ -194,6 +218,13 @@ Inside the Artifacts section (section `7`):
 | `/` | Search the captured artifact index |
 | `i` | Inspect the selected artifact (press again to see more of it) |
 | `e` | Review, then export the selected artifact |
+
+The section shows two paginated tables sharing one selection: a **Captured** table (tool
+identity, path, type, run/attempt, size) for artifacts a tool captured directly, and an
+**Evidence** table (source bucket, identity, type, run, size) for every other shared evidence
+item — scan outputs, handoffs, memory records, and any bucket added later. Selection moves
+through the Captured rows first, then the Evidence rows. `/` matches path, category, or media
+type in Captured rows, and bucket, identity, category, or kind in Evidence rows.
 
 Export opens the same grant-review overlay as scans and checks: nothing is written to disk
 until you accept it with `y`.
@@ -217,9 +248,15 @@ Inside the Setup/Agents section (section `8`):
 ## 10. Paste
 
 Bracketed paste is supported: pasted text lands literally in whatever text field is active
-(a search box, the run-ID filter, a memory create/edit field, a form field) and is never
-replayed as key presses — a paste can never itself trigger a scan, a quit, or navigation.
+(a search box, the Tokens or Artifacts filter, a memory create/edit field, a form field) and is
+never replayed as key presses — a paste can never itself trigger a scan, a quit, or navigation.
 Outside of a text field, a paste is ignored.
+
+On Windows, a console with VT input enabled sends the same bracketed-paste escape sequences a
+POSIX terminal does, handled the same way. On an older console without VT input, a burst of
+more than one printable character can't be told apart from a real paste, so it is always
+treated as literal paste text rather than replayed as key presses — a pasted "qq" still never
+quits.
 
 ---
 
@@ -228,6 +265,11 @@ Outside of a text field, a paste is ignored.
 - `NO_COLOR` — set to any value to disable colored output. This is independent of motion.
 - `RUSH_REDUCED_MOTION` — set to any value to render the final state of an animation
   immediately instead of playing it, and to make idle background-load redraws immediate too.
+
+Without `RUSH_REDUCED_MOTION`, the screen refreshes at up to 20Hz while something is active
+(a run, a change, or an animation in progress) and at 4Hz while idle, checking for input in
+slots of 50ms or less. A newly revealed list reveals one more row every 40ms, capped at 240ms
+total. Selection highlight fades in over 120ms, and the detail pane fades in over 180ms.
 
 ---
 

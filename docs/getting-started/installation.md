@@ -1,6 +1,6 @@
 # Install Rush
 
-Rush is a Python 3.12 command-line application. Current installation is an editable source checkout managed by [uv](https://docs.astral.sh/uv/). A standalone, package-manager, and clean-machine installer is planned in [Phase 65, P65-01](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-01--verified-standalone-release-artifacts-f28).
+Rush is a Python 3.12 command-line application. The fastest way to install it is the standalone install script in [Standalone and package-manager installation](#standalone-and-package-manager-installation) below — it downloads a checksum-checked, self-contained `rush` binary, with no Python, `uv`, or repo checkout required. Building from an editable source checkout with [uv](https://docs.astral.sh/uv/) (the per-OS sections below) is the contributor/source-build alternative.
 
 ## Before you begin
 
