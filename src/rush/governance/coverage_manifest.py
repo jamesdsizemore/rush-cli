@@ -74,6 +74,16 @@ def classify_path(rel_path: str) -> CoverageRecord:
             exclusion_reason="Untracked entry script and spec written by the native-archive build step",
         )
 
+    # OS-generated metadata files (macOS Finder/AppleDouble, Windows)
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename in {".DS_Store", "Thumbs.db"} or basename.startswith("._"):
+        return CoverageRecord(
+            path=normalized,
+            classification="excluded",
+            inclusion_rule="os-metadata-file",
+            exclusion_reason="OS-generated metadata file not part of the tracked checkout",
+        )
+
     # Source code
     if normalized.startswith("src/"):
         return CoverageRecord(
