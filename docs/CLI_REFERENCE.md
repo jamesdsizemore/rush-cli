@@ -180,6 +180,66 @@ The following explicit permission flags are available across tools:
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
 
+### `rush status` and bare `rush`
+
+`rush status [PATH]` and bare `rush` (no subcommand) print the same read-only view: project root, registration/config state, detected engines, current activity, latest attempt, published result, agent registration/activation state, and useful memory count. Neither writes anything. On an unregistered project, the summary opens with a one-line banner (`warn -- unregistered project /path/to/project; no analysis has run; project is not registered.`) followed by:
+
+```text
+Project
+  root: /path/to/project
+  registration: unregistered
+  configured: no
+Config
+  rush.toml: missing
+Engines
+  none detected
+Activity
+  idle
+Latest attempt
+  none
+Published result
+  none
+Agents
+  claude-desktop: not_detected, activation unverified
+  claude-code: not_detected, activation unverified
+  cursor: not_detected, activation unverified
+  windsurf: not_detected, activation unverified
+  zed: not_detected, activation unverified
+  codex: not_detected, activation unverified
+Memory
+  absent
+Next actions
+  project is not registered: rush setup /path/to/project
+```
+
+`rush status --json` returns the canonical `ToolResult`; `--result HANDLE` with `--view result|bytes`, `--cursor`, `--offset`, `--limit`, `--max-bytes` retrieves a stored result page, the same contract as `rush context retrieve`.
+
+### `rush check`'s six steps
+
+`rush check PATH` runs `format` (check-only), `lint`, `typecheck`, `dead`, `slop`, then `test` in that order; every step runs and is reported by default (`--fail-fast` stops at the first failing step and reports the rest not run). The `test` step needs `--allow-build`; without it, `test` is `skipped` with the permission reason. Example against a project with one unused function and no test config:
+
+```text
+[CHECK] Status: warn
+check: executed 5 tool(s) with status 'warn'
+  1. format    ok      format [ruff]: all formatted
+  2. lint      ok      lint [ruff]: clean
+  3. typecheck ok      typecheck [mypy+pyrefly]: 0 finding(s)
+  4. dead      warn    dead [vulture]: 1 finding(s)
+  5. slop      skipped skipped: requires permission: --allow-download (aislop's npm package is not in the local npm cache) (permission_denied)
+  6. test      skipped test: no pyproject.toml or package.json found above /path/to/project
+6/6 steps
+  - [warn] unused function 'f' (60% confidence)
+1/1 findings
+```
+
+### Deduplicated diagnostics
+
+`lint` and `check` collapse identical repeated findings emitted by the same producer at the same physical file (matched by inode identity, falling back to the lexical path when the file is missing) into one; a finding that differs in end location, message, fix, evidence, or producer stays separate, and results spanning multiple engines/languages keep each engine's own counts distinct.
+
+### Memory contribution in scan/check summaries
+
+When a scan or check run's tools actually read or wrote memory records, its summary line ends with one clause built from that run's own `metadata.memory` union: `memory: read {N} prior record(s), wrote {M} record(s)`, for example `"probe-suite: executed 2 tool(s) with status 'ok'; memory: read 1 prior record, wrote 1 record"`. The clause is omitted entirely when neither happened; the record ids are in `metadata.memory.used`/`.written` for `--json`/detail output.
+
 ### `rush fix PATH`
 
 Status: P64-01 implements bounded target restoration for this route; Phase 64 remains in progress. Run `rush fix PATH --dry-run --force` to inspect native Ruff-selected files with `check --show-files --no-cache`, then read-only `format --diff --no-cache`, `check --diff --no-cache`, and ordinary `check --no-cache`. The ordinary check catches unfixable lint findings that diff output can miss. A no-change run returns `ok`; proposed formatting or any lint finding returns `warn`; invalid Python, Ruff process/config errors, failed AST validation, or snapshot/restore failures return `error`; unavailable Ruff returns `skipped`.
@@ -264,7 +324,7 @@ Flags vary by registered command. Generic catalog commands expose `--workspace`,
 
 ## Result and exit behavior
 
-`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. A missing target is `TARGET_NOT_FOUND` and a malformed one is `TARGET_INVALID`, both exit 2 with no engine run. See [Result reference](reference/result-reference.md).
+`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. A missing target is `TARGET_NOT_FOUND` and a malformed one is `TARGET_INVALID`, both exit 2 with no engine run. See [Result reference](reference/result-reference.md). For example, `rush lint /no/such/path` (no such target) returns `error` and exits 2; `rush check` with only an advisory finding returns `warn` and exits 1.
 
 
 ## Context Intelligence & Ship Commands (Phases 41–43)

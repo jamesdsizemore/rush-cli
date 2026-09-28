@@ -16,6 +16,9 @@ Before commit/after edits: format-check, lint, typecheck, dead, slop, and test a
 ### `rush_status` (Phase 70)
 Call first each session: read-only, no grant required. Reports `path`'s project setup, engines, scans, results, agents, and memory state without changing anything. `operation: "status"` (default) or `"result"` (reads a stored result via `result_handle`, `view: "result"|"bytes"`, `cursor`, `offset`, and the common `limit`/`max_bytes` fields); also accepts `session_id` and `project`.
 
+### Truthful descriptions and server instructions (Phase 70 T5)
+Core `mcp_description` text and the server's own `instructions` field (`build_server_instructions` in `src/rush/mcp.py`) share one contract and never claim more than a tool verifies: `rush_check`'s test step runs only with `allow_build`, else it is skipped and the check is never `ok`; `rush_status` states plainly that agent registration is not verified activity; `rush_review` states that its engines are deterministic heuristics and that `use_llm=true` sends the heuristic findings to a configured external LLM provider, with no Rush grant gating that call; `rush_memory` states that reads need a non-empty `session_allowlist` and writes need `allow_cache_write`. The `instructions` text also varies by connected profile (`core`, `full`, or the fixed restricted memory-session text) and lists exactly that profile's registered tool names.
+
 ## Common result
 
 Catalog tools return canonical `ToolResultV1` data (`schema_version: "1.0.0"`) documented in [Result reference](result-reference.md). Service operations remain JSON-RPC protocol frames. Some legacy custom MCP tools still return specialized strings or dictionaries; MCP discovery and each tool's generated schema are authoritative. A missing optional engine in a catalog tool is a structured `skipped` result.
