@@ -93,6 +93,7 @@ def _provision_aislop(
         os_name=platform[0],
         arch=platform[1],
         data_root=data_root,
+        which=lambda name: f"/usr/bin/{name}",
         runner=runner,
     )
     return resolve_and_apply_provision_plan(
@@ -127,8 +128,13 @@ def test_slop_runs_setup_provisioned_aislop_not_on_path(
     )
     assert "aislop" in result.applied, result.failed
 
+    # PATH holds only Node.js's npx (a fake printing aislop's report): the
+    # engine runs the provisioned launcher's pinned npm package through it.
     empty_bin = tmp_path / "empty-bin"
     empty_bin.mkdir()
+    npx = empty_bin / "npx"
+    npx.write_text(f"#!/bin/sh\nprintf '%s' '{_AISLOP_REPORT}'\n")
+    npx.chmod(0o755)
     monkeypatch.setenv("PATH", str(empty_bin))
     monkeypatch.setattr(common, "_venv_scripts_dir", lambda: None)
     clear_binary_cache()
@@ -158,14 +164,15 @@ def test_reused_aislop_with_cold_npm_cache_fetches_its_runtime(tmp_path: Path) -
 
     assert "aislop" in second.reused, second.failed
     # The plan's offline probe, then apply's offline check, the granted
-    # online fetch, and the offline verification.
+    # online fetch, and the offline verification -- each through npx.
     assert [
-        ((env or {}).get("npm_config_offline"), argv[1:]) for argv, env in calls
+        ((env or {}).get("npm_config_offline"), argv[0], argv[-2:])
+        for argv, env in calls
     ] == [
-        ("true", ["--version"]),
-        ("true", ["--version"]),
-        ("false", ["--version"]),
-        ("true", ["--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
+        ("false", "/usr/bin/npx", ["aislop", "--version"]),
+        ("true", "/usr/bin/npx", ["aislop", "--version"]),
     ]
 
 

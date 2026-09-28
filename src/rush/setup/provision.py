@@ -680,7 +680,7 @@ def _plan_entry(
         # A reused npm-runtime engine whose package is not usable offline
         # (a new machine, a cleared cache) needs the fetch grants again.
         cold = engine.engine_id in NPM_RUNTIME_FETCH and not _npm_runtime_offline(
-            engine.engine_id, Path(manifest.executable), runner
+            engine.engine_id, Path(manifest.executable), runner, which
         )
         return replace(
             entry,
@@ -1005,17 +1005,36 @@ def prefetch_npm_runtime(
     runner: Runner = _default_runner,
     *,
     allow_fetch: bool = True,
+    which: Callable[[str], str | None] | None = None,
 ) -> str:
     """Make `engine_id`'s npm runtime available offline: `already_cached`
     when an offline run already works, else `fetched` after one online run
     that a second offline run then verifies. Without `allow_fetch` there is
-    no online run: `fetch_not_granted`. Raises ProvisionError."""
-    from ..engines.aislop import AISLOP_NO_TELEMETRY_ENV
+    no online run: `fetch_not_granted`. Runs the npm package `executable`
+    (the launcher) pins exactly as the engine does, never the launcher.
+    Raises ProvisionError."""
+    from ..engines.aislop import (
+        AISLOP_NO_TELEMETRY_ENV,
+        NO_NODE_STDERR,
+        npm_command,
+        npm_package,
+    )
 
     args = NPM_RUNTIME_FETCH.get(engine_id)
     if args is None:
         return "not_applicable"
-    argv = [str(executable), *args]
+    package = npm_package(str(executable))
+    if package is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine_id}: no aislop_py package found for {executable} "
+            "to pin its npm version",
+        )
+    argv = npm_command(package, list(args), which)
+    if argv is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED", f"{engine_id}: {NO_NODE_STDERR}"
+        )
 
     def run(offline: str) -> subprocess.CompletedProcess[str]:
         try:
@@ -1047,11 +1066,18 @@ def prefetch_npm_runtime(
     return "fetched"
 
 
-def _npm_runtime_offline(engine_id: str, executable: Path, runner: Runner) -> bool:
+def _npm_runtime_offline(
+    engine_id: str,
+    executable: Path,
+    runner: Runner,
+    which: Callable[[str], str | None] | None = None,
+) -> bool:
     """True when `engine_id`'s npm package already runs offline (one offline
     run, no network); an executable that cannot run counts as not usable."""
     try:
-        state = prefetch_npm_runtime(engine_id, executable, runner, allow_fetch=False)
+        state = prefetch_npm_runtime(
+            engine_id, executable, runner, allow_fetch=False, which=which
+        )
     except ProvisionError:
         return False
     return state == "already_cached"
@@ -1424,6 +1450,7 @@ def _apply_entry(
             Path(reused.executable),
             ctx.runner,
             allow_fetch=granted,
+            which=ctx.which,
         )
         if state == "fetch_not_granted":
             result.permission_blocked[entry.engine_id] = flags
@@ -1444,13 +1471,15 @@ def _apply_entry(
         dest, entry.engine_id, identity.version, ctx.project_root
     )
     if existing is not None:
-        prefetch_npm_runtime(entry.engine_id, Path(existing.executable), ctx.runner)
+        prefetch_npm_runtime(
+            entry.engine_id, Path(existing.executable), ctx.runner, which=ctx.which
+        )
         _update_selection(ctx.project_root, entry.engine_id, dest / MANIFEST_FILENAME)
         result.reused[entry.engine_id] = existing
         return
     _claim_destination(dest, entry, identity, ctx)
     executable = _install_into(engine, identity, dest, ctx)
-    prefetch_npm_runtime(entry.engine_id, executable, ctx.runner)
+    prefetch_npm_runtime(entry.engine_id, executable, ctx.runner, which=ctx.which)
     probe_argv = (
         [str(executable), *entry.probe[1:]]
         if entry.probe
