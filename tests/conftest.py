@@ -872,7 +872,7 @@ def native_release_archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
     build = tmp_path_factory.mktemp("pyinstaller")
     entry = build / "rush_entry.py"
     entry.write_text(
-        'from rush.cli import cli\n\nif __name__ == "__main__":\n    cli()\n',
+        'from rush.entry import main\n\nif __name__ == "__main__":\n    main()\n',
         encoding="utf-8",
     )
     if importlib.util.find_spec("PyInstaller") is not None:

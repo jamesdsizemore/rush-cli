@@ -430,7 +430,7 @@ def test_fuzz_runs_target_and_reports_reproducer(monkeypatch, tmp_path: Path) ->
 
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = []
 
     def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
@@ -491,7 +491,7 @@ def test_fuzz_config_and_explicit_options_reach_argv(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = []
 
     def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
@@ -570,7 +570,7 @@ def test_fuzz_uses_anchored_stderr_stats_and_rejects_fake_stdout(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     outputs = iter(
         [
             (0, "runs 1000", ""),
@@ -608,7 +608,7 @@ def test_fuzz_timeout_and_positive_exit_without_reproducer_are_errors(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = iter((subprocess.TimeoutExpired([sys.executable], 4),))
 
     def timeout_run(*_args, **_kwargs):
@@ -642,7 +642,7 @@ def test_fuzz_positive_exit_without_reproducer_is_error(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     monkeypatch.setattr(
         fuzz_mod,
         "run_subprocess",
@@ -667,7 +667,7 @@ def test_fuzz_report_symlink_cannot_overwrite_outside_file(
     outside.write_text("sentinel", encoding="utf-8")
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
 
     def fake_run(argv, *, cwd=None, **_kwargs):
         report = Path(cwd) / "fuzz-report.json"
@@ -695,7 +695,7 @@ def test_fuzz_crash_symlink_outside_run_is_rejected(
     outside.mkdir()
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
 
     def fake_run(argv, *, cwd=None, **_kwargs):
         crashes = Path(cwd) / "crashes"

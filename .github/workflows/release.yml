@@ -80,10 +80,10 @@ jobs:
         shell: bash
         run: |
           cat > rush_entry.py <<'PYEOF'
-          from rush.cli import cli
+          from rush.entry import main
 
           if __name__ == "__main__":
-              cli()
+              main()
           PYEOF
 
       - name: Compile standalone binary

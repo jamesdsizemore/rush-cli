@@ -7,12 +7,12 @@ import difflib
 import hashlib
 import os
 import random
-import sys
 from pathlib import Path
 from typing import Any
 
 from ..io.physical_paths import ContainmentError, PhysicalRoot
 from ..permissions import ExecutionPermissions, check_permissions
+from ..runtime.project_python import PYTHON_PREREQUISITE, project_python
 from ..safety.redactor import sanitize_value
 from .common import run_subprocess
 
@@ -42,7 +42,7 @@ def _plans(nodes: list[str], runs: int, seed: int) -> list[dict[str, Any]]:
     return result
 
 
-def _execute(root: Path, plans, intervention: str) -> list[dict[str, Any]]:
+def _execute(python: str, root: Path, plans, intervention: str) -> list[dict[str, Any]]:
     plugin = root / "_rush_test_heal_perturb.py"
     if not plugin.exists():
         plugin.write_text(
@@ -67,7 +67,7 @@ def _execute(root: Path, plans, intervention: str) -> list[dict[str, Any]]:
         env["RUSH_TEST_HEAL_RANDOM_SEED"] = str(plan["random_seed"])
         proc = run_subprocess(
             [
-                sys.executable,
+                python,
                 "-m",
                 "pytest",
                 "-p",
@@ -395,6 +395,16 @@ class TestHealer:
                 {"status": "error", "error": f"invalid test target: {exc}"}
             ).value
         relative = target.relative_to(self.project_root)
+        python = project_python(self.project_root)
+        if python is None:
+            return {
+                "status": "skipped",
+                "summary": f"test-heal: {PYTHON_PREREQUISITE}",
+                "runs": runs,
+                "seed": seed,
+                "dry_run": dry_run,
+            }
+        self._python = python
         from ..patch.sandbox import PatchSandboxManager
 
         manager = PatchSandboxManager(self.project_root)
@@ -403,7 +413,7 @@ class TestHealer:
             sandbox = manager.create_sandbox()
             collected = run_subprocess(
                 [
-                    sys.executable,
+                    python,
                     "-m",
                     "pytest",
                     "--collect-only",
@@ -446,7 +456,7 @@ class TestHealer:
     def _diagnose_in_sandbox(
         self, sandbox, relative, original, plans, seed, dry_run, permissions
     ):
-        baseline = _execute(sandbox, plans, "baseline")
+        baseline = _execute(self._python, sandbox, plans, "baseline")
         runs = len(plans)
         passes = sum(item["result"] == "passed" for item in baseline)
         failures = runs - passes
@@ -484,7 +494,7 @@ class TestHealer:
         isolated_target = sandbox / relative
         for cause, repaired in _candidate_sources(original, seed).items():
             isolated_target.write_text(repaired, encoding="utf-8")
-            observations = _execute(sandbox, plans, CAUSES[cause])
+            observations = _execute(self._python, sandbox, plans, CAUSES[cause])
             base["interventions"].append(
                 {"cause": CAUSES[cause], "observations": observations}
             )
@@ -543,7 +553,7 @@ class TestHealer:
                 required_commands=(
                     VerifierCommandPlan(
                         command=(
-                            sys.executable,
+                            self._python,
                             "-m",
                             "pytest",
                             relative.as_posix(),

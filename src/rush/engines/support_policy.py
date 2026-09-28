@@ -16,6 +16,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, Self
 
+from rush.runtime.project_python import project_python
 from rush.tools import common
 from rush.tools.common import clear_binary_cache, resolve_binary
 
@@ -201,8 +202,10 @@ class EngineSupportPolicy:
     def discover_engine(self, family_name: str) -> str | None:
         """Discover engine path deterministically respecting active environment."""
         record = self.get_family(family_name)
-        if record.executable in ("python-built-in", "python-stdlib", "python-module"):
+        if record.executable in ("python-built-in", "python-stdlib"):
             return sys.executable
+        if record.executable == "python-module":
+            return project_python()
         return resolve_binary(record.executable)
 
     def discover_capabilities(self) -> dict[str, bool]:
