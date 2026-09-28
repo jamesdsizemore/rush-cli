@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import codecs
+import functools
 import io
 import json
 import os
@@ -839,8 +840,6 @@ class SectionView:
     filters: dict[str, Any] = field(default_factory=dict)
     expanded: set[str] = field(default_factory=set)
     page_cursor: str | None = None
-    # T28-E: the cache key of the background read in flight for this view.
-    loading_key: Any = None
 
 
 def _coerce_view(value: SectionView | Mapping[str, Any]) -> SectionView:
@@ -1992,6 +1991,46 @@ def _cycle_agent(state: TuiState, actions: ScanActions) -> None:
         state.selected_agent_id = state.agent_ids[(idx + 1) % len(state.agent_ids)]
 
 
+def _git_apply(**changes: Any) -> Callable[[TuiState], None]:
+    """T28-E: a Git read's result as `TuiState` field updates, applied by
+    `_drain_results` on the loop thread."""
+
+    def apply(state: TuiState) -> None:
+        for name, value in changes.items():
+            setattr(state, name, value)
+
+    return apply
+
+
+def _git_request(
+    state: TuiState,
+    project: ProjectState,
+    key: str,
+    label: str,
+    read: Callable[[], Callable[[TuiState], None]],
+) -> None:
+    """T28-E: run one Git read on a worker thread; the key path only records
+    the request and shows "loading". `read` does the I/O and returns the
+    update `_drain_results` applies while this request is still current: a
+    newer request under the same `key`, a project switch or a changed
+    identity discards it, like every section load."""
+    generation = project.begin_request(key)
+    identity = project.identity()
+    results = state.result_queue
+    state.git_message = f"loading {label}"
+
+    def _worker() -> None:
+        try:
+            payload: Any = read()
+            ok = True
+        except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
+            # worker: a failed read is shown, never raised into the loop.
+            payload, ok = str(exc) or type(exc).__name__, False
+        results.put((project, key, generation, identity, ok, payload))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def _load_git_view(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
@@ -1999,38 +2038,47 @@ def _load_git_view(
     `project` (the same `project_snapshot()` the dashboard's `section=git`/
     `section=artifacts` HTTP endpoints render). A load failure surfaces via
     `state.git_message`, never a crash of the render loop -- same contract as
-    `_start_scan_thread`'s worker-error handling above."""
+    `_start_scan_thread`'s worker-error handling above. T28-E: the reads run
+    on the worker (`_git_request`); a pending page or diff becomes stale."""
     state.git_page = None
     state.git_selected = 0
     state.git_expanded = None
     state.git_dirty_index = -1
-    if actions.git_snapshot is None:
+    for key in ("git_page", "git_diff"):
+        project.pending.pop(key, None)
+    snapshot = actions.git_snapshot
+    if snapshot is None:
+        project.pending.pop("git", None)
         state.git_data = None
         state.git_message = "git view unavailable"
         return
-    try:
-        state.git_data = actions.git_snapshot(project.root, data_root=state.data_root)
-        state.git_message = ""
-    except Exception as exc:  # noqa: BLE001 -- injectable Phase65/workflows
-        # seam (`actions.git_snapshot`); a failed load must surface to the
-        # user, never crash key dispatch or the render loop.
-        state.git_data = None
-        state.git_message = f"git view failed: {exc}"
-        return
-    git = (state.git_data or {}).get("git") or {}
-    if project.project_id is None or not git.get("has_git"):
-        return
-    from rush.workflows import projects as wp
+    root, project_id, data_root = project.root, project.project_id, state.data_root
 
-    try:
-        branch = wp.project_git_branch(project.project_id, data_root=state.data_root)
-        worktree = wp.project_git_worktree(
-            project.project_id, data_root=state.data_root
+    def _read() -> Callable[[TuiState], None]:
+        try:
+            data = snapshot(root, data_root=data_root)
+        except Exception as exc:  # noqa: BLE001 -- injectable Phase65/workflows
+            # seam (`actions.git_snapshot`); a failed load must surface to the
+            # user, never crash key dispatch or the render loop.
+            return _git_apply(git_data=None, git_message=f"git view failed: {exc}")
+        git = (data or {}).get("git") or {}
+        if project_id is None or not git.get("has_git"):
+            return _git_apply(git_data=data, git_message="")
+        from rush.workflows import projects as wp
+
+        try:
+            branch = wp.project_git_branch(project_id, data_root=data_root)
+            worktree = wp.project_git_worktree(project_id, data_root=data_root)
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(
+                git_data=data, git_message=f"git branch/worktree read failed: {exc}"
+            )
+        return _git_apply(
+            git_data={**(data or {}), "branch": branch, "worktree": worktree},
+            git_message="",
         )
-    except (wp.ProjectError, OSError) as exc:
-        state.git_message = f"git branch/worktree read failed: {exc}"
-        return
-    state.git_data = {**(state.git_data or {}), "branch": branch, "worktree": worktree}
+
+    _git_request(state, project, "git", "Git history", _read)
 
 
 def _git_page_commits(state: TuiState) -> tuple[list[dict[str, Any]], int, Any]:
@@ -2057,35 +2105,49 @@ def _git_turn(step: int) -> Callable[[TuiState, ScanActions], None]:
             state.git_message = "no older commits"
             return
         if step < 0 and skip == 0:
-            state.git_message = "already on the newest commits"
+            if state.active_project.pending.pop("git_page", None) is not None:
+                state.git_message = ""  # the older page still loading is dropped
+            else:
+                state.git_message = "already on the newest commits"
             return
         target = next_skip if step > 0 else max(0, skip - PAGE_SIZE)
         state.git_selected, state.git_expanded = 0, None
         state.git_message = ""
+        project = state.active_project
+        project.pending.pop("git_diff", None)  # a diff of this page is stale
         if target == 0:
+            project.pending.pop("git_page", None)  # so is a late older page
             state.git_page = None
             return
-        project = state.active_project
-        if project.project_id is None:
+        project_id, data_root = project.project_id, state.data_root
+        if project_id is None:
             state.git_message = "git history paging needs a registered project"
             return
-        from rush.workflows import projects as wp
 
-        try:
-            page = wp.project_git_history(
-                project.project_id,
-                data_root=state.data_root,
-                limit=PAGE_SIZE,
-                skip=target,
-            )
-        except (wp.ProjectError, OSError) as exc:
-            state.git_message = f"git history read failed: {exc}"
-            return
-        state.git_page = {
-            "commits": list(page.get("commits") or []),
-            "skip": target,
-            "next_skip": page.get("next_skip"),
-        }
+        def _read() -> Callable[[TuiState], None]:
+            from rush.workflows import projects as wp
+
+            try:
+                page = wp.project_git_history(
+                    project_id, data_root=data_root, limit=PAGE_SIZE, skip=target
+                )
+            except (wp.ProjectError, OSError) as exc:
+                return _git_apply(git_message=f"git history read failed: {exc}")
+            loaded = {
+                "commits": list(page.get("commits") or []),
+                "skip": target,
+                "next_skip": page.get("next_skip"),
+            }
+
+            def apply(state: TuiState) -> None:
+                # A diff requested from the page this one replaces is stale.
+                state.active_project.pending.pop("git_diff", None)
+                state.git_page, state.git_selected = loaded, 0
+                state.git_expanded, state.git_message = None, ""
+
+            return apply
+
+        _git_request(state, project, "git_page", "commits", _read)
 
     return run
 
@@ -2097,28 +2159,35 @@ def _git_expand_commit(state: TuiState) -> None:
     if not commits:
         state.git_message = "no commit to expand"
         return
-    if project.project_id is None:
+    project_id, data_root = project.project_id, state.data_root
+    if project_id is None:
         state.git_message = "commit diffs need a registered project"
         return
     commit = commits[min(state.git_selected, len(commits) - 1)]
     commit_hash = str(commit.get("hash", ""))
-    from rush.workflows import projects as wp
+    title = f"commit {commit_hash[:8]} {commit.get('subject', '')}"
 
-    try:
-        diff = wp.project_git_commit_diff(
-            project.project_id, commit_hash, data_root=state.data_root
+    def _read() -> Callable[[TuiState], None]:
+        from rush.workflows import projects as wp
+
+        try:
+            diff = wp.project_git_commit_diff(
+                project_id, commit_hash, data_root=data_root
+            )
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(git_message=f"git commit diff failed: {exc}")
+        return _git_apply(
+            git_expanded={
+                "title": title,
+                "paths": list(diff.get("changed_paths") or []),
+                "lines": list(diff.get("lines") or []),
+                "truncated": bool(diff.get("truncated")),
+                "error": diff.get("error"),
+            },
+            git_message="",
         )
-    except (wp.ProjectError, OSError) as exc:
-        state.git_message = f"git commit diff failed: {exc}"
-        return
-    state.git_expanded = {
-        "title": f"commit {commit_hash[:8]} {commit.get('subject', '')}",
-        "paths": list(diff.get("changed_paths") or []),
-        "lines": list(diff.get("lines") or []),
-        "truncated": bool(diff.get("truncated")),
-        "error": diff.get("error"),
-    }
-    state.git_message = ""
+
+    _git_request(state, project, "git_diff", "commit diff", _read)
 
 
 def _git_dirty_diff(state: TuiState, actions: ScanActions) -> None:
@@ -2132,28 +2201,32 @@ def _git_dirty_diff(state: TuiState, actions: ScanActions) -> None:
     if not dirty:
         state.git_message = "no dirty files"
         return
-    if project.project_id is None:
+    project_id, data_root = project.project_id, state.data_root
+    if project_id is None:
         state.git_message = "dirty-file diffs need a registered project"
         return
     state.git_dirty_index = (state.git_dirty_index + 1) % len(dirty)
     path = str(dirty[state.git_dirty_index].get("path", ""))
-    from rush.workflows import projects as wp
 
-    try:
-        diff = wp.project_git_dirty_diff(
-            project.project_id, path, data_root=state.data_root
+    def _read() -> Callable[[TuiState], None]:
+        from rush.workflows import projects as wp
+
+        try:
+            diff = wp.project_git_dirty_diff(project_id, path, data_root=data_root)
+        except (wp.ProjectError, OSError) as exc:
+            return _git_apply(git_message=f"git dirty diff failed: {exc}")
+        return _git_apply(
+            git_expanded={
+                "title": f"dirty {path}",
+                "paths": [path],
+                "lines": list(diff.get("lines") or []),
+                "truncated": bool(diff.get("truncated")),
+                "error": diff.get("error"),
+            },
+            git_message="",
         )
-    except (wp.ProjectError, OSError) as exc:
-        state.git_message = f"git dirty diff failed: {exc}"
-        return
-    state.git_expanded = {
-        "title": f"dirty {path}",
-        "paths": [path],
-        "lines": list(diff.get("lines") or []),
-        "truncated": bool(diff.get("truncated")),
-        "error": diff.get("error"),
-    }
-    state.git_message = ""
+
+    _git_request(state, project, "git_diff", "dirty diff", _read)
 
 
 def _handle_search_key(state: TuiState, key: str) -> None:
@@ -4132,13 +4205,6 @@ def _load_overview_section(
     return "populated", None, data
 
 
-# T28-E: how long the render thread waits for a background Tokens read
-# before painting "loading"; a slower read is applied by `_drain_results`.
-# ponytail: one fixed wait inside Phase 66's 300ms transition bound; make it
-# per-frame budgeted if large telemetry DBs routinely exceed it.
-_LOAD_WAIT_S = 0.25
-
-
 def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
     """Tokens reload only when root, filter, or telemetry mtime changes."""
     db = Path(root) / ".rush" / "telemetry" / "tokens.db"
@@ -4151,67 +4217,50 @@ def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]
     return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
 
 
-def _refresh_tokens_view(state: TuiState, project: ProjectState) -> SectionView:
-    """The cached Tokens view: one `project_token_usage` read per root/filter/
-    telemetry-mtime change, never one per painted frame, and always on a
-    worker thread, never this one. The worker posts through the same
-    generation/identity-checked `result_queue` post the section loaders use;
-    a read finished within `_LOAD_WAIT_S` is applied to this frame."""
-    view = state.views.setdefault((project_key(project), "tokens"), SectionView())
-    key = _tokens_cache_key(project.root, view.filters)
-    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
-        return view
-    if project.project_id is None:
-        view.state, view.reason, view.data = (
-            "unavailable",
-            "project not registered",
-            None,
-        )
-        return view
-    if "tokens" in project.pending and view.loading_key == key:
-        return view  # this exact read is already in flight
+def _load_tokens_section(
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    actions: ScanActions,
+    *,
+    filters: Mapping[str, Any] | None = None,
+) -> LoadOutcome:
+    """T28-E: one `project_token_usage` read for the Tokens view's filters,
+    on the section worker. The result carries the root/filter/telemetry-mtime
+    key and project id it was read for, so `_request_stale_tokens` re-reads
+    only when one of them changes, never once per painted frame."""
+    filters = dict(filters or {})
+    # The key is taken before the read: a write during it triggers one more.
+    marker = {"_cache_key": _tokens_cache_key(root, filters), "_project_id": project_id}
+    if project_id is None:
+        return "unavailable", "project not registered", marker
     from rush.workflows import projects as wp
 
-    filters = {k: v for k, v in view.filters.items() if not str(k).startswith("_")}
-    project_id, data_root = project.project_id, state.data_root
-    generation = project.begin_request("tokens")
-    identity = project.identity()
-    view.state, view.reason, view.data, view.loading_key = "loading", None, None, key
-    box: dict[str, Any] = {}
-    lock = threading.Lock()
-    done = threading.Event()
-    results = state.result_queue
+    query = {k: v for k, v in filters.items() if not str(k).startswith("_")}
+    try:
+        data = dict(wp.project_token_usage(project_id, data_root=data_root, **query))
+    except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
+        # worker, but the failure keeps its key so it is not re-read every tick.
+        return "failed", str(exc) or type(exc).__name__, marker
+    return "populated", None, {**data, **marker}
 
-    def _worker() -> None:
-        outcome: LoadOutcome
-        try:
-            data = dict(
-                wp.project_token_usage(project_id, data_root=data_root, **filters)
-            )
-            data["_cache_key"] = key
-            outcome = ("populated", None, data)
-        except Exception as exc:  # noqa: BLE001 -- same contract as `_submit`'s
-            # worker: a failed read is shown as a failed section, never raised.
-            outcome = ("failed", str(exc) or type(exc).__name__, {"_cache_key": key})
-        with lock:
-            if box.get("abandoned"):
-                results.put((project, "tokens", generation, identity, True, outcome))
-            else:
-                box["outcome"] = outcome
-        done.set()
 
-    threading.Thread(target=_worker, daemon=True).start()
-    done.wait(_LOAD_WAIT_S)
-    with lock:
-        finished = box.pop("outcome", None)
-        if finished is None:
-            box["abandoned"] = True
-    if finished is not None and project.accepts("tokens", generation, identity):
-        del project.pending["tokens"]
-        view.state, view.reason, view.data = finished
-        view.loading_key = None
-        view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return view
+def _request_stale_tokens(state: TuiState) -> None:
+    """T28-E: once per loop tick (two `stat`s, no read), re-request the open
+    Tokens view when its root, filter, telemetry mtime or project id no
+    longer match the loaded result."""
+    if not state.projects or state.section != "tokens":
+        return
+    project = state.active_project
+    view = state.views.get((project_key(project), "tokens"))
+    if view is None or "tokens" in project.pending:
+        return
+    data = view.data if isinstance(view.data, Mapping) else {}
+    if (
+        data.get("_cache_key") != _tokens_cache_key(project.root, view.filters)
+        or data.get("_project_id") != project.project_id
+    ):
+        state.load_requests.add((project_key(project), "tokens"))
 
 
 def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
@@ -4496,6 +4545,7 @@ _SECTION_LOADERS: dict[
     "overview": _load_overview_section,
     "scans": _load_scans_section,
     "setup": _load_setup_section,
+    "tokens": _load_tokens_section,
 }
 
 
@@ -4516,6 +4566,12 @@ def _submit(
     key = (project_key(project), section)
     if key not in state.views:
         state.views[key] = SectionView(state="loading", generation=generation)
+    if section == "tokens":
+        # T28-E: numbers read for another root/filter/mtime are never shown
+        # under this one; the view says "loading" until the result drains.
+        view = state.views[key]
+        view.state, view.reason, view.data = "loading", None, None
+        loader = functools.partial(_load_tokens_section, filters=dict(view.filters))
     args = (project.root, project.project_id, state.data_root, actions)
     results = state.result_queue
 
@@ -4573,6 +4629,14 @@ def _drain_results(state: TuiState) -> bool:
             continue  # superseded, switched away, or identity changed
         del project.pending[section]
         applied = True
+        if section.startswith("git"):
+            # T28-E: a `_git_request` read; Git state is the active project's.
+            if project is state.active_project:
+                if ok:
+                    payload(state)
+                else:
+                    state.git_message = f"git read failed: {payload}"
+            continue
         if ok and section == "overview" and isinstance(payload[2], Mapping):
             registration = payload[2].get("registration")
             if isinstance(registration, Mapping):
@@ -4610,6 +4674,7 @@ def _pump(state: TuiState, actions: ScanActions) -> bool:
     section already loading is not started again (F5 cannot pile up
     threads). True when a result was applied, so the screen must redraw."""
     applied = _drain_results(state)
+    _request_stale_tokens(state)
     requests, state.load_requests = state.load_requests, set()
     for pkey, section in requests:
         for project in state.projects:
@@ -5048,10 +5113,6 @@ def _refresh(state: TuiState, actions: ScanActions) -> None:
         _load_git_view(state, state.active_project, actions)
     elif state.section == "artifacts":
         state.views.pop((project_key(state.active_project), "artifacts"), None)
-    elif state.section == "tokens":
-        tokens = state.views.get((project_key(state.active_project), "tokens"))
-        if tokens is not None and isinstance(tokens.data, dict):
-            tokens.data.pop("_cache_key", None)  # the next frame re-reads
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -5884,8 +5945,6 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
         return _render_setup(state, project)
     if section == "artifacts":
         return _render_artifacts(state, project)
-    if section == "tokens":
-        _refresh_tokens_view(state, project)
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
     if section == "tokens" and view is not None:
