@@ -1186,7 +1186,18 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": ["codegraph"],
+      "argv": [
+        "codegraph",
+        "callers",
+        "no_such_symbol",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "no symbol named 'no_such_symbol' is in the code graph"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1231,7 +1242,18 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "seed": ["codegraph"],
+      "argv": [
+        "codegraph",
+        "slice",
+        "no_such_symbol",
+        "--json"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "no symbol named 'no_such_symbol' is in the code graph"
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []
@@ -1896,19 +1918,20 @@
     "argv": [
       "context",
       "retrieve",
-      "0000000000000000000000000000000000000000000000000000000000000000",
+      "<chunk-handle>",
       "--json"
     ],
     "canonical": "rush context retrieve",
     "family": "inspection",
     "fixture": "isolated-home+fixture-project(example.py,example.json)",
     "expect": {
+      "seed": ["context-chunk"],
       "json_paths": {
         "tool": "continuity",
-        "status": "skipped"
+        "status": "ok"
       },
       "human_contains": [
-        "continuity skipped"
+        "Recovered context handle."
       ],
       "exit": 0
     },
@@ -1919,7 +1942,20 @@
       "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
     },
     "failure": {
-      "not_applicable": "route takes no filesystem target to make missing"
+      "argv": [
+        "context",
+        "retrieve",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "--json"
+      ],
+      "json_paths": {
+        "tool": "continuity",
+        "status": "error"
+      },
+      "human_contains": [
+        "Context handle was not found."
+      ],
+      "exit": 2
     },
     "side_effects": {
       "allowed_paths": []

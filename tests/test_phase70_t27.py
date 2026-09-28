@@ -251,7 +251,11 @@ _GIT_ENV = {
 def _seed_git_repo(cwd: Path) -> dict[str, str]:
     env = {**os.environ, **_GIT_ENV}
     with _process_stub({"processes": "git"}):
-        for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "seed"]):
+        for args in (
+            ["init", "-q", "-b", "main"],
+            ["add", "-A"],
+            ["commit", "-q", "-m", "seed"],
+        ):
             _REAL_RUN(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
     return {}
 
@@ -317,6 +321,55 @@ def _seed_rush_shim(cwd: Path) -> dict[str, str]:
     return {"<rush-binary>": str(shim)}
 
 
+def _seed_codegraph_index(cwd: Path) -> dict[str, str]:
+    """A small real code-graph index (one target symbol plus its caller) so
+    `codegraph callers`/`codegraph slice` can be asked about a name that
+    genuinely is not in the index, raising the route's own BadParameter."""
+    from rush.codegraph.python_ast import PythonCodeGraphBuilder
+    from rush.codegraph.store import CodeGraphStore, GraphEdge
+
+    store = CodeGraphStore(cwd / ".codegraph" / "graph.db")
+    target = cwd / "target.py"
+    target.write_text("def target_fn():\n    return 1\n", encoding="utf-8")
+    PythonCodeGraphBuilder.index_python_file(target, target.read_text(), store)
+    caller = cwd / "caller.py"
+    caller.write_text("def caller_fn():\n    target_fn()\n", encoding="utf-8")
+    PythonCodeGraphBuilder.index_python_file(caller, caller.read_text(), store)
+    store.insert_edge(
+        GraphEdge(
+            source_id=f"{caller}:caller_fn:1",
+            target_id=f"{target}:target_fn:1",
+            edge_type="CALLS",
+        )
+    )
+    return {}
+
+
+def _seed_context_chunk(cwd: Path) -> dict[str, str]:
+    """A real CCR chunk stored via `context pack` (budget forced below the
+    packed size so it spills to the cache), so `context retrieve` has a real
+    handle to recover instead of the all-zero not-found handle."""
+    target = cwd / "example.py"
+    if not target.exists():
+        target.write_text("def example() -> int:\n    return 1\n", encoding="utf-8")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "context",
+            "pack",
+            "--path",
+            "example.py",
+            "--budget",
+            "1",
+            "--allow-cache-write",
+            "--json",
+        ],
+    )
+    payload = json.loads(result.stdout)
+    handle = payload["extensions"]["metadata"]["context_envelope"]["recovery"]["handle"]
+    return {"<chunk-handle>": handle}
+
+
 _MATRIX_SEEDS: dict[str, Any] = {
     "rush-shim": _seed_rush_shim,
     "scanned-project-with-findings": lambda cwd: _seed_scanned_project(
@@ -327,6 +380,8 @@ _MATRIX_SEEDS: dict[str, Any] = {
     "moved-project": _seed_moved_project,
     "scanned-project": _seed_scanned_project,
     "connected-agent": _seed_connected_agent,
+    "codegraph": _seed_codegraph_index,
+    "context-chunk": _seed_context_chunk,
 }
 
 
