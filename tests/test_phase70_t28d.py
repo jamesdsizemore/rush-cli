@@ -744,10 +744,10 @@ def test_t28d_maintenance_preview_ids_equal_applied_ids(
     spy = _MemoryRunSpy(
         {
             "maintain": [
-                {"raw": {"data": {"candidate_ids": ["a1", "a2"], "applied": False}}}
+                {"status": "ok", "raw": {"candidate_ids": ["a1", "a2"], "apply": False}}
             ]
             * tasks
-            + [{"raw": {"data": {"candidate_ids": ["a1", "a2"], "applied": True}}}]
+            + [{"status": "ok", "raw": {"candidate_ids": ["a1", "a2"], "changed": 2}}]
             * tasks
         }
     )
@@ -760,7 +760,7 @@ def test_t28d_maintenance_preview_ids_equal_applied_ids(
         f"followed by an applied run (apply=True); saw {maintain_calls!r}"
     )
     assert maintain_calls[0]["request"]["apply"] is False
-    preview_ids = maintain_calls[0]["response"]["raw"]["data"]["candidate_ids"]
+    preview_ids = maintain_calls[0]["response"]["raw"]["candidate_ids"]
     applied_ids = maintain_calls[1].get("request", {}).get("candidate_ids")
     assert preview_ids == applied_ids == ["a1", "a2"]
 
@@ -777,7 +777,7 @@ def test_t28d_maintenance_cancel_makes_zero_apply_calls(
     spy = _MemoryRunSpy(
         {
             "maintain": [
-                {"raw": {"data": {"candidate_ids": ["a1"], "applied": False}}},
+                {"status": "ok", "raw": {"candidate_ids": ["a1"], "apply": False}},
             ]
         }
     )

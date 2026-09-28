@@ -2497,6 +2497,8 @@ def _memory_delete_preview(
         if item.get("id") in state.memory_selected_ids
     }
     owner_scope = _memory_owner_scope(state, project)
+    # Reviewed grants: cache_write (required, memory.py:2568) and artifact_write (unlinks handoff blobs, memory.py:2616) -- the same pair the apply used to hardcode.
+    grants = ["cache_write", "artifact_write"]
     try:
         result = actions.memory_run(
             project.root,
@@ -2506,6 +2508,7 @@ def _memory_delete_preview(
                 "expected_revisions": revisions,
                 "scope": state.memory_subject,
                 "owner_scope": owner_scope,
+                "required_grants": grants,
                 "apply": False,
             },
         )
@@ -2519,6 +2522,7 @@ def _memory_delete_preview(
         "expected_revisions": revisions,
         "scope": state.memory_subject,
         "owner_scope": owner_scope,
+        "required_grants": grants,
         "affected": (data or {}).get("affected", []),
     }
     state.memory_message = (
@@ -2548,9 +2552,12 @@ def _memory_delete_apply(
                 # a scope change between preview and apply must not silently widen
                 # what the confirmed 'y' actually deletes.
                 "owner_scope": pending["owner_scope"],
+                "required_grants": pending["required_grants"],
                 "apply": True,
             },
-            permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+            permissions=ExecutionPermissions(
+                **{grant: True for grant in pending["required_grants"]}
+            ),
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"delete failed: {exc}"
