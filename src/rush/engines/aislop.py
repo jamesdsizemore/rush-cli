@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
-from collections.abc import Iterator
+import re
+import shutil
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -28,6 +31,79 @@ def _granted() -> ExecutionPermissions:
     return _GRANTS.get() or ExecutionPermissions()
 
 
+_VERSION_RE = re.compile(r"""^__version__\s*=\s*["']([^"']+)["']""", re.MULTILINE)
+NO_NODE_STDERR = "aislop for Python requires Node.js tooling on PATH."
+
+
+def _launcher_package_init(binary: str) -> Path | None:
+    """`aislop_py/__init__.py` of the install `binary` (aislop's Python
+    launcher) belongs to, else of Rush's own interpreter."""
+    real = Path(os.path.realpath(binary))
+    # A venv or `uv tool` env (the POSIX uv shim symlinks into it), then Rush's
+    # provisioned `uv tool install` layout (UV_TOOL_DIR=<bin dir>/tools).
+    # ponytail: fixed layouts; a Windows shim copied outside its env (plain
+    # `uv tool install`) falls back to Rush's interpreter, read the uv receipt
+    # if that ever pins a different version.
+    for env in (real.parent.parent, real.parent / "tools" / "aislop"):
+        for init in (
+            *sorted(env.glob("lib/python*/site-packages/aislop_py/__init__.py")),
+            env / "Lib" / "site-packages" / "aislop_py" / "__init__.py",
+        ):
+            if init.is_file():
+                return init
+    spec = importlib.util.find_spec("aislop_py")
+    return Path(spec.origin) if spec is not None and spec.origin else None
+
+
+def _pinned_version(binary: str) -> str | None:
+    """The npm version aislop's launcher pins (its `aislop_py.__version__`)."""
+    init = _launcher_package_init(binary)
+    if init is None:
+        return None
+    try:
+        match = _VERSION_RE.search(init.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+def npm_package(binary: str) -> str | None:
+    """The npm package aislop runs: `AISLOP_NPM_PACKAGE`, else the version
+    the launcher at `binary` pins."""
+    package = os.environ.get("AISLOP_NPM_PACKAGE")
+    if package:
+        return package
+    version = _pinned_version(binary)
+    return f"aislop@{version}" if version else None
+
+
+def npm_command(
+    package: str,
+    args: list[str],
+    which: Callable[[str], str | None] | None = None,
+) -> list[str] | None:
+    """aislop_py/cli.py's npm argv, without its os.execve(): execve cannot run
+    Windows' npx.cmd, so the launcher crashes there."""
+    find = which or shutil.which
+    npx = find("npx")
+    if npx:
+        return [npx, "--yes", "--package", package, "aislop", *args]
+    npm = find("npm")
+    if npm:
+        return [npm, "exec", "--yes", "--package", package, "--", "aislop", *args]
+    return None
+
+
+def _install_channel(binary: str) -> str:
+    """aislop_py/cli.py's install-channel detection, for the launcher path."""
+    existing = os.environ.get("AISLOP_INSTALL_CHANNEL", "").strip().lower()
+    if existing:
+        return existing
+    if "pipx" in str(Path(binary).resolve()).lower() or os.environ.get("PIPX_HOME"):
+        return "pipx"
+    return "pip"
+
+
 @contextmanager
 def aislop_grants(permissions: ExecutionPermissions) -> Iterator[None]:
     """Make the calling tool's grants decide whether aislop may download."""
@@ -43,7 +119,7 @@ class AislopEngine(Engine):
     binary = "aislop"
     file_extensions = ("py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "c", "cpp")
 
-    def child_env(self) -> dict[str, str] | None:
+    def child_env(self) -> dict[str, str]:
         # aislop's npm cli.js honors both telemetry opt-outs; npm runs offline
         # unless the calling tool holds the download grant.
         env = {**os.environ, **AISLOP_NO_TELEMETRY_ENV}
@@ -68,9 +144,23 @@ class AislopEngine(Engine):
         if target.is_file():
             include = ["--include", target.name]
             target = target.parent
-        argv = [binary_path, "scan", "--format=json", *args, *include, str(target)]
+        scan = ["scan", "--format=json", *args, *include, str(target)]
+
+        # Run the launcher's pinned npm package directly, never the launcher.
+        package = npm_package(binary_path)
+        if package is None:
+            return self._not_run(
+                target,
+                1,
+                f"aislop: no aislop_py package found for {binary_path} "
+                "to pin its npm version",
+            )
+        argv = npm_command(package, scan)
+        if argv is None:
+            return self._not_run(target, 127, NO_NODE_STDERR)
 
         env = self.child_env()
+        env.setdefault("AISLOP_INSTALL_CHANNEL", _install_channel(binary_path))
         proc = run_subprocess(
             argv,
             cwd=target,
@@ -103,6 +193,30 @@ class AislopEngine(Engine):
             duration_ms=0,
             cwd=str(target),
         )
+
+    @staticmethod
+    def _not_run(target: Path, exit_code: int, stderr: str) -> EngineResult:
+        return EngineResult(
+            exit_code=exit_code,
+            stdout="",
+            stderr=stderr,
+            parsed=None,
+            findings=[],
+            summary=f"aislop exit {exit_code}",
+            duration_ms=0,
+            cwd=str(target),
+        )
+
+    def version(
+        self,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> str | None:
+        """The pinned npm version itself: `aislop --version` would run the
+        launcher, which crashes on Windows."""
+        binary_path = resolve_binary(self.binary)
+        return _pinned_version(binary_path) if binary_path else None
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         findings: list[Finding] = []
@@ -144,9 +258,9 @@ class AislopEngine(Engine):
         if (
             not reported
             and raw.get("exit_code") == 127
-            and "requires Node.js" in (raw.get("stderr") or "")
+            and NO_NODE_STDERR in (raw.get("stderr") or "")
         ):
-            # aislop's pip shim runs its npm package through npx: without
+            # aislop runs its pinned npm package through npx: without
             # Node.js on PATH the engine is not installed, not broken.
             return skipped_result(
                 tool_name,

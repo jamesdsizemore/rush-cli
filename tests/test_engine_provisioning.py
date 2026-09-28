@@ -48,6 +48,7 @@ from rush.setup.provision import (
     _destination_for,
     build_provision_plan,
     current_os_arch,
+    prefetch_npm_runtime,
     resolve_and_apply_provision_plan,
 )
 
@@ -1240,13 +1241,14 @@ def test_consented_aislop_provision_installs_package_and_prefetches_npm_runtime(
     assert "aislop" in result.applied, result.failed
     assert calls[0][0][:4] == ["uv", "tool", "install", "--force"]
     assert calls[0][0][4] == "aislop==0.16.1"
-    runtime = [
-        (argv[1:], (env or {}).get("npm_config_offline")) for argv, env in calls[1:]
-    ]
+    # Each runtime run is the pinned npm package through npx, never the
+    # installed launcher.
+    runtime = [(argv, (env or {}).get("npm_config_offline")) for argv, env in calls[1:]]
+    npx = ["/usr/bin/npx", "--yes", "--package", "aislop@0.16.1", "aislop"]
     assert runtime == [
-        (["--version"], "true"),
-        (["--version"], "false"),
-        (["--version"], "true"),
+        ([*npx, "--version"], "true"),
+        ([*npx, "--version"], "false"),
+        ([*npx, "--version"], "true"),
     ]
 
 
@@ -1270,3 +1272,95 @@ def test_aislop_provision_without_npx_names_the_missing_runtime(tmp_path: Path) 
     assert result.failed["aislop"]["code"] == "SYSTEM_PREREQUISITE_REQUIRED"
     assert "npx" in result.failed["aislop"]["message"]
     assert ENGINE_PACKAGES["aislop"].prerequisites == ("uv", "python", "node", "npm")
+
+
+# --- aislop npm runtime prefetch ---------------------------------------------
+
+
+def _aislop_launcher(tmp_path: Path, version: str) -> Path:
+    """A `uv tool install`-layout aislop launcher pinning npm `version`; the
+    launcher itself exits 1 so running it fails loudly."""
+    bin_dir = tmp_path / "bin"
+    site = bin_dir / "tools" / "aislop" / "lib" / "python3.12" / "site-packages"
+    init = site / "aislop_py" / "__init__.py"
+    init.parent.mkdir(parents=True)
+    init.write_text(f'__version__ = "{version}"\n', encoding="utf-8")
+    launcher = bin_dir / "aislop"
+    launcher.write_text("#!/bin/sh\nexit 1\n")
+    launcher.chmod(0o755)
+    return launcher
+
+
+def _prefetch_argvs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, found: dict[str, str]
+) -> tuple[Path, list[list[str]]]:
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name, *_a, **_k: found.get(name))
+    launcher = _aislop_launcher(tmp_path, "9.8.7")
+    calls: list[list[str]] = []
+
+    def runner(argv, env=None):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    assert prefetch_npm_runtime("aislop", launcher, runner) == "already_cached"
+    return launcher, calls
+
+
+@pytest.mark.parametrize(
+    "npx",
+    ["/opt/node/bin/npx", r"C:\Program Files\nodejs\npx.cmd"],
+    ids=["posix", "windows-npx-cmd"],
+)
+def test_prefetch_npm_runtime_never_runs_the_launcher(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, npx: str
+) -> None:
+    """The prefetch runs the launcher's pinned npm package through npx, as the
+    engine does, never the launcher (whose os.execve() crashes on Windows)."""
+    launcher, calls = _prefetch_argvs(tmp_path, monkeypatch, {"npx": npx})
+    assert calls == [[npx, "--yes", "--package", "aislop@9.8.7", "aislop", "--version"]]
+    assert all(str(launcher) not in argv for argv in calls)
+
+
+def test_prefetch_npm_runtime_falls_back_to_npm_exec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    npm = "/opt/node/bin/npm"
+    _, calls = _prefetch_argvs(tmp_path, monkeypatch, {"npm": npm})
+    assert calls == [
+        [npm, "exec", "--yes", "--package", "aislop@9.8.7", "--", "aislop", "--version"]
+    ]
+
+
+def test_prefetch_npm_runtime_honors_the_engine_package_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("shutil.which", lambda name, *_a, **_k: f"/n/{name}")
+    monkeypatch.setenv("AISLOP_NPM_PACKAGE", "aislop@0.0.9")
+    calls: list[list[str]] = []
+
+    def runner(argv, env=None):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    prefetch_npm_runtime("aislop", _aislop_launcher(tmp_path, "9.8.7"), runner)
+    assert calls == [
+        ["/n/npx", "--yes", "--package", "aislop@0.0.9", "aislop", "--version"]
+    ]
+
+
+def test_prefetch_npm_runtime_without_node_is_a_prerequisite_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name, *_a, **_k: None)
+    calls: list[list[str]] = []
+
+    def runner(argv, env=None):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    with pytest.raises(ProvisionError) as caught:
+        prefetch_npm_runtime("aislop", _aislop_launcher(tmp_path, "9.8.7"), runner)
+    assert caught.value.code == "SYSTEM_PREREQUISITE_REQUIRED"
+    assert calls == []

@@ -7,11 +7,29 @@ import os
 import subprocess
 from pathlib import Path
 
+import aislop_py
 import pytest
 
 from rush.engines import aislop
 from rush.engines.aislop import AislopEngine
 from rush.tools import common
+
+# The npm package aislop's own Python launcher (aislop_py/cli.py) pins.
+PINNED = f"aislop@{aislop_py.__version__}"
+
+
+def _node_tooling(monkeypatch, **found: str) -> None:
+    """`shutil.which` finds only the named Node.js tools, at the given paths."""
+    monkeypatch.setattr("shutil.which", lambda name, *_a, **_k: found.get(name))
+
+
+def _no_launcher(monkeypatch) -> None:
+    """Fail the test if anything execs a process (aislop's launcher does)."""
+
+    def execve(*args: object) -> None:
+        raise AssertionError(f"os.execve called: {args}")
+
+    monkeypatch.setattr(os, "execve", execve)
 
 
 def test_aislop_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
@@ -25,10 +43,229 @@ def test_aislop_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "C:/bin/aislop")
     monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npx="C:/node/npx")
 
     raw = AislopEngine().run(tmp_path, [], cwd=tmp_path)
     assert raw["exit_code"] == 0
-    assert calls == [["C:/bin/aislop", "scan", "--format=json", str(tmp_path)]]
+    assert calls == [
+        [
+            "C:/node/npx",
+            "--yes",
+            "--package",
+            PINNED,
+            "aislop",
+            "scan",
+            "--format=json",
+            str(tmp_path),
+        ]
+    ]
+
+
+def test_aislop_runs_the_pinned_npm_package_without_the_launcher(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """aislop's launcher os.execve()s npx, which cannot run npx.cmd on
+    Windows: the engine runs the launcher's pinned npm package itself."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/venv/bin/aislop")
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npx="/usr/local/bin/npx")
+    _no_launcher(monkeypatch)
+    engine = AislopEngine()
+
+    engine.run(tmp_path, ["--staged"], cwd=tmp_path)
+    version = engine.version()
+
+    assert calls == [
+        [
+            "/usr/local/bin/npx",
+            "--yes",
+            "--package",
+            f"aislop@{aislop_py.__version__}",
+            "aislop",
+            "scan",
+            "--format=json",
+            "--staged",
+            str(tmp_path),
+        ]
+    ]
+    assert "/venv/bin/aislop" not in calls[0]
+    # The version is the pin itself: no `aislop --version` launcher run.
+    assert version == aislop_py.__version__
+    assert len(calls) == 1
+
+
+def test_aislop_uses_npx_cmd_on_windows(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    npx_cmd = "C:\\Program Files\\nodejs\\npx.cmd"
+    monkeypatch.setattr(
+        aislop, "resolve_binary", lambda _binary: "C:\\venv\\Scripts\\aislop.exe"
+    )
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npx=npx_cmd, npm="C:\\Program Files\\nodejs\\npm.cmd")
+    _no_launcher(monkeypatch)
+
+    raw = AislopEngine().run(tmp_path, [], cwd=tmp_path)
+
+    assert raw["exit_code"] == 0
+    assert calls == [
+        [
+            npx_cmd,
+            "--yes",
+            "--package",
+            PINNED,
+            "aislop",
+            "scan",
+            "--format=json",
+            str(tmp_path),
+        ]
+    ]
+
+
+def test_aislop_falls_back_to_npm_exec_without_npx(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/venv/bin/aislop")
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npm="/usr/bin/npm")
+
+    AislopEngine().run(tmp_path, [], cwd=tmp_path)
+
+    assert calls == [
+        [
+            "/usr/bin/npm",
+            "exec",
+            "--yes",
+            "--package",
+            PINNED,
+            "--",
+            "aislop",
+            "scan",
+            "--format=json",
+            str(tmp_path),
+        ]
+    ]
+
+
+def test_aislop_without_node_tooling_is_skipped_not_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise AssertionError(f"ran {argv}")
+
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/venv/bin/aislop")
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    _node_tooling(monkeypatch)
+    engine = AislopEngine()
+
+    res = engine.normalize(engine.run(tmp_path, []), tmp_path, "slop")
+
+    assert res["status"] == "skipped"
+    assert "npx (Node.js) not on PATH" in res["summary"]
+
+
+def test_aislop_honors_the_launchers_npm_package_override(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/venv/bin/aislop")
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.setenv("AISLOP_NPM_PACKAGE", "aislop@0.0.9")
+    _node_tooling(monkeypatch, npx="/usr/bin/npx")
+
+    AislopEngine().run(tmp_path, [], cwd=tmp_path)
+
+    assert calls[0][:5] == [
+        "/usr/bin/npx",
+        "--yes",
+        "--package",
+        "aislop@0.0.9",
+        "aislop",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("launcher", "site_packages"),
+    [
+        # A venv / `uv tool` env on POSIX (the uv bin entry is a symlink into it).
+        ("env/bin/aislop", "env/lib/python3.12/site-packages"),
+        # A venv on Windows.
+        ("env/Scripts/aislop.exe", "env/Lib/site-packages"),
+        # Rush's provisioned `uv tool install` on Windows: UV_TOOL_BIN_DIR=dest
+        # holds a copied shim, UV_TOOL_DIR=dest/tools holds the env.
+        ("dest/aislop.exe", "dest/tools/aislop/Lib/site-packages"),
+    ],
+)
+def test_aislop_pins_the_version_of_the_resolved_install(
+    monkeypatch, tmp_path: Path, launcher: str, site_packages: str
+) -> None:
+    """The pin comes from the aislop install the engine resolved (a
+    provisioned one is not importable by Rush), not Rush's own interpreter."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    binary = tmp_path / launcher
+    binary.parent.mkdir(parents=True)
+    binary.write_text("")
+    package = tmp_path / site_packages / "aislop_py"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(
+        '"""Python launcher package for the aislop CLI."""\n\n__version__ = "9.9.9"\n'
+    )
+    monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: str(binary))
+    monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npx="/usr/bin/npx")
+    engine = AislopEngine()
+
+    engine.run(tmp_path, [], cwd=tmp_path)
+
+    assert calls[0][:5] == [
+        "/usr/bin/npx",
+        "--yes",
+        "--package",
+        "aislop@9.9.9",
+        "aislop",
+    ]
+    assert engine.version() == "9.9.9"
 
 
 def test_aislop_normalizes_clean(tmp_path: Path) -> None:
@@ -97,6 +334,8 @@ def _run_and_normalize(
 
     monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/bin/aislop")
     monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
+    _node_tooling(monkeypatch, npx="/usr/bin/npx")
     engine = AislopEngine()
     monkeypatch.setattr(engine, "version", lambda **_kw: "0.16.1")
     raw = engine.run(target, [])
@@ -115,7 +354,11 @@ def test_aislop_file_target_scans_parent_with_single_include(
     assert calls == [
         (
             [
-                "/bin/aislop",
+                "/usr/bin/npx",
+                "--yes",
+                "--package",
+                PINNED,
+                "aislop",
                 "scan",
                 "--format=json",
                 "--include",
@@ -135,14 +378,27 @@ def test_aislop_directory_target_runs_in_the_scanned_directory(
     _res, calls = _run_and_normalize(monkeypatch, tmp_path, '{"diagnostics": []}', 0)
 
     assert calls == [
-        (["/bin/aislop", "scan", "--format=json", str(tmp_path)], tmp_path)
+        (
+            [
+                "/usr/bin/npx",
+                "--yes",
+                "--package",
+                PINNED,
+                "aislop",
+                "scan",
+                "--format=json",
+                str(tmp_path),
+            ],
+            tmp_path,
+        )
     ]
 
 
 def test_slop_passes_no_file_positionals_to_the_aislop_binary(
     monkeypatch, tmp_path: Path
 ) -> None:
-    """Fake `aislop` executable on PATH: the real dispatch spawns exactly one
+    """Fake `aislop` launcher and `npx` on PATH: the real dispatch runs the
+    pinned npm package through npx (never the launcher) with exactly one
     positional (the directory) -- aislop 0.16.1 rejects any more."""
     from rush.tools.common import clear_binary_cache
     from rush.tools.slop import SlopTool
@@ -150,14 +406,17 @@ def test_slop_passes_no_file_positionals_to_the_aislop_binary(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "argv.log"
-    fake = bin_dir / "aislop"
+    launcher = bin_dir / "aislop"
+    launcher.write_text(f'#!/bin/sh\necho launcher >> "{log}"\nexit 139\n')
+    launcher.chmod(0o755)
+    fake = bin_dir / "npx"
     fake.write_text(
         "#!/bin/sh\n"
-        'if [ "$1" = "--version" ]; then echo 0.16.1; exit 0; fi\n'
         f'for a in "$@"; do echo "$a" >> "{log}"; done\n'
         "echo '{\"diagnostics\": []}'\n"
     )
     fake.chmod(0o755)
+    monkeypatch.delenv("AISLOP_NPM_PACKAGE", raising=False)
     project = tmp_path / "proj"
     (project / "pkg").mkdir(parents=True)
     (project / "pkg" / "a.py").write_text(SLOPPY_SOURCE)
@@ -174,7 +433,15 @@ def test_slop_passes_no_file_positionals_to_the_aislop_binary(
 
     assert result["engine"] == "aislop"
     assert result["status"] == "ok", result["summary"]
-    assert log.read_text().splitlines() == ["scan", "--format=json", str(project)]
+    assert log.read_text().splitlines() == [
+        "--yes",
+        "--package",
+        PINNED,
+        "aislop",
+        "scan",
+        "--format=json",
+        str(project),
+    ]
     metadata = result["metadata"]
     assert metadata is not None
     scope = metadata["engines"][0]["scope"]
@@ -297,20 +564,22 @@ def test_slop_real_aislop_scans_python_project(tmp_path: Path) -> None:
 
 
 def _fake_npx_aislop(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
-    """A fake `aislop` on PATH that, like the real npx wrapper on an empty npm
-    cache, fails with ENOTCACHED when npm is offline. It logs the
-    `npm_config_offline` value of every invocation."""
+    """A fake `aislop` launcher plus a fake `npx` on PATH that, like real npx
+    on an empty npm cache, fails with ENOTCACHED when npm is offline. npx
+    logs the `npm_config_offline` value of every invocation."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "offline.log"
-    fake = bin_dir / "aislop"
+    launcher = bin_dir / "aislop"
+    launcher.write_text("#!/bin/sh\nexit 139\n")
+    launcher.chmod(0o755)
+    fake = bin_dir / "npx"
     fake.write_text(
         "#!/bin/sh\n"
         f'echo "offline=$npm_config_offline" >> "{log}"\n'
         'if [ "$npm_config_offline" = "true" ]; then\n'
         "  echo 'npm error code ENOTCACHED' >&2; exit 1\n"
         "fi\n"
-        'if [ "$1" = "--version" ]; then echo 0.16.1; exit 0; fi\n'
         "echo '{\"diagnostics\": []}'\n"
     )
     fake.chmod(0o755)
@@ -380,6 +649,7 @@ def test_aislop_offline_env_set_only_without_download_grant(
 
     monkeypatch.setattr(aislop, "resolve_binary", lambda _binary: "/bin/aislop")
     monkeypatch.setattr(aislop, "run_subprocess", fake_run)
+    _node_tooling(monkeypatch, npx="/usr/bin/npx")
 
     AislopEngine().run(tmp_path, [], cwd=tmp_path)
     with aislop_grants(ExecutionPermissions(download=True)):
@@ -393,6 +663,8 @@ def test_aislop_offline_env_set_only_without_download_grant(
     for env in (offline_env, granted_env):
         assert env["AISLOP_NO_TELEMETRY"] == "1"
         assert env["DO_NOT_TRACK"] == "1"
+        # aislop's launcher sets its install channel for the npm package.
+        assert env["AISLOP_INSTALL_CHANNEL"] == "pip"
 
 
 @pytest.mark.needs_aislop
