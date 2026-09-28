@@ -8,6 +8,7 @@ import dataclasses
 import json
 import os
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -309,7 +310,22 @@ def test_setup_review_lists_fetch_grants_for_reused_aislop_with_cold_cache(
     assert "aislop" in first.applied, first.failed
     warm.unlink()  # the npm cache goes cold
 
-    review = build_setup_review(project, data_root)
+    # The probe runs aislop's npm package through npx exactly as the engine
+    # does (never the launcher); this npx stands in for npm's cache, so the
+    # machine's real npm cache never decides the result.
+    npx = tmp_path / "bin" / "npx"
+    npx.parent.mkdir()
+    npx.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$npm_config_offline" = true ] && [ ! -f "{warm}" ]; '
+        "then exit 1; fi\n"
+    )
+    npx.chmod(0o755)
+
+    def which(name: str) -> str | None:
+        return str(npx) if name == "npx" else shutil.which(name)
+
+    review = build_setup_review(project, data_root, which=which)
     (entry,) = [e for e in review["provision"]["entries"] if e["engine_id"] == "aislop"]
     assert entry["identity_state"] == "reuse_verified"
     assert list(entry["required_grants"]) == ["network", "download", "cache_write"]
