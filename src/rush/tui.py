@@ -25,6 +25,7 @@ import io
 import json
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -795,6 +796,11 @@ class ProjectState:
     # in over `selection_ms` and the detail pane fades in over `detail_ms`;
     # None = final state.
     selection_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: the worker thread observing a dashboard-owned run's durable status
+    # (`_observe_dashboard_operation`), started by the render loop.
+    dashboard_poll_thread: threading.Thread | None = field(
+        default=None, repr=False, compare=False
+    )
     # T28-B: the last rescan's `compare_runs` verdicts plus the reviewed
     # baseline attempt's findings (`baseline_findings`), shown while its
     # `current_run_id` is still this project's run.
@@ -1530,7 +1536,10 @@ class DashboardOwner:
             if exc.code != 401:
                 raise
             return dispatch_dashboard_operation_status(
-                self.base_url, self.project_id, operation_id, session=self._new_session()
+                self.base_url,
+                self.project_id,
+                operation_id,
+                session=self._new_session(),
             )
 
     def _new_session(self) -> tuple[str, str]:
@@ -1638,14 +1647,13 @@ def _start_dashboard_owned(
         if isinstance(operation_id, str) and operation_id:
             project.operation_id = operation_id
         # U02: completion is never inferred from `plan_total` (CHECK_SUITE
-        # never has one) -- `_poll_running_scans`'s dashboard-owned branch
-        # below is the only thing that ever moves this project out of
-        # "scanning", by polling the retained `operation_id`'s real durable
-        # status.
+        # never has one) -- only a poll of the retained `operation_id`'s real
+        # durable status (`_poll_running_scans`, or the render loop's
+        # `_start_dashboard_observers` worker) ever moves this project out of
+        # "scanning".
         project.last_message = (
             f"{operation} running in dashboard (operation {operation_id or '?'})"
         )
-        _observe_dashboard_operation(project, owner)
 
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
@@ -1657,11 +1665,35 @@ def _start_dashboard_owned(
 _DASHBOARD_POLL_SECONDS = 0.25
 
 
+def _start_dashboard_observers(state: TuiState) -> None:
+    """T28-F: the render loop starts one observer worker per running
+    dashboard-owned run whose `operation_id` is known; the loop itself never
+    touches the network."""
+    for project in state.projects:
+        if (
+            project.owner != "dashboard"
+            or project.status not in ("scanning", "cancelling")
+            or not project.operation_id
+            or project.dashboard_owner_handle is None
+        ):
+            continue
+        thread = project.dashboard_poll_thread
+        if thread is not None and thread.is_alive():
+            continue
+        thread = threading.Thread(
+            target=_observe_dashboard_operation,
+            args=(project, project.dashboard_owner_handle),
+            daemon=True,
+        )
+        project.dashboard_poll_thread = thread
+        thread.start()
+
+
 def _observe_dashboard_operation(project: ProjectState, owner: Any) -> None:
-    """T28-F: the dashboard-owned status poll runs here, on the dispatch
-    worker, never on the render/input loop: it posts each result to the
-    project until the operation is terminal or the project is no longer
-    observing this owner's run."""
+    """T28-F: the dashboard-owned status poll runs here, on a worker, never
+    on the render/input loop: it posts each result to the project until the
+    operation is terminal or the project is no longer observing this
+    owner's run."""
     operation_id = project.operation_id
     while (
         operation_id
@@ -2021,12 +2053,14 @@ def _poll_dashboard_status(project: ProjectState, owner: Any) -> None:
 
 def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
     """One status read for every running project, dashboard-owned ones
-    included. The render loop calls `_poll_local_scans` instead: a
-    dashboard-owned run is polled by its own dispatch worker."""
+    included -- except a dashboard-owned run the render loop already handed
+    to its observer worker (`_start_dashboard_observers`, called first each
+    tick): the loop itself never touches the network."""
     for project in state.projects:
-        if project.owner == "dashboard" and project.status in (
-            "scanning",
-            "cancelling",
+        if (
+            project.owner == "dashboard"
+            and project.status in ("scanning", "cancelling")
+            and project.dashboard_poll_thread is None
         ):
             _poll_dashboard_owned_scan(project, actions)
     _poll_local_scans(state, actions)
@@ -4370,12 +4404,12 @@ def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) 
 
 
 def _poll_detach(state: TuiState) -> None:
-    """T28-F: end the loop once the Detach worker is done or its deadline
-    passed -- the process exits regardless, as Phase 69's Detach did."""
+    """T28-F: end the loop once the Detach worker has reaped the run and
+    recorded it. Past the deadline the loop keeps waiting; only a Ctrl-C
+    then exits (`_handle_sigint`)."""
     if state.detach_deadline is None:
         return
-    done = state.detach_done is not None and state.detach_done.is_set()
-    if done or time.monotonic() >= state.detach_deadline:
+    if state.detach_done is not None and state.detach_done.is_set():
         state.detach_deadline = None
         state.mode = "list"
         state.should_quit = True
@@ -4383,10 +4417,16 @@ def _poll_detach(state: TuiState) -> None:
 
 def _handle_sigint(state: TuiState, actions: ScanActions) -> None:
     """T28-F: Ctrl-C caught in the loop is the `q` quit flow: idle quits,
-    running work opens `quit_confirm`, a second Ctrl-C there Detaches, and
-    one while detaching stops waiting."""
+    running work opens `quit_confirm`, a second Ctrl-C there Detaches. One
+    while detaching is ignored until the run is reaped and recorded; only
+    past the deadline does it stop waiting."""
     if state.detach_deadline is not None:
-        state.should_quit = True
+        if time.monotonic() >= state.detach_deadline:
+            state.should_quit = True
+        else:
+            state.message = (
+                "detaching... Ctrl-C is ignored until the run is reaped and recorded"
+            )
     elif state.mode == "quit_confirm" and state.projects:
         _begin_detach(state, state.active_project, actions)
     else:
@@ -6483,7 +6523,9 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     )
     # T28-F: the pane fades in over `detail_ms` after the selection moved.
     fading = _motion_running(project, _TERMINAL_MOTION["detail_ms"])
-    return Panel(Group(*parts), title=title, style="magenta dim" if fading else "magenta")
+    return Panel(
+        Group(*parts), title=title, style="magenta dim" if fading else "magenta"
+    )
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -7110,14 +7152,19 @@ def _render_no_projects(state: TuiState) -> Layout:
 
 
 def _render_detaching(state: TuiState) -> Panel:
-    remaining = max(0.0, (state.detach_deadline or 0.0) - time.monotonic())
+    remaining = (state.detach_deadline or 0.0) - time.monotonic()
+    when = (
+        f"Exits once the run is reaped and recorded, within {remaining:.0f}s."
+        if remaining > 0
+        else "The run is overdue; Ctrl-C exits now."
+    )
     return Panel(
         Group(
             Text(
                 "Detaching -- cancelling the local run and stopping its processes.",
                 style="bold yellow",
             ),
-            Text(f"Exits within {remaining:.0f}s. Ctrl-C exits now."),
+            Text(when),
         ),
         title="Detaching",
         style=THEME["border"],
@@ -7293,9 +7340,9 @@ def run_interactive_tui(
     if state.projects:
         state.load_requests.add((project_key(state.active_project), "overview"))
 
-    # P69-06 CONNECT: explicit active/idle refresh-rate limiter -- 20Hz while
-    # a key was just dispatched or a scan is running, 4Hz otherwise -- rather
-    # than refreshing on every tick unconditionally.
+    # P69-06 CONNECT / T28-F: refreshes are capped at 20Hz (reduced motion
+    # included); a change, running work or motion refreshes in the next 50ms
+    # slot, and normal motion keeps a 4Hz idle heartbeat.
     _pump(state, actions)  # immediate outcomes are in the first frame
     _ACTIVE_REFRESH_INTERVAL = 1.0 / 20
     _IDLE_REFRESH_INTERVAL = 1.0 / 4
@@ -7308,9 +7355,17 @@ def run_interactive_tui(
     # restored; a closed input is never read again (it would spin).
     exit_cause = ""
     input_closed = False
-    # Carries a Ctrl-C handled mid-tick into the next tick's refresh.
-    interrupted = False
+    # T28-F: a change not yet shown; carried across ticks until a refresh.
+    dirty = False
+    was_continuous = False
     reveal_key = _row_reveal_key(state)
+    selection_key = _selection_key(state)
+    # T28-F: Ctrl-C only sets a flag (the loop runs the quit flow after the
+    # tick's key), so it never tears down the loop mid-frame.
+    sigint = threading.Event()
+    previous_sigint: Any = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigint = signal.signal(signal.SIGINT, lambda *_: sigint.set())
     with raw_terminal():
         live = (
             Live(
@@ -7329,86 +7384,101 @@ def run_interactive_tui(
                 if max_ticks is not None and ticks >= max_ticks:
                     break
                 ticks += 1
-                try:
-                    size = reader.get_size()
-                    resized = size != state.terminal_size
-                    if resized:
-                        state.terminal_size = size
+                size = reader.get_size()
+                if size != state.terminal_size:
+                    state.terminal_size = size
+                    dirty = True
 
-                    applied = _pump(state, actions)
-                    _poll_running_scans(state, actions)
-                    _poll_detach(state)
+                if _pump(state, actions):
+                    dirty = True
+                _start_dashboard_observers(state)
+                _poll_running_scans(state, actions)
+                _poll_detach(state)
 
-                    key: str | None = None
-                    if input_closed:
-                        time.sleep(tick_seconds)
-                    else:
-                        key = reader.read_key(tick_seconds)
-                    if key == EOF:
-                        input_closed = True
-                        exit_cause = (
-                            "rush ui: input reached end-of-file; detached and "
-                            "restored the terminal"
-                        )
-                        _handle_eof(state, actions)
-                    elif key is not None:
-                        _dispatch_key(state, key, actions)
-                    status_changed = _reload_after_finished_work(state, seen_statuses)
-
-                    # T28-F: a changed findings view reveals its rows one per
-                    # 40ms (capped at 240ms); reduced motion shows them all.
-                    new_reveal_key = _row_reveal_key(state)
-                    if new_reveal_key != reveal_key:
-                        reveal_key = new_reveal_key
-                        if state.projects and not reduced_motion:
-                            state.active_project.row_reveal_started = time.monotonic()
-                    revealing = _row_reveal_active(state)
-
-                    if live is not None:
-                        setup_events = sum(
-                            len(p.setup_apply_events) for p in state.projects
-                        )
-                        has_activity = (
-                            key is not None
-                            or interrupted
-                            or applied
-                            or resized
-                            or revealing
-                            or setup_events != seen_setup_events
-                            or status_changed
-                            or state.detach_deadline is not None
-                            or any(
-                                p.status in ("scanning", "cancelling")
-                                for p in state.projects
-                            )
-                        )
-                        seen_setup_events = setup_events
-                        # U04 fix: reduced motion renders the final state
-                        # (already shown once by `Live(render_app(state), ...)`
-                        # above) and never refreshes again on an idle timer --
-                        # only a real key/scan event re-renders. Normal motion
-                        # keeps its active/idle heartbeat regardless.
-                        if reduced_motion:
-                            if has_activity:
-                                live.update(render_app(state), refresh=True)
-                                interrupted = False
-                        else:
-                            interval = (
-                                _ACTIVE_REFRESH_INTERVAL
-                                if has_activity
-                                else _IDLE_REFRESH_INTERVAL
-                            )
-                            now = time.monotonic()
-                            if now - last_refresh >= interval:
-                                live.update(render_app(state), refresh=True)
-                                last_refresh = now
-                                interrupted = False
-                except KeyboardInterrupt:
-                    # T28-F: Ctrl-C is the quit flow, never an uncaught
-                    # interrupt tearing down the loop mid-frame.
-                    interrupted = True
+                key: str | None = None
+                if input_closed:
+                    time.sleep(tick_seconds)
+                else:
+                    timeout = tick_seconds
+                    if dirty and live is not None:
+                        # A pending change is shown in the next 50ms slot.
+                        slot = last_refresh + _ACTIVE_REFRESH_INTERVAL
+                        timeout = max(0.0, min(tick_seconds, slot - time.monotonic()))
+                    try:
+                        key = reader.read_key(timeout)
+                    except KeyboardInterrupt:
+                        sigint.set()
+                if key == EOF:
+                    input_closed = True
+                    exit_cause = (
+                        "rush ui: input reached end-of-file; detached and "
+                        "restored the terminal"
+                    )
+                    _handle_eof(state, actions)
+                elif key is not None:
+                    _dispatch_key(state, key, actions)
+                if key is not None:
+                    dirty = True
+                if sigint.is_set():
+                    sigint.clear()
+                    dirty = True
                     _handle_sigint(state, actions)
+                if _reload_after_finished_work(state, seen_statuses):
+                    dirty = True
+
+                # T28-F: a changed findings view reveals its rows one per
+                # 40ms (capped at 240ms); a moved selection's highlight and
+                # detail pane move in over `selection_ms`/`detail_ms`.
+                # Reduced motion shows the final state at once.
+                new_reveal_key = _row_reveal_key(state)
+                if new_reveal_key != reveal_key:
+                    reveal_key = new_reveal_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.row_reveal_started = time.monotonic()
+                new_selection_key = _selection_key(state)
+                if new_selection_key != selection_key:
+                    selection_key = new_selection_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.selection_started = time.monotonic()
+
+                setup_events = sum(len(p.setup_apply_events) for p in state.projects)
+                if setup_events != seen_setup_events:
+                    seen_setup_events = setup_events
+                    dirty = True
+                motion_project = state.active_project if state.projects else None
+                continuous = (
+                    _row_reveal_active(state)
+                    or _motion_running(
+                        motion_project,
+                        max(
+                            _TERMINAL_MOTION["selection_ms"],
+                            _TERMINAL_MOTION["detail_ms"],
+                        ),
+                    )
+                    or state.detach_deadline is not None
+                    or any(
+                        p.status in ("scanning", "cancelling") for p in state.projects
+                    )
+                )
+                if was_continuous and not continuous:
+                    dirty = True  # the motion's final frame
+                was_continuous = continuous
+
+                if live is not None:
+                    now = time.monotonic()
+                    elapsed = now - last_refresh + 1e-9
+                    if (
+                        (dirty or continuous) and elapsed >= _ACTIVE_REFRESH_INTERVAL
+                    ) or (not reduced_motion and elapsed >= _IDLE_REFRESH_INTERVAL):
+                        live.update(render_app(state), refresh=True)
+                        last_refresh = now
+                        dirty = False
+            if live is not None and dirty:
+                # A change still waiting for its slot is shown before exit.
+                live.update(render_app(state), refresh=True)
         finally:
+            if previous_sigint is not None:
+                signal.signal(signal.SIGINT, previous_sigint)
             if live is not None:
                 live.stop()
 
@@ -7429,6 +7499,30 @@ def _row_reveal_key(state: TuiState) -> tuple[Any, ...]:
         project.detail_page,
         project.filter_text,
         len(project.results),
+    )
+
+
+def _selection_key(state: TuiState) -> tuple[Any, ...]:
+    """T28-F: where the selection is; a change restarts its motion."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    artifacts = state.views.get((project_key(project), "artifacts"))
+    return (
+        state.active_index,
+        state.section,
+        state.mode,
+        state.overlay,
+        state.focus,
+        project.selected_index,
+        state.nav_index,
+        state.action_index,
+        state.chooser_index,
+        state.git_selected,
+        state.memory_selected_index,
+        state.map_selected_index,
+        state.project_selector_index,
+        artifacts.selection if artifacts is not None else None,
     )
 
 

@@ -12,6 +12,7 @@ selection 120 ms, detail 180 ms; reduced motion renders the final state).
 from __future__ import annotations
 
 import io
+import itertools
 import os
 import signal
 import subprocess
@@ -26,8 +27,8 @@ from rich.console import Console
 
 import rush.dashboard.server as server_module
 from rush import tui
-from rush.tui import ProjectSeed, ScanActions, run_interactive_tui
 from rush.tools.base import Finding, ToolResult
+from rush.tui import ProjectSeed, ScanActions, run_interactive_tui
 
 
 @pytest.fixture(autouse=True)
@@ -239,9 +240,9 @@ def test_hung_dashboard_never_blocks_a_tick_and_cancel_stays_usable(
         )
         project = holder[0].active_project
         assert owner.status_threads, "the dashboard status was never polled"
-        assert all(
-            t is not threading.main_thread() for t in owner.status_threads
-        ), "dashboard status polling must run on the worker, never the loop"
+        assert all(t is not threading.main_thread() for t in owner.status_threads), (
+            "dashboard status polling must run on the worker, never the loop"
+        )
         assert max(work) < 0.05, (
             "a tick blocked on the unanswering dashboard for "
             f"{max(work):.3f}s (bound 50 ms)"
@@ -335,7 +336,7 @@ def test_reduced_motion_still_caps_refresh_at_20hz(
         tick_seconds=0.01,
     )
     times = [t for t, _ in frames]
-    gaps = [b - a for a, b in zip(times, times[1:], strict=False)]
+    gaps = [b - a for a, b in itertools.pairwise(times)]
     assert len(times) <= 11, (
         f"{len(times)} refreshes in 0.5s under reduced motion (20 Hz cap = 11)"
     )
@@ -357,9 +358,7 @@ def _motion_probe(renderable: Any) -> tuple[Any, list[bool]]:
     for line in _lines(renderable, 120, 40):
         text = "".join(segment.text for segment in line)
         detail_dim.extend(
-            bool(seg.style and seg.style.dim)
-            for seg in line
-            if "srcline-" in seg.text
+            bool(seg.style and seg.style.dim) for seg in line if "srcline-" in seg.text
         )
         if "a.py:7" in text and "error" in text and style is None:
             style = next(seg.style for seg in line if "lint" in seg.text)
