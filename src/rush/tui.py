@@ -777,6 +777,7 @@ class TuiState:
     memory_pending_promote: dict[str, Any] | None = None
     # T28-D: propose/create form fields {"subject","source","content"} (mode == "memory_create").
     memory_create_buffer: dict[str, str] | None = None
+    memory_create_field: str = "content"
     # P69-07 CONNECT: the owner every memory mutation this admin session makes is
     # attributed to (mode == "memory_owner" is the selector). `project`/`session`
     # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
@@ -2411,6 +2412,75 @@ def _memory_write_preview_apply(
         return None
 
 
+def _memory_create_commit(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """Validate required fields, then preview+apply a `write` via
+    `_memory_write_preview_apply` so create shares the same reviewed-grants
+    path as every other mutating form."""
+    buf = state.memory_create_buffer or {}
+    missing = [
+        f for f in ("subject", "source", "content") if not (buf.get(f) or "").strip()
+    ]
+    if missing:
+        state.memory_message = f"required: {', '.join(missing)}"
+        return
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    result = _memory_write_preview_apply(
+        state,
+        project,
+        actions,
+        "write",
+        [],
+        subject=buf["subject"],
+        content={"note": buf["content"]},
+        source=buf["source"],
+        symbol_ref=None,
+        source_kind="local_tool",
+    )
+    if result is None:
+        return
+    if result.get("status", "ok") == "ok":
+        state.memory_create_buffer = None
+        state.mode = "memory"
+        state.memory_message = f"proposed {(result.get('raw') or {}).get('id')}"
+        _memory_refresh(state, project, actions, announce=False)
+    else:
+        raw = result.get("raw") or {}
+        state.memory_message = (
+            f"write refused: {raw.get('message') or result.get('summary')}"
+        )
+
+
+def _handle_memory_create_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_create_buffer = None
+        state.memory_message = "create cancelled -- 0 records written"
+        return
+    if key == "tab":
+        fields = ("subject", "source", "content")
+        idx = (
+            fields.index(state.memory_create_field)
+            if state.memory_create_field in fields
+            else 0
+        )
+        state.memory_create_field = fields[(idx + 1) % len(fields)]
+        return
+    if key == "enter":
+        _memory_create_commit(state, state.active_project, actions)
+        return
+    buf = state.memory_create_buffer or {}
+    current = buf.get(state.memory_create_field, "")
+    if key == "backspace":
+        buf[state.memory_create_field] = current[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[state.memory_create_field] = current + key
+    state.memory_create_buffer = buf
+
+
 def _memory_delete_preview(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
@@ -2615,6 +2685,18 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "n" and state.memory_pending_delete is not None:
         state.memory_pending_delete = None
         state.memory_message = "delete cancelled -- 0 records removed"
+        return
+    if key == "n":
+        state.mode = "memory_create"
+        state.memory_create_field = "content"
+        state.memory_create_buffer = {
+            "subject": state.memory_subject,
+            "source": "tui",
+            "content": "",
+        }
+        state.memory_message = (
+            "new memory: [tab] field  [enter] preview+submit  [esc] cancel"
+        )
         return
     if key in ("down", "j"):
         if state.memory_items:
@@ -3708,6 +3790,7 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         "grant_review": _handle_grant_review_key,
         "memory_search": _handle_memory_search_key,
         "memory_edit": _handle_memory_edit_key,
+        "memory_create": _handle_memory_create_key,
         "memory_owner": _handle_memory_owner_key,
         "memory": _handle_memory_key,
         "quit_confirm": _handle_quit_confirm_key,
@@ -4202,6 +4285,11 @@ def _render_memory_admin(state: TuiState) -> Panel:
         lines.append(
             _safe(f"edit note> {state.memory_edit_buffer or ''}", "bold yellow")
         )
+    if state.mode == "memory_create":
+        buf = state.memory_create_buffer or {}
+        for name in ("subject", "source", "content"):
+            marker = ">" if name == state.memory_create_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
 
     table = Table(expand=True)
     table.add_column("", width=4)
@@ -4543,7 +4631,13 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
         return _render_section_chooser(state)
     if state.overlay == "form":
         return _render_form(state)
-    if state.mode in ("memory", "memory_search", "memory_edit", "memory_owner"):
+    if state.mode in (
+        "memory",
+        "memory_search",
+        "memory_edit",
+        "memory_owner",
+        "memory_create",
+    ):
         return _render_memory_admin(state)
     if state.mode == "git":
         return _render_git_panel(state)
