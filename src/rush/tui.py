@@ -2822,6 +2822,10 @@ def _memory_edit_refresh_and_rereview(
 
 def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     project = state.active_project
+    if key in ("n", "escape") and state.memory_pending_maintain is not None:
+        state.memory_pending_maintain = None
+        state.memory_message = "maintenance cancelled"
+        return
     if key == "escape":
         if state.memory_pending_delete is not None:
             state.memory_pending_delete = None
@@ -2905,8 +2909,14 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "d":
         _memory_delete_preview(state, project, actions)
         return
+    if key == "w":
+        _memory_maintain_preview(state, project, actions)
+        return
     if key == "y":
-        _memory_delete_apply(state, project, actions)
+        if state.memory_pending_maintain is not None:
+            _memory_maintain_apply(state, project, actions)
+        else:
+            _memory_delete_apply(state, project, actions)
         return
 
 
