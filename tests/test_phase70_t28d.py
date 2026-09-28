@@ -374,7 +374,7 @@ def test_t28d_promote_uses_reviewed_grants_not_hardcoded(tmp_path: Path) -> None
     item = {"id": "a1", "artifact_version": 1, "content": {}, "source": "cli"}
     state.memory_items = [item]
     state.memory_selected_index = 0
-    state.memory_pending_promote = {"required_grants": {"artifact_write": True}}
+    state.memory_pending_promote = {"required_grants": ["artifact_write"]}
     spy = _MemoryRunSpy(
         {"promote": [{"raw": {"promoted": True, "new_tier": "verified"}}]}
     )
@@ -396,11 +396,19 @@ def _preview_missing_fields(call: dict[str, Any]) -> list[str]:
     `call["request"]` first (the shape `delete`/`edit` already use), then
     falls back to the call's own top-level kwargs (the shape `promote`
     uses today)."""
-    payload = call.get("request") if isinstance(call.get("request"), dict) else call
+    request = call.get("request") if isinstance(call.get("request"), dict) else call
+    payload = request
+    if call.get("operation") in ("write", "promote"):
+        # write/promote requests carry only apply + required_grants; the preview
+        # names the affected ids/versions/owner in its response (memory.py:2941).
+        raw = (call.get("response") or {}).get("raw") or {}
+        if request.get("apply") is not False:
+            return ["apply=False"]
+        payload = {**raw, "required_grants": request.get("required_grants")}
     missing = []
-    if not (payload.get("artifact_ids") or payload.get("id")):
+    if not ("target_ids" in payload or payload.get("artifact_ids") or payload.get("id")):
         missing.append("ids")
-    if not (payload.get("expected_revisions") or payload.get("expected_version")):
+    if not ("expected_revisions" in payload or payload.get("expected_revisions") or payload.get("expected_version")):
         missing.append("versions")
     if not payload.get("owner_scope"):
         missing.append("owner")
@@ -464,10 +472,12 @@ def test_t28d_every_form_previews_with_reviewed_grants(
     state.memory_selected_index = 0
     state.memory_selected_ids = {"a1"}
     state.memory_edit_buffer = "y"
+    new_preview = {"status": "ok", "raw": {"apply": False, "target_ids": [], "expected_revisions": {}, "owner_scope": {"kind": "project", "id": "p"}, "required_grants": ["cache_write"], "missing_grants": [], "draft": {}}}
     spy = _MemoryRunSpy(
         {
             "edit": [{"raw": {"code": "OK"}}],
-            "promote": [{"raw": {"promoted": True, "new_tier": "verified"}}],
+            "promote": [new_preview, {"raw": {"promoted": True, "new_tier": "verified"}}],
+            "write": [new_preview, {"status": "ok", "raw": {"id": "new-1", "artifact_version": 1}}],
             "archive": [{"raw": {"code": "OK"}}],
             "delete": [
                 {"raw": {"data": {"affected": ["a1"]}}},
@@ -609,13 +619,22 @@ def test_t28d_promote_denied_insufficient_corroboration_regression(
     item = {"id": "a1", "artifact_version": 1, "content": {}, "source": "cli"}
     state.memory_items = [item]
     state.memory_selected_index = 0
-    # Today's `_memory_promote_selected` makes exactly one call (no preview
-    # step yet -- that gap is `test_t28d_promote_previews_before_applying`
-    # above); this arrange must match that shipped, single-call shape or the
-    # test fails on its own fixture instead of on real behavior.
+    # Preview first (never carries a denial: corroboration runs at apply), then the apply's denial.
     spy = _MemoryRunSpy(
         {
             "promote": [
+                {
+                    "status": "ok",
+                    "raw": {
+                        "apply": False,
+                        "target_ids": [],
+                        "expected_revisions": {},
+                        "owner_scope": {"kind": "project", "id": "p"},
+                        "required_grants": ["cache_write"],
+                        "missing_grants": [],
+                        "draft": {},
+                    },
+                },
                 {
                     "raw": {
                         "promoted": False,

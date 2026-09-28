@@ -773,6 +773,10 @@ class TuiState:
     memory_filter_source: str | None = None
     memory_filter_freshness: str | None = None
     memory_filter_archived: bool = False
+    # T28-D: grants the user reviewed for the next promote (list of ExecutionPermissions field names).
+    memory_pending_promote: dict[str, Any] | None = None
+    # T28-D: propose/create form fields {"subject","source","content"} (mode == "memory_create").
+    memory_create_buffer: dict[str, str] | None = None
     # P69-07 CONNECT: the owner every memory mutation this admin session makes is
     # attributed to (mode == "memory_owner" is the selector). `project`/`session`
     # kinds have a real derived default id (`_default_owner_scope_id`), so an empty
@@ -2330,28 +2334,81 @@ def _memory_promote_selected(
     if item is None or actions.memory_run is None:
         state.memory_message = "no row selected"
         return
-    try:
-        result = actions.memory_run(
-            project.root,
-            operation="promote",
-            subject=state.memory_subject,
-            content=item.get("content") or {},
-            source=item.get("source", ""),
-            symbol_ref=item.get("symbol_ref"),
-            source_kind="local_tool",
-            user_stated=False,
-            candidate_sources=[item.get("source", "")],
-            owner_scope=_memory_owner_scope(state, project),
-            permissions=ExecutionPermissions(cache_write=True),
-        )
-    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
-        state.memory_message = f"promote failed: {exc}"
+    pending = state.memory_pending_promote or {}
+    state.memory_pending_promote = None
+    result = _memory_write_preview_apply(
+        state,
+        project,
+        actions,
+        "promote",
+        list(pending.get("required_grants") or []),
+        subject=state.memory_subject,
+        content=item.get("content") or {},
+        source=item.get("source", ""),
+        symbol_ref=item.get("symbol_ref"),
+        source_kind="local_tool",
+        user_stated=False,
+        candidate_sources=[item.get("source", "")],
+    )
+    if result is None:
         return
     raw = result.get("raw") or {}
     if raw.get("promoted"):
         state.memory_message = f"promoted to {raw.get('new_tier')}"
     else:
         state.memory_message = f"promotion denied: {raw.get('denial_reason')}"
+
+
+def _memory_write_preview_apply(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    operation: str,
+    grants: list[str],
+    **fields: Any,
+) -> dict[str, Any] | None:
+    """Preview a memory write with the reviewed grants, refuse to apply on a
+    non-ok preview or missing grants, then apply with whatever grants the
+    preview actually reported as required (never the caller's raw guess)."""
+    if actions.memory_run is None:
+        state.memory_message = "memory backend unavailable"
+        return None
+    requested = sorted({"cache_write", *grants})
+    try:
+        preview = actions.memory_run(
+            project.root,
+            operation=operation,
+            owner_scope=_memory_owner_scope(state, project),
+            request={"apply": False, "required_grants": requested},
+            permissions=ExecutionPermissions(**{g: True for g in requested}),
+            **fields,
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"{operation} preview failed: {exc}"
+        return None
+    praw = preview.get("raw") or {}
+    if preview.get("status", "ok") != "ok" or praw.get("missing_grants"):
+        state.memory_message = (
+            f"{operation} preview refused: "
+            f"{praw.get('message') or praw.get('missing_grants')}"
+        )
+        return None
+    reviewed = list(praw.get("required_grants") or requested)
+    state.memory_message = (
+        f"{operation} preview: owner {praw.get('owner_scope')} grants {reviewed}"
+    )
+    try:
+        return actions.memory_run(
+            project.root,
+            operation=operation,
+            owner_scope=_memory_owner_scope(state, project),
+            request={"apply": True, "required_grants": reviewed},
+            permissions=ExecutionPermissions(**{g: True for g in reviewed}),
+            **fields,
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"{operation} failed: {exc}"
+        return None
 
 
 def _memory_delete_preview(
