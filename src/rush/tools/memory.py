@@ -283,6 +283,8 @@ _ARCHIVE_REQUEST_KEYS = {
 # `request=None` keeps the legacy apply-immediately behavior), the grants pinned at
 # review time, and (maintain) the previewed candidate set.
 _WRITE_REQUEST_KEYS = {"apply", "required_grants"}
+# T28-D: a TUI promote of a listed row names that row and the version reviewed.
+_PROMOTE_REQUEST_KEYS = _WRITE_REQUEST_KEYS | {"source_id", "expected_version"}
 _MAINTAIN_REQUEST_KEYS = {
     "apply",
     "required_grants",
@@ -1517,6 +1519,44 @@ class MemoryTool(ToolFn):
             raw=raw,
         )
 
+    @staticmethod
+    def _promote_source_conflict(
+        root: Path, source_id: str, expected_version: int
+    ) -> dict[str, Any] | None:
+        """T28-D: the reviewed promote source must still be the live row at the
+        reviewed version; otherwise the candidate would carry content nobody
+        reviewed (or revive an archived row)."""
+        base = {"source_id": source_id, "expected_version": expected_version}
+        view, store_state = TypedArtifactStore.open_readonly_view(root)
+        if store_state is not None:
+            return {
+                **base,
+                "actual_version": None,
+                "reason": f"the store is {store_state}: {readonly_view_reason(store_state)}",
+            }
+        try:
+            current = view.get_current(source_id) if view is not None else None
+        finally:
+            if view is not None:
+                view.close()
+        if current is None:
+            return {**base, "actual_version": None, "reason": "it no longer exists"}
+        if current.archived_at is not None:
+            return {
+                **base,
+                "actual_version": current.artifact_version,
+                "reason": "it was archived",
+            }
+        if current.artifact_version != expected_version:
+            return {
+                **base,
+                "actual_version": current.artifact_version,
+                "reason": (
+                    f"reviewed v{expected_version}, now v{current.artifact_version}"
+                ),
+            }
+        return None
+
     def _run_promote(
         self,
         started: float,
@@ -1534,8 +1574,25 @@ class MemoryTool(ToolFn):
         request: dict[str, Any] | None = None,
     ) -> ToolResult:
         apply, grants, _, request_error = self._parse_mutation_request(
-            request, _WRITE_REQUEST_KEYS
+            request, _PROMOTE_REQUEST_KEYS
         )
+        source_id = (request or {}).get("source_id")
+        expected_version = (request or {}).get("expected_version")
+        if not request_error and (source_id is None) != (expected_version is None):
+            request_error = "source_id and expected_version are given together."
+        if (
+            not request_error
+            and source_id is not None
+            and not (
+                isinstance(source_id, str)
+                and source_id
+                and type(expected_version) is int
+                and expected_version >= 1
+            )
+        ):
+            request_error = (
+                "source_id must be a non-empty ID and expected_version a positive int."
+            )
         if request_error:
             return self._result(
                 started,
@@ -1572,6 +1629,16 @@ class MemoryTool(ToolFn):
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind, owner
         )
+        if source_id is not None and isinstance(expected_version, int):
+            stale = self._promote_source_conflict(root, source_id, expected_version)
+            if stale is not None:
+                return self._result(
+                    started,
+                    "fail",
+                    f"Promotion source {source_id} changed since review: {stale['reason']}.",
+                    operation="promote",
+                    raw={"code": "E_VERSION", **stale},
+                )
         if not apply:
             preview = _new_artifact_preview(artifact, root, grants, granted)
             preview["user_stated"] = user_stated

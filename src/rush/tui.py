@@ -2216,11 +2216,13 @@ def _memory_refresh(
         from rush.memory.store import readonly_view_reason
 
         state.memory_items = []
-        state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
+        if announce:
+            state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
         return
     if not sources:
         state.memory_items = []
-        state.memory_message = "no memory recorded for this project yet"
+        if announce:
+            state.memory_message = "no memory recorded for this project yet"
         return
     try:
         result = actions.memory_run(
@@ -2445,6 +2447,10 @@ def _memory_promote_selected(
             "promote",
             "promote",
             list(pending.get("required_grants") or []),
+            request_extra={
+                "source_id": item["id"],
+                "expected_version": item.get("artifact_version"),
+            },
             subject=state.memory_subject,
             content=item.get("content") or {},
             source=item.get("source", ""),
@@ -2478,11 +2484,15 @@ def _memory_write_preview(
     operation: str,
     verb: str,
     grants: list[str],
+    request_extra: dict[str, Any] | None = None,
     **fields: Any,
 ) -> None:
     """Preview a memory write with the requested grants, refuse on a non-ok
     preview or missing grants, else hold it for "y" with the grants the preview
-    actually reported as required (never the caller's raw guess)."""
+    actually reported as required (never the caller's raw guess).
+    `request_extra` rides on both the preview and the held apply request (a
+    promote names its reviewed source row and version there)."""
+    extra = dict(request_extra or {})
     if actions.memory_run is None:
         state.memory_message = "memory backend unavailable"
         return
@@ -2492,7 +2502,7 @@ def _memory_write_preview(
             project.root,
             operation=operation,
             owner_scope=_memory_owner_scope(state, project),
-            request={"apply": False, "required_grants": requested},
+            request={"apply": False, "required_grants": requested, **extra},
             permissions=ExecutionPermissions(**{g: True for g in requested}),
             **fields,
         )
@@ -2517,7 +2527,7 @@ def _memory_write_preview(
             {
                 "operation": operation,
                 "owner_scope": owner_scope,
-                "request": {"apply": True, "required_grants": reviewed},
+                "request": {"apply": True, "required_grants": reviewed, **extra},
                 **fields,
             }
         ],
@@ -2631,6 +2641,13 @@ def _memory_delete_preview(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
+    code = raw.get("code") if isinstance(raw, dict) else None
+    if code != "OK":
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
+        return
     state.memory_pending_delete = {
         "artifact_ids": ids,
         "expected_revisions": revisions,
@@ -2680,10 +2697,26 @@ def _memory_delete_apply(
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else {}
-    deleted = len((data or {}).get("affected") or [])
+    code = raw.get("code") if isinstance(raw, dict) else None
     state.memory_pending_delete = None
     state.memory_selected_ids = set()
-    state.memory_message = f"deleted {deleted} record(s)"
+    if code == "OK":
+        deleted = [
+            row.get("id") if isinstance(row, dict) else row
+            for row in (data or {}).get("affected") or []
+        ]
+        state.memory_message = f"deleted {len(deleted)} record(s): {deleted}"
+    elif code == "E_VERSION":
+        state.memory_message = (
+            "delete refused: a reviewed record changed since the preview "
+            f"({(data or {}).get('message')}); nothing was deleted, list "
+            "refreshed -- review it and press d again"
+        )
+    else:
+        state.memory_message = (
+            f"delete refused: {code or result.get('status')}: "
+            f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+        )
     _memory_refresh(state, project, actions, announce=False)
 
 
@@ -2948,12 +2981,28 @@ def _memory_mutation_apply(
                 )
         elif operation == "promote":
             item_id = pending["items"][index]["id"]
-            if raw.get("promoted"):
-                messages.append(f"{item_id} promoted to {raw.get('new_tier')}")
+            created = raw.get("artifact") or {}
+            candidate = (
+                f" (candidate {created.get('id')} v{created.get('artifact_version')})"
+                if created.get("id")
+                else ""
+            )
+            if raw.get("code") == "E_VERSION":
+                messages.append(
+                    f"{item_id} promotion refused: changed since review "
+                    f"({raw.get('reason')}); list refreshed, review it again"
+                )
+                refresh = True
+            elif raw.get("promoted"):
+                messages.append(
+                    f"{item_id} promoted to {raw.get('new_tier')}{candidate}"
+                )
+                refresh = True
             else:
                 messages.append(
-                    f"{item_id} promotion denied: {raw.get('denial_reason')}"
+                    f"{item_id} promotion denied: {raw.get('denial_reason')}{candidate}"
                 )
+                refresh = bool(candidate) or refresh
         elif result.get("status", "ok") == "ok":
             state.memory_create_buffer = None
             state.mode = "memory"

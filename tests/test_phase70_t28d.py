@@ -512,8 +512,8 @@ def test_t28d_every_form_previews_with_reviewed_grants(
             ],
             "archive": [{"raw": {"code": "OK"}}],
             "delete": [
-                {"raw": {"data": {"affected": ["a1"]}}},
-                {"raw": {"data": {"affected": ["a1"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1"]}}},
             ],
         }
     )
@@ -553,8 +553,8 @@ def test_t28d_delete_multiselect_preview_and_apply(
     spy = _MemoryRunSpy(
         {
             "delete": [
-                {"raw": {"data": {"affected": ["a1", "a2"]}}},
-                {"raw": {"data": {"affected": ["a1", "a2"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1", "a2"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1", "a2"]}}},
             ]
         }
     )
@@ -596,8 +596,8 @@ def test_t28d_delete_preview_then_apply_matches_ids(
     spy = _MemoryRunSpy(
         {
             "delete": [
-                {"raw": {"data": {"affected": ["a1"]}}},
-                {"raw": {"data": {"affected": ["a1"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1"]}}},
+                {"raw": {"code": "OK", "data": {"affected": ["a1"]}}},
             ]
         }
     )
@@ -628,7 +628,9 @@ def test_t28d_delete_cancel_makes_zero_apply_calls(tmp_path: Path) -> None:
     state, project = _state_and_project(tmp_path)
     state.memory_items = [{"id": "a1", "artifact_version": 1}]
     state.memory_selected_ids = {"a1"}
-    spy = _MemoryRunSpy({"delete": [{"raw": {"data": {"affected": ["a1"]}}}]})
+    spy = _MemoryRunSpy(
+        {"delete": [{"raw": {"code": "OK", "data": {"affected": ["a1"]}}}]}
+    )
     actions = _actions(spy)
     tui_mod._memory_delete_preview(state, project, actions)
     tui_mod._handle_memory_key(state, "n", actions)

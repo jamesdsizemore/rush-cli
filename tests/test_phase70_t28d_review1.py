@@ -729,3 +729,130 @@ def test_r1_maintenance_never_creates_rows_or_enables_learning(tmp_path: Path) -
         if not Path(path).name.startswith("memory.db")
     }
     assert files_after == files_before
+
+
+# ---------------------------------------------------------------------------
+# T28-D review round 2: promote binds the reviewed source row and version;
+# delete reports a denied or conflicting outcome instead of a zero-count
+# success; a refresh after an outcome keeps that outcome's message.
+# ---------------------------------------------------------------------------
+
+
+def _archive_outside_tui(root: Path, artifact_id: str, version: int) -> None:
+    store = TypedArtifactStore(root)
+    try:
+        store.archive(
+            artifact_id, expected_version=version, scope="domain_knowledge", apply=True
+        )
+    finally:
+        store.close()
+
+
+def _promote_preview(tmp_path: Path, root: Path) -> tuple[TuiState, ScanActions]:
+    state = _state(tmp_path, root)
+    actions = _actions()
+    _enter_memory(state, actions)
+    _browse(state, actions)
+    _cursor_to(state, actions, "zq01")
+    _keys(state, actions, "p")
+    assert _lines_with(_screen(state), "promote preview", "zq01")
+    return state, actions
+
+
+def test_r2_promote_refuses_source_edited_after_preview(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    state, actions = _promote_preview(tmp_path, root)
+    before = set(_rows(root))
+    _edit_outside_tui(root, "zq01", "beta", 1)
+
+    _keys(state, actions, "y")
+
+    assert set(_rows(root)) == before, "a candidate was created from stale content"
+    assert _row(root, "zq01")["artifact_version"] == 2
+    assert "changed since review" in state.memory_message, state.memory_message
+    assert "reviewed v1, now v2" in state.memory_message, state.memory_message
+
+
+def test_r2_promote_refuses_source_archived_after_preview(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    state, actions = _promote_preview(tmp_path, root)
+    before = set(_rows(root))
+    _archive_outside_tui(root, "zq01", 1)
+
+    _keys(state, actions, "y")
+
+    assert set(_rows(root)) == before, "an archived row was revived as a candidate"
+    assert "it was archived" in state.memory_message, state.memory_message
+
+
+def test_r2_promote_denial_names_the_created_candidate(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    state, actions = _promote_preview(tmp_path, root)
+    before = set(_rows(root))
+
+    _keys(state, actions, "y")
+
+    created = set(_rows(root)) - before
+    assert len(created) == 1, created
+    (candidate_id,) = created
+    assert "promotion denied" in state.memory_message, state.memory_message
+    assert f"candidate {candidate_id} v1" in state.memory_message, state.memory_message
+
+
+def test_r2_delete_denied_preview_is_not_held(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01", owner=OwnerScope(kind="user", id="alice"))
+    state = _state(tmp_path, root)
+    actions = _actions()
+    _enter_memory(state, actions)
+    _browse(state, actions)
+
+    _keys(state, actions, " ", "d")
+
+    assert state.memory_pending_delete is None
+    assert "delete refused: E_OWNER" in state.memory_message, state.memory_message
+    assert "permanently deletes" not in _screen(state)
+    _keys(state, actions, "y")
+    assert "zq01" in _rows(root)
+
+
+def test_r2_delete_conflict_reports_the_change_and_deletes_nothing(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    _seed(root, "zq02", note="alpha two")
+    state = _state(tmp_path, root)
+    actions = _actions()
+    _enter_memory(state, actions)
+    _browse(state, actions)
+    _cursor_to(state, actions, "zq01")
+    _keys(state, actions, " ")
+    _cursor_to(state, actions, "zq02")
+    _keys(state, actions, " ", "d")
+    assert state.memory_pending_delete is not None
+    _edit_outside_tui(root, "zq02", "alpha changed", 1)
+
+    _keys(state, actions, "y")
+
+    rows = _rows(root)
+    assert {"zq01", "zq02"} <= set(rows), "a reviewed row was deleted on conflict"
+    assert rows["zq02"]["artifact_version"] == 2
+    assert "changed since the preview" in state.memory_message, state.memory_message
+    assert "deleted 0" not in state.memory_message
+
+
+def test_r2_refresh_without_announce_keeps_the_outcome_message(
+    tmp_path: Path,
+) -> None:
+    root = _root(tmp_path, "a")
+    state = _state(tmp_path, root)
+    actions = _actions()
+    state.memory_message = "maintenance: expiry_sweep changed 1"
+
+    tui_mod._memory_refresh(state, state.active_project, actions, announce=False)
+
+    assert state.memory_message == "maintenance: expiry_sweep changed 1"
