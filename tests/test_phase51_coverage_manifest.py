@@ -84,6 +84,17 @@ def test_pyinstaller_build_byproducts_are_classified_excluded(path: str) -> None
     assert record.exclusion_reason
 
 
+@pytest.mark.parametrize(
+    "path",
+    [".DS_Store", "src/rush/.DS_Store", "docs/Thumbs.db", "x/._foo.py"],
+)
+def test_os_metadata_files_are_classified_excluded(path: str) -> None:
+    # macOS Finder/AppleDouble and Windows metadata files must not crash the manifest.
+    record = classify_path(path)
+    assert record.classification == "excluded"
+    assert record.exclusion_reason
+
+
 def test_repository_coverage_manifest_is_valid_and_non_empty() -> None:
     manifest_file = Path("governance/first-party-coverage.toml")
     assert manifest_file.is_file(), "governance/first-party-coverage.toml must exist"

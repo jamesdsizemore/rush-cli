@@ -318,7 +318,7 @@ def test_unreadable_registry_is_a_directory(tmp_path: Path) -> None:
     assert result["raw"]["data"]["registry"]["state"] == "unreadable"
 
 
-@pytest.mark.skipif(os.name == "nt" or os.getuid() == 0, reason="POSIX non-root only")
+@pytest.mark.posix_nonroot
 def test_permission_denied_registry(tmp_path: Path) -> None:
     from rush.tools.status import StatusTool
 

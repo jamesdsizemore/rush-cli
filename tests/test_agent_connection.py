@@ -297,7 +297,7 @@ def test_malformed_codex_toml_reported(tmp_path: Path) -> None:
     assert codex_status.error is not None
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+@pytest.mark.posix_only
 def test_read_only_config_reported_without_crashing_others(tmp_path: Path) -> None:
     home = _home_with(tmp_path, "windsurf", WINDSURF_JSON)
     path = ADAPTERS["windsurf"].config_paths("Darwin", home)[0]

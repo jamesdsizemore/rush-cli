@@ -27,9 +27,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(
-    os.name != "posix", reason="these tests require a POSIX pty"
-)
+pytestmark = pytest.mark.posix_only  # a POSIX pty
 
 _REPO_SRC = str(Path(__file__).resolve().parent.parent / "src")
 

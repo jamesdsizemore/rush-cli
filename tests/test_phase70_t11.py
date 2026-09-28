@@ -538,7 +538,7 @@ def _brew_venv(tmp_path: Path, home: Path, first_hop: Path) -> Path:
     return project
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink chain")
+@pytest.mark.posix_only
 def test_t11_project_environment_and_trust_homebrew_framework_chain(
     tmp_path, granted_build
 ) -> None:
@@ -560,7 +560,7 @@ def test_t11_project_environment_and_trust_homebrew_framework_chain(
     assert env.interpreter_sha256 == binaries.compute_file_sha256(real)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink chain")
+@pytest.mark.posix_only
 def test_t11_project_environment_and_trust_homebrew_same_basename_elsewhere_rejected(
     tmp_path, granted_build
 ) -> None:
@@ -583,7 +583,7 @@ def test_t11_project_environment_and_trust_homebrew_same_basename_elsewhere_reje
     assert env.cause == "interpreter_outside_home"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink chain")
+@pytest.mark.posix_only
 def test_t11_project_environment_and_trust_symlink_loop_rejected(
     tmp_path, granted_build
 ) -> None:
@@ -792,7 +792,7 @@ def test_t11_project_environment_and_trust_cli_and_mcp_expose_environment(
     assert granted["analysis_environment"]["permission"] == "granted"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX shell fixture")
+@pytest.mark.posix_only
 def test_t11_project_environment_and_trust_exec_never_falls_back_to_project_path(
     tmp_path, monkeypatch, spawn_spy
 ) -> None:
@@ -866,7 +866,7 @@ def _fake_pyrefly(directory: Path, version: str) -> Path:
     return fake
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX shell fixture")
+@pytest.mark.posix_only
 def test_t11_pyrefly_below_minimum_is_engine_unsupported(tmp_path, monkeypatch) -> None:
     """Below the pinned minimum pyrefly never runs `check`; the result is an
     explicit engine-unsupported error, never a silent pass."""
@@ -890,7 +890,7 @@ def test_t11_pyrefly_below_minimum_is_engine_unsupported(tmp_path, monkeypatch) 
     assert "0.36.2" in result["summary"] and PYREFLY_MINIMUM in result["summary"]
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX shell fixture")
+@pytest.mark.posix_only
 def test_t11_pyrefly_at_minimum_runs(tmp_path, monkeypatch) -> None:
     from rush.runtime import binaries
     from rush.tools import common

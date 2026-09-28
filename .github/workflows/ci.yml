@@ -84,8 +84,11 @@ jobs:
           ./osv-scanner --version
           echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
 
+      # Every needs_* marker deselected here (conftest.py also deselects, never
+      # skips, a needs_* test whose binary is not on PATH) is installed and run
+      # by the static-tool-acceptance job below.
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload and not test_eval_live_local_provider and not test_prettier_engine_check_mode" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint" --deselect "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability"
+        run: uv run pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_aislop and not needs_prettier and not needs_promptfoo and not needs_tsc"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
@@ -140,7 +143,7 @@ jobs:
         run: uv pip install vulture==2.16 radon==6.0.1 sloppylint==0.5.1
 
       - name: Install Node-based static-analysis and eval engines
-        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0
+        run: npm install -g knip@5.88.1 jscpd@5.2.0 prettier@3.9.6 promptfoo@0.123.0 typescript@5.9.3
 
       - name: Run static-tool and ai-eval acceptance
         run: uv run --no-sync pytest tests/test_static_tools.py tests/test_aislop_reference.py tests/test_ai_eval.py tests/test_engines.py -q

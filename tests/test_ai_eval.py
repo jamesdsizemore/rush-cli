@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -186,9 +185,8 @@ def test_eval_adapters_refuse_preexisting_reports(
     assert report.read_text() == '{"stale": true}'
 
 
+@pytest.mark.needs_promptfoo
 def test_eval_live_local_provider(monkeypatch, tmp_path):
-    if shutil.which("promptfoo") is None:
-        pytest.skip("Promptfoo must be installed for live local-provider acceptance")
     requests = []
 
     class Provider(BaseHTTPRequestHandler):
