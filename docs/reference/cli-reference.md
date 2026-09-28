@@ -150,7 +150,7 @@ Evaluation commands expose permission flags according to their own generated hel
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
-| `ui [PATH ...]` | At a TTY, persistent Rich UI with background checks and keyboard navigation. `--json` runs checks once, emits JSON, and exits; redirected stdout without `--json` runs checks once and prints a text summary. | `--json`, Permissions | none |
+| `ui [PATH ...]` | Opens the interactive terminal UI on a read-only Overview for one or more projects; the interface starts immediately, and analysis is an explicit Start action (F5 refreshes the Overview), never automatic. With `--json`, or when stdin/stdout is not a terminal, prints each project's read-only `rush status` snapshot instead of opening the interface (JSON with `--json`; otherwise a one-line summary plus the next `rush status --json`/`rush check` commands) — it never runs checks. | `--json`, Permissions | none |
 | `dashboard [PATH]` | Authenticated, CSRF-hardened local web dashboard on `127.0.0.1` behind a single-use bootstrap URL; mutations require an explicit grant per action. See [the dashboard/TUI review](../reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings. | `--port`, `--reconnect`, Permissions | starts local server, opens browser to a per-server session URL |
 | `gain` | Live-updating Rich HUD of token compression and dollar savings; re-renders until Ctrl+C. `context gain` is a live alias for the same command, not a one-shot summary. | none | none |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
@@ -179,7 +179,6 @@ Published result
 Agents
   claude-desktop: not_detected, activation unverified
   claude-code: not_detected, activation unverified
-  cursor: not_detected, activation unverified
   windsurf: not_detected, activation unverified
   zed: not_detected, activation unverified
   codex: not_detected, activation unverified

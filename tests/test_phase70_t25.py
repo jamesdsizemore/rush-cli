@@ -463,6 +463,7 @@ _SECTION_81_DOCS = tuple(
         "docs/getting-started/installation.md",
         "docs/integrations/mcp-client-setup.md",
         "docs/agentic-rush/plugins-and-agent-skills.md",
+        "docs/user-guide/interactive-tui.md",
     )
 )
 
