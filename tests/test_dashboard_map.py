@@ -2628,6 +2628,12 @@ def test_standalone_tui_process_acquires_its_own_owner_lock_before_reserving_loc
     )
     tui_module._start_scan_thread(project, actions)
     try:
+        # T28-F: the start admits on its worker; wait (bounded) until it has.
+        deadline = time.monotonic() + 5.0
+        while not (project.owner_instance_id and project.ledger_admitted):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.005)
         assert project.owner == "local"
         assert project.owner_instance_id
         lock_path = (
@@ -3694,6 +3700,10 @@ def test_quit_after_dashboard_owned_rescan_cancels_the_correct_run_not_a_stale_l
         cancel_scan_run=lambda root, run_id: cancel_calls.append(run_id),
     )
     tui_module._request_cancel(project, actions_with_cancel)
+    # T28-F: the cancel request runs on a worker; wait (bounded) for it.
+    deadline = time.monotonic() + 5.0
+    while owner.calls[-1][0] != "cancel" and time.monotonic() < deadline:
+        time.sleep(0.005)
     # T28-B: dashboard-owned work is cancelled by the owning server's own
     # `cancel` operation, never the local marker-file cancel.
     assert cancel_calls == [], "a dashboard-owned cancel must never run locally"

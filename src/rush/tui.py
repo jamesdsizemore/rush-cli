@@ -773,6 +773,16 @@ class ProjectState:
     cancel_event: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
+    # T28-F: a cancel pressed before the run had a cancellable identity (the
+    # start worker still resolving the owner, or a dashboard dispatch not yet
+    # answered). The start worker honors it before admitting, launching or
+    # dispatching anything, or forwards it once the dispatch answers;
+    # `start_lock` makes each of those steps atomic with the cancel key.
+    start_cancel_requested: bool = False
+    dashboard_dispatch_pending: bool = False
+    start_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
     section: str = "overview"
     views: dict[str, Any] = field(default_factory=dict, repr=False)
     # T28-B: `rush ui --allow-*` grants for this project's Setup toggles, and
@@ -1530,7 +1540,10 @@ class DashboardOwner:
             if exc.code != 401:
                 raise
             return dispatch_dashboard_operation_status(
-                self.base_url, self.project_id, operation_id, session=self._new_session()
+                self.base_url,
+                self.project_id,
+                operation_id,
+                session=self._new_session(),
             )
 
     def _new_session(self) -> tuple[str, str]:
@@ -1611,13 +1624,17 @@ def _start_dashboard_owned(
     for this case: this process simply stops observing, and the dashboard's
     own durable status record is what a later `rush ui`/`rush dashboard`
     invocation reads to find the result."""
-    project.owner = "dashboard"
-    project.dashboard_owner_handle = owner
-    project.work_kind = "dashboard"
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
-    project.operation_id = ""
+    with project.start_lock:
+        if _cancelled_before_start(project, operation):
+            return
+        project.owner = "dashboard"
+        project.dashboard_owner_handle = owner
+        project.work_kind = "dashboard"
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
+        project.operation_id = ""
+        project.dashboard_dispatch_pending = True
 
     def _worker() -> None:
         try:
@@ -1626,17 +1643,24 @@ def _start_dashboard_owned(
             # real network boundary into another process; its failure space
             # is unbounded. Surface it, and never silently re-run the work
             # locally: ownership is decided once, visibly.
+            with project.start_lock:
+                project.dashboard_dispatch_pending = False
+                project.start_cancel_requested = False
             project.last_message = f"{operation} failed on dashboard: {exc}"
             project.status = "error"
             return
         run_id = response.get("run_id") if isinstance(response, dict) else None
-        if isinstance(run_id, str) and run_id:
-            project.run_id = run_id
         operation_id = (
             response.get("operation_id") if isinstance(response, dict) else None
         )
-        if isinstance(operation_id, str) and operation_id:
-            project.operation_id = operation_id
+        with project.start_lock:
+            if isinstance(run_id, str) and run_id:
+                project.run_id = run_id
+            if isinstance(operation_id, str) and operation_id:
+                project.operation_id = operation_id
+            forward_cancel = project.start_cancel_requested
+            project.start_cancel_requested = False
+            project.dashboard_dispatch_pending = False
         # U02: completion is never inferred from `plan_total` (CHECK_SUITE
         # never has one) -- `_poll_running_scans`'s dashboard-owned branch
         # below is the only thing that ever moves this project out of
@@ -1645,11 +1669,27 @@ def _start_dashboard_owned(
         project.last_message = (
             f"{operation} running in dashboard (operation {operation_id or '?'})"
         )
+        if forward_cancel:
+            # T28-F: the cancel pressed while this dispatch was unanswered
+            # now reaches the run it started.
+            try:
+                owner.dispatch(
+                    "cancel",
+                    run_id=project.run_id or "",
+                    operation_id=project.operation_id,
+                )
+            except Exception as exc:  # noqa: BLE001 -- same network boundary
+                # as the dispatch above; surface the failure.
+                project.last_message = f"cancel failed: {exc}"
+                if project.status == "cancelling":
+                    project.status = "scanning"
         _observe_dashboard_operation(project, owner)
 
     thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
+    # T28-F: started before it is published -- the start worker calls this
+    # while the loop or a caller may already be reading `scan_thread`.
     thread.start()
+    project.scan_thread = thread
 
 
 # T28-F: how often the dispatch worker re-reads a dashboard-owned run's
@@ -1675,6 +1715,59 @@ def _observe_dashboard_operation(project: ProjectState, owner: Any) -> None:
         time.sleep(_DASHBOARD_POLL_SECONDS)
 
 
+def _start_off_key_path(
+    project: ProjectState, label: str, begin: Callable[[], None]
+) -> None:
+    """T28-F: a scan, rescan or check start returns at once. Its owner
+    resolution (the dashboard descriptor read and `/api/control/health`
+    probe) and the dashboard-owned vs local decision run on this worker; the
+    project shows `starting` until the worker has decided."""
+    project.status = "scanning"
+    with project.start_lock:
+        project.start_cancel_requested = False
+        project.work_kind = "starting"
+    project.operation_id = ""
+    project.progress = None
+    project.progress_history = []
+    project.last_message = f"{label} starting"
+
+    def _worker() -> None:
+        try:
+            begin()
+        except Exception as exc:  # noqa: BLE001 -- `begin` calls injectable
+            # seams (`plan_scan`, the owner finder, admission); surface any
+            # failure on the project, never let the worker die silently.
+            project.last_message = f"{label} failed: {exc}"
+            project.status = "error"
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    project.scan_thread = thread
+    thread.start()
+
+
+def _cancelled_before_start(project: ProjectState, label: str) -> bool:
+    """T28-F: the start worker's check, under `project.start_lock`, right
+    before it admits, launches or dispatches anything: a cancel recorded
+    while starting ends the start here as `cancelled`."""
+    if not project.start_cancel_requested:
+        return False
+    project.start_cancel_requested = False
+    project.status = "cancelled"
+    project.last_message = f"{label} cancelled before it started"
+    return True
+
+
+def _run_dashboard_owned(
+    project: ProjectState, owner: Any, operation: str, arguments: dict[str, Any]
+) -> None:
+    """Hand the work to the dashboard from the start worker and wait for the
+    dispatch worker, so joining `project.scan_thread` covers the whole run."""
+    _start_dashboard_owned(project, owner, operation, arguments)
+    dispatch = project.scan_thread
+    if dispatch is not None and dispatch is not threading.current_thread():
+        dispatch.join()
+
+
 def _start_scan_thread(
     project: ProjectState,
     actions: ScanActions,
@@ -1682,11 +1775,19 @@ def _start_scan_thread(
 ) -> None:
     # T28-B: only the reviewed grants run the scan; unreviewed = none.
     granted = permissions if permissions is not None else ExecutionPermissions()
+    _start_off_key_path(
+        project, "scan_start", lambda: _begin_scan(project, actions, granted)
+    )
+
+
+def _begin_scan(
+    project: ProjectState, actions: ScanActions, granted: ExecutionPermissions
+) -> None:
     plan = actions.plan_scan(project.root)
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
         project.plan_total = len(list(getattr(plan, "candidates", None) or []))
-        _start_dashboard_owned(
+        _run_dashboard_owned(
             project,
             owner,
             "scan_start",
@@ -1703,14 +1804,17 @@ def _start_scan_thread(
         project.last_message = "scan_start refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.work_kind = "scan"
-    run_id = str(uuid.uuid4())
-    project.run_id = run_id
-    project.plan_total = len(list(getattr(plan, "candidates", None) or []))
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
+    with project.start_lock:
+        if _cancelled_before_start(project, "scan_start"):
+            return
+        project.owner = "local"
+        project.work_kind = "scan"
+        run_id = str(uuid.uuid4())
+        project.run_id = run_id
+        project.plan_total = len(list(getattr(plan, "candidates", None) or []))
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
     admission = _admit_local_run(
         project,
         owner_instance_id=owner_instance_id,
@@ -1731,6 +1835,7 @@ def _start_scan_thread(
         project.run_id = admission.run_id or run_id
         project.operation_id = admission.operation_id or project.operation_id
         project.owner_instance_id = admission.owner_instance_id or owner_instance_id
+        project.work_kind = "scan"
         project.last_message = "scan_start attached to the already-running executor"
         return
     # `admission is None` means `_admit_local_run` itself raised (an
@@ -1771,9 +1876,7 @@ def _start_scan_thread(
             outcome = "cancelled" if project.status == "cancelling" else outcome_status
             _finalize_local_run(project, {"status": outcome})
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _reviewed_attempt_id(project: ProjectState) -> str | None:
@@ -1817,6 +1920,19 @@ def _start_rescan_thread(
     expected_attempt_id: str | None = None,
 ) -> None:
     baseline_run_id = project.run_id
+    _start_off_key_path(
+        project,
+        "rescan",
+        lambda: _begin_rescan(project, actions, baseline_run_id, expected_attempt_id),
+    )
+
+
+def _begin_rescan(
+    project: ProjectState,
+    actions: ScanActions,
+    baseline_run_id: str | None,
+    expected_attempt_id: str | None,
+) -> None:
     # T28-B: the reviewed attempt (resolved now when no review carried it);
     # a newer attempt makes the rescan refuse.
     if expected_attempt_id is None:
@@ -1828,7 +1944,7 @@ def _start_rescan_thread(
         # become locally owned mid-session.
         # `rescan`'s real argument name is `run_id` (the baseline run being
         # re-executed), per the server's own argument allowlist.
-        _start_dashboard_owned(
+        _run_dashboard_owned(
             project, owner, "rescan", {"run_id": baseline_run_id or ""}
         )
         return
@@ -1842,25 +1958,30 @@ def _start_rescan_thread(
         project.last_message = "rescan refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.work_kind = "rescan"
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
-    # The rescan worker reports its own terminal status; `plan_total` left
-    # from an earlier scan would make `_poll_running_scans` poll the baseline
-    # run's finished events and overwrite a failed rescan with "complete".
-    project.plan_total = 0
-    operation_id = str(uuid.uuid4())
-    # P69-06h: tag this local run's owner identity even without a durable
-    # admission row -- `reap_owner_processes` reads `.procs` by
-    # `owner_instance_id` alone, so Detach's force-exit can still stop this
-    # run's owned subprocess groups. Full ledger admission (recovery
-    # reconciliation) is `_start_scan_thread`'s scope, not duplicated here.
-    project.owner_instance_id = owner_instance_id
-    project.operation_id = operation_id
-    project.run_resolved = True
-    project.ledger_admitted = False
+    with project.start_lock:
+        if _cancelled_before_start(project, "rescan"):
+            return
+        project.owner = "local"
+        project.work_kind = "rescan"
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
+        # The rescan worker reports its own terminal status; `plan_total`
+        # left from an earlier scan would make `_poll_running_scans` poll the
+        # baseline run's finished events and overwrite a failed rescan with
+        # "complete".
+        project.plan_total = 0
+        operation_id = str(uuid.uuid4())
+        # P69-06h: tag this local run's owner identity even without a durable
+        # admission row -- `reap_owner_processes` reads `.procs` by
+        # `owner_instance_id` alone, so Detach's force-exit can still stop
+        # this run's owned subprocess groups. Full ledger admission (recovery
+        # reconciliation) is `_start_scan_thread`'s scope, not duplicated
+        # here.
+        project.owner_instance_id = owner_instance_id
+        project.operation_id = operation_id
+        project.run_resolved = True
+        project.ledger_admitted = False
 
     def _worker() -> None:
         try:
@@ -1897,9 +2018,7 @@ def _start_rescan_thread(
             project.last_message = f"rescan error: {exc}"
             project.status = "error"
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> None:
@@ -1916,9 +2035,15 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
     `DashboardContext` this process does not have. Otherwise it falls back to
     a local daemon thread carrying this process's own owner-instance lock id
     and run id, so the subprocesses it spawns stay fenced and reapable."""
+    _start_off_key_path(
+        project, "initial check", lambda: _begin_check(project, actions)
+    )
+
+
+def _begin_check(project: ProjectState, actions: ScanActions) -> None:
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
-        _start_dashboard_owned(project, owner, "check_suite", {})
+        _run_dashboard_owned(project, owner, "check_suite", {})
         return
 
     owner_instance_id = _tui_owner_instance_id()
@@ -1930,19 +2055,22 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
         project.last_message = "initial check refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.status = "scanning"
-    project.work_kind = "check"
-    project.cancel_event.clear()
-    run_id = str(uuid.uuid4())
-    # P69-06h: tag this local run's owner identity so Detach's force-exit can
-    # still reap its owned subprocess groups (see `_start_rescan_thread`'s
-    # identical comment -- ledger admission stays `_start_scan_thread`'s
-    # scope, not duplicated here).
-    project.owner_instance_id = owner_instance_id
-    project.operation_id = run_id
-    project.run_resolved = True
-    project.ledger_admitted = False
+    with project.start_lock:
+        if _cancelled_before_start(project, "initial check"):
+            return
+        project.owner = "local"
+        project.status = "scanning"
+        project.work_kind = "check"
+        project.cancel_event.clear()
+        run_id = str(uuid.uuid4())
+        # P69-06h: tag this local run's owner identity so Detach's force-exit
+        # can still reap its owned subprocess groups (see
+        # `_start_rescan_thread`'s identical comment -- ledger admission stays
+        # `_start_scan_thread`'s scope, not duplicated here).
+        project.owner_instance_id = owner_instance_id
+        project.operation_id = run_id
+        project.run_resolved = True
+        project.ledger_admitted = False
 
     def _worker() -> None:
         try:
@@ -1973,9 +2101,7 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
             project.last_message = f"initial check error: {exc}"
             project.status = "error"
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> None:
@@ -4193,7 +4319,17 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
     is cancelled by the owning server's own `cancel` operation."""
     if project.status != "scanning":
         return
-    kind = project.work_kind
+    with project.start_lock:
+        kind = project.work_kind
+        if kind == "starting" or project.dashboard_dispatch_pending:
+            # T28-F: no cancellable run yet (the owner is still being decided,
+            # or the dashboard has not answered the dispatch). The start
+            # worker honors this before launching or dispatching anything, or
+            # forwards it to the run once the dispatch answers.
+            project.start_cancel_requested = True
+            project.status = "cancelling"
+            project.last_message = "cancel requested -- stopping the start"
+            return
     if kind == "check":
         project.cancel_event.set()
         project.status = "cancelling"
@@ -4213,18 +4349,12 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         project.last_message = f"cancel failed: {exc}"
 
 
-# T28-F: how long a dashboard cancel key waits for a prompt answer before
-# the request continues on its worker -- well inside the 50 ms input bound.
-_CANCEL_ANSWER_WAIT_SECONDS = 0.03
-
-
 def _send_dashboard_cancel(project: ProjectState, actions: ScanActions) -> None:
     """T28-F: the owning dashboard's `cancel` crosses the network, so it runs
     on a worker; the run shows `cancelling` at once and returns to
-    `scanning` with the reason if the request fails. A prompt answer lands
-    before this returns; an unanswering dashboard never holds the loop."""
+    `scanning` with the reason if the request fails. The key path never
+    waits for the answer."""
     project.status = "cancelling"
-    answered = threading.Event()
 
     def _worker() -> None:
         try:
@@ -4241,11 +4371,8 @@ def _send_dashboard_cancel(project: ProjectState, actions: ScanActions) -> None:
             project.last_message = f"cancel failed: {exc}"
             if project.status == "cancelling":
                 project.status = "scanning"
-        finally:
-            answered.set()
 
     threading.Thread(target=_worker, daemon=True).start()
-    answered.wait(_CANCEL_ANSWER_WAIT_SECONDS)
 
 
 def _wait_for_cancel_ack(
@@ -6134,7 +6261,9 @@ def _render_overview(state: TuiState, project: ProjectState) -> Panel:
         data = view.data if isinstance(view.data, Mapping) else {}
         lines.extend(_overview_lines(data))
     lines.extend(_outcome_line(result) for result in project.results)
-    if project.status in ("scanning", "cancelling"):
+    if project.work_kind == "starting" and project.status in ("scanning", "cancelling"):
+        lines.append(_safe("starting"))
+    elif project.status in ("scanning", "cancelling"):
         lines.append(_safe(f"{project.work_kind or 'work'} running"))
     elif project.status == "cancelled":
         lines.append(_safe(f"{project.work_kind or 'work'} cancelled", "bold yellow"))
@@ -6483,7 +6612,9 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     )
     # T28-F: the pane fades in over `detail_ms` after the selection moved.
     fading = _motion_running(project, _TERMINAL_MOTION["detail_ms"])
-    return Panel(Group(*parts), title=title, style="magenta dim" if fading else "magenta")
+    return Panel(
+        Group(*parts), title=title, style="magenta dim" if fading else "magenta"
+    )
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
