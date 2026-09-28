@@ -284,7 +284,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "scan_start": frozenset({"plan_id"}),
     "scan_cancel": frozenset({"run_id", "operation_id"}),
     "scan_resume": frozenset({"run_id"}),
-    "rescan": frozenset({"run_id"}),
+    "rescan": frozenset({"run_id", "expected_attempt_id"}),
     "handoff_preview": frozenset(
         {"run_id", "attempt_id", "agent_id", "finding_ids", "max_tokens", "max_bytes"}
     ),
@@ -2162,6 +2162,16 @@ def _dispatch_rescan(
             400, "malformed_request", f"unknown run_id: {baseline_run_id}"
         )
     captured_attempt_id = baseline_manifest.get("attempt_id")
+    # T28-B: a client that reviewed a specific attempt names it; a newer
+    # attempt published since that review refuses the rescan before any effect.
+    reviewed_attempt_id = arguments.get("expected_attempt_id")
+    if reviewed_attempt_id is not None and reviewed_attempt_id != captured_attempt_id:
+        raise _ActionDenied(
+            409,
+            "RESUME_STALE",
+            f"run {baseline_run_id} changed since review: reviewed attempt "
+            f"{reviewed_attempt_id}, current attempt {captured_attempt_id}",
+        )
     permissions = _permissions_from_grants(grants)
     new_run_id = str(uuid.uuid4())
     new_attempt_id = str(uuid.uuid4())

@@ -474,7 +474,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     expanded_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "2", "down", "+", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -489,7 +489,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     collapsed_again_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "2", "down", "+", "-", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "h", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -1328,13 +1328,21 @@ def test_admit_local_run_refuses_to_reserve_work_when_owner_lock_acquisition_fai
         lambda *a, **k: admit_calls.append((a, k)),
     )
 
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-a"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
     assert admit_calls == [], "a failed lifetime lock must never reserve work"
-    assert project.scan_thread is None
+    assert local_executions == [], "a failed lifetime lock must never launch work"
     assert project.status == "error"
 
 
@@ -1380,12 +1388,20 @@ def test_admit_local_run_attaches_to_stored_executor_identity_when_admission_res
             owner_instance_id="attached-owner",
         ),
     )
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-c"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
-    assert project.scan_thread is None
+    assert local_executions == [], "an attached start must never launch a worker"
     assert project.run_id == "attached-run"
     assert project.operation_id == "attached-op"
     assert project.owner_instance_id == "attached-owner"
@@ -1417,12 +1433,20 @@ def test_admission_conflict_or_error_launches_nothing_and_displays_failure(
             slot_id="fake-slot", started=False, attached=False, conflict=True
         ),
     )
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-d1"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
-    assert project.scan_thread is None
+    assert local_executions == [], "a conflict must launch nothing"
     assert project.status == "error"
     assert "conflict" in project.last_message.lower()
 
@@ -1702,9 +1726,9 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
             )
         ],
     )
-    keys: list[str | None] = ["f3", "2", "down", "+", None, None, "q"]
+    keys: list[str | None] = ["f3", "2", "down", "l", None, None, "q"]
     # The launch read consumes the first size, so ticks 1-4 (every key up
-    # to "+") run at 120x40 and the shrink to 60x18 happens afterwards.
+    # to "l") run at 120x40 and the shrink to 60x18 happens afterwards.
     # Below 60x20 only q/c/F2/Escape are accepted (T28 shared design).
     sizes = [
         (120, 40),

@@ -22,6 +22,7 @@ crash.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -709,6 +710,10 @@ def test_request_cancel_dispatches_by_work_kind(
         dashboard_owner=lambda root: owner,
     )
     tui_module._request_cancel(project, actions)
+    # T28-F: the cancel request runs on a worker; wait (bounded) for it.
+    deadline = time.monotonic() + 5.0
+    while not owner.calls and time.monotonic() < deadline:
+        time.sleep(0.005)
     assert scan_cancel_calls == [], "a dashboard-owned cancel must never run locally"
     assert [call[0] for call in owner.calls] == ["cancel"], (
         f"a dashboard-owned cancel must dispatch exactly one 'cancel' "

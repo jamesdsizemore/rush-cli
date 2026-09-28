@@ -25,6 +25,7 @@ import io
 import json
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -250,6 +251,26 @@ _TERMINAL_MOTION: dict[str, int] = {
 
 def _reduced_motion() -> bool:
     return bool(os.environ.get("RUSH_REDUCED_MOTION"))
+
+
+def _motion_running(project: ProjectState | None, duration_ms: int) -> bool:
+    """T28-F: True while a transition of `duration_ms` that started when the
+    selection last moved is still running; never under reduced motion."""
+    if project is None or project.selection_started is None or _reduced_motion():
+        return False
+    return (time.monotonic() - project.selection_started) * 1000 < duration_ms
+
+
+def _selection_style(project: ProjectState | None) -> str:
+    """T28-F: the selected row's highlight -- dim reverse while it moves in
+    over `selection_ms`, then reverse."""
+    if _motion_running(project, _TERMINAL_MOTION["selection_ms"]):
+        return "dim reverse"
+    return "reverse"
+
+
+def _state_selection_style(state: TuiState) -> str:
+    return _selection_style(state.active_project if state.projects else None)
 
 
 def _row_reveal_progress(
@@ -753,6 +774,16 @@ class ProjectState:
     cancel_event: threading.Event = field(
         default_factory=threading.Event, repr=False, compare=False
     )
+    # T28-F: a cancel pressed before the run had a cancellable identity (the
+    # start worker still resolving the owner, or a dashboard dispatch not yet
+    # answered). The start worker honors it before admitting, launching or
+    # dispatching anything, or forwards it once the dispatch answers;
+    # `start_lock` makes each of those steps atomic with the cancel key.
+    start_cancel_requested: bool = False
+    dashboard_dispatch_pending: bool = False
+    start_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
     section: str = "overview"
     views: dict[str, Any] = field(default_factory=dict, repr=False)
     # T28-B: `rush ui --allow-*` grants for this project's Setup toggles, and
@@ -771,6 +802,15 @@ class ProjectState:
     dashboard_owner_handle: Any = field(default=None, repr=False, compare=False)
     # T28-F: monotonic start of the findings-row reveal; None = final state.
     row_reveal_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: monotonic time the selection last moved -- the highlight moves
+    # in over `selection_ms` and the detail pane fades in over `detail_ms`;
+    # None = final state.
+    selection_started: float | None = field(default=None, repr=False, compare=False)
+    # T28-F: the worker thread observing a dashboard-owned run's durable status
+    # (`_observe_dashboard_operation`), started by the render loop.
+    dashboard_poll_thread: threading.Thread | None = field(
+        default=None, repr=False, compare=False
+    )
     # T28-B: the last rescan's `compare_runs` verdicts plus the reviewed
     # baseline attempt's findings (`baseline_findings`), shown while its
     # `current_run_id` is still this project's run.
@@ -808,17 +848,33 @@ class ProjectState:
         return rows
 
     def visible_findings(self) -> list[dict[str, Any]]:
-        rows = self.flattened_findings()
+        """T28-C: the filter matches severity, step status, tool, engine,
+        path and message; a `field:value` prefix narrows to that field."""
         needle = self.filter_text.strip().lower()
-        if not needle:
-            return rows
-        return [
-            row
-            for row in rows
-            if needle in _finding_path(row).lower()
-            or needle in str(row.get("message", "")).lower()
-            or needle in str(row.get("tool", "")).lower()
-        ]
+        rows: list[dict[str, Any]] = []
+        for result in self.results:
+            for finding in result.get("findings") or []:
+                row = {"tool": result.get("tool"), **finding}
+                if not needle or _filter_matches(needle, row, result):
+                    rows.append(row)
+        return rows
+
+
+def _filter_matches(
+    needle: str, row: Mapping[str, Any], result: Mapping[str, Any]
+) -> bool:
+    fields = {
+        "severity": row.get("severity"),
+        "status": result.get("status"),
+        "tool": row.get("tool"),
+        "engine": result.get("engine"),
+        "path": _finding_path(row),
+        "message": row.get("message"),
+    }
+    field, sep, value = needle.partition(":")
+    if sep and field in fields:
+        return value.strip() in str(fields[field] or "").lower()
+    return any(needle in str(v or "").lower() for v in fields.values())
 
 
 def project_key(project: ProjectState) -> str:
@@ -929,6 +985,10 @@ class TuiState:
     git_dirty_index: int = -1
     # T28-E: the Tokens run-id filter entry (mode == "tokens_filter").
     tokens_filter_buffer: str = ""
+    # T28-E: (project key, section) whose last worker staleness check found
+    # nothing changed; the next loop tick starts none, so checks alternate
+    # with idle ticks instead of running back to back.
+    stale_cooldown: set[tuple[str, str]] = field(default_factory=set)
     # T28-A: Tab/Shift+Tab focus position (`FOCUS_CYCLE`; `active_pane` alias).
     focus: str = "list"
     section: str = "overview"
@@ -956,6 +1016,8 @@ class TuiState:
     # re-entering Map via F3, so both survive either.
     map_expanded: set[str] = field(default_factory=set)
     map_selected_index: int = 0
+    # T28-F: `+`/`-` -- the Detail pane takes the list pane's place.
+    detail_expanded: bool = False
     # T28-C: the `/` query typed in `mode == "map_search"`.
     map_query: str = ""
     # T28-F: the overlay `resize_guidance` covers while the terminal is below
@@ -1187,10 +1249,11 @@ def _map_nodes(
                 nodes.append(
                     {
                         "key": f"{file_key}:finding:{idx}",
-                        "label": str(finding.get("message", "")),
+                        "label": _map_finding_label(finding),
                         "depth": depth + 1,
                         "kind": "finding",
                         "parent": file_key,
+                        "finding": finding,
                     }
                 )
         if len(shown) < len(files):
@@ -1210,6 +1273,7 @@ def _map_nodes(
 
     emit("", 1)
     snapshot = project.map_snapshot or {}
+    relations = _map_relations(snapshot)
     for kind, field_name, title in (
         ("memory", "memories", "Memories"),
         ("agent", "agents", "Agents"),
@@ -1240,17 +1304,72 @@ def _map_nodes(
             }
         )
         for idx, item in enumerate(leaves):
-            related = item.get("cites") if kind == "memory" else item.get("assigned_to")
+            if relations is None:
+                targets = ["(relations unavailable)"]
+            else:
+                targets = relations.get(f"{kind}:{item.get('id')}") or [
+                    "(no recorded relation)"
+                ]
             nodes.append(
                 {
                     "key": f"{branch_key}:{idx}",
-                    "label": f"{item.get('id')} -> {', '.join(map(str, related or []))}",
+                    "label": f"{item.get('id')} -> {', '.join(targets)}",
                     "depth": 2,
                     "kind": kind,
                     "parent": branch_key,
+                    "record": item,
+                    "relation": "cites" if kind == "memory" else "assigned_to",
+                    "targets": targets,
                 }
             )
     return nodes
+
+
+def _map_finding_label(finding: Mapping[str, Any]) -> str:
+    """T28-C: a Map finding row keeps its provenance -- severity, tool,
+    rule, path:line and finding id -- next to the message."""
+    line = _finding_line(finding)
+    parts = [
+        str(finding.get("severity") or ""),
+        str(finding.get("tool") or finding.get("provenance") or ""),
+        str(finding.get("rule") or finding.get("rule_id") or ""),
+        f"{_finding_path(finding)}:{line}" if line else _finding_path(finding),
+        str(finding.get("finding_id") or finding.get("id") or ""),
+    ]
+    provenance = " ".join(part for part in parts if part)
+    message = str(finding.get("message", ""))
+    return f"{message} [{provenance}]" if provenance else message
+
+
+def _map_relations(snapshot: dict[str, Any]) -> dict[str, list[str]] | None:
+    """T28-C: memory `cites` and agent `assigned_to` relations exactly as
+    the shared dashboard projection records them (`build_project_map`'s
+    full graph, before its render-limit grouping), keyed by projected
+    node id ("memory:<id>"/"agent:<id>") -> target file paths / finding
+    ids. A target the projection drops (no recorded file/finding) is never
+    shown; a snapshot the projection cannot read is `None` (said so in the
+    row), never a raw-snapshot fallback."""
+    if "project_id" not in snapshot:
+        return {}
+    from rush.dashboard.project_map import _build_full_graph
+
+    try:
+        graph_nodes, edges = _build_full_graph(
+            snapshot, snapshot.get("source_identity", snapshot["project_id"])
+        )
+    except (KeyError, TypeError, AttributeError, ValueError):
+        return None
+    display = {
+        node["id"]: node["path"] if node["kind"] == "file" else node["artifact_id"]
+        for node in graph_nodes
+    }
+    relations: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge["relation"] in ("cites", "assigned_to"):
+            relations.setdefault(edge["source"], []).append(
+                str(display.get(edge["target"], edge["target"]))
+            )
+    return relations
 
 
 def _map_visible_nodes(
@@ -1456,6 +1575,12 @@ class DashboardOwner:
     _session_cache: dict[str, tuple[str, str]] = field(
         default_factory=dict, compare=False, repr=False
     )
+    # T28-F: a failed session exchange, kept for this owner's lifetime so an
+    # unanswering dashboard is not re-contacted (and waited on) every poll; a
+    # newly found owner starts clean.
+    _session_failure: list[Exception] = field(
+        default_factory=list, compare=False, repr=False
+    )
 
     def dispatch(self, operation: str, **arguments: Any) -> dict[str, Any]:
         from rush.dashboard.server import (
@@ -1489,15 +1614,9 @@ class DashboardOwner:
         a second failure is a visible disconnection, surfaced to the caller."""
         from urllib.error import HTTPError
 
-        from rush.dashboard.server import (
-            _control_session,
-            dispatch_dashboard_operation_status,
-        )
+        from rush.dashboard.server import dispatch_dashboard_operation_status
 
-        session = self._session_cache.get("session")
-        if session is None:
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
+        session = self._session_cache.get("session") or self._new_session()
         try:
             return dispatch_dashboard_operation_status(
                 self.base_url, self.project_id, operation_id, session=session
@@ -1505,11 +1624,29 @@ class DashboardOwner:
         except HTTPError as exc:
             if exc.code != 401:
                 raise
-            session = _control_session(self.base_url, self.control_capability)
-            self._session_cache["session"] = session
             return dispatch_dashboard_operation_status(
-                self.base_url, self.project_id, operation_id, session=session
+                self.base_url,
+                self.project_id,
+                operation_id,
+                session=self._new_session(),
             )
+
+    def _new_session(self) -> tuple[str, str]:
+        """Exchange the control capability for a session; a failure is
+        cached (T28-F) and re-raised without another exchange."""
+        from rush.dashboard.server import _control_session
+
+        if self._session_failure:
+            raise ConnectionError(
+                f"dashboard session failed: {self._session_failure[0]}"
+            )
+        try:
+            session = _control_session(self.base_url, self.control_capability)
+        except Exception as exc:
+            self._session_failure.append(exc)
+            raise
+        self._session_cache["session"] = session
+        return session
 
 
 def _find_live_dashboard_owner(root: Path) -> DashboardOwner | None:
@@ -1572,13 +1709,17 @@ def _start_dashboard_owned(
     for this case: this process simply stops observing, and the dashboard's
     own durable status record is what a later `rush ui`/`rush dashboard`
     invocation reads to find the result."""
-    project.owner = "dashboard"
-    project.dashboard_owner_handle = owner
-    project.work_kind = "dashboard"
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
-    project.operation_id = ""
+    with project.start_lock:
+        if _cancelled_before_start(project, operation):
+            return
+        project.owner = "dashboard"
+        project.dashboard_owner_handle = owner
+        project.work_kind = "dashboard"
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
+        project.operation_id = ""
+        project.dashboard_dispatch_pending = True
 
     def _worker() -> None:
         try:
@@ -1587,29 +1728,152 @@ def _start_dashboard_owned(
             # real network boundary into another process; its failure space
             # is unbounded. Surface it, and never silently re-run the work
             # locally: ownership is decided once, visibly.
+            with project.start_lock:
+                project.dashboard_dispatch_pending = False
+                project.start_cancel_requested = False
             project.last_message = f"{operation} failed on dashboard: {exc}"
             project.status = "error"
             return
         run_id = response.get("run_id") if isinstance(response, dict) else None
-        if isinstance(run_id, str) and run_id:
-            project.run_id = run_id
         operation_id = (
             response.get("operation_id") if isinstance(response, dict) else None
         )
-        if isinstance(operation_id, str) and operation_id:
-            project.operation_id = operation_id
+        with project.start_lock:
+            if isinstance(run_id, str) and run_id:
+                project.run_id = run_id
+            if isinstance(operation_id, str) and operation_id:
+                project.operation_id = operation_id
+            forward_cancel = project.start_cancel_requested
+            project.start_cancel_requested = False
+            project.dashboard_dispatch_pending = False
         # U02: completion is never inferred from `plan_total` (CHECK_SUITE
-        # never has one) -- `_poll_running_scans`'s dashboard-owned branch
-        # below is the only thing that ever moves this project out of
-        # "scanning", by polling the retained `operation_id`'s real durable
-        # status.
+        # never has one) -- only a poll of the retained `operation_id`'s real
+        # durable status (`_poll_running_scans`, or the render loop's
+        # `_start_dashboard_observers` worker) ever moves this project out of
+        # "scanning".
         project.last_message = (
             f"{operation} running in dashboard (operation {operation_id or '?'})"
         )
+        if forward_cancel:
+            # T28-F: the cancel pressed while this dispatch was unanswered
+            # now reaches the run it started.
+            try:
+                owner.dispatch(
+                    "cancel",
+                    run_id=project.run_id or "",
+                    operation_id=project.operation_id,
+                )
+            except Exception as exc:  # noqa: BLE001 -- same network boundary
+                # as the dispatch above; surface the failure.
+                project.last_message = f"cancel failed: {exc}"
+                if project.status == "cancelling":
+                    project.status = "scanning"
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    # T28-F: started before it is published -- the start worker calls this
+    # while the loop or a caller may already be reading `scan_thread`.
+    thread.start()
+    project.scan_thread = thread
+
+
+# T28-F: how often the dispatch worker re-reads a dashboard-owned run's
+# durable status (the 4 Hz idle refresh rate).
+_DASHBOARD_POLL_SECONDS = 0.25
+
+
+def _start_dashboard_observers(state: TuiState) -> None:
+    """T28-F: the render loop starts one observer worker per running
+    dashboard-owned run whose `operation_id` is known; the loop itself never
+    touches the network."""
+    for project in state.projects:
+        if (
+            project.owner != "dashboard"
+            or project.status not in ("scanning", "cancelling")
+            or not project.operation_id
+            or project.dashboard_owner_handle is None
+        ):
+            continue
+        thread = project.dashboard_poll_thread
+        if thread is not None and thread.is_alive():
+            continue
+        thread = threading.Thread(
+            target=_observe_dashboard_operation,
+            args=(project, project.dashboard_owner_handle),
+            daemon=True,
+        )
+        project.dashboard_poll_thread = thread
+        thread.start()
+
+
+def _observe_dashboard_operation(project: ProjectState, owner: Any) -> None:
+    """T28-F: the dashboard-owned status poll runs here, on a worker, never
+    on the render/input loop: it posts each result to the project until the
+    operation is terminal or the project is no longer observing this
+    owner's run."""
+    operation_id = project.operation_id
+    while (
+        operation_id
+        and project.operation_id == operation_id
+        and project.status in ("scanning", "cancelling")
+        and project.dashboard_owner_handle is owner
+    ):
+        _poll_dashboard_status(project, owner)
+        if project.status not in ("scanning", "cancelling"):
+            return
+        time.sleep(_DASHBOARD_POLL_SECONDS)
+
+
+def _start_off_key_path(
+    project: ProjectState, label: str, begin: Callable[[], None]
+) -> None:
+    """T28-F: a scan, rescan or check start returns at once. Its owner
+    resolution (the dashboard descriptor read and `/api/control/health`
+    probe) and the dashboard-owned vs local decision run on this worker; the
+    project shows `starting` until the worker has decided."""
+    project.status = "scanning"
+    with project.start_lock:
+        project.start_cancel_requested = False
+        project.work_kind = "starting"
+    project.operation_id = ""
+    project.progress = None
+    project.progress_history = []
+    project.last_message = f"{label} starting"
+
+    def _worker() -> None:
+        try:
+            begin()
+        except Exception as exc:  # noqa: BLE001 -- `begin` calls injectable
+            # seams (`plan_scan`, the owner finder, admission); surface any
+            # failure on the project, never let the worker die silently.
+            project.last_message = f"{label} failed: {exc}"
+            project.status = "error"
 
     thread = threading.Thread(target=_worker, daemon=True)
     project.scan_thread = thread
     thread.start()
+
+
+def _cancelled_before_start(project: ProjectState, label: str) -> bool:
+    """T28-F: the start worker's check, under `project.start_lock`, right
+    before it admits, launches or dispatches anything: a cancel recorded
+    while starting ends the start here as `cancelled`."""
+    if not project.start_cancel_requested:
+        return False
+    project.start_cancel_requested = False
+    project.status = "cancelled"
+    project.last_message = f"{label} cancelled before it started"
+    return True
+
+
+def _run_dashboard_owned(
+    project: ProjectState, owner: Any, operation: str, arguments: dict[str, Any]
+) -> None:
+    """Hand the work to the dashboard from the start worker and wait for the
+    dispatch worker, so joining `project.scan_thread` covers the whole run."""
+    _start_dashboard_owned(project, owner, operation, arguments)
+    dispatch = project.scan_thread
+    if dispatch is not None and dispatch is not threading.current_thread():
+        dispatch.join()
 
 
 def _start_scan_thread(
@@ -1619,11 +1883,19 @@ def _start_scan_thread(
 ) -> None:
     # T28-B: only the reviewed grants run the scan; unreviewed = none.
     granted = permissions if permissions is not None else ExecutionPermissions()
+    _start_off_key_path(
+        project, "scan_start", lambda: _begin_scan(project, actions, granted)
+    )
+
+
+def _begin_scan(
+    project: ProjectState, actions: ScanActions, granted: ExecutionPermissions
+) -> None:
     plan = actions.plan_scan(project.root)
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
         project.plan_total = len(list(getattr(plan, "candidates", None) or []))
-        _start_dashboard_owned(
+        _run_dashboard_owned(
             project,
             owner,
             "scan_start",
@@ -1640,14 +1912,17 @@ def _start_scan_thread(
         project.last_message = "scan_start refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.work_kind = "scan"
-    run_id = str(uuid.uuid4())
-    project.run_id = run_id
-    project.plan_total = len(list(getattr(plan, "candidates", None) or []))
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
+    with project.start_lock:
+        if _cancelled_before_start(project, "scan_start"):
+            return
+        project.owner = "local"
+        project.work_kind = "scan"
+        run_id = str(uuid.uuid4())
+        project.run_id = run_id
+        project.plan_total = len(list(getattr(plan, "candidates", None) or []))
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
     admission = _admit_local_run(
         project,
         owner_instance_id=owner_instance_id,
@@ -1668,6 +1943,7 @@ def _start_scan_thread(
         project.run_id = admission.run_id or run_id
         project.operation_id = admission.operation_id or project.operation_id
         project.owner_instance_id = admission.owner_instance_id or owner_instance_id
+        project.work_kind = "scan"
         project.last_message = "scan_start attached to the already-running executor"
         return
     # `admission is None` means `_admit_local_run` itself raised (an
@@ -1708,9 +1984,7 @@ def _start_scan_thread(
             outcome = "cancelled" if project.status == "cancelling" else outcome_status
             _finalize_local_run(project, {"status": outcome})
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _reviewed_attempt_id(project: ProjectState) -> str | None:
@@ -1754,6 +2028,19 @@ def _start_rescan_thread(
     expected_attempt_id: str | None = None,
 ) -> None:
     baseline_run_id = project.run_id
+    _start_off_key_path(
+        project,
+        "rescan",
+        lambda: _begin_rescan(project, actions, baseline_run_id, expected_attempt_id),
+    )
+
+
+def _begin_rescan(
+    project: ProjectState,
+    actions: ScanActions,
+    baseline_run_id: str | None,
+    expected_attempt_id: str | None,
+) -> None:
     # T28-B: the reviewed attempt (resolved now when no review carried it);
     # a newer attempt makes the rescan refuse.
     if expected_attempt_id is None:
@@ -1765,8 +2052,16 @@ def _start_rescan_thread(
         # become locally owned mid-session.
         # `rescan`'s real argument name is `run_id` (the baseline run being
         # re-executed), per the server's own argument allowlist.
-        _start_dashboard_owned(
-            project, owner, "rescan", {"run_id": baseline_run_id or ""}
+        _run_dashboard_owned(
+            project,
+            owner,
+            "rescan",
+            {
+                "run_id": baseline_run_id or "",
+                # T28-B: the reviewed attempt travels with the request; the
+                # server refuses a rescan of a run that changed since review.
+                "expected_attempt_id": expected_attempt_id,
+            },
         )
         return
 
@@ -1779,25 +2074,35 @@ def _start_rescan_thread(
         project.last_message = "rescan refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.work_kind = "rescan"
-    project.status = "scanning"
-    project.progress = None
-    project.progress_history = []
-    # The rescan worker reports its own terminal status; `plan_total` left
-    # from an earlier scan would make `_poll_running_scans` poll the baseline
-    # run's finished events and overwrite a failed rescan with "complete".
-    project.plan_total = 0
-    operation_id = str(uuid.uuid4())
-    # P69-06h: tag this local run's owner identity even without a durable
-    # admission row -- `reap_owner_processes` reads `.procs` by
-    # `owner_instance_id` alone, so Detach's force-exit can still stop this
-    # run's owned subprocess groups. Full ledger admission (recovery
-    # reconciliation) is `_start_scan_thread`'s scope, not duplicated here.
-    project.owner_instance_id = owner_instance_id
-    project.operation_id = operation_id
-    project.run_resolved = True
-    project.ledger_admitted = False
+    with project.start_lock:
+        if _cancelled_before_start(project, "rescan"):
+            return
+        project.owner = "local"
+        project.work_kind = "rescan"
+        project.status = "scanning"
+        project.progress = None
+        project.progress_history = []
+        # The rescan worker reports its own terminal status; `plan_total`
+        # left from an earlier scan would make `_poll_running_scans` poll the
+        # baseline run's finished events and overwrite a failed rescan with
+        # "complete".
+        project.plan_total = 0
+        operation_id = str(uuid.uuid4())
+        # P69-06h: tag this local run's owner identity even without a durable
+        # admission row -- `reap_owner_processes` reads `.procs` by
+        # `owner_instance_id` alone, so Detach's force-exit can still stop
+        # this run's owned subprocess groups. Full ledger admission (recovery
+        # reconciliation) is `_start_scan_thread`'s scope, not duplicated
+        # here.
+        project.owner_instance_id = owner_instance_id
+        project.operation_id = operation_id
+        project.run_resolved = True
+        project.ledger_admitted = False
+        # T28-B: the rescan's own run id is allocated here, so a cancel
+        # targets the run that is actually executing, never the finished
+        # baseline.
+        new_run_id = str(uuid.uuid4())
+        project.run_id = new_run_id
 
     def _worker() -> None:
         try:
@@ -1806,6 +2111,7 @@ def _start_rescan_thread(
                 baseline_run_id,
                 owner_instance_id=owner_instance_id,
                 expected_attempt_id=expected_attempt_id,
+                new_run_id=new_run_id,
             )
             run = outcome.get("run") if isinstance(outcome, dict) else None
             comparison = (
@@ -1826,7 +2132,16 @@ def _start_rescan_thread(
                     # Phase65's real `ScanRun.aggregate`, `ToolResult`-shaped
                     # at runtime.
                     project.results = [cast(ToolResult, aggregate)]
-            project.status = "complete"
+            run_status = run.get("status") if isinstance(run, dict) else None
+            project.status = (
+                "cancelled"
+                if run_status == "cancelled"
+                else "error"
+                if run_status in ("error", "failed")
+                else "complete"
+            )
+            if project.status == "error":
+                project.last_message = f"rescan {run_status}"
         except Exception as exc:  # noqa: BLE001 -- same contract as
             # `_start_scan_thread._worker` above: `actions.rescan_project_run`
             # is an injectable Phase65 seam whose failure space this
@@ -1834,9 +2149,7 @@ def _start_rescan_thread(
             project.last_message = f"rescan error: {exc}"
             project.status = "error"
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> None:
@@ -1853,9 +2166,15 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
     `DashboardContext` this process does not have. Otherwise it falls back to
     a local daemon thread carrying this process's own owner-instance lock id
     and run id, so the subprocesses it spawns stay fenced and reapable."""
+    _start_off_key_path(
+        project, "initial check", lambda: _begin_check(project, actions)
+    )
+
+
+def _begin_check(project: ProjectState, actions: ScanActions) -> None:
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
-        _start_dashboard_owned(project, owner, "check_suite", {})
+        _run_dashboard_owned(project, owner, "check_suite", {})
         return
 
     owner_instance_id = _tui_owner_instance_id()
@@ -1867,19 +2186,22 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
         project.last_message = "initial check refused: owner lifetime lock unavailable"
         return
 
-    project.owner = "local"
-    project.status = "scanning"
-    project.work_kind = "check"
-    project.cancel_event.clear()
-    run_id = str(uuid.uuid4())
-    # P69-06h: tag this local run's owner identity so Detach's force-exit can
-    # still reap its owned subprocess groups (see `_start_rescan_thread`'s
-    # identical comment -- ledger admission stays `_start_scan_thread`'s
-    # scope, not duplicated here).
-    project.owner_instance_id = owner_instance_id
-    project.operation_id = run_id
-    project.run_resolved = True
-    project.ledger_admitted = False
+    with project.start_lock:
+        if _cancelled_before_start(project, "initial check"):
+            return
+        project.owner = "local"
+        project.status = "scanning"
+        project.work_kind = "check"
+        project.cancel_event.clear()
+        run_id = str(uuid.uuid4())
+        # P69-06h: tag this local run's owner identity so Detach's force-exit
+        # can still reap its owned subprocess groups (see
+        # `_start_rescan_thread`'s identical comment -- ledger admission stays
+        # `_start_scan_thread`'s scope, not duplicated here).
+        project.owner_instance_id = owner_instance_id
+        project.operation_id = run_id
+        project.run_resolved = True
+        project.ledger_admitted = False
 
     def _worker() -> None:
         try:
@@ -1910,9 +2232,7 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
             project.last_message = f"initial check error: {exc}"
             project.status = "error"
 
-    thread = threading.Thread(target=_worker, daemon=True)
-    project.scan_thread = thread
-    thread.start()
+    _worker()
 
 
 def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> None:
@@ -1926,11 +2246,17 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
         owner = project.dashboard_owner_handle = _dashboard_owner_for(project, actions)
     if owner is None or not hasattr(owner, "operation_status"):
         return
+    _poll_dashboard_status(project, owner)
+
+
+def _poll_dashboard_status(project: ProjectState, owner: Any) -> None:
+    """One durable status read for a dashboard-owned run, posted to the
+    project (T28-F: `_observe_dashboard_operation` runs it on the worker)."""
     try:
         status_payload = owner.operation_status(project.operation_id)
     except Exception as exc:  # noqa: BLE001 -- a poll failure crosses a real
-        # network boundary; surface it and retry next tick, never crash the
-        # render loop.
+        # network boundary; surface it and retry on the next poll, never crash
+        # the worker.
         project.last_message = f"dashboard status poll failed: {exc}"
         return
     ledger_status = (
@@ -1938,8 +2264,6 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
     )
     if ledger_status != "terminal":
         return
-    if project.scan_thread is not None:
-        project.scan_thread.join(timeout=2.0)
     outcome_payload = (
         (status_payload.get("payload") or {})
         if isinstance(status_payload, dict)
@@ -1953,11 +2277,27 @@ def _poll_dashboard_owned_scan(project: ProjectState, actions: ScanActions) -> N
 
 
 def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
+    """One status read for every running project, dashboard-owned ones
+    included -- except a dashboard-owned run the render loop already handed
+    to its observer worker (`_start_dashboard_observers`, called first each
+    tick): the loop itself never touches the network."""
+    for project in state.projects:
+        if (
+            project.owner == "dashboard"
+            and project.status in ("scanning", "cancelling")
+            and project.dashboard_poll_thread is None
+        ):
+            _poll_dashboard_owned_scan(project, actions)
+    _poll_local_scans(state, actions)
+
+
+def _poll_local_scans(state: TuiState, actions: ScanActions) -> None:
+    """The loop's per-tick read of locally-owned runs' event files; it never
+    touches the network or waits on a thread."""
     for project in state.projects:
         if project.status not in ("scanning", "cancelling"):
             continue
         if project.owner == "dashboard":
-            _poll_dashboard_owned_scan(project, actions)
             continue
         if project.run_id is None or project.plan_total <= 0:
             continue  # rescan-style thread reports its own terminal status directly
@@ -1975,8 +2315,8 @@ def _poll_running_scans(state: TuiState, actions: ScanActions) -> None:
         if len(project.progress_history) > 500:
             del project.progress_history[:-500]
         if progress.status != "running":
-            if project.scan_thread is not None:
-                project.scan_thread.join(timeout=2.0)
+            if project.scan_thread is not None and project.scan_thread.is_alive():
+                continue  # T28-F: settle on a later tick, never join on the loop
             project.status = progress.status
 
 
@@ -4112,24 +4452,25 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
     is cancelled by the owning server's own `cancel` operation."""
     if project.status != "scanning":
         return
-    kind = project.work_kind
+    with project.start_lock:
+        kind = project.work_kind
+        if kind == "starting" or project.dashboard_dispatch_pending:
+            # T28-F: no cancellable run yet (the owner is still being decided,
+            # or the dashboard has not answered the dispatch). The start
+            # worker honors this before launching or dispatching anything, or
+            # forwards it to the run once the dispatch answers.
+            project.start_cancel_requested = True
+            project.status = "cancelling"
+            project.last_message = "cancel requested -- stopping the start"
+            return
     if kind == "check":
         project.cancel_event.set()
         project.status = "cancelling"
         return
+    if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
+        _send_dashboard_cancel(project, actions)
+        return
     try:
-        if kind == "dashboard" or (kind is None and project.owner == "dashboard"):
-            owner = project.dashboard_owner_handle or _dashboard_owner_for(
-                project, actions
-            )
-            if owner is None:
-                project.last_message = "cancel failed: dashboard owner not reachable"
-                return
-            owner.dispatch(
-                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
-            )
-            project.status = "cancelling"
-            return
         if not project.run_id:
             return
         actions.cancel_scan_run(project.root, project.run_id)
@@ -4139,6 +4480,32 @@ def _request_cancel(project: ProjectState, actions: ScanActions) -> None:
         # request must surface to the user, never crash the key-dispatch
         # path.
         project.last_message = f"cancel failed: {exc}"
+
+
+def _send_dashboard_cancel(project: ProjectState, actions: ScanActions) -> None:
+    """T28-F: the owning dashboard's `cancel` crosses the network, so it runs
+    on a worker; the run shows `cancelling` at once and returns to
+    `scanning` with the reason if the request fails. The key path never
+    waits for the answer."""
+    project.status = "cancelling"
+
+    def _worker() -> None:
+        try:
+            owner = project.dashboard_owner_handle or _dashboard_owner_for(
+                project, actions
+            )
+            if owner is None:
+                raise ConnectionError("dashboard owner not reachable")
+            owner.dispatch(
+                "cancel", run_id=project.run_id or "", operation_id=project.operation_id
+            )
+        except Exception as exc:  # noqa: BLE001 -- the dispatch crosses a real
+            # network boundary into another process; surface the failure.
+            project.last_message = f"cancel failed: {exc}"
+            if project.status == "cancelling":
+                project.status = "scanning"
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _wait_for_cancel_ack(
@@ -4263,12 +4630,12 @@ def _begin_detach(state: TuiState, project: ProjectState, actions: ScanActions) 
 
 
 def _poll_detach(state: TuiState) -> None:
-    """T28-F: end the loop once the Detach worker is done or its deadline
-    passed -- the process exits regardless, as Phase 69's Detach did."""
+    """T28-F: end the loop once the Detach worker has reaped the run and
+    recorded it. Past the deadline the loop keeps waiting; only a Ctrl-C
+    then exits (`_handle_sigint`)."""
     if state.detach_deadline is None:
         return
-    done = state.detach_done is not None and state.detach_done.is_set()
-    if done or time.monotonic() >= state.detach_deadline:
+    if state.detach_done is not None and state.detach_done.is_set():
         state.detach_deadline = None
         state.mode = "list"
         state.should_quit = True
@@ -4276,10 +4643,16 @@ def _poll_detach(state: TuiState) -> None:
 
 def _handle_sigint(state: TuiState, actions: ScanActions) -> None:
     """T28-F: Ctrl-C caught in the loop is the `q` quit flow: idle quits,
-    running work opens `quit_confirm`, a second Ctrl-C there Detaches, and
-    one while detaching stops waiting."""
+    running work opens `quit_confirm`, a second Ctrl-C there Detaches. One
+    while detaching is ignored until the run is reaped and recorded; only
+    past the deadline does it stop waiting."""
     if state.detach_deadline is not None:
-        state.should_quit = True
+        if time.monotonic() >= state.detach_deadline:
+            state.should_quit = True
+        else:
+            state.message = (
+                "detaching... Ctrl-C is ignored until the run is reaped and recorded"
+            )
     elif state.mode == "quit_confirm" and state.projects:
         _begin_detach(state, state.active_project, actions)
     else:
@@ -4342,15 +4715,16 @@ def _load_overview_section(
 
 
 def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Tokens reload only when root, filter, or telemetry mtime changes."""
-    db = Path(root) / ".rush" / "telemetry" / "tokens.db"
-    mtimes: list[Any] = []
-    for path in (db, db.with_name("tokens.db-wal")):
-        try:
-            mtimes.append(path.stat().st_mtime_ns)
-        except OSError:
-            mtimes.append(None)
-    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+    """Tokens reload only when root, filter, or one of the token inputs (the
+    telemetry DB, a run manifest, a handoff) changes. Stats and a glob of
+    every attempt: computed on a worker thread, never on the loop thread."""
+    from rush.workflows import projects as wp
+
+    return (
+        str(root),
+        tuple(sorted(filters.items())),
+        wp.token_usage_signature(Path(root)),
+    )
 
 
 def _load_tokens_section(
@@ -4381,40 +4755,91 @@ def _load_tokens_section(
     return "populated", None, {**data, **marker}
 
 
-def _request_stale_tokens(state: TuiState) -> None:
-    """T28-E: once per loop tick (two `stat`s, no read), re-request the open
-    Tokens view when its root, filter, telemetry mtime or project id no
-    longer match the loaded result."""
-    if not state.projects or state.section != "tokens":
+_STALE_CHECKED = ("tokens", "artifacts")
+
+
+def _request_stale_checks(state: TuiState) -> None:
+    """T28-E: check the open Tokens or Artifacts view for staleness on a
+    worker thread -- one check in flight at a time, none on the tick right
+    after one found nothing changed. Its cache key (a glob and `stat`s of
+    every input) is computed there, and `_drain_results` re-requests the
+    view when the key or project id no longer match the loaded result. The
+    loop thread only starts the check."""
+    if not state.projects or state.section not in _STALE_CHECKED:
         return
+    section = state.section
     project = state.active_project
-    view = state.views.get((project_key(project), "tokens"))
-    if view is None or "tokens" in project.pending:
+    pkey = project_key(project)
+    view = state.views.get((pkey, section))
+    check = f"{section}:stale"
+    if view is None or section in project.pending or check in project.pending:
         return
+    if (pkey, section) in state.stale_cooldown:
+        state.stale_cooldown.discard((pkey, section))
+        return
+    generation = project.begin_request(check)
+    identity = project.identity()
+    root, filters, results = project.root, dict(view.filters), state.result_queue
+
+    def _worker() -> None:
+        payload: Any = "staleness check failed"
+        ok = False
+        try:
+            key_of = _tokens_cache_key if section == "tokens" else _artifacts_cache_key
+            payload, ok = (key_of(root, filters), filters), True
+        finally:  # always posted, so the check never stays pending
+            results.put((project, check, generation, identity, ok, payload))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_stale_check(
+    state: TuiState, project: ProjectState, section: str, ok: bool, payload: Any
+) -> None:
+    """A finished staleness check: re-request `section` when its loaded key
+    or project id no longer match (a filter changed since is re-requested by
+    its own key handler)."""
+    view = state.views.get((project_key(project), section))
+    if not ok or view is None or section in project.pending:
+        return
+    key, filters = payload
     data = view.data if isinstance(view.data, Mapping) else {}
-    if (
-        data.get("_cache_key") != _tokens_cache_key(project.root, view.filters)
-        or data.get("_project_id") != project.project_id
+    if filters == view.filters and (
+        data.get("_cache_key") != key or data.get("_project_id") != project.project_id
     ):
-        state.load_requests.add((project_key(project), "tokens"))
+        state.load_requests.add((project_key(project), section))
+    else:
+        state.stale_cooldown.add((project_key(project), section))
+
+
+_TOKEN_FILTERS = {"run": "run_id", "agent": "agent_id", "session": "session_id"}
 
 
 def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -> None:
-    """T28-E: `/` in Tokens -- type a run id; Enter filters by that stored
-    `run_id` identity, Escape clears the run filter."""
-    view = state.views.setdefault(
-        (project_key(state.active_project), "tokens"), SectionView()
-    )
+    """T28-E: `/` in Tokens -- type `run:<id>`, `agent:<id>` or
+    `session:<id>` (a bare id is a run id); Enter filters by that stored
+    identity (an empty id clears it), Escape clears every identity filter.
+    Either re-requests the view on the section worker."""
+    project = state.active_project
+    view = state.views.setdefault((project_key(project), "tokens"), SectionView())
     if key == "enter":
-        run_id = state.tokens_filter_buffer.strip()
-        if run_id:
-            view.filters["run_id"] = run_id
+        text = state.tokens_filter_buffer.strip()
+        name, sep, value = text.partition(":")
+        field_name = _TOKEN_FILTERS.get(name.strip().lower()) if sep else None
+        if field_name is None:
+            field_name, value = "run_id", text
+        value = value.strip()
+        if value:
+            view.filters[field_name] = value
         else:
-            view.filters.pop("run_id", None)
+            view.filters.pop(field_name, None)
         state.mode = "list"
+        state.load_requests.add((project_key(project), "tokens"))
     elif key == "escape":
-        view.filters.pop("run_id", None)
+        for field_name in _TOKEN_FILTERS.values():
+            view.filters.pop(field_name, None)
         state.mode = "list"
+        state.load_requests.add((project_key(project), "tokens"))
     elif key == "backspace":
         state.tokens_filter_buffer = state.tokens_filter_buffer[:-1]
     elif len(key) == 1 and key.isprintable():
@@ -4422,8 +4847,9 @@ def _handle_tokens_filter_key(state: TuiState, key: str, actions: ScanActions) -
 
 
 def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
-    """Artifacts reload only when root, filter, an attempt manifest or the
-    handoff directory changes."""
+    """Artifacts reload only when root, a read filter, an attempt manifest or
+    the handoff directory changes (the `/` query filters the loaded index,
+    so it is not part of the key). Computed on a worker thread."""
     root = Path(root)
     paths = sorted(root.glob(".rush/runs/*/attempts/*/manifest.json"))
     mtimes: list[Any] = []
@@ -4432,43 +4858,75 @@ def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, .
             mtimes.append((path.as_posix(), path.stat().st_mtime_ns))
         except OSError:
             mtimes.append((path.as_posix(), None))
-    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+    read_filters = {k: v for k, v in filters.items() if k != "query"}
+    return (str(root), tuple(sorted(read_filters.items())), tuple(mtimes))
+
+
+def _load_artifacts_section(
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    actions: ScanActions,
+    *,
+    filters: Mapping[str, Any] | None = None,
+) -> LoadOutcome:
+    """The Artifacts section loader (`_SECTION_LOADERS`), on the worker."""
+    return _read_artifacts_index(root, project_id, data_root, filters)
+
+
+def _read_artifacts_index(
+    root: Path,
+    project_id: str | None,
+    data_root: Path | None,
+    filters: Mapping[str, Any] | None,
+) -> LoadOutcome:
+    """T28-E: one `list_project_artifacts` read carrying the cache key (taken
+    before the read) and project id it was read for."""
+    marker = {
+        "_cache_key": _artifacts_cache_key(root, dict(filters or {})),
+        "_project_id": project_id,
+    }
+    if project_id is None:
+        return "unavailable", "project not registered", marker
+    from rush.workflows import projects as wp
+
+    try:
+        data = dict(wp.list_project_artifacts(project_id, data_root=data_root))
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        return "failed", str(exc) or type(exc).__name__, marker
+    lists = [v for v in data.values() if isinstance(v, list)]
+    if lists and not any(lists):
+        return "empty", "no artifacts recorded yet", {**data, **marker}
+    return "populated", None, {**data, **marker}
+
+
+def _apply_artifacts_outcome(
+    view: SectionView, outcome: LoadOutcome, generation: int | None = None
+) -> None:
+    """Land a loaded index in place: the selection (clamped), the `/` query
+    and an open inspected detail survive a refresh."""
+    view_state, reason, data = outcome
+    detail = view.data.get("_detail") if isinstance(view.data, Mapping) else None
+    view.state, view.reason = view_state, reason
+    view.data = {**data, "_detail": detail} if detail is not None else dict(data)
+    view.selection = min(view.selection, max(0, _artifact_row_count(view) - 1))
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if generation is not None:
+        view.generation = generation
 
 
 def _refresh_artifacts_view(state: TuiState, project: ProjectState) -> SectionView:
-    """The cached Artifacts index (`list_project_artifacts`): one read per
-    root/filter/manifest change, never one per painted frame."""
-    view = state.views.setdefault((project_key(project), "artifacts"), SectionView())
-    key = _artifacts_cache_key(project.root, view.filters)
-    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
-        return view
-    from rush.workflows import projects as wp
-
-    if project.project_id is None:
-        view.state, view.reason, view.data = (
-            "unavailable",
-            "project not registered",
-            {"_cache_key": key},
-        )
-        return view
-    try:
-        data = dict(
-            wp.list_project_artifacts(project.project_id, data_root=state.data_root)
-        )
-    except (wp.ProjectError, OSError, ValueError) as exc:
-        view.state, view.reason = "failed", str(exc) or type(exc).__name__
-        view.data = {"_cache_key": key}
-        return view
-    data["_cache_key"] = key
-    lists = [v for v in data.values() if isinstance(v, list)]
-    if lists and not any(lists):
-        view.state, view.reason = "empty", "no artifacts recorded yet"
-    else:
-        view.state, view.reason = "populated", None
-    view.data = data
-    view.selection = min(view.selection, max(0, len(_captured_rows(view)) - 1))
-    view.scroll = 0
-    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """The Artifacts view for a key handler (entering the section, inspect,
+    export). No artifact I/O on the input thread: when nothing is loaded yet
+    the section loader is queued for the worker (the view renders "loading"
+    until its result drains); a loaded index is kept fresh by the worker
+    staleness check (`_request_stale_checks`), never re-read here and never
+    by the renderer."""
+    key = (project_key(project), "artifacts")
+    view = state.views.setdefault(key, SectionView())
+    if not isinstance(view.data, Mapping) or "_cache_key" not in view.data:
+        state.load_requests.add(key)
+        view.scroll = 0
     return view
 
 
@@ -4498,6 +4956,56 @@ def _selected_artifact(view: SectionView) -> Mapping[str, Any] | None:
     return rows[view.selection] if 0 <= view.selection < len(rows) else None
 
 
+def _evidence_rows(
+    view: SectionView, *, filtered: bool = True
+) -> list[tuple[str, Mapping[str, Any]]]:
+    """Every other shared evidence item (scan outputs, handoffs, memory and
+    any bucket added later) as (bucket, reference record), in bucket order;
+    with `filtered`, only those whose bucket, reference or type contains the
+    committed `/` query."""
+    data = view.data if isinstance(view.data, Mapping) else {}
+    rows: list[tuple[str, Mapping[str, Any]]] = []
+    for bucket, items in data.items():
+        if bucket == "captured" or str(bucket).startswith("_"):
+            continue
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            record = item if isinstance(item, Mapping) else {"artifact_ref": item}
+            rows.append((str(bucket), record))
+    query = str(view.filters.get("query") or "").lower() if filtered else ""
+    if not query:
+        return rows
+    return [
+        (bucket, record)
+        for bucket, record in rows
+        if any(
+            query in str(value or "").lower()
+            for value in (
+                bucket,
+                record.get("artifact_ref"),
+                record.get("category"),
+                record.get("kind"),
+            )
+        )
+    ]
+
+
+def _artifact_row_count(view: SectionView) -> int:
+    """The one Artifacts index: captured rows, then evidence rows."""
+    return len(_captured_rows(view)) + len(_evidence_rows(view))
+
+
+def _selected_evidence(view: SectionView) -> tuple[str, Mapping[str, Any]] | None:
+    index = view.selection - len(_captured_rows(view))
+    rows = _evidence_rows(view)
+    return rows[index] if 0 <= index < len(rows) else None
+
+
+def _evidence_record_text(record: Mapping[str, Any]) -> str:
+    return json.dumps(record, indent=2, sort_keys=True, default=str)
+
+
 def _artifact_cursor(project_id: str, item: Mapping[str, Any]) -> str:
     """The first-page cursor binding project/run/attempt/tool/path/sha256."""
     payload = {
@@ -4519,6 +5027,21 @@ def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
     view = _refresh_artifacts_view(state, project)
     item = _selected_artifact(view)
+    evidence = _selected_evidence(view)
+    if item is None and evidence is not None and isinstance(view.data, dict):
+        # A reference record (handoff, scan output, memory, unknown bucket):
+        # its safe generic detail is the record itself, never executed.
+        bucket, record = evidence
+        text = _evidence_record_text(record)
+        view.data["_detail"] = {
+            "ref": record.get("artifact_ref"),
+            "evidence": bucket,
+            "text": text,
+            "size": len(text.encode("utf-8")),
+        }
+        view.scroll = 0
+        state.message = f"{bucket} reference {record.get('artifact_ref')}"
+        return
     if item is None or project.project_id is None or not isinstance(view.data, dict):
         state.message = "no captured artifact selected"
         return
@@ -4556,7 +5079,7 @@ def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
         except (wp.ProjectError, OSError, ValueError) as exc:
             page = {"error": str(exc) or type(exc).__name__}
         chunk = b"" if page.get("error") else base64.b64decode(page["content_base64"])
-        if not chunk:
+        if page.get("error") or (not chunk and page.get("next_cursor") is not None):
             detail["error"] = page.get("error") or "read_failed"
             cursor = None
             break
@@ -4605,15 +5128,33 @@ def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
     project = state.active_project
     view = _refresh_artifacts_view(state, project)
     item = _selected_artifact(view)
+    evidence = _selected_evidence(view)
+    if item is None and evidence is not None:
+        state.message = (
+            f"export applies to captured artifacts; {evidence[1].get('artifact_ref')} "
+            f"is a {evidence[0]} reference (i inspects it)"
+        )
+        return
     if item is None or project.project_id is None:
         state.message = "no captured artifact selected"
+        return
+    from rush.io.physical_paths import ContainmentError
+    from rush.workflows import projects as wp
+
+    destination = _artifact_export_destination(project.root, item)
+    try:
+        wp.check_export_destination(project.root, destination)
+    except ContainmentError:
+        state.message = (
+            f"export refused: {destination} resolves outside the project root"
+        )
         return
     _open_grant(
         state,
         {
             "kind": "artifact_export",
             "grants": "artifact_write",
-            "destination": str(_artifact_export_destination(project.root, item)),
+            "destination": str(destination),
             "run_id": item.get("run_id"),
             "attempt_id": item.get("attempt_id"),
             "tool_id": item.get("tool_id"),
@@ -4627,13 +5168,14 @@ def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
 
 
 def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
-    """The confirmed export: exactly one `export_project_artifact` call."""
+    """The confirmed export: exactly one `export_project_artifact` call (it
+    creates the contained `.rush/exports` parent itself)."""
+    from rush.io.physical_paths import ContainmentError
     from rush.workflows import projects as wp
 
     project = state.active_project
     destination = Path(grant["destination"])
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
         result = wp.export_project_artifact(
             project.project_id or str(project.root),
             run_id=str(grant["run_id"]),
@@ -4645,7 +5187,7 @@ def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
             data_root=state.data_root,
             expected_sha256=grant.get("sha256"),
         )
-    except (wp.ProjectError, OSError, ValueError) as exc:
+    except (wp.ProjectError, OSError, ValueError, ContainmentError) as exc:
         state.message = f"export failed: {exc}"
         return
     state.message = f"exported {result['path']} ({result['size']} bytes)" + (
@@ -4661,7 +5203,7 @@ def _artifacts_move(state: TuiState, step: int) -> None:
     if isinstance(view.data.get("_detail"), Mapping):
         view.scroll = max(0, view.scroll + step)
         return
-    count = len(_captured_rows(view))
+    count = _artifact_row_count(view)
     if count:
         view.selection = max(0, min(count - 1, view.selection + step))
 
@@ -4682,6 +5224,7 @@ _SECTION_LOADERS: dict[
     "scans": _load_scans_section,
     "setup": _load_setup_section,
     "tokens": _load_tokens_section,
+    "artifacts": _load_artifacts_section,
 }
 
 
@@ -4708,6 +5251,11 @@ def _submit(
         view = state.views[key]
         view.state, view.reason, view.data = "loading", None, None
         loader = functools.partial(_load_tokens_section, filters=dict(view.filters))
+    elif section == "artifacts":
+        # The loaded index stays visible while it refreshes.
+        loader = functools.partial(
+            _load_artifacts_section, filters=dict(state.views[key].filters)
+        )
     args = (project.root, project.project_id, state.data_root, actions)
     results = state.result_queue
 
@@ -4768,6 +5316,9 @@ def _drain_results(state: TuiState) -> bool:
             continue  # superseded, switched away, or identity changed
         del project.pending[section]
         applied = True
+        if section.endswith(":stale"):
+            _apply_stale_check(state, project, section.split(":")[0], ok, payload)
+            continue
         if section.startswith("git"):
             # T28-E: a `_git_request` read; Git state is the active project's.
             if project is state.active_project:
@@ -4782,6 +5333,9 @@ def _drain_results(state: TuiState) -> bool:
                 _apply_registration(state, project, registration)
         key = (project_key(project), section)
         prior = state.views.get(key)
+        if ok and section == "artifacts" and prior is not None:
+            _apply_artifacts_outcome(prior, payload, generation)
+            continue
         if ok:
             view_state, reason, data = payload
             if (
@@ -4813,7 +5367,7 @@ def _pump(state: TuiState, actions: ScanActions) -> bool:
     section already loading is not started again (F5 cannot pile up
     threads). True when a result was applied, so the screen must redraw."""
     applied = _drain_results(state)
-    _request_stale_tokens(state)
+    _request_stale_checks(state)
     requests, state.load_requests = state.load_requests, set()
     for pkey, section in requests:
         for project in state.projects:
@@ -4882,6 +5436,11 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
         _load_git_view(state, project, actions)
     elif section == "memory":
         _memory_submit(state, project, actions, "list", _memory_refresh)
+    elif section == "artifacts":
+        # Nothing loaded: the worker load is queued; a loaded index gets an
+        # immediate worker staleness check on the next tick instead.
+        _refresh_artifacts_view(state, project)
+        state.stale_cooldown.discard((project_key(project), section))
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
@@ -5116,6 +5675,9 @@ def _select_row(state: TuiState, actions: ScanActions) -> None:
     if state.mode == "git":
         _git_expand_commit(state)
         return
+    if state.mode == "map":
+        _map_expand(state, actions)
+        return
     project = state.active_project
     if project.visible_findings() or _outcome_results(project):
         state.active_project.detail_scroll = None
@@ -5251,8 +5813,6 @@ def _cancel(state: TuiState, actions: ScanActions) -> None:
 def _refresh(state: TuiState, actions: ScanActions) -> None:
     if state.section == "git":
         _load_git_view(state, state.active_project, actions)
-    elif state.section == "artifacts":
-        state.views.pop((project_key(state.active_project), "artifacts"), None)
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -5261,6 +5821,24 @@ def _refresh(state: TuiState, actions: ScanActions) -> None:
 def _goto(section: str) -> Callable[[TuiState, ScanActions], None]:
     def run(state: TuiState, actions: ScanActions) -> None:
         _enter_section(state, section, actions)
+
+    return run
+
+
+def _set_detail(expanded: bool) -> Callable[[TuiState, ScanActions], None]:
+    """`+`/`-`: expand/collapse the selected item's detail. Git draws a
+    full-width panel, so there `+` shows the selected commit's detail (as
+    Enter does) and `-` drops it, a still-loading one included."""
+
+    def run(state: TuiState, actions: ScanActions) -> None:
+        state.detail_expanded = expanded
+        if state.mode != "git":
+            return
+        if expanded:
+            _git_expand_commit(state)
+        else:
+            state.active_project.pending.pop("git_diff", None)
+            state.git_expanded = None
 
     return run
 
@@ -5464,6 +6042,8 @@ ACTIONS: tuple[Action, ...] = (
     Action("cycle_pane_reverse", "Prev pane", "Navigation", (), _cycle_focus(-1)),
     Action("map_expand", "Expand", "Navigation", ("map",), _map_expand),
     Action("map_collapse", "Collapse", "Navigation", ("map",), _map_collapse),
+    Action("detail_expand", "Expand detail", "Navigation", (), _set_detail(True)),
+    Action("detail_collapse", "Collapse detail", "Navigation", (), _set_detail(False)),
     Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
     Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
     Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
@@ -5659,6 +6239,18 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
     ):
         _memory_cancel_request(state)
         return
+    if state.mode == "memory" and key in ("+", "-"):
+        # The Memory list is not a text field: `+` expands the selected
+        # record exactly as `x` does, `-` collapses it (dropping an expand
+        # still in flight).
+        state.detail_expanded = key == "+"
+        if key == "+":
+            _handle_memory_key(state, "x", actions)
+        else:
+            if (state.memory_request or {}).get("operation") == "expand":
+                _memory_cancel_request(state)
+            state.memory_expanded = None
+        return
     handler = modal.get(state.mode)
     if handler is not None:
         handler(state, key, actions)
@@ -5728,13 +6320,20 @@ def _render_project_table(project: ProjectState) -> Panel:
             _safe(f"{path}:{_finding_line(row)}"),
             Text(sev, style=_severity_style(sev)),
             _safe(f"[{verdict}] {message}" if verdict else message),
+            style=_selection_style(project) if marker else None,
         )
     # T28-C: a tool outcome with no findings (clean/skipped/denied/error)
     # still gets its own selectable row with its status and reason; below
     # the table each outcome's engine, version and time get a full-width
     # line and its reason its own line, so a narrow list pane never
     # collapses them.
-    outcome_lines: list[Text] = []
+    # T28-C: a tool with findings still shows its engine, version, time
+    # and step status, independently of its finding count.
+    outcome_lines: list[Text] = [
+        _safe(f"  {_outcome_heading(r)}", _severity_style(str(r.get("status", ""))))
+        for r in project.results
+        if r.get("findings")
+    ]
     for idx, result in enumerate(_outcome_results(project), len(rows)):
         marker = ">" if idx == project.selected_index else ""
         status = safe_terminal_text(result.get("status", ""))
@@ -5745,6 +6344,7 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text("-"),
             Text(status, style=_severity_style(status)),
             _safe(reason),
+            style=_selection_style(project) if marker else None,
         )
         outcome_lines.append(
             _safe(
@@ -5769,6 +6369,16 @@ def _render_project_table(project: ProjectState) -> Panel:
             Text("-"),
             Text("cancelled", style="bold yellow"),
             _safe(f"run {project.run_id or ''} cancelled; rows above are earlier"),
+        )
+    elif project.status == "error":
+        # T28-C: the failed current operation surfaces here too, even with
+        # no findings; the rows above are earlier results.
+        table.add_row(
+            Text(""),
+            Text("suite"),
+            Text("-"),
+            Text("error", style=_severity_style("error")),
+            _safe(project.last_message or "current operation failed"),
         )
     if comparison is not None:
         outcome_lines.extend(_comparison_lines(project, comparison))
@@ -5837,7 +6447,7 @@ def _render_outcome_detail(project: ProjectState, result: ToolResult) -> Panel:
         _safe(f"engine: {result.get('engine') or result.get('tool', '')}"),
         _safe(f"version: {result.get('engine_version') or 'version unknown'}"),
         _safe(f"execution time: {result.get('duration_ms', '?')} ms"),
-        _safe(f"target: {project.root}"),
+        *_outcome_scope_lines(project, result),
     ]
     for artifact in result.get("artifacts") or []:
         lines.append(_safe(f"artifact: {artifact}"))
@@ -5846,6 +6456,28 @@ def _render_outcome_detail(project: ProjectState, result: ToolResult) -> Panel:
         title=_safe(f"{result.get('tool', '')}: outcome"),
         style="magenta",
     )
+
+
+def _outcome_scope_lines(project: ProjectState, result: ToolResult) -> list[Text]:
+    """T28-C: the targets/coverage the result recorded (`metadata.scope`);
+    the project root only when it recorded none, labelled as such."""
+    scope = (result.get("metadata") or {}).get("scope") or {}
+    targets = scope.get("requested_targets") or scope.get("consumed_files")
+    if targets:
+        lines = [_safe(f"targets: {', '.join(str(t) for t in targets)}")]
+    else:
+        lines = [_safe(f"target: {project.root} (project root; no targets recorded)")]
+    if scope.get("coverage"):
+        counts = ", ".join(
+            f"{key.removesuffix('_file_count')} {scope[key]}"
+            for key in ("requested_file_count", "consumed_file_count")
+            if scope.get(key) is not None
+        )
+        detail = "; ".join(x for x in (counts, scope.get("reason") or "") if x)
+        lines.append(
+            _safe(f"coverage: {scope['coverage']}" + (f" ({detail})" if detail else ""))
+        )
+    return lines
 
 
 def _safe(value: object, style: str = "") -> Text:
@@ -5865,7 +6497,11 @@ def _findings_title(
         return Text("Findings (no result yet)")
     if all(r.get("status") in _UNAVAILABLE_STATUSES for r in project.results):
         return Text("Findings (unavailable: no tool completed)")
-    title = f"Findings ({len(rows)}) page {project.detail_page + 1}/{total_pages}"
+    count = f"{len(rows)}"
+    if project.filter_text:
+        # T28-C: a filtered list shows shown of total.
+        count += f" of {len(project.flattened_findings())}"
+    title = f"Findings ({count}) page {project.detail_page + 1}/{total_pages}"
     if project.filter_text:
         title += f" filter={project.filter_text!r}"
     return _safe(title)
@@ -5975,6 +6611,8 @@ def _overview_lines(data: Mapping[str, Any]) -> list[Text]:
     git = evidence.get("git") or {}
     if not git.get("has_git"):
         lines.append(Text("Git: unavailable -- no Git repository"))
+    elif git.get("state") == "empty":
+        lines.append(Text("Git: empty repository -- no commits yet"))
     elif git.get("head") is None:
         lines.append(Text("Git: unavailable -- git could not read HEAD"))
     else:
@@ -6025,7 +6663,9 @@ def _render_overview(state: TuiState, project: ProjectState) -> Panel:
         data = view.data if isinstance(view.data, Mapping) else {}
         lines.extend(_overview_lines(data))
     lines.extend(_outcome_line(result) for result in project.results)
-    if project.status in ("scanning", "cancelling"):
+    if project.work_kind == "starting" and project.status in ("scanning", "cancelling"):
+        lines.append(_safe("starting"))
+    elif project.status in ("scanning", "cancelling"):
         lines.append(_safe(f"{project.work_kind or 'work'} running"))
     elif project.status == "cancelled":
         lines.append(_safe(f"{project.work_kind or 'work'} cancelled", "bold yellow"))
@@ -6094,15 +6734,12 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
     if section == "tokens" and view is not None:
-        run_id = view.filters.get("run_id")
-        lines.append(
-            _safe(f"run filter: {run_id}" if run_id else "run filter: none (/ run id)")
-        )
+        lines.extend(_tokens_scope_lines(view))
         if state.mode == "tokens_filter":
             lines.append(
                 _safe(
-                    f"run id> {state.tokens_filter_buffer}_  "
-                    "(Enter apply, Escape clear)",
+                    f"filter> {state.tokens_filter_buffer}_  "
+                    "(run:<id> agent:<id> session:<id>; Enter apply, Escape clear)",
                     "bold",
                 )
             )
@@ -6111,6 +6748,51 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     else:
         lines.extend(_data_lines(view.data))
     return Panel(Group(*lines), title=label, style=THEME["border"])
+
+
+def _tokens_scope_lines(view: SectionView) -> list[Text]:
+    """What the Tokens numbers are attributed to (the stored run/agent/session
+    identities filtered on), the measurement interval, and the unscoped
+    events: excluded from a scoped selection, shown here as their own
+    labelled count and never assigned to it."""
+    filters = view.filters
+    scoped = any(filters.get(key) for key in _TOKEN_FILTERS.values())
+    lines = [
+        _safe(
+            "attribution: "
+            + " | ".join(
+                f"{label} {filters.get(key) or 'all'}"
+                for label, key in _TOKEN_FILTERS.items()
+            )
+            + "  (/ run:<id> agent:<id> session:<id>)"
+        )
+    ]
+    data = view.data if isinstance(view.data, Mapping) else {}
+    interval = data.get("interval")
+    if isinstance(interval, Mapping):
+        if interval.get("earliest"):
+            lines.append(
+                _safe(f"interval: {interval['earliest']} .. {interval.get('latest')}")
+            )
+        else:
+            lines.append(_safe("interval: no stored event time in this selection"))
+    unscoped = data.get("unscoped")
+    if isinstance(unscoped, Mapping):
+        count = int(unscoped.get("event_count") or 0)
+        keys = ", ".join(str(k) for k in unscoped.get("identity_keys") or [])
+        lines.append(
+            _safe(
+                f"unscoped: {count} {'event' if count == 1 else 'events'} "
+                f"without stored {keys} identity "
+                + (
+                    "(excluded from this selection)"
+                    if scoped
+                    else "(included in project totals)"
+                ),
+                "yellow" if count else "",
+            )
+        )
+    return lines
 
 
 _ARTIFACT_ERROR_GUIDANCE = {
@@ -6126,7 +6808,12 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     """Every captured artifact (identity/type/run/size, paginated around the
     selection), the other shared evidence buckets, and the inspected text.
     Every recorded string goes through `_safe`."""
-    view = _refresh_artifacts_view(state, project)
+    key = (project_key(project), "artifacts")
+    view = state.views.get(key)
+    if view is None:
+        # No I/O here: the section worker loads it.
+        view = state.views[key] = SectionView()
+        state.load_requests.add(key)
     lines: list[Any] = list(_view_state_lines("Artifacts", view))
     rows = _captured_rows(view)
     total = len(_captured_rows(view, filtered=False))
@@ -6145,7 +6832,7 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
                 "bold yellow",
             )
         )
-    page = view.selection // PAGE_SIZE
+    page = min(view.selection, max(0, len(rows) - 1)) // PAGE_SIZE
     page_rows, total_pages = paginate(rows, page)
     table = Table(
         expand=True,
@@ -6157,28 +6844,48 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
     table.add_column("run / attempt")
     table.add_column("size", width=10)
     for idx, row in enumerate(page_rows):
+        selected = page * PAGE_SIZE + idx == view.selection
         table.add_row(
-            Text(">" if page * PAGE_SIZE + idx == view.selection else ""),
+            Text(">" if selected else ""),
             _safe(f"{row.get('tool_id')}:{row.get('path')}"),
             _safe(f"{row.get('category')} {row.get('media_type') or 'unknown'}"),
             _safe(f"{row.get('run_id')} / {row.get('attempt_id')}"),
             _safe(row.get("size")),
+            style=_selection_style(project) if selected else None,
         )
     lines.append(table)
+    evidence = _evidence_rows(view)
+    evidence_total = len(_evidence_rows(view, filtered=False))
+    if evidence_total:
+        # The same selection continues from the captured rows into these.
+        offset = view.selection - len(rows)
+        evidence_page = max(0, offset) // PAGE_SIZE
+        evidence_rows, evidence_pages = paginate(evidence, evidence_page)
+        evidence_table = Table(
+            expand=True,
+            title=(
+                f"Evidence ({len(evidence)}) of {evidence_total} "
+                f"page {evidence_page + 1}/{evidence_pages}"
+            ),
+        )
+        evidence_table.add_column("", width=2)
+        evidence_table.add_column("source")
+        evidence_table.add_column("identity")
+        evidence_table.add_column("type")
+        evidence_table.add_column("run")
+        evidence_table.add_column("size", width=10)
+        for idx, (bucket, record) in enumerate(evidence_rows):
+            ref = record.get("artifact_ref") or record.get("path") or ""
+            evidence_table.add_row(
+                Text(">" if evidence_page * PAGE_SIZE + idx == offset else ""),
+                _safe(bucket),
+                _safe(ref),
+                _safe(f"{record.get('category', '')} {record.get('kind', '')}"),
+                _safe(record.get("run_id") or "-"),
+                _safe(f"{len(_evidence_record_text(record).encode('utf-8'))} B"),
+            )
+        lines.append(evidence_table)
     data = view.data if isinstance(view.data, Mapping) else {}
-    for bucket, items in data.items():
-        if bucket == "captured" or str(bucket).startswith("_"):
-            continue
-        if not isinstance(items, list) or not items:
-            continue
-        lines.append(_safe(f"{bucket} ({len(items)})", "bold"))
-        for item in items[:PAGE_SIZE]:
-            if isinstance(item, Mapping):
-                ref = item.get("artifact_ref") or item.get("path") or ""
-                item_type = f"{item.get('category', '')} {item.get('kind', '')}"
-                lines.append(_safe(f"  {ref}  {item_type}"))
-            else:
-                lines.append(_safe(f"  {item}"))
     detail = data.get("_detail")
     if isinstance(detail, Mapping):
         lines.extend(_artifact_detail_lines(detail, view.scroll))
@@ -6189,6 +6896,17 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
 
 
 def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]:
+    if detail.get("evidence"):
+        text_lines = str(detail.get("text") or "").split("\n")
+        start = min(scroll, max(0, len(text_lines) - 1))
+        return [
+            _safe(
+                f"{detail.get('ref')}  {detail.get('evidence')} reference record  "
+                f"{detail.get('size')} B",
+                "bold",
+            ),
+            _safe("\n".join(text_lines[start : start + _DETAIL_WINDOW_LINES])),
+        ]
     item = detail.get("item") or {}
     size = detail.get("size")
     media = item.get("media_type") or "unknown"
@@ -6216,6 +6934,8 @@ def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]
                 "yellow",
             )
         )
+    elif not error and size == 0:
+        lines.append(_safe("empty captured content (0 bytes)", "dim"))
     elif detail.get("end", 0) > detail.get("offset", 0):
         text_lines = str(detail.get("text") or "").split("\n")
         start = min(scroll, max(0, len(text_lines) - 1))
@@ -6344,6 +7064,24 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     if not rows or project.selected_index >= len(rows):
         return Panel(Text("No finding selected."), title="Detail")
     finding = rows[project.selected_index]
+    start = project.detail_scroll
+    if start is None:
+        start = _detail_default_scroll(project)
+    panel, start = _finding_panel(project, finding, data_root, start)
+    if project.detail_scroll is not None:
+        project.detail_scroll = start
+    return panel
+
+
+def _finding_panel(
+    project: ProjectState,
+    finding: dict[str, Any],
+    data_root: Path | None,
+    start: int,
+    provenance: str = "",
+) -> tuple[Panel, int]:
+    """One finding's evidence (captured artifact, else the bounded live
+    file) with the file text from `start`, clamped; returns the clamp."""
     body = _captured_detail(project, finding, data_root) or _bounded_local_detail(
         project.root, finding
     )
@@ -6353,13 +7091,9 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     lines = body.split("\n")
     pinned = 1 + (len(message.split("\n")) if message else 0)
     head, text_lines = lines[:pinned], lines[pinned:]
-    start = project.detail_scroll
-    if start is None:
-        start = _detail_default_scroll(project)
     start = min(start, max(0, len(text_lines) - 1))
-    if project.detail_scroll is not None:
-        project.detail_scroll = start
-    parts: list[Text] = [_safe("\n".join(head))]
+    parts: list[Text] = [_safe(provenance, "dim")] if provenance else []
+    parts.append(_safe("\n".join(head)))
     if start > 0:
         parts.append(
             _safe(f"... {start} earlier lines above (scroll up to see them)", "dim")
@@ -6370,7 +7104,50 @@ def _render_detail(project: ProjectState, data_root: Path | None = None) -> Pane
     title = _safe(
         f"{finding.get('tool', '')}: {_finding_path(finding)}:{_finding_line(finding)}"
     )
-    return Panel(Group(*parts), title=title, style="magenta")
+    # T28-F: the pane fades in over `detail_ms` after the selection moved.
+    fading = _motion_running(project, _TERMINAL_MOTION["detail_ms"])
+    style = "magenta dim" if fading else "magenta"
+    return Panel(Group(*parts), title=title, style=style), start
+
+
+def _render_map_detail(state: TuiState, project: ProjectState) -> Panel:
+    """T28-C: the wide detail pane in Map shows the selected Map node's own
+    evidence -- a finding's captured/live detail, a file's bounded live
+    text and its findings, a memory/agent record with its projected
+    relations -- never the Scans list selection."""
+    nodes = _map_visible_nodes(project, state.map_expanded)
+    if not 0 <= state.map_selected_index < len(nodes):
+        return Panel(Text("No map node selected."), title="Detail")
+    node = nodes[state.map_selected_index]
+    finding = node.get("finding")
+    if finding is not None:
+        line = finding.get("line")
+        start = max(0, line - 1 - _DETAIL_CONTEXT_LINES) if isinstance(line, int) else 0
+        panel, _ = _finding_panel(
+            project, finding, state.data_root, start, provenance=node["label"]
+        )
+        return panel
+    lines: list[str] = [str(node["label"])]
+    if node.get("kind") == "file":
+        children = node.get("children") or []
+        lines.append(f"findings: {len(children)}")
+        lines.extend(f"  {_map_finding_label(child)}" for child in children)
+        lines.append(_bounded_local_detail(project.root, {"path": node["path"]}))
+    elif "record" in node:
+        lines.append(f"{node['relation']}:")
+        lines.extend(f"  {target}" for target in node["targets"])
+        lines.extend(
+            f"{key}: {value}" for key, value in node["record"].items() if key != "id"
+        )
+    elif node.get("children"):
+        expanded = node["key"] in state.map_expanded
+        lines.append("expanded (Left collapses)" if expanded else "Enter/Right expands")
+    text = "\n".join(lines).split("\n")
+    return Panel(
+        _safe("\n".join(text[:_DETAIL_WINDOW_LINES])),
+        title=_safe(f"Map: {node.get('kind', '')}"),
+        style="magenta",
+    )
 
 
 def _render_grant_review(grant: dict[str, Any]) -> Panel:
@@ -6491,6 +7268,7 @@ def _render_memory_admin(state: TuiState) -> Panel:
             _safe(item.get("trust_tier", "")),
             _safe(item.get("source", "")),
             "yes" if item.get("stale") else "no",
+            style=_state_selection_style(state) if cursor == ">" else None,
         )
     lines.append(table)
     lines.append(
@@ -6642,8 +7420,10 @@ def _render_git_panel(state: TuiState) -> Panel:
             )
         )
     if state.git_data is not None:
-        if git.get("state") == "empty" or git.get("has_git") is False:
+        if git.get("has_git") is False:
             lines.append(_safe("No Git repository at this project root", "bold yellow"))
+        elif git.get("state") == "empty":
+            lines.append(_safe("Empty repository: no commits yet", "bold yellow"))
         elif git.get("state") == "failed":
             lines.append(
                 _safe("Git read failed: HEAD/status could not be read", "bold red")
@@ -6669,6 +7449,7 @@ def _render_git_panel(state: TuiState) -> Panel:
             _safe(commit.get("author", "")),
             _safe(commit.get("date", "")),
             _safe(commit.get("subject", "")),
+            style=_state_selection_style(state) if marker == ">" else None,
         )
     lines.append(history_table)
 
@@ -6732,12 +7513,10 @@ def _render_nav_pane(state: TuiState) -> Panel:
     for idx, section in enumerate(SECTIONS):
         current = section == state.section
         cursor = ">" if (focus_nav and idx == state.nav_index) or current else " "
-        lines.append(
-            Text(
-                f"{cursor}{idx + 1} {SECTION_LABELS[section]}",
-                style=THEME["blue"] if current else THEME["text_muted"],
-            )
-        )
+        style = THEME["blue"] if current else THEME["text_muted"]
+        if focus_nav and idx == state.nav_index:
+            style = f"{style} {_state_selection_style(state)}"
+        lines.append(Text(f"{cursor}{idx + 1} {SECTION_LABELS[section]}", style=style))
     lines.append(Text("Projects", style="bold"))
     lines.extend(
         _safe(
@@ -6754,28 +7533,45 @@ def _render_nav_pane(state: TuiState) -> Panel:
             cursor = (
                 ">" if state.focus == "actions" and idx == state.action_index else " "
             )
+            style = THEME["text"] if ok else THEME["text_muted"]
+            if cursor == ">":
+                style = f"{style} {_state_selection_style(state)}"
             lines.append(
                 Text(
                     f"{cursor}{action.label}" + ("" if ok else f" ({reason})"),
-                    style=THEME["text"] if ok else THEME["text_muted"],
+                    style=style,
                 )
             )
     return Panel(Group(*lines), title="Navigate", style=THEME["border"])
 
 
 def _render_section_chooser(state: TuiState) -> Panel:
+    rows = _chooser_rows()
+    # T28-F: at most the rows the main area holds (the 3-row header, the
+    # footer, the panel's 2 border rows and the blank + hint rows), scrolled
+    # so the cursor stays on screen and j/k reach every row.
+    footer = _footer_height(state, _footer_status_line(state, state.active_project))
+    window = max(1, state.terminal_size[1] - 3 - footer - 4)
+    start = min(max(0, state.chooser_index - window // 2), max(0, len(rows) - window))
     lines: list[Any] = []
-    for idx, (target, label) in enumerate(_chooser_rows()):
+    for idx, (target, label) in enumerate(rows[start : start + window], start):
         number = f"{idx + 1} " if target.startswith("section:") else "  "
+        selected = idx == state.chooser_index
         lines.append(
             Text(
-                f"{'>' if idx == state.chooser_index else ' '}{number}{label}",
-                style=THEME["blue"] if idx == state.chooser_index else THEME["text"],
+                f"{'>' if selected else ' '}{number}{label}",
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
     lines.append(Text("[1-8] go  [enter] choose  [escape] close", style="bold yellow"))
-    return Panel(Group(*lines), title="Sections", style=THEME["border"])
+    title = "Sections"
+    if window < len(rows):
+        end = min(len(rows), start + window)
+        title = f"Sections {start + 1}-{end} of {len(rows)} (j/k scroll)"
+    return Panel(Group(*lines), title=title, style=THEME["border"])
 
 
 def _render_form(state: TuiState) -> Panel:
@@ -6802,7 +7598,7 @@ def _render_project_selector(state: TuiState) -> Panel:
             safe_terminal_text(
                 f"{'>' if idx == state.project_selector_index else ' '}{p.name}"
             ),
-            style=THEME["blue"]
+            style=f"{THEME['blue']} {_state_selection_style(state)}"
             if idx == state.project_selector_index
             else THEME["text"],
         )
@@ -6814,7 +7610,9 @@ def _render_project_selector(state: TuiState) -> Panel:
         lines.append(
             Text(
                 f"{'>' if selected else ' '}{label}",
-                style=THEME["blue"] if selected else THEME["text"],
+                style=f"{THEME['blue']} {_state_selection_style(state)}"
+                if selected
+                else THEME["text"],
             )
         )
     lines.append(Text(""))
@@ -6842,7 +7640,12 @@ def _render_map(state: TuiState, project: ProjectState) -> Panel:
         glyph = ""
         if node.get("children"):
             glyph = "[-] " if node["key"] in state.map_expanded else "[+] "
-        lines.append(_safe(f"{marker}{indent}{glyph}{node['label']}"))
+        lines.append(
+            _safe(
+                f"{marker}{indent}{glyph}{node['label']}",
+                _selection_style(project) if marker == ">" else "",
+            )
+        )
     if not lines:
         lines.append(Text("No findings."))
     return Panel(Group(*lines), title="Map", style=THEME["blue"])
@@ -6895,12 +7698,19 @@ def _unavailable_line(state: TuiState) -> Text:
 def _set_footer(layout: Layout, state: TuiState, status: Text) -> None:
     """The status line above the keymap footer; the footer grows to the
     keymap's wrapped height so `?:Help` is never cut off."""
-    keymap = _keymap_footer(state)
+    layout["footer"].size = _footer_height(state, status)
+    layout["footer"].update(
+        Panel(Group(status, _keymap_footer(state)), style=_FOOTER_STYLE)
+    )
+
+
+def _footer_height(state: TuiState, status: Text) -> int:
+    """The footer's rows: its 2 border rows plus the status line and the
+    keymap line, each wrapped to the terminal width."""
     inner = max(1, state.terminal_size[0] - 4)
     measure = Console(width=inner, file=io.StringIO())
-    rows = sum(max(1, len(text.wrap(measure, inner))) for text in (status, keymap))
-    layout["footer"].size = 2 + rows
-    layout["footer"].update(Panel(Group(status, keymap), style=_FOOTER_STYLE))
+    texts = (status, _keymap_footer(state))
+    return 2 + sum(max(1, len(text.wrap(measure, inner))) for text in texts)
 
 
 def _render_resize_guidance(state: TuiState) -> Panel:
@@ -6966,14 +7776,19 @@ def _render_no_projects(state: TuiState) -> Layout:
 
 
 def _render_detaching(state: TuiState) -> Panel:
-    remaining = max(0.0, (state.detach_deadline or 0.0) - time.monotonic())
+    remaining = (state.detach_deadline or 0.0) - time.monotonic()
+    when = (
+        f"Exits once the run is reaped and recorded, within {remaining:.0f}s."
+        if remaining > 0
+        else "The run is overdue; Ctrl-C exits now."
+    )
     return Panel(
         Group(
             Text(
                 "Detaching -- cancelling the local run and stopping its processes.",
                 style="bold yellow",
             ),
-            Text(f"Exits within {remaining:.0f}s. Ctrl-C exits now."),
+            Text(when),
         ),
         title="Detaching",
         style=THEME["border"],
@@ -7070,7 +7885,19 @@ def render_app(state: TuiState) -> Layout:
     # no distinct 80-99/narrow behavior.
     branch = _width_branch(state.terminal_size[0])
     in_pane_mode = state.mode in ("list", "map", "map_search") and state.overlay is None
-    if branch == "wide" and in_pane_mode:
+    if state.detail_expanded and in_pane_mode:
+        # `+`: the Detail pane fills the list/detail area beside the nav.
+        body = _render_detail(project, state.data_root)
+        if branch in ("wide", "compact"):
+            layout["main"].split_row(
+                Layout(name="nav", size=24 if branch == "wide" else 20),
+                Layout(name="detail", ratio=1),
+            )
+            layout["main"]["nav"].update(_render_nav_pane(state))
+            layout["main"]["detail"].update(body)
+        else:
+            layout["main"].update(body)
+    elif branch == "wide" and in_pane_mode:
         overview = state.mode == "list" and state.section == "overview"
         layout["main"].split_row(
             Layout(name="nav", size=24),
@@ -7079,7 +7906,11 @@ def render_app(state: TuiState) -> Layout:
         )
         layout["main"]["nav"].update(_render_nav_pane(state))
         layout["main"]["list"].update(body)
-        layout["main"]["detail"].update(_render_detail(project, state.data_root))
+        layout["main"]["detail"].update(
+            _render_map_detail(state, project)
+            if state.mode in ("map", "map_search")
+            else _render_detail(project, state.data_root)
+        )
     elif branch == "compact" and in_pane_mode:
         layout["main"].split_row(
             Layout(name="nav", size=20),
@@ -7149,9 +7980,9 @@ def run_interactive_tui(
     if state.projects:
         state.load_requests.add((project_key(state.active_project), "overview"))
 
-    # P69-06 CONNECT: explicit active/idle refresh-rate limiter -- 20Hz while
-    # a key was just dispatched or a scan is running, 4Hz otherwise -- rather
-    # than refreshing on every tick unconditionally.
+    # P69-06 CONNECT / T28-F: refreshes are capped at 20Hz (reduced motion
+    # included); a change, running work or motion refreshes in the next 50ms
+    # slot, and normal motion keeps a 4Hz idle heartbeat.
     _pump(state, actions)  # immediate outcomes are in the first frame
     _ACTIVE_REFRESH_INTERVAL = 1.0 / 20
     _IDLE_REFRESH_INTERVAL = 1.0 / 4
@@ -7164,9 +7995,17 @@ def run_interactive_tui(
     # restored; a closed input is never read again (it would spin).
     exit_cause = ""
     input_closed = False
-    # Carries a Ctrl-C handled mid-tick into the next tick's refresh.
-    interrupted = False
+    # T28-F: a change not yet shown; carried across ticks until a refresh.
+    dirty = False
+    was_continuous = False
     reveal_key = _row_reveal_key(state)
+    selection_key = _selection_key(state)
+    # T28-F: Ctrl-C only sets a flag (the loop runs the quit flow after the
+    # tick's key), so it never tears down the loop mid-frame.
+    sigint = threading.Event()
+    previous_sigint: Any = None
+    if threading.current_thread() is threading.main_thread():
+        previous_sigint = signal.signal(signal.SIGINT, lambda *_: sigint.set())
     with raw_terminal():
         live = (
             Live(
@@ -7185,86 +8024,101 @@ def run_interactive_tui(
                 if max_ticks is not None and ticks >= max_ticks:
                     break
                 ticks += 1
-                try:
-                    size = reader.get_size()
-                    resized = size != state.terminal_size
-                    if resized:
-                        state.terminal_size = size
+                size = reader.get_size()
+                if size != state.terminal_size:
+                    state.terminal_size = size
+                    dirty = True
 
-                    applied = _pump(state, actions)
-                    _poll_running_scans(state, actions)
-                    _poll_detach(state)
+                if _pump(state, actions):
+                    dirty = True
+                _start_dashboard_observers(state)
+                _poll_running_scans(state, actions)
+                _poll_detach(state)
 
-                    key: str | None = None
-                    if input_closed:
-                        time.sleep(tick_seconds)
-                    else:
-                        key = reader.read_key(tick_seconds)
-                    if key == EOF:
-                        input_closed = True
-                        exit_cause = (
-                            "rush ui: input reached end-of-file; detached and "
-                            "restored the terminal"
-                        )
-                        _handle_eof(state, actions)
-                    elif key is not None:
-                        _dispatch_key(state, key, actions)
-                    status_changed = _reload_after_finished_work(state, seen_statuses)
-
-                    # T28-F: a changed findings view reveals its rows one per
-                    # 40ms (capped at 240ms); reduced motion shows them all.
-                    new_reveal_key = _row_reveal_key(state)
-                    if new_reveal_key != reveal_key:
-                        reveal_key = new_reveal_key
-                        if state.projects and not reduced_motion:
-                            state.active_project.row_reveal_started = time.monotonic()
-                    revealing = _row_reveal_active(state)
-
-                    if live is not None:
-                        setup_events = sum(
-                            len(p.setup_apply_events) for p in state.projects
-                        )
-                        has_activity = (
-                            key is not None
-                            or interrupted
-                            or applied
-                            or resized
-                            or revealing
-                            or setup_events != seen_setup_events
-                            or status_changed
-                            or state.detach_deadline is not None
-                            or any(
-                                p.status in ("scanning", "cancelling")
-                                for p in state.projects
-                            )
-                        )
-                        seen_setup_events = setup_events
-                        # U04 fix: reduced motion renders the final state
-                        # (already shown once by `Live(render_app(state), ...)`
-                        # above) and never refreshes again on an idle timer --
-                        # only a real key/scan event re-renders. Normal motion
-                        # keeps its active/idle heartbeat regardless.
-                        if reduced_motion:
-                            if has_activity:
-                                live.update(render_app(state), refresh=True)
-                                interrupted = False
-                        else:
-                            interval = (
-                                _ACTIVE_REFRESH_INTERVAL
-                                if has_activity
-                                else _IDLE_REFRESH_INTERVAL
-                            )
-                            now = time.monotonic()
-                            if now - last_refresh >= interval:
-                                live.update(render_app(state), refresh=True)
-                                last_refresh = now
-                                interrupted = False
-                except KeyboardInterrupt:
-                    # T28-F: Ctrl-C is the quit flow, never an uncaught
-                    # interrupt tearing down the loop mid-frame.
-                    interrupted = True
+                key: str | None = None
+                if input_closed:
+                    time.sleep(tick_seconds)
+                else:
+                    timeout = tick_seconds
+                    if dirty and live is not None:
+                        # A pending change is shown in the next 50ms slot.
+                        slot = last_refresh + _ACTIVE_REFRESH_INTERVAL
+                        timeout = max(0.0, min(tick_seconds, slot - time.monotonic()))
+                    try:
+                        key = reader.read_key(timeout)
+                    except KeyboardInterrupt:
+                        sigint.set()
+                if key == EOF:
+                    input_closed = True
+                    exit_cause = (
+                        "rush ui: input reached end-of-file; detached and "
+                        "restored the terminal"
+                    )
+                    _handle_eof(state, actions)
+                elif key is not None:
+                    _dispatch_key(state, key, actions)
+                if key is not None:
+                    dirty = True
+                if sigint.is_set():
+                    sigint.clear()
+                    dirty = True
                     _handle_sigint(state, actions)
+                if _reload_after_finished_work(state, seen_statuses):
+                    dirty = True
+
+                # T28-F: a changed findings view reveals its rows one per
+                # 40ms (capped at 240ms); a moved selection's highlight and
+                # detail pane move in over `selection_ms`/`detail_ms`.
+                # Reduced motion shows the final state at once.
+                new_reveal_key = _row_reveal_key(state)
+                if new_reveal_key != reveal_key:
+                    reveal_key = new_reveal_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.row_reveal_started = time.monotonic()
+                new_selection_key = _selection_key(state)
+                if new_selection_key != selection_key:
+                    selection_key = new_selection_key
+                    if state.projects and not reduced_motion:
+                        state.active_project.selection_started = time.monotonic()
+
+                setup_events = sum(len(p.setup_apply_events) for p in state.projects)
+                if setup_events != seen_setup_events:
+                    seen_setup_events = setup_events
+                    dirty = True
+                motion_project = state.active_project if state.projects else None
+                continuous = (
+                    _row_reveal_active(state)
+                    or _motion_running(
+                        motion_project,
+                        max(
+                            _TERMINAL_MOTION["selection_ms"],
+                            _TERMINAL_MOTION["detail_ms"],
+                        ),
+                    )
+                    or state.detach_deadline is not None
+                    or any(
+                        p.status in ("scanning", "cancelling") for p in state.projects
+                    )
+                )
+                if was_continuous and not continuous:
+                    dirty = True  # the motion's final frame
+                was_continuous = continuous
+
+                if live is not None:
+                    now = time.monotonic()
+                    elapsed = now - last_refresh + 1e-9
+                    if (
+                        (dirty or continuous) and elapsed >= _ACTIVE_REFRESH_INTERVAL
+                    ) or (not reduced_motion and elapsed >= _IDLE_REFRESH_INTERVAL):
+                        live.update(render_app(state), refresh=True)
+                        last_refresh = now
+                        dirty = False
+            if live is not None and dirty:
+                # A change still waiting for its slot is shown before exit.
+                live.update(render_app(state), refresh=True)
         finally:
+            if previous_sigint is not None:
+                signal.signal(signal.SIGINT, previous_sigint)
             if live is not None:
                 live.stop()
 
@@ -7285,6 +8139,30 @@ def _row_reveal_key(state: TuiState) -> tuple[Any, ...]:
         project.detail_page,
         project.filter_text,
         len(project.results),
+    )
+
+
+def _selection_key(state: TuiState) -> tuple[Any, ...]:
+    """T28-F: where the selection is; a change restarts its motion."""
+    if not state.projects:
+        return ()
+    project = state.active_project
+    artifacts = state.views.get((project_key(project), "artifacts"))
+    return (
+        state.active_index,
+        state.section,
+        state.mode,
+        state.overlay,
+        state.focus,
+        project.selected_index,
+        state.nav_index,
+        state.action_index,
+        state.chooser_index,
+        state.git_selected,
+        state.memory_selected_index,
+        state.map_selected_index,
+        state.project_selector_index,
+        artifacts.selection if artifacts is not None else None,
     )
 
 

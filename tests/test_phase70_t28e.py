@@ -1331,12 +1331,12 @@ def test_export_project_artifact_interrupted_write_removes_only_its_own_partial(
     other_partial = tmp_path / "unrelated.txt.partial"
     other_partial.write_bytes(b"a different in-flight export, must survive")
 
-    original_replace = os.replace
+    original_link = os.link
 
     def _boom(*_args: Any, **_kwargs: Any) -> None:
-        raise OSError("simulated interruption before os.replace")
+        raise OSError("simulated interruption before os.link")
 
-    monkeypatch.setattr(os, "replace", _boom)
+    monkeypatch.setattr(os, "link", _boom)
 
     with pytest.raises(OSError):
         wp.export_project_artifact(
@@ -1350,7 +1350,7 @@ def test_export_project_artifact_interrupted_write_removes_only_its_own_partial(
             data_root=data_root,
         )
 
-    monkeypatch.setattr(os, "replace", original_replace)
+    monkeypatch.setattr(os, "link", original_link)
     assert not destination.exists()
     assert not list(tmp_path.glob("interrupted.txt*.partial"))
     assert other_partial.exists(), (
@@ -1489,6 +1489,7 @@ def test_tui_f3_digit_or_alias_reaches_tokens_git_artifacts_sections(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     assert state.section == "artifacts"
     rendered = _render_text(state)
     assert "report.txt" in rendered, (
@@ -1560,6 +1561,7 @@ def test_tui_artifacts_section_inspects_via_bounded_continuation(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     assert state.section == "artifacts"
 
     inspect = _find_action("artifacts", "inspect")
@@ -1612,6 +1614,7 @@ def test_tui_export_review_writes_only_after_approval(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     export_action = _find_action("artifacts", "export")
     export_action.run(state, actions)
 
@@ -1666,6 +1669,7 @@ def test_tui_export_review_declined_writes_nothing(
 
     tui_mod._dispatch_key(state, "f3", actions)
     tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
     export_action = _find_action("artifacts", "export")
     export_action.run(state, actions)
     assert state.overlay == "grant_review"

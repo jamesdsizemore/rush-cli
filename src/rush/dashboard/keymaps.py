@@ -54,9 +54,11 @@ DEFAULT_KEYBINDINGS = [
     KeybindingAction(
         key="f5", action_name="refresh", description="Refresh current section"
     ),
-    KeybindingAction(key="+", action_name="map_expand", description="Expand Map node"),
+    # Phase 66 §3.8: `+`/`-` expand/collapse the detail pane in every
+    # section; Map nodes keep Right/l and Left/h.
+    KeybindingAction(key="+", action_name="detail_expand", description="Expand detail"),
     KeybindingAction(
-        key="-", action_name="map_collapse", description="Collapse Map node"
+        key="-", action_name="detail_collapse", description="Collapse detail"
     ),
     KeybindingAction(
         key="?", action_name="show_help", description="Show current key bindings"
