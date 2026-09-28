@@ -154,8 +154,16 @@ def _isolated_and_zero_spawn(tmp_path, monkeypatch):
     def _no_spawn(*args, **kwargs):  # pragma: no cover - only hit on defect
         pytest.fail(f"unexpected subprocess call: args={args} kwargs={kwargs}")
 
+    class _NoSpawnPopen(subprocess.Popen):
+        """Refuses to spawn but stays a class, so a module imported during
+        the test can still evaluate `subprocess.Popen[bytes]` annotations
+        (the mcp SDK does this when rush.mcp is first imported)."""
+
+        def __init__(self, *args, **kwargs):  # pragma: no cover - only on defect
+            _no_spawn(*args, **kwargs)
+
     monkeypatch.setattr(subprocess, "run", _no_spawn)
-    monkeypatch.setattr(subprocess, "Popen", _no_spawn)
+    monkeypatch.setattr(subprocess, "Popen", _NoSpawnPopen)
 
 
 def _everyday_rows(output: str) -> dict[str, str]:
