@@ -7,9 +7,16 @@ from __future__ import annotations
 
 import hashlib
 import time
+from typing import TYPE_CHECKING
 
 from ..safety.redactor import SecretRedactor
-from ..tools.base import Finding, Severity, ToolResult
+
+if TYPE_CHECKING:
+    from ..tools.base import Finding, Severity, ToolResult
+
+# rush.tools.base is imported inside the builders below, never at module import:
+# importing it runs rush/tools/__init__.py, whose tools import this module back,
+# which breaks any entry point (rush.entry) that imports rush.runtime first.
 
 
 def skipped_result(
@@ -21,6 +28,8 @@ def skipped_result(
     metadata: dict | None = None,
 ) -> ToolResult:
     """Build a ToolResult for an unavailable local engine or missing permission."""
+    from ..tools.base import ToolResult
+
     result = ToolResult(
         tool=tool_name,
         engine=engine,
@@ -47,6 +56,8 @@ def error_result(
     metadata: dict | None = None,
 ) -> ToolResult:
     """Build an engine error result with optional execution metadata."""
+    from ..tools.base import ToolResult
+
     result = ToolResult(
         tool=tool_name,
         engine=engine,
@@ -95,6 +106,8 @@ def normalize_findings(
     Invalid records without a message are omitted. At most 10,000 records are
     processed to bound memory use from a malformed external engine payload.
     """
+    from ..tools.base import Finding
+
     findings: list[Finding] = []
     for raw_finding in raw_findings[:10000]:
         path = str(raw_finding.get("path") or raw_finding.get("filename") or "")

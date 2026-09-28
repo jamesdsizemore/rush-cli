@@ -55,10 +55,10 @@ jobs:
         run: |
           uv pip install pyinstaller
           cat > rush_entry.py <<'PYEOF'
-          from rush.cli import cli
+          from rush.entry import main
 
           if __name__ == "__main__":
-              cli()
+              main()
           PYEOF
           uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "
@@ -272,10 +272,10 @@ jobs:
         run: |
           uv pip install pyinstaller
           cat > rush_entry.py <<'PYEOF'
-          from rush.cli import cli
+          from rush.entry import main
 
           if __name__ == "__main__":
-              cli()
+              main()
           PYEOF
           uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
           uv run --no-sync python -c "

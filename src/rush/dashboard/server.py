@@ -6,6 +6,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import secrets
 import socket
@@ -59,7 +60,6 @@ from rush.memory.store import (
     readonly_view_reason,
 )
 from rush.permissions import ExecutionPermissions
-from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.engine_packages import ENGINE_PACKAGES
 from rush.setup.provision import build_provision_plan
@@ -69,6 +69,7 @@ from rush.tools.base import ToolResult
 from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.project import ProjectTool
 from rush.tools.setup_wizard import run_setup_wizard
+from rush.workflows import projects as wp
 from rush.workflows.project_run import (
     _MANIFEST_RELATIVE,
     ScanHandoff,
@@ -95,6 +96,7 @@ from rush.workflows.project_run import (
 from rush.workflows.projects import (
     ProjectError,
     ProjectInvalidRequestError,
+    _scan_file_inventory,
     create_project,
     expand_artifact_reference,
     export_project_data,
@@ -283,7 +285,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "scan_start": frozenset({"plan_id"}),
     "scan_cancel": frozenset({"run_id", "operation_id"}),
     "scan_resume": frozenset({"run_id"}),
-    "rescan": frozenset({"run_id"}),
+    "rescan": frozenset({"run_id", "expected_attempt_id"}),
     "handoff_preview": frozenset(
         {"run_id", "attempt_id", "agent_id", "finding_ids", "max_tokens", "max_bytes"}
     ),
@@ -638,6 +640,12 @@ class _RateLimiter:
 # hang -- see `stop_all_dashboard_contexts` below.
 _live_dashboard_contexts: weakref.WeakSet = weakref.WeakSet()
 
+_LOG = logging.getLogger(__name__)
+
+# How long `server_close()` waits for still-running `_run_terminal_supervised`
+# workers before recording their terminal outcome itself.
+SUPERVISED_SHUTDOWN_JOIN_SECONDS = 5.0
+
 
 def stop_all_dashboard_contexts() -> None:
     """Test-support: stop every live `DashboardContext`'s background
@@ -722,6 +730,14 @@ class DashboardContext:
             target=self._recovery_loop, daemon=True, name="rush-dashboard-recovery"
         )
         self._recovery_thread.start()
+        # Every `_run_terminal_supervised` worker not yet terminalized, keyed
+        # by operation id, so `join_supervised()` can bound them at shutdown
+        # instead of letting one write into an already-released state store.
+        # `_supervised_abandoned`: operations shutdown terminalized itself;
+        # their worker must never write again.
+        self._supervised_lock = threading.Lock()
+        self._supervised: dict[str, threading.Thread] = {}
+        self._supervised_abandoned: set[str] = set()
         _live_dashboard_contexts.add(self)
 
     def _recovery_loop(self) -> None:
@@ -739,6 +755,91 @@ class DashboardContext:
         never a correctness requirement for process exit."""
         self._recovery_stop.set()
         self.outcomes.stop()
+
+    def start_terminal_supervised(
+        self, operation_id: str, body: Callable[[], dict[str, Any]]
+    ) -> threading.Thread:
+        """Launch and track one `_run_terminal_supervised` worker."""
+        thread = threading.Thread(
+            target=_run_terminal_supervised,
+            args=(self, operation_id, body),
+            daemon=True,
+            name=f"rush-supervised-{operation_id}",
+        )
+        with self._supervised_lock:
+            self._supervised[operation_id] = thread
+        try:
+            thread.start()
+        except BaseException:
+            with self._supervised_lock:
+                self._supervised.pop(operation_id, None)
+            raise
+        return thread
+
+    def record_supervised_terminal(
+        self, operation_id: str, payload: dict[str, Any]
+    ) -> None:
+        """A supervised worker's last act: record its terminal status. Never
+        raises -- a failed write is recorded as `terminal_write_failed`, or
+        logged when the store itself is unreachable. Skipped when shutdown
+        already terminalized this operation."""
+        with self._supervised_lock:
+            try:
+                if operation_id in self._supervised_abandoned:
+                    return
+                try:
+                    self.mutations.record_status_transition(
+                        operation_id, "terminal", payload
+                    )
+                except Exception as exc:  # noqa: BLE001 -- surfaced, never raised.
+                    _LOG.exception(
+                        "terminal status write failed for supervised operation %s",
+                        operation_id,
+                    )
+                    self._record_terminal_or_log(
+                        operation_id,
+                        {
+                            "status": "error",
+                            "code": "terminal_write_failed",
+                            "message": str(exc) or exc.__class__.__name__,
+                        },
+                    )
+            finally:
+                self._supervised.pop(operation_id, None)
+
+    def join_supervised(self, timeout: float) -> None:
+        """Join every running supervised worker within `timeout` seconds in
+        total; any still running is terminalized here as `server_shutdown`
+        and never writes to the state store afterwards."""
+        with self._supervised_lock:
+            running = list(self._supervised.values())
+        deadline = time.monotonic() + timeout
+        for thread in running:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        with self._supervised_lock:
+            for operation_id in list(self._supervised):
+                self._supervised_abandoned.add(operation_id)
+                del self._supervised[operation_id]
+                self._record_terminal_or_log(
+                    operation_id,
+                    {
+                        "status": "error",
+                        "code": "server_shutdown",
+                        "message": "dashboard shut down before the operation finished",
+                    },
+                )
+
+    def _record_terminal_or_log(
+        self, operation_id: str, payload: dict[str, Any]
+    ) -> None:
+        try:
+            self.mutations.record_status_transition(operation_id, "terminal", payload)
+        except Exception:  # noqa: BLE001 -- the log is the last surface left.
+            _LOG.exception(
+                "could not record %s terminal for supervised operation %s",
+                payload["code"],
+                operation_id,
+            )
 
     def live_secrets(self) -> tuple[str, ...]:
         """Every currently-live secret value this server can still redact by
@@ -968,7 +1069,7 @@ def _run_terminal_supervised(
             "message": str(exc) or exc.__class__.__name__,
         }
     finally:
-        ctx.mutations.record_status_transition(operation_id, "terminal", payload)
+        ctx.record_supervised_terminal(operation_id, payload)
 
 
 def _dispatch_provision_apply(
@@ -1038,10 +1139,7 @@ def _dispatch_provision_apply(
             "provision": applied.get("provision", {}),
         }
 
-    thread = threading.Thread(
-        target=_run_terminal_supervised, args=(ctx, operation_id, _body), daemon=True
-    )
-    thread.start()
+    ctx.start_terminal_supervised(operation_id, _body)
     return 202, {
         "operation_id": operation_id,
         "run_id": run_id,
@@ -1196,26 +1294,6 @@ def _operation_project_id(ctx: DashboardContext, operation_id: str) -> str | Non
 # --- P69-03.2a-c: unify every scan producer into one publication path -------
 
 
-def _scan_file_inventory(root: Path) -> list[dict[str, str]]:
-    """P69-03.2b: the project's own tracked-or-present files, its own
-    concept -- never derived from a scan's findings or a `ScanPlan`'s
-    `ScanCandidate` set (different tools legitimately target different file
-    subsets). Reuses the same `SKIP_DIRS` ignore convention every other
-    whole-tree walk in this codebase already shares (`rush.review.collection`)
-    rather than inventing a second bespoke list."""
-    if not root.is_dir():
-        return []
-    entries: list[dict[str, str]] = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root)
-        if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
-            continue
-        entries.append({"path": rel.as_posix()})
-    return entries
-
-
 _UNAVAILABLE_SOURCE_IDENTITY = "source-identity-unavailable"
 
 
@@ -1338,11 +1416,13 @@ def _publish_scan_snapshot(
     generation: int | None = None,
     run_id: str = "",
     attempt_id: str = "",
+    file_inventory: list[dict[str, str]] | None = None,
 ) -> None:
     """P69-03.2c glue shared by `scan_start`/`scan_resume`/`rescan` (and
     CHECK_SUITE's own initial-launch scan via `publish_check_suite_scan`
-    below): adapts the producer's result, computes the file inventory, and
-    publishes both atomically through `ProjectRegistry.publish_scan_result` --
+    below): adapts the producer's result, computes the file inventory (or
+    reuses `file_inventory` when the caller already walked the tree, so one
+    publish walks it once), and publishes both atomically through `ProjectRegistry.publish_scan_result` --
     a failed or partial `run_state` is still published here (the map must
     render what actually completed, never silently drop the publish just
     because the run wasn't a full clean pass).
@@ -1378,7 +1458,9 @@ def _publish_scan_snapshot(
     snapshot = _snapshot_from_scan_result(
         project_id,
         result,
-        file_inventory=_scan_file_inventory(root),
+        file_inventory=(
+            file_inventory if file_inventory is not None else _scan_file_inventory(root)
+        ),
         existing_snapshot=existing,
     )
     snapshot["scan_provenance"] = scan_provenance
@@ -1746,6 +1828,7 @@ def publish_check_suite_scan(
         generation=scan_generation,
         run_id=run_id,
         attempt_id=attempt_id,
+        file_inventory=file_inventory,
     )
     return run_id, attempt_id
 
@@ -2176,6 +2259,16 @@ def _dispatch_rescan(
             400, "malformed_request", f"unknown run_id: {baseline_run_id}"
         )
     captured_attempt_id = baseline_manifest.get("attempt_id")
+    # T28-B: a client that reviewed a specific attempt names it; a newer
+    # attempt published since that review refuses the rescan before any effect.
+    reviewed_attempt_id = arguments.get("expected_attempt_id")
+    if reviewed_attempt_id is not None and reviewed_attempt_id != captured_attempt_id:
+        raise _ActionDenied(
+            409,
+            "RESUME_STALE",
+            f"run {baseline_run_id} changed since review: reviewed attempt "
+            f"{reviewed_attempt_id}, current attempt {captured_attempt_id}",
+        )
     permissions = _permissions_from_grants(grants)
     new_run_id = str(uuid.uuid4())
     new_attempt_id = str(uuid.uuid4())
@@ -2436,10 +2529,7 @@ def _dispatch_handoff_send(
             "attempt_id": attempt_id,
         }
 
-    thread = threading.Thread(
-        target=_run_terminal_supervised, args=(ctx, operation_id, _body), daemon=True
-    )
-    thread.start()
+    ctx.start_terminal_supervised(operation_id, _body)
     return 202, {
         "operation_id": operation_id,
         "run_id": run_id,
@@ -3248,21 +3338,28 @@ _MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
 
 def _read_artifact_content_page(
-    root: Path, entry: dict[str, Any], rel_path: str, *, offset: int, limit: int
+    root: Path,
+    entry: dict[str, Any],
+    rel_path: str,
+    *,
+    offset: int,
+    limit: int,
+    project_id: str | None = None,
+    data_root: Path | None = None,
 ) -> dict[str, Any]:
-    """M12: bounded, path-traversal-safe byte-range content page for the
-    artifact-download route (plan §3.6: artifact reads paginate at
-    1MiB/page) -- resolved only from this exact run/attempt's own captured
-    immutable snapshot (`CandidateResult.artifact_snapshots`, `project_run.py`),
-    never from the live/staged current-project tree. A reference minted for
-    one attempt can therefore never return another attempt's (or another
-    candidate's) bytes for the same declared logical path, even when both
-    declared the identical filename. Raw bytes travel base64-encoded
-    (`content_base64`), never UTF-8-decoded -- lossless for binary content
-    and for multi-byte characters that straddle a page boundary. A manifest
-    that predates this fix (or a candidate that never captured this path)
-    has no snapshot entry: reported as `immutable_content_unavailable`,
-    never a live-file fallback."""
+    """M12: bounded byte-range content page for the artifact-download route
+    (plan §3.6: artifact reads paginate at 1MiB/page), resolved only from
+    this exact run/attempt's own captured immutable snapshot
+    (`CandidateResult.artifact_snapshots`, `project_run.py`), never from the
+    live/staged current-project tree. T28-E: a thin adapter over the shared
+    `workflows/projects.py::read_project_artifact_page` (containment,
+    identity and cursor validation live there, so CLI/TUI/web cannot
+    diverge): it only finds this run/attempt/tool's recorded snapshot
+    sha256 for `rel_path`, builds the reader's cursor, and maps
+    `next_cursor` back to this route's `next_offset`. A manifest that
+    predates snapshot capture (or a candidate that never captured this path)
+    is reported as `immutable_content_unavailable`, never a live-file
+    fallback. Raw bytes travel base64-encoded (`content_base64`)."""
     run_id = entry.get("run_id")
     attempt_id = entry.get("attempt_id")
     tool_id = entry.get("tool_id")
@@ -3277,40 +3374,51 @@ def _read_artifact_content_page(
             if item.get("candidate_id") == tool_id:
                 snapshot = (item.get("artifact_snapshots") or {}).get(rel_path)
                 break
-    if not isinstance(snapshot, dict):
+    if manifest is None or not isinstance(snapshot, dict):
         return {
             "path": rel_path,
             "error": "immutable_content_unavailable",
             "content_base64": None,
         }
-    immutable_path = snapshot.get("immutable_path")
-    total_size = snapshot.get("size")
-    try:
-        target = (root / str(immutable_path)).resolve()
-        target.relative_to(root.resolve())
-    except (ValueError, OSError):
-        return {"path": rel_path, "error": "invalid_path", "content_base64": None}
-    if not target.is_file():
-        return {"path": rel_path, "error": "not_found", "content_base64": None}
-    offset = max(0, offset)
-    limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
-    try:
-        with target.open("rb") as handle:
-            handle.seek(offset)
-            chunk = handle.read(limit)
-    except OSError:
-        return {"path": rel_path, "error": "read_failed", "content_base64": None}
-    next_offset = (
-        offset + len(chunk) if offset + len(chunk) < (total_size or 0) else None
+    # The reader re-resolves `root` and refuses a cursor naming any other
+    # project, so an id taken from the route or the manifest is only a hint;
+    # a CHECK_SUITE manifest records none and resolves through the registry.
+    project_id = (
+        project_id
+        or manifest.get("project_id")
+        or wp.resolve_project(root, data_root=data_root)["project_id"]
     )
+    cursor = wp._b64url_encode(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "tool_id": tool_id,
+                "path": rel_path,
+                "sha256": snapshot.get("sha256"),
+                "offset": 0,
+            }
+        ).encode("utf-8")
+    )
+    page = wp.read_project_artifact_page(
+        root, cursor, data_root=data_root, offset=max(0, offset), limit=limit
+    )
+    if page.get("error"):
+        return page
+    next_cursor = page.get("next_cursor")
     return {
-        "path": rel_path,
-        "offset": offset,
-        "size": total_size,
-        "content_base64": base64.b64encode(chunk).decode("ascii"),
-        "next_offset": next_offset,
-        "sha256": snapshot.get("sha256"),
-        "media_type": snapshot.get("media_type"),
+        "path": page.get("path"),
+        "offset": page.get("offset"),
+        "size": page.get("size"),
+        "content_base64": page.get("content_base64"),
+        "next_offset": (
+            json.loads(wp._b64url_decode(next_cursor))["offset"]
+            if next_cursor
+            else None
+        ),
+        "sha256": page.get("sha256"),
+        "media_type": page.get("media_type"),
     }
 
 
@@ -5269,7 +5377,12 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         limit = _MAX_ARTIFACT_PAGE_BYTES
                     root = Path(resolve_project(project_id)["root"])
                     result["content"] = _read_artifact_content_page(
-                        root, entry, rel_path, offset=offset, limit=limit
+                        root,
+                        entry,
+                        rel_path,
+                        offset=offset,
+                        limit=limit,
+                        project_id=project_id,
                     )
             body = _success_body(
                 request_id,
@@ -5693,6 +5806,9 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
         self, *args: Any, max_concurrent: int = MAX_CONCURRENT_REQUESTS, **kwargs: Any
     ) -> None:
         self._admission = threading.Semaphore(max_concurrent)
+        # Set by create_dashboard_server(); before super().__init__, whose
+        # bind-failure path already calls server_close().
+        self.dashboard_context: DashboardContext | None = None
         super().__init__(*args, **kwargs)
 
     def process_request(self, request: Any, client_address: Any) -> None:
@@ -5709,6 +5825,13 @@ class _AdmissionControlledServer(ThreadingHTTPServer):
             super().shutdown_request(request)
         finally:
             self._admission.release()
+
+    def server_close(self) -> None:
+        """Close the socket, then bound every supervised worker before the
+        caller releases the state store."""
+        super().server_close()
+        if self.dashboard_context is not None:
+            self.dashboard_context.join_supervised(SUPERVISED_SHUTDOWN_JOIN_SECONDS)
 
 
 def create_dashboard_server(
@@ -5737,6 +5860,7 @@ def create_dashboard_server(
     # rather than closing and rebinding (which would race another process
     # for the freed port).
     server.RequestHandlerClass = _make_handler(ctx)
+    server.dashboard_context = ctx
     return server, ctx, bootstrap_token
 
 

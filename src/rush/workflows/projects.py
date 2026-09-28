@@ -34,6 +34,8 @@ agent-workflow-plan.md §6.1, "P65-03 owns registry/envelope tests"):
 from __future__ import annotations
 
 import base64
+import copy
+import errno
 import hashlib
 import hmac
 import json
@@ -42,9 +44,10 @@ import re
 import sqlite3
 import stat
 import subprocess
+import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -52,6 +55,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rush.config import load_config
+from rush.io.physical_paths import ContainmentError, PhysicalRoot
 from rush.memory.store import (
     MemoryStoreUnreadableError,
     is_internal_memory_source,
@@ -59,10 +63,10 @@ from rush.memory.store import (
     readonly_view_reason,
     sqlite_has_table,
 )
+from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import (
-    read_memory_event_totals_readonly,
     read_summary_readonly,
 )
 from rush.tools.routing import detect_project_languages
@@ -1014,6 +1018,37 @@ def _iter_run_manifests(root: Path) -> list[dict[str, Any]]:
     return manifests
 
 
+def _iter_all_attempt_manifests(root: Path) -> list[dict[str, Any]]:
+    """Every attempt manifest of every run under `root` (oldest run first),
+    each read through `_read_contained_manifest`; unreadable ones are skipped."""
+    runs_dir = root / ".rush" / "runs"
+    manifests: list[dict[str, Any]] = []
+    if not runs_dir.is_dir():
+        return manifests
+    for run_dir in sorted(p for p in runs_dir.iterdir() if p.is_dir()):
+        attempts_dir = run_dir / "attempts"
+        if not _MAP_ID_RE.match(run_dir.name) or not attempts_dir.is_dir():
+            continue
+        for attempt_dir in sorted(p for p in attempts_dir.iterdir() if p.is_dir()):
+            if not _MAP_ID_RE.match(attempt_dir.name):
+                continue
+            try:
+                manifest = _read_contained_manifest(
+                    root, run_dir.name, attempt_dir.name
+                )
+            except (FileNotFoundError, ValueError, OSError):
+                continue
+            if isinstance(manifest, dict):
+                manifests.append(
+                    {
+                        **manifest,
+                        "run_id": manifest.get("run_id", run_dir.name),
+                        "attempt_id": manifest.get("attempt_id", attempt_dir.name),
+                    }
+                )
+    return manifests
+
+
 def _iter_handoffs(root: Path) -> list[dict[str, Any]]:
     """Every persisted `rush.workflows.project_run.build_handoff` packet under `root`
     (`.rush/handoffs/*.json`), sorted for determinism."""
@@ -1315,7 +1350,7 @@ def _git_read(root: Path) -> list[str]:
     try:
         listed = subprocess.run(
             [
-                "git",
+                *_GIT_READ,
                 "config",
                 "--local",
                 "--includes",
@@ -1374,31 +1409,42 @@ def _git_log(root: Path, *, limit: int, skip: int = 0) -> list[dict[str, Any]]:
 
 
 def _git_dirty_files(root: Path) -> list[dict[str, Any]]:
-    """Bounded working-tree/index status (`git status --porcelain=v1`). A
-    rename is reported as `old_path`/`path` (porcelain's `R  old -> new`
-    line shape) -- never collapsed to a delete+add."""
+    """Bounded working-tree/index status (`git status --porcelain=v1 -z`,
+    every untracked file listed). Paths are Git's own unquoted names, so a
+    name with spaces or quotes is diffable as listed. A rename/copy is
+    reported as `old_path`/`path` (the `-z` record's second field) -- never
+    collapsed to a delete+add."""
     try:
         result = subprocess.run(
-            [*_git_read(root), "status", "--porcelain=v1"],
+            [
+                *_git_read(root),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return []
+    fields = iter(result.stdout.split("\0"))
     entries: list[dict[str, Any]] = []
-    for line in result.stdout.splitlines()[:_GIT_DIRTY_MAX]:
-        if len(line) < 4:
+    for record in fields:
+        if len(entries) >= _GIT_DIRTY_MAX:
+            break
+        if len(record) < 4:
             continue
-        status = line[:2].strip()
-        rest = line[3:]
-        old_path = None
-        path = rest
-        if " -> " in rest:
-            old_path, path = rest.split(" -> ", 1)
-        entries.append({"status": status, "path": path, "old_path": old_path})
+        status = record[:2]
+        old_path = next(fields, None) if ("R" in status or "C" in status) else None
+        entries.append(
+            {"status": status.strip(), "path": record[3:], "old_path": old_path}
+        )
     return entries
 
 
@@ -1410,21 +1456,38 @@ def _git_summary(root: Path) -> dict[str, Any]:
     below serves the full paginated history)."""
     if not (root / ".git").exists():
         return {
+            "state": "empty",
             "has_git": False,
             "head": None,
             "dirty": None,
             "history": [],
             "dirty_files": [],
         }
+    state = "populated"
+    head: str | None
     try:
-        head = subprocess.run(
-            [*_git_read(root), "rev-parse", "HEAD"],
+        verified = subprocess.run(
+            [*_git_read(root), "rev-parse", "--verify", "-q", "HEAD"],
             cwd=root,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
             timeout=5,
-        ).stdout.strip()
+        )
+        head = verified.stdout.strip()
+        if verified.returncode != 0:
+            # Exit 1 plus a symbolic HEAD is an unborn branch (no commits
+            # yet): an empty repository. Anything else is a failed read.
+            if verified.returncode != 1:
+                raise subprocess.CalledProcessError(verified.returncode, "rev-parse")
+            subprocess.run(
+                [*_git_read(root), "symbolic-ref", "-q", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                timeout=5,
+            )
+            head, state = None, "empty"
         status = subprocess.run(
             [*_git_read(root), "status", "--porcelain"],
             cwd=root,
@@ -1435,13 +1498,106 @@ def _git_summary(root: Path) -> dict[str, Any]:
         ).stdout
         dirty: bool | None = bool(status.strip())
     except (OSError, subprocess.SubprocessError):
-        head, dirty = None, None
+        head, dirty, state = None, None, "failed"
     return {
+        "state": state,
         "has_git": True,
         "head": head,
         "dirty": dirty,
         "history": _git_log(root, limit=_GIT_HISTORY_PAGE_MAX),
         "dirty_files": _git_dirty_files(root),
+    }
+
+
+def _git_text(root: Path, *args: str, ok_codes: tuple[int, ...] = (0,)) -> str | None:
+    """One hardened read-only Git command's stdout (undecodable bytes become
+    U+FFFD), or `None` on failure. `ok_codes` are the exit codes that count
+    as success (`diff --no-index` exits 1 when the files differ)."""
+    try:
+        result = subprocess.run(
+            [*_git_read(root), *args],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout if result.returncode in ok_codes else None
+
+
+def project_git_branch(
+    project: str | Path, *, data_root: Path | None = None
+) -> dict[str, Any]:
+    """The checked-out branch (`None` when detached or not a Git root)."""
+    root = Path(resolve_project(project, data_root=data_root)["root"])
+    out = _git_text(root, "symbolic-ref", "--short", "-q", "HEAD")
+    return {"branch": (out or "").strip() or None}
+
+
+def project_git_worktree(
+    project: str | Path, *, data_root: Path | None = None
+) -> dict[str, Any]:
+    """The worktree top level and the shared Git directory it belongs to."""
+    root = Path(resolve_project(project, data_root=data_root)["root"])
+    out = _git_text(root, "rev-parse", "--show-toplevel", "--git-common-dir")
+    lines = (out or "").splitlines()
+    if len(lines) < 2:
+        return {"toplevel": None, "git_common_dir": None}
+    common = Path(lines[1])
+    if not common.is_absolute():
+        common = root / common
+    return {"toplevel": lines[0], "git_common_dir": str(common.resolve())}
+
+
+def project_git_dirty_diff(
+    project: str | Path, path: str, *, data_root: Path | None = None
+) -> dict[str, Any]:
+    """Bounded diff of one path, only when Git's own dirty listing names it;
+    any other path is `not_dirty` and no diff runs. The diff is the staged
+    change (`--cached`) followed by the unstaged one; an untracked file shows
+    as a new file (`diff --no-index /dev/null <path>`)."""
+    root = Path(resolve_project(project, data_root=data_root)["root"])
+    if not (root / ".git").exists():
+        return {"path": path, "error": "not_dirty"}
+    entry = next(
+        (
+            e
+            for e in _git_dirty_files(root)
+            if path in (e.get("path"), e.get("old_path"))
+        ),
+        None,
+    )
+    if entry is None:
+        return {"path": path, "error": "not_dirty"}
+    flags = ("--no-color", "--no-ext-diff", "--no-textconv")
+    out: str | None
+    if entry["status"] == "??":
+        out = _git_text(
+            root,
+            "diff",
+            "--no-index",
+            *flags,
+            "--",
+            os.devnull,
+            entry["path"],
+            ok_codes=(0, 1),
+        )
+    else:
+        paths = [p for p in (entry.get("old_path"), entry["path"]) if p]
+        staged = _git_text(root, "diff", "--cached", "-M", *flags, "--", *paths)
+        unstaged = _git_text(root, "diff", *flags, "--", *paths)
+        out = None if staged is None or unstaged is None else staged + unstaged
+    if out is None:
+        return {"path": path, "error": "failed"}
+    lines = out.splitlines()
+    return {
+        "path": path,
+        "lines": lines[:_GIT_DIFF_MAX_LINES],
+        "truncated": len(lines) > _GIT_DIFF_MAX_LINES,
     }
 
 
@@ -1573,7 +1729,13 @@ def _git_show_path_digest(root: Path, commit: str, path: str) -> str | None:
     engines use for `git_link["path_digests"]`."""
     try:
         result = subprocess.run(
-            [*_git_read(root), "show", "--no-textconv", f"{commit}:{path}"],
+            [
+                *_git_read(root),
+                "show",
+                "--no-ext-diff",
+                "--no-textconv",
+                f"{commit}:{path}",
+            ],
             cwd=root,
             check=True,
             capture_output=True,
@@ -1641,6 +1803,35 @@ def _readonly_memory_refs(
     return refs if refs is not None else ([], [])
 
 
+def _readonly_memory_event_totals(
+    root: Path, filters: Mapping[str, str] | None = None
+) -> dict[str, int]:
+    """Recorded memory-event token totals by kind, read without creating or
+    migrating `.rush/telemetry/tokens.db`. Missing DB/table is no events.
+    `filters` match stored identity columns; a schema without one of them
+    holds only unscoped rows, which a scoped selection never includes."""
+    filters = dict(filters or {})
+
+    def _read(conn: sqlite3.Connection) -> dict[str, int]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return {}
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if not set(filters) <= columns:
+            return {}
+        where = " AND ".join(f"{column} = ?" for column in filters)
+        rows = conn.execute(
+            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events"
+            + (f" WHERE {where}" if where else "")
+            + " GROUP BY kind",
+            list(filters.values()),
+        ).fetchall()
+        return {str(kind): int(total) for kind, total in rows}
+
+    db = Path(root).resolve() / ".rush" / "telemetry" / "tokens.db"
+    totals = read_sqlite_readonly(db, _read)
+    return totals or {}
+
+
 def list_project_artifacts(
     project: str | Path,
     *,
@@ -1695,6 +1886,37 @@ def list_project_artifacts(
                 }
             )
 
+    # T28-E: every attempt of every run (not only the latest), one entry per
+    # captured path, each naming the immutable snapshot a reader/export uses.
+    captured: list[dict[str, Any]] = []
+    for manifest in _iter_all_attempt_manifests(root):
+        for item in manifest.get("scheduled") or []:
+            snapshots = (
+                item.get("artifact_snapshots") if isinstance(item, dict) else None
+            )
+            if not isinstance(snapshots, dict):
+                continue
+            for rel_path, snap in snapshots.items():
+                if not isinstance(snap, dict):
+                    continue
+                captured.append(
+                    {
+                        "artifact_ref": (
+                            f"run:{manifest.get('run_id')}:{manifest.get('attempt_id')}:"
+                            f"{item.get('candidate_id')}:{rel_path}"
+                        ),
+                        "category": item.get("category", "unknown"),
+                        "kind": "captured_artifact",
+                        "run_id": manifest.get("run_id"),
+                        "attempt_id": manifest.get("attempt_id"),
+                        "tool_id": item.get("candidate_id"),
+                        "path": rel_path,
+                        "sha256": snap.get("sha256"),
+                        "size": snap.get("size"),
+                        "media_type": snap.get("media_type"),
+                    }
+                )
+
     handoffs: list[dict[str, Any]] = []
     for handoff in _iter_handoffs(root):
         handoffs.append(
@@ -1741,6 +1963,7 @@ def list_project_artifacts(
     return {
         "project_id": record["project_id"],
         "scan_outputs": scan_outputs,
+        "captured": captured,
         "handoffs": handoffs,
         "memory": memory_refs,
     }
@@ -1785,8 +2008,19 @@ def export_project_data(
     }
 
 
+def _identity_matches(record: Mapping[str, Any], filters: Mapping[str, str]) -> bool:
+    """A record belongs to a scoped selection only by its own stored identity;
+    a missing identity is unscoped and never reconstructed."""
+    return all(record.get(key) == value for key, value in filters.items())
+
+
 def project_token_usage(
-    project: str | Path, *, data_root: Path | None = None
+    project: str | Path,
+    *,
+    data_root: Path | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
     """Separates provider-reported real model usage, tokenizer-computed handoff-packet
     counts, recorded cache/memory-reuse event costs, and the estimated avoided-payload
@@ -1796,48 +2030,267 @@ def project_token_usage(
     coerced to `0` ("known-zero").
     """
     record = resolve_project(project, data_root=data_root)
-    root = Path(record["root"])
+    return root_token_usage(
+        Path(record["root"]), run_id=run_id, agent_id=agent_id, session_id=session_id
+    )
+
+
+_TOKEN_USAGE_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+_TOKEN_USAGE_CACHE_LOCK = threading.Lock()
+_TOKEN_USAGE_CACHE_SIZE = 16
+
+
+def token_usage_signature(root: Path) -> tuple[Any, ...]:
+    """Every input `root_token_usage` reads, as (path, size, st_mtime_ns): the
+    telemetry DB and its WAL, every attempt's JSON records (manifest and the
+    attempt header the latest-attempt selector reads) and every handoff. An
+    equal signature means an identical read, so the Tokens view and `rush
+    gain` re-read only when it changes. Stats only; never creates anything."""
+    root = Path(root)
+    telemetry = root / ".rush" / "telemetry" / "tokens.db"
+    paths = [
+        telemetry,
+        telemetry.with_name("tokens.db-wal"),
+        *sorted(root.glob(".rush/runs/*/attempts/*/*.json")),
+        *sorted(root.glob(".rush/handoffs/*.json")),
+    ]
+    entries: list[tuple[str, int | None, int | None]] = []
+    for path in paths:
+        try:
+            info = path.stat()
+        except OSError:
+            entries.append((path.as_posix(), None, None))
+        else:
+            entries.append((path.as_posix(), info.st_size, info.st_mtime_ns))
+    return tuple(entries)
+
+
+def _has_identity(record: Mapping[str, Any], key: str) -> bool:
+    """A stored identity value; absent, empty and the telemetry default
+    `'unscoped'` are all no identity."""
+    value = record.get(key)
+    return value is not None and value not in ("", "unscoped")
+
+
+def _event_time(value: Any) -> datetime | None:
+    """A stored event time (ISO string or Unix seconds) as aware UTC."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return datetime.fromtimestamp(value, UTC)
+    if isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return None
+
+
+def _readonly_telemetry_scope(
+    root: Path, filters: Mapping[str, str], identity_keys: list[str]
+) -> tuple[int, list[datetime]]:
+    """Telemetry rows (token and memory events) without a stored value for
+    one of `identity_keys`, and the earliest/latest stored time of the rows
+    in this selection. A legacy table without an identity column holds only
+    unscoped rows. Read-only, like `_readonly_memory_event_totals`."""
+
+    def _read(conn: sqlite3.Connection) -> tuple[int, list[datetime]]:
+        unscoped = 0
+        times: list[datetime] = []
+        for table in ("token_events", "memory_events"):
+            if not sqlite_has_table(conn, table):
+                continue
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if not set(identity_keys) <= columns:
+                unscoped += int(
+                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                )
+                selected = None if filters else ""
+            else:
+                missing = " OR ".join(
+                    f"{key} IS NULL OR {key} IN ('', 'unscoped')"
+                    for key in identity_keys
+                )
+                unscoped += int(
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {missing}"
+                    ).fetchone()[0]
+                )
+                selected = " AND ".join(f"{column} = ?" for column in filters)
+            if selected is None or "timestamp" not in columns:
+                continue
+            bounds = conn.execute(
+                f"SELECT MIN(timestamp), MAX(timestamp) FROM {table}"
+                + (f" WHERE {selected}" if selected else ""),
+                list(filters.values()) if selected else [],
+            ).fetchone()
+            times.extend(t for t in map(_event_time, bounds) if t is not None)
+        return unscoped, times
+
+    db = Path(root).resolve() / ".rush" / "telemetry" / "tokens.db"
+    return read_sqlite_readonly(db, _read) or (0, [])
+
+
+def root_token_usage(
+    root: Path,
+    *,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """`project_token_usage` over an already-resolved project root: the one
+    token authority shared by the Tokens section and `rush gain`, which may
+    run against an unregistered root. Read-only. The result is cached by
+    root, filters and `token_usage_signature`, taken before the read, so an
+    unchanged selection is never re-read and a write during a read triggers
+    one more."""
+    filters = {
+        key: value
+        for key, value in (
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
+    key = (
+        str(Path(root).resolve()),
+        tuple(sorted(filters.items())),
+        token_usage_signature(root),
+    )
+    with _TOKEN_USAGE_CACHE_LOCK:
+        cached = _TOKEN_USAGE_CACHE.get(key)
+    if cached is None:
+        cached = _read_root_token_usage(root, filters)
+        with _TOKEN_USAGE_CACHE_LOCK:
+            _TOKEN_USAGE_CACHE[key] = cached
+            while len(_TOKEN_USAGE_CACHE) > _TOKEN_USAGE_CACHE_SIZE:
+                _TOKEN_USAGE_CACHE.pop(next(iter(_TOKEN_USAGE_CACHE)))
+    return copy.deepcopy(cached)
+
+
+def _read_root_token_usage(root: Path, filters: Mapping[str, str]) -> dict[str, Any]:
+    # A scoped selection's unscoped events are those missing one of its
+    # identities; an unscoped view's are those with no stored run identity.
+    identity_keys = list(filters) or ["run_id"]
+    times: list[datetime] = []
 
     provider_total: int | None = None
     provider_events = 0
+    provider_by_tool: dict[str, int] = {}
+    unscoped_provider = 0
     for manifest in _iter_run_manifests(root):
+        matches = _identity_matches(manifest, filters)
+        scoped = all(_has_identity(manifest, k) for k in identity_keys)
         for item in manifest.get("scheduled") or []:
             metrics = (item.get("child") or {}).get("metrics") or {}
             reported = metrics.get("total_tokens")
-            if isinstance(reported, int) and not isinstance(reported, bool):
-                provider_total = (provider_total or 0) + reported
-                provider_events += 1
+            if not isinstance(reported, int) or isinstance(reported, bool):
+                continue
+            unscoped_provider += not scoped
+            if not matches:
+                continue
+            provider_total = (provider_total or 0) + reported
+            provider_events += 1
+            tool = str(item.get("candidate_id") or "unknown")
+            provider_by_tool[tool] = provider_by_tool.get(tool, 0) + reported
+            stamp = _event_time(manifest.get("created_at"))
+            if stamp is not None:
+                times.append(stamp)
 
     tokenizer_total = 0
     tokenizer_packets = 0
+    unscoped_packets = 0
     for handoff in _iter_handoffs(root):
         tokens = (handoff.get("packet") or {}).get("tokens")
-        if isinstance(tokens, int) and not isinstance(tokens, bool):
-            tokenizer_total += tokens
-            tokenizer_packets += 1
+        if not isinstance(tokens, int) or isinstance(tokens, bool):
+            continue
+        unscoped_packets += not all(_has_identity(handoff, k) for k in identity_keys)
+        if not _identity_matches(handoff, filters):
+            continue
+        tokenizer_total += tokens
+        tokenizer_packets += 1
+        stamp = _event_time(handoff.get("created_at"))
+        if stamp is not None:
+            times.append(stamp)
 
-    # T27/T28-A: a read never constructs the telemetry store (no DB is
-    # created or migrated).
+    # T28-A: read-only; `TelemetryStore(root)` creates/migrates tokens.db.
+    # A corrupt or unreadable DB is an unavailable measurement with its
+    # reason, never an exception into the Tokens section.
+    telemetry_error: str | None = None
+    try:
+        recorded = _readonly_memory_event_totals(root, filters)
+        avoided = read_summary_readonly(root, **filters)
+        unscoped_telemetry, telemetry_times = _readonly_telemetry_scope(
+            root, filters, identity_keys
+        )
+        times.extend(telemetry_times)
+    except (MemoryStoreUnreadableError, sqlite3.DatabaseError) as exc:
+        telemetry_error = f"token telemetry unreadable: {exc}"
+        recorded = {}
+        unscoped_telemetry = 0
+        avoided = {
+            "events_count": 0,
+            "total_raw_tokens": 0,
+            "total_compressed_tokens": 0,
+            "net_tokens_saved": 0,
+            "compression_ratio": 0.0,
+            "dollar_savings_est": 0.0,
+            "available": False,
+            "reason": telemetry_error,
+        }
     cache_kinds = ("retrieval", "expansion", "packing", "handoff", "embedding")
-    cache_by_kind = read_memory_event_totals_readonly(root, cache_kinds)
+    cache_by_kind = {kind: recorded.get(kind, 0) for kind in cache_kinds}
 
-    return {
-        "provider_reported": {
-            "total_tokens": provider_total,
-            "event_count": provider_events,
-            "source": "run_manifest_metrics",
-        },
+    provider: dict[str, Any] = {
+        "total_tokens": provider_total,
+        "event_count": provider_events,
+        "by_tool": provider_by_tool,
+        "source": "run_manifest_metrics",
+    }
+    if provider_total is None:
+        provider["reason"] = (
+            "no run manifest in this selection reports provider token usage"
+        )
+    cache_hits: dict[str, Any] = {
+        "total_tokens": sum(cache_by_kind.values()),
+        "by_kind": cache_by_kind,
+    }
+    if telemetry_error is not None:
+        cache_hits.update(available=False, reason=telemetry_error)
+
+    unscoped: dict[str, Any] = {
+        "event_count": unscoped_provider + unscoped_packets + unscoped_telemetry,
+        "provider_events": unscoped_provider,
+        "tokenizer_packets": unscoped_packets,
+        "telemetry_events": unscoped_telemetry,
+        "identity_keys": identity_keys,
+    }
+    if telemetry_error is not None:
+        unscoped["reason"] = telemetry_error
+    usage: dict[str, Any] = {
+        "provider_reported": provider,
         "tokenizer_counted": {
             "total_tokens": tokenizer_total,
             "packet_count": tokenizer_packets,
             "encoding": "cl100k_base",
         },
-        "cache_hits": {
-            "total_tokens": sum(cache_by_kind.values()),
-            "by_kind": cache_by_kind,
+        "cache_hits": cache_hits,
+        "estimated_avoided": avoided,
+        "unscoped": unscoped,
+        # The measurement interval: earliest/latest stored time of an event
+        # in this selection (None when none carries a time).
+        "interval": {
+            "earliest": min(times).isoformat() if times else None,
+            "latest": max(times).isoformat() if times else None,
         },
-        "estimated_avoided": read_summary_readonly(root),
     }
+    # Unfiltered callers keep the original key set; only a scoped selection
+    # reports the identities it was filtered by.
+    if filters:
+        usage["filters"] = filters
+    return usage
 
 
 def _memory_counts(
@@ -1956,6 +2409,608 @@ def project_snapshot(
     }
 
 
+# --- Phase 70 T28-C: read-only project map evidence ---------------------------
+
+_MAP_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_NOT_CAPTURED = "not captured (unavailable)"
+_MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
+
+
+def _scan_file_inventory(root: Path) -> list[dict[str, str]]:
+    """P69-03.2b: the project's own tracked-or-present files, its own
+    concept -- never derived from a scan's findings or a `ScanPlan`'s
+    `ScanCandidate` set (different tools legitimately target different file
+    subsets). Reuses the same `SKIP_DIRS` ignore convention every other
+    whole-tree walk in this codebase already shares (`rush.review.collection`)
+    rather than inventing a second bespoke list."""
+    if not root.is_dir():
+        return []
+    entries: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root)
+        if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
+            continue
+        entries.append({"path": rel.as_posix()})
+    return entries
+
+
+def _manifest_rel(run_id: str, attempt_id: str) -> str:
+    return f".rush/runs/{run_id}/attempts/{attempt_id}/manifest.json"
+
+
+def _read_contained_manifest(root: Path, run_id: str, attempt_id: str) -> Any:
+    """The attempt's `manifest.json` through `PhysicalRoot.open_contained`
+    (no symlinked component, no escape) and `_read_regular_json`. Raises
+    `FileNotFoundError` when absent, `ValueError` when refused or unusable."""
+    try:
+        path = PhysicalRoot(root).open_contained(_manifest_rel(run_id, attempt_id))
+    except (ContainmentError, ValueError) as exc:
+        raise ValueError(str(exc)) from exc
+    return _read_regular_json(path)
+
+
+def _current_map_memories(root: Path) -> list[dict[str, Any]] | str:
+    """Recorded memory artifacts with `cites` only from the recorded
+    `symbol_ref` (`path::Symbol`), over the zero-write reader."""
+
+    def _read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        conn.row_factory = sqlite3.Row
+        if not sqlite_has_table(conn, "memory_artifacts"):
+            return []
+        rows = conn.execute(
+            "SELECT id, symbol_ref, source FROM memory_artifacts ORDER BY id ASC"
+        ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "cites": (
+                    [str(row["symbol_ref"]).split("::", 1)[0]]
+                    if row["symbol_ref"]
+                    else []
+                ),
+            }
+            for row in rows
+            if not is_internal_memory_source(row["source"])
+        ]
+
+    try:
+        memories = read_sqlite_readonly(root / ".rush" / "memory.db", _read)
+    except MemoryStoreUnreadableError as exc:
+        return f"unavailable ({exc})"
+    return memories if memories is not None else []
+
+
+def _current_map_agents(root: Path, run_id: str) -> list[dict[str, Any]]:
+    """`.rush/handoffs/*.json` recorded against exactly `run_id`, merged per
+    agent (`assigned_to` = that run's handed-off `finding_ids`)."""
+    agents: dict[str, list[str]] = {}
+    for handoff in _iter_handoffs(root):
+        if not isinstance(handoff, dict) or handoff.get("run_id") != run_id:
+            continue
+        agent_id = handoff.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            continue
+        assigned = agents.setdefault(agent_id, [])
+        for finding_id in handoff.get("finding_ids") or []:
+            if isinstance(finding_id, str) and finding_id not in assigned:
+                assigned.append(finding_id)
+    return [{"id": agent_id, "assigned_to": ids} for agent_id, ids in agents.items()]
+
+
+def project_map_snapshot(
+    project: dict[str, Any], run_id: str | None, attempt_id: str | None
+) -> dict[str, Any]:
+    """T28-C: the `build_project_map` input (files/findings/memories/agents)
+    for one resolved project, read-only. `run_id` given is a historical view
+    whose memories/agents come only from the manifest's frozen
+    `historical_memory_agent_snapshot` (never written here, never
+    live-substituted); `run_id` None is the current view, resolved through
+    T23's `select_attempt_chronology`. Missing, corrupt, or ambiguous
+    evidence is `available: False` with a `reason`, never an exception."""
+    root = Path(project["root"])
+    project_id = project["project_id"]
+    base: dict[str, Any] = {
+        "schema_version": 1,
+        "project_id": project_id,
+        "root": str(root),
+        "files": [],
+        "findings": [],
+        "memories": [],
+        "agents": [],
+    }
+
+    def unavailable(reason: str, **extra: Any) -> dict[str, Any]:
+        return {**base, **extra, "available": False, "reason": reason}
+
+    historical = run_id is not None
+    selection_state = "explicit"
+    if run_id is None:
+        chronology = select_attempt_chronology(root, project_id)
+        selection_state = chronology.state
+        if chronology.state in {"latest_unresolved", "chronology_ambiguous"}:
+            return unavailable(chronology.state, selection_state=chronology.state)
+        if chronology.published is None:
+            # No published attempt yet: memories are project-scoped and
+            # still read; agents are run-scoped, so there are none.
+            return {
+                **base,
+                "run_id": None,
+                "attempt_id": None,
+                "selection_state": chronology.state,
+                "memories": _current_map_memories(root),
+                "artifact_snapshots": {},
+            }
+        run_id = chronology.published.run_id
+        attempt_id = chronology.published.attempt_id
+    if not _MAP_ID_RE.match(run_id):
+        return unavailable("invalid_run_id")
+    if attempt_id is None:
+        from rush.workflows.project_run import _highest_generation_attempt_dir
+
+        try:
+            attempt_dir = _highest_generation_attempt_dir(root, run_id)
+        except (OSError, ValueError):
+            attempt_dir = None
+        if attempt_dir is None:
+            return unavailable("attempt_not_found", run_id=run_id)
+        attempt_id = attempt_dir.name
+    if not _MAP_ID_RE.match(attempt_id):
+        return unavailable("invalid_attempt_id", run_id=run_id)
+    ids = {"run_id": run_id, "attempt_id": attempt_id}
+    try:
+        manifest = _read_contained_manifest(root, run_id, attempt_id)
+    except FileNotFoundError:
+        return unavailable("manifest_missing", **ids)
+    except ValueError as exc:
+        return unavailable(f"manifest_unreadable: {exc}", **ids)
+    if not isinstance(manifest, dict):
+        return unavailable("manifest_unreadable: not a JSON object", **ids)
+
+    aggregate = manifest.get("aggregate")
+    raw_findings = aggregate.get("findings") if isinstance(aggregate, dict) else None
+    findings = [
+        dict(finding, id=finding.get("finding_id") or finding.get("id"))
+        for finding in (raw_findings if isinstance(raw_findings, list) else [])
+        if isinstance(finding, dict)
+    ]
+    snapshot: dict[str, Any] = {
+        **base,
+        **ids,
+        "selection_state": selection_state,
+        "findings": findings,
+    }
+    inventory = manifest.get("file_inventory")
+    if isinstance(inventory, list):
+        snapshot["files"] = inventory
+    else:
+        # A legacy manifest with no recorded inventory, or a malformed
+        # (non-list) one: never a live rewalk substituted as if recorded;
+        # only the attempt's own finding paths, flagged as such.
+        snapshot["file_inventory_missing"] = True
+        snapshot["files"] = [
+            {"path": path}
+            for path in sorted(
+                {f["path"] for f in findings if isinstance(f.get("path"), str)}
+            )
+        ]
+
+    if historical:
+        frozen = manifest.get("historical_memory_agent_snapshot")
+        frozen = frozen if isinstance(frozen, dict) else {}
+        memories = frozen.get("memories")
+        agents = frozen.get("agents")
+        snapshot["memories"] = memories if isinstance(memories, list) else _NOT_CAPTURED
+        snapshot["agents"] = agents if isinstance(agents, list) else _NOT_CAPTURED
+    else:
+        snapshot["memories"] = _current_map_memories(root)
+        snapshot["agents"] = _current_map_agents(root, run_id)
+
+    artifact_snapshots: dict[str, dict[str, Any]] = {}
+    for item in manifest.get("scheduled") or []:
+        if not isinstance(item, dict):
+            continue
+        captured = item.get("artifact_snapshots")
+        if not isinstance(captured, dict):
+            continue
+        for path, entry in captured.items():
+            if isinstance(entry, dict) and path not in artifact_snapshots:
+                artifact_snapshots[path] = {
+                    "tool_id": item.get("candidate_id"),
+                    "sha256": entry.get("sha256"),
+                }
+    snapshot["artifact_snapshots"] = artifact_snapshots
+    return snapshot
+
+
+def open_contained_file(root: Path | str, relative_path: str) -> int:
+    """Opens `relative_path` under `root` read-only and returns the fd.
+
+    Lexical checks go through `PhysicalRoot.open_contained`; then every
+    component is opened from the root's own fd with `dir_fd` and
+    `O_NOFOLLOW` (`O_DIRECTORY` for directories), so a component swapped
+    for a symlink after validation is refused instead of followed. The
+    result must be a regular file with `st_nlink == 1` (a hard link can
+    alias a file outside the root). Raises `ContainmentError` on a refusal,
+    `FileNotFoundError` when a component is missing, `OSError` otherwise.
+    The caller closes the fd."""
+    physical = PhysicalRoot(root)
+    target = physical.open_contained(relative_path)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    # O_NONBLOCK: opening a FIFO planted at the path must not hang the reader.
+    file_flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    parts = Path(relative_path).parts
+    if not parts:
+        raise ContainmentError("NOT_REGULAR_FILE", "Path names no file", relative_path)
+    if os.open in os.supports_dir_fd:
+        dir_flags = os.O_RDONLY | nofollow | getattr(os, "O_DIRECTORY", 0)
+        dir_fd = os.open(physical.root_path, dir_flags)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
+                os.close(dir_fd)
+                dir_fd = next_fd
+            fd = os.open(parts[-1], file_flags, dir_fd=dir_fd)
+        finally:
+            os.close(dir_fd)
+    else:
+        # ponytail: no dir_fd (Windows) -- open_contained's component walk
+        # plus O_NOFOLLOW on the leaf is the check; the fstat checks remain.
+        fd = os.open(target, file_flags)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise ContainmentError(
+                "NOT_REGULAR_FILE", "Not a regular file", relative_path
+            )
+        if st.st_nlink > 1:
+            raise ContainmentError(
+                "HARDLINK_DISALLOWED",
+                "A hard-linked file may alias a file outside the root",
+                relative_path,
+            )
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def read_project_artifact_page(
+    project: str | Path,
+    cursor: str,
+    *,
+    data_root: Path | None = None,
+    offset: int | None = None,
+    limit: int = _MAX_ARTIFACT_PAGE_BYTES,
+) -> dict[str, Any]:
+    """T28-C/T28-E: one bounded byte page of an attempt's captured immutable
+    artifact snapshot (`scheduled[].artifact_snapshots`), never the live
+    file. `cursor` is base64url JSON `{project_id, run_id, attempt_id,
+    tool_id, path, sha256, offset}`. The manifest and the immutable path are
+    both reached through `PhysicalRoot.open_contained`, and the snapshot is
+    opened by `open_contained_file` (per-component `dir_fd` + `O_NOFOLLOW`,
+    no hard link) and must be a regular file of the recorded size.
+    Errors are returned as `error`: `invalid_cursor | not_found |
+    immutable_content_unavailable | invalid_path | read_failed`. An explicit
+    `offset` (the HTTP adapter's byte offset) replaces the cursor's offset,
+    under the same validation."""
+    record = resolve_project(project, data_root=data_root)
+    root = Path(record["root"])
+    project_id = record["project_id"]
+
+    def error(kind: str, path: Any = None) -> dict[str, Any]:
+        return {"path": path, "error": kind, "content_base64": None}
+
+    try:
+        payload = json.loads(_b64url_decode(cursor))
+    except (ValueError, TypeError, RecursionError):
+        return error("invalid_cursor")
+    if not isinstance(payload, dict):
+        return error("invalid_cursor")
+    run_id = payload.get("run_id")
+    attempt_id = payload.get("attempt_id")
+    tool_id = payload.get("tool_id")
+    rel_path = payload.get("path")
+    sha256 = payload.get("sha256")
+    if offset is None:
+        offset = payload.get("offset", 0)
+    if not isinstance(rel_path, str):
+        return error("invalid_cursor")
+    if (
+        payload.get("project_id") != project_id
+        or not isinstance(run_id, str)
+        or not isinstance(attempt_id, str)
+        or not isinstance(tool_id, str)
+        or not isinstance(sha256, str)
+        or not _MAP_ID_RE.match(run_id)
+        or not _MAP_ID_RE.match(attempt_id)
+        or type(offset) is not int
+        or offset < 0
+    ):
+        return error("invalid_cursor", rel_path)
+    try:
+        manifest = _read_contained_manifest(root, run_id, attempt_id)
+    except (FileNotFoundError, ValueError):
+        return error("not_found", rel_path)
+    # Identity is the cursor's project resolved to its root (the manifest was
+    # read under that root); a CHECK_SUITE manifest records no project_id, so
+    # only a manifest naming a different project is refused.
+    if not isinstance(manifest, dict) or manifest.get("project_id", project_id) != (
+        project_id
+    ):
+        return error("not_found", rel_path)
+    snapshot = None
+    for item in manifest.get("scheduled") or []:
+        if isinstance(item, dict) and item.get("candidate_id") == tool_id:
+            captured = item.get("artifact_snapshots")
+            snapshot = captured.get(rel_path) if isinstance(captured, dict) else None
+            break
+    if not isinstance(snapshot, dict):
+        return error("immutable_content_unavailable", rel_path)
+    if snapshot.get("sha256") != sha256:
+        return error("invalid_cursor", rel_path)
+    total_size = snapshot.get("size")
+    immutable_path = snapshot.get("immutable_path")
+    if type(total_size) is not int or not isinstance(immutable_path, str):
+        return error("immutable_content_unavailable", rel_path)
+    if offset > total_size:
+        return error("invalid_cursor", rel_path)
+    limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
+    try:
+        fd = open_contained_file(root, immutable_path)
+    except (ContainmentError, ValueError):
+        return error("invalid_path", rel_path)
+    except FileNotFoundError:
+        # The manifest records this snapshot but its captured bytes are gone:
+        # the immutable content is unavailable (never a live-file fallback).
+        return error("immutable_content_unavailable", rel_path)
+    except OSError:
+        return error("invalid_path", rel_path)
+    try:
+        st = os.fstat(fd)
+        if st.st_size != total_size:
+            return error("immutable_content_unavailable", rel_path)
+        os.lseek(fd, offset, os.SEEK_SET)
+        chunk = os.read(fd, limit)
+    except OSError:
+        return error("read_failed", rel_path)
+    finally:
+        os.close(fd)
+    next_offset = offset + len(chunk)
+    next_cursor = (
+        _b64url_encode(json.dumps({**payload, "offset": next_offset}).encode("utf-8"))
+        if next_offset < total_size
+        else None
+    )
+    return {
+        "path": rel_path,
+        "run_id": run_id,
+        "attempt_id": attempt_id,
+        "tool_id": tool_id,
+        "label": f"captured snapshot (run {run_id}, attempt {attempt_id})",
+        "offset": offset,
+        "size": total_size,
+        "content_base64": base64.b64encode(chunk).decode("ascii"),
+        "next_cursor": next_cursor,
+        "sha256": sha256,
+        "media_type": snapshot.get("media_type"),
+    }
+
+
+def _export_under_root(
+    root: Path | str, destination: Path
+) -> tuple[str, tuple[str, ...]] | None:
+    """`(root, parent parts below it)` when `destination` is named under the
+    project root (as registered or as resolved), else `None`."""
+    parent = Path(os.path.abspath(destination)).parent
+    for base in dict.fromkeys((os.path.abspath(root), os.path.realpath(root))):
+        try:
+            return base, parent.relative_to(base).parts
+        except ValueError:
+            continue
+    return None
+
+
+def check_export_destination(root: Path | str, destination: Path) -> None:
+    """Refuse (`ContainmentError`) an export destination named under the
+    project root whose existing parent chain leaves it: every existing
+    component below the root must be a real directory, never a symlink.
+    Missing components are fine (the export creates them inside the root). A
+    destination named outside the root is the reviewer's explicit choice."""
+    under = _export_under_root(root, destination)
+    if under is None:
+        return
+    current = Path(under[0])
+    for part in under[1]:
+        current = current / part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            return
+        if not stat.S_ISDIR(mode):
+            raise ContainmentError(
+                "EXPORT_ESCAPES_ROOT",
+                "Export destination leaves the project root",
+                str(destination),
+            )
+
+
+def _export_parent_fd(root: Path | str, destination: Path) -> int | None:
+    """A directory fd for `destination`'s parent (`None` without `dir_fd`
+    support). Under the root, each component is opened from the root's fd
+    with `O_NOFOLLOW` (created when missing), so a component swapped for a
+    symlink after `check_export_destination` is refused, not followed."""
+    check_export_destination(root, destination)
+    under = _export_under_root(root, destination)
+    if os.open not in os.supports_dir_fd or os.link not in os.supports_dir_fd:
+        # ponytail: no dir_fd (Windows) -- the lstat walk above is the check.
+        if under is not None:
+            Path(os.path.abspath(destination)).parent.mkdir(parents=True, exist_ok=True)
+            check_export_destination(root, destination)
+        return None
+    dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    if under is None:
+        return os.open(Path(os.path.abspath(destination)).parent, dir_flags)
+    nofollow = dir_flags | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(under[0], dir_flags)
+    try:
+        for part in under[1]:
+            try:
+                next_fd = os.open(part, nofollow, dir_fd=fd)
+            except FileNotFoundError:
+                os.mkdir(part, dir_fd=fd)
+                next_fd = os.open(part, nofollow, dir_fd=fd)
+            except OSError as exc:
+                if exc.errno not in (errno.ELOOP, errno.ENOTDIR):
+                    raise
+                raise ContainmentError(
+                    "EXPORT_ESCAPES_ROOT",
+                    "Export destination leaves the project root",
+                    str(destination),
+                ) from exc
+            os.close(fd)
+            fd = next_fd
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _file_matches(name: str, dir_fd: int | None, size: int, sha256: str) -> bool:
+    """Whether the regular file `name` (never followed as a symlink) holds
+    exactly `size` bytes hashing to `sha256`, read in bounded chunks."""
+    try:
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=dir_fd)
+    except OSError:
+        return False
+    with os.fdopen(fd, "rb") as handle:
+        st = os.fstat(handle.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_size != size:
+            return False
+        digest = hashlib.sha256()
+        while chunk := handle.read(_MAX_ARTIFACT_PAGE_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest() == sha256
+
+
+def export_project_artifact(
+    project: str | Path,
+    *,
+    run_id: str,
+    attempt_id: str,
+    tool_id: str,
+    path: str,
+    destination: Path,
+    permissions: Any,
+    data_root: Path | None = None,
+    expected_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Copy one captured artifact snapshot's exact bytes to `destination`.
+
+    Requires `artifact_write`. A destination named under the project root
+    must stay physically under it (`check_export_destination`, then an
+    `O_NOFOLLOW` walk from the root's fd); otherwise `ContainmentError`.
+    Bytes come only through `read_project_artifact_page` (contained, no
+    subprocess), one verified page at a time, streamed into an `O_EXCL`
+    `<dest>.<uuid>.partial` file while SHA-256 and length are computed
+    incrementally. The partial is published with `os.link` -- which never
+    replaces a file that appeared meanwhile -- and then unlinked. An existing
+    destination with identical bytes is a no-op; any other existing
+    destination is `FileExistsError`. Only this call's partial is removed."""
+    if not getattr(permissions, "artifact_write", False):
+        raise PermissionError("artifact export requires the artifact_write grant")
+    record = resolve_project(project, data_root=data_root)
+    project_id = record["project_id"]
+    sha256 = expected_sha256
+    if sha256 is None:
+        try:
+            manifest = _read_contained_manifest(
+                Path(record["root"]), run_id, attempt_id
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            raise FileNotFoundError(f"artifact not found: {path}") from exc
+        for item in (manifest or {}).get("scheduled") or []:
+            if isinstance(item, dict) and item.get("candidate_id") == tool_id:
+                snaps = item.get("artifact_snapshots")
+                snap = snaps.get(path) if isinstance(snaps, dict) else None
+                if isinstance(snap, dict) and isinstance(snap.get("sha256"), str):
+                    sha256 = snap["sha256"]
+                break
+        if sha256 is None:
+            raise FileNotFoundError(f"no captured snapshot for artifact: {path}")
+    cursor: str | None = _b64url_encode(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "tool_id": tool_id,
+                "path": path,
+                "sha256": sha256,
+                "offset": 0,
+            }
+        ).encode("utf-8")
+    )
+
+    destination = Path(destination)
+    parent_fd = _export_parent_fd(record["root"], destination)
+
+    def at(name: str) -> str:
+        return name if parent_fd is not None else str(destination.with_name(name))
+
+    partial = at(f"{destination.name}.{uuid.uuid4().hex}.partial")
+    target = at(destination.name)
+    size = 0
+    try:
+        fd = os.open(
+            partial,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            dir_fd=parent_fd,
+        )
+        try:
+            digest = hashlib.sha256()
+            written = 0
+            with os.fdopen(fd, "wb") as handle:
+                while cursor is not None:
+                    page = read_project_artifact_page(
+                        project_id, cursor, data_root=data_root
+                    )
+                    if page.get("error"):
+                        raise FileNotFoundError(
+                            f"artifact unavailable ({page['error']}): {path}"
+                        )
+                    chunk = base64.b64decode(page["content_base64"])
+                    handle.write(chunk)
+                    handle.flush()
+                    digest.update(chunk)
+                    written += len(chunk)
+                    size = page["size"]
+                    cursor = page.get("next_cursor")
+                os.fsync(handle.fileno())
+                on_disk = os.fstat(handle.fileno()).st_size
+            if written != size or on_disk != size or digest.hexdigest() != sha256:
+                raise ValueError(
+                    f"artifact bytes do not match their recorded digest: {path}"
+                )
+            try:
+                os.link(partial, target, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+                noop = False
+            except FileExistsError:
+                if not _file_matches(target, parent_fd, size, sha256):
+                    raise FileExistsError(
+                        f"export destination already exists: {destination}"
+                    ) from None
+                noop = True
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(partial, dir_fd=parent_fd)
+    finally:
+        if parent_fd is not None:
+            os.close(parent_fd)
+    return {"path": str(destination), "size": size, "sha256": sha256, "noop": noop}
+
+
 __all__ = [
     "CURSOR_KEY_FILE",
     "REGISTRY_LOCK_FILE",
@@ -1975,21 +3030,29 @@ __all__ = [
     "ProjectRootMissingError",
     "ProjectSetupRequiredError",
     "RegistryState",
+    "check_export_destination",
     "compute_settings_plan_id",
     "configure_project",
     "create_project",
     "ensure_cursor_key",
     "expand_artifact_reference",
+    "export_project_artifact",
     "export_project_data",
     "get_selected_project",
     "list_project_artifacts",
     "list_projects",
     "list_projects_page",
+    "open_contained_file",
+    "project_git_branch",
     "project_git_commit_diff",
+    "project_git_dirty_diff",
     "project_git_history",
+    "project_git_worktree",
+    "project_map_snapshot",
     "project_overview_evidence",
     "project_snapshot",
     "project_token_usage",
+    "read_project_artifact_page",
     "read_registry_state",
     "register_project",
     "relink_project",

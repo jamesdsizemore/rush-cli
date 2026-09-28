@@ -48,6 +48,7 @@ import json
 import os
 import sqlite3
 import stat
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1226,3 +1227,491 @@ def test_x2_database_error_during_immutable_read_is_read_conflict_no_sidecar_ret
     assert not (tmp_path / "plain.db-wal").exists()
     assert not (tmp_path / "plain.db-shm").exists()
     assert _snapshot(tmp_path) == before
+
+
+# --- T29: prove the four requested user outcomes end to end -----------------
+#
+# Brief: `.scratch/phase-70-design-gate/W4-T23-T29.md`, section "## T29".
+# Plan packet: `docs/phase-plans/phase-70-agent-adoption-and-usability-plan.md`,
+# "#### T29 -- Prove the four requested user outcomes end to end".
+#
+# Adapted from the pre-T25/T27/T28 RED draft (a scratchpad copy written
+# before T25/T27/T28 landed on this branch) to this branch's actual current
+# contracts. One real, verified behavior change since that draft was
+# written, confirmed directly against `src/rush/cli.py::ui_cmd`:
+#
+# - `rush ui --json` no longer runs `CHECK_SUITE` unconditionally. Since
+#   T28-A, the non-interactive `ui --json` path (`if json_output or not
+#   _interactive_terminal():`, comment "it never runs checks") always
+#   returns each project's read-only `StatusTool` snapshot --
+#   `{"project", "path", "status": <StatusTool raw>}` -- and ignores
+#   `--allow-build`/every other permission flag entirely. There is no
+#   six-step check-status map to compare against CLI/MCP through this
+#   surface any more; the pre-T28 draft's TUI check-parity assertions
+#   tested a CHECK_SUITE-shaped `"result"` key that no longer exists.
+#   The interactive TUI still runs `CHECK_SUITE`: `C` -> `_start_check`
+#   -> `_start_initial_check_thread` -> `default_scan_actions(permissions)`'s
+#   `run_check_suite`. `_t29_tui_check` below drives that real path, so the
+#   check-parity tests compare CLI, MCP and TUI; the JSON Overview's
+#   permission-flag invariance stays as an extra check (`tui_overview`).
+# - The TUI snapshot's per-project "status" key is already the unwrapped
+#   `StatusTool` "raw" dict (`status.get("raw")`), one level shallower than
+#   CLI `status --json`/MCP `rush_status` (which return the full `{"raw":
+#   ..., "summary": ..., "status": ...}` tool result). `_t29_status_fields`
+#   below re-wraps it (`{"raw": tui_status}`) so the same helper reads all
+#   three shapes uniformly.
+
+_T29_STEP_IDS = ("format", "lint", "typecheck", "dead", "slop", "test")
+_T29_EVIDENCE_DOC = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "reports"
+    / "phase-70-implementation-evidence.md"
+)
+
+
+def _t29_call_mcp(server: Any, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Invoke one MCP tool in-process, return its structured result.
+    `rush_status`/`rush_check` return the SDK's raw `(content, structured)`
+    tuple rather than a `CallToolResult`."""
+    import asyncio
+
+    result = asyncio.run(server.call_tool(name, arguments))
+    if isinstance(result, tuple):
+        return result[1]
+    return result.structuredContent
+
+
+def _t29_status_fields(payload: dict[str, Any]) -> dict[str, Any]:
+    data = ((payload.get("raw") or {}).get("data")) or {}
+    project = data.get("project") or {}
+    memory = data.get("memory") or {}
+    return {
+        "project_id": project.get("project_id"),
+        "root": project.get("root"),
+        "registration": project.get("registration"),
+        "published": data.get("published"),
+        "latest_attempt": data.get("latest_attempt"),
+        "memory_useful_count": memory.get("useful_count"),
+    }
+
+
+def _t29_child_map(payload: dict[str, Any]) -> dict[str, str]:
+    children = (payload.get("metadata") or {}).get("children") or []
+    return {child["tool"]: child["status"] for child in children}
+
+
+@pytest.fixture(scope="module")
+def t29_world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
+    """One isolated HOME plus one registered, lint-clean, formatted project
+    (real `.git`, real `pyproject.toml`), shared by the whole module so the
+    real `aislop` child (an installed CLI, not stubbed) is exercised
+    against exactly one fresh HOME for the whole module, never a fresh HOME
+    per test. No `tempfile.mkdtemp()`; `tmp_path_factory` +
+    `MonkeyPatch.undo()`."""
+    from rush.workflows.projects import register_project
+
+    home = tmp_path_factory.mktemp("t29-home")
+    root = tmp_path_factory.mktemp("t29-proj")
+    (root / ".git").mkdir()
+    (root / "app.py").write_text(
+        "def add(a: int, b: int) -> int:\n"
+        "    return a + b\n"
+        "\n\n"
+        "assert add(1, 2) == 3\n",
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text(
+        '[project]\nname = "fixture"\nversion = "0"\n', encoding="utf-8"
+    )
+
+    patch = pytest.MonkeyPatch()
+    patch.setenv("HOME", str(home))
+    patch.delenv("XDG_DATA_HOME", raising=False)
+    patch.setenv("CLAUDE_CONFIG_DIR", str(home / "claude-config"))
+    patch.setenv("CODEX_HOME", str(home / "codex-home"))
+
+    record = register_project(root)
+
+    yield {"home": home, "root": root, "project_id": record.project_id}
+
+    patch.undo()
+
+
+@pytest.fixture(scope="module")
+def t29_status_results(t29_world: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    from rush.cli import cli
+    from rush.mcp import build_server
+
+    root = str(t29_world["root"])
+    cli_result = CliRunner().invoke(cli, ["status", root, "--json"])
+    assert cli_result.exit_code in (0, 1), cli_result.output  # arrange
+    cli_json = json.loads(cli_result.output)
+
+    server = build_server(profile="full")
+    mcp_json = _t29_call_mcp(server, "rush_status", {"path": root})
+
+    ui_result = CliRunner().invoke(cli, ["ui", root, "--json"])
+    assert ui_result.exit_code == 0, ui_result.output  # arrange
+    tui_status = json.loads(ui_result.output)[0]["status"]
+
+    return {"cli": cli_json, "mcp": mcp_json, "tui": {"raw": tui_status}}
+
+
+class _T29IdleReader:
+    """`run_interactive_tui`'s key reader: no key, fixed terminal size."""
+
+    def read_key(self, timeout: float) -> str | None:
+        return None
+
+    def get_size(self) -> tuple[int, int]:
+        return (120, 40)
+
+
+def _t29_tui_check(root: Path, *, allowed: bool) -> dict[str, Any]:
+    """The interactive TUI's own check, through its real seams: the same
+    `ExecutionPermissions` `rush ui [--allow-build --allow-download]`
+    builds, `default_scan_actions(permissions)`, one idle launch tick of
+    `run_interactive_tui`, then the `C` key -> `_start_check` ->
+    `_start_initial_check_thread` -> `run_check_suite` worker. Returns the
+    suite result the worker stored on the project."""
+    import io
+    import time
+
+    from rich.console import Console
+
+    from rush.cli_support.options import _extract_permissions
+    from rush.tui import (
+        ProjectSeed,
+        _dispatch_key,
+        _pump,
+        default_scan_actions,
+        run_interactive_tui,
+    )
+
+    perms = _extract_permissions(allow_build=allowed, allow_download=allowed)
+    actions = default_scan_actions(permissions=perms)
+    state = run_interactive_tui(
+        [
+            ProjectSeed(
+                name=root.name, root=root, lexical_path=root, original_input=str(root)
+            )
+        ],
+        console=Console(file=io.StringIO()),
+        key_reader=_T29IdleReader(),
+        actions=actions,
+        max_ticks=1,
+        use_live=False,
+        permissions=perms,
+    )
+    _dispatch_key(state, "C", actions)
+    project = state.active_project
+    assert state.message == "analysis started", state.message  # arrange
+    thread = project.scan_thread
+    assert thread is not None  # arrange: a local worker, not a dashboard
+    deadline = time.monotonic() + 600
+    while thread.is_alive():
+        assert time.monotonic() < deadline, "TUI check never finished"
+        _pump(state, actions)
+        time.sleep(0.05)
+    _pump(state, actions)
+    assert project.status == "complete", (project.status, project.last_message)
+    assert len(project.results) == 1  # arrange
+    return dict(project.results[0])
+
+
+@pytest.fixture(scope="module")
+def t29_check_results(
+    t29_world: dict[str, Any],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Denied and granted check outcomes across CLI `check --json`, MCP
+    `rush_check` and the interactive TUI check (`tui`), plus the TUI's JSON
+    Overview snapshot under both permission states (`tui_overview`) --
+    computed once for the whole module against the one shared
+    HOME/project."""
+    from rush.cli import cli
+    from rush.mcp import build_server
+
+    root = str(t29_world["root"])
+    server = build_server(profile="full")
+
+    out: dict[str, dict[str, Any]] = {}
+    for allowed in (False, True):
+        key = "granted" if allowed else "denied"
+        # Real behavior found by running this test: the six-step CHECK_SUITE
+        # needs two permissions to reach "ok", not one -- `--allow-build`
+        # (the `test` step) and `--allow-download` (the `slop`/aislop step,
+        # whose npm package is not in the local npm cache in a fresh HOME).
+        # Granting only `--allow-build` leaves `slop` skipped and the
+        # aggregate at "warn" (verified directly: a `check --allow-build`
+        # run in a scratch fixture reported `slop skipped: requires
+        # permission: --allow-download ...` with every other step "ok").
+        cli_args = ["check", root, "--json"] + (
+            ["--allow-build", "--allow-download"] if allowed else []
+        )
+        cli_result = CliRunner().invoke(cli, cli_args)
+        assert cli_result.exit_code in (0, 1), cli_result.output  # arrange
+        cli_json = json.loads(cli_result.output)
+
+        mcp_args: dict[str, Any] = {"path": root}
+        if allowed:
+            mcp_args["allow_build"] = True
+            mcp_args["allow_download"] = True
+        mcp_json = _t29_call_mcp(server, "rush_check", mcp_args)
+
+        ui_args = ["ui", root, "--json"] + (
+            ["--allow-build", "--allow-download"] if allowed else []
+        )
+        ui_result = CliRunner().invoke(cli, ui_args)
+        assert ui_result.exit_code == 0, ui_result.output  # arrange
+        tui_status = json.loads(ui_result.output)[0]["status"]
+
+        out[key] = {
+            "cli": cli_json,
+            "mcp": mcp_json,
+            "tui": _t29_tui_check(t29_world["root"], allowed=allowed),
+            "tui_overview": {"raw": tui_status},
+        }
+    return out
+
+
+# --- 1. cross-interface user-outcome parity ---------------------------------
+
+
+def test_t29_status_fields_parity_cli_mcp_tui(
+    t29_status_results: dict[str, dict[str, Any]],
+) -> None:
+    """CLI `status --json`, MCP `rush_status`, and the TUI's JSON Overview
+    snapshot must agree exactly on project_id, root, registration,
+    published, latest_attempt, and memory.useful_count."""
+    cli_fields = _t29_status_fields(t29_status_results["cli"])
+    mcp_fields = _t29_status_fields(t29_status_results["mcp"])
+    tui_fields = _t29_status_fields(t29_status_results["tui"])
+
+    assert cli_fields["project_id"] is not None  # arrange: a real project_id
+    assert cli_fields == mcp_fields
+    assert cli_fields == tui_fields
+
+
+def test_t29_check_step_ids_and_statuses_parity_cli_mcp_tui(
+    t29_check_results: dict[str, dict[str, dict[str, Any]]],
+) -> None:
+    """CLI `check --json`, MCP `rush_check`, and the interactive TUI's own
+    check (`C` -> `_start_check` -> `default_scan_actions`'s real
+    `run_check_suite`) give the same six step IDs, per-step statuses and
+    aggregate, denied and granted alike; denied gives `warn` with `test`
+    skipped on all three."""
+    for key in ("denied", "granted"):
+        results = t29_check_results[key]
+        cli_children = _t29_child_map(results["cli"])
+        mcp_children = _t29_child_map(results["mcp"])
+        tui_children = _t29_child_map(results["tui"])
+
+        assert set(cli_children) == set(_T29_STEP_IDS), key  # arrange
+        assert cli_children == mcp_children == tui_children, key
+        assert (
+            results["cli"]["status"]
+            == results["mcp"]["status"]
+            == results["tui"]["status"]
+        ), key
+
+    denied = t29_check_results["denied"]
+    for interface in ("cli", "mcp", "tui"):
+        assert _t29_child_map(denied[interface])["test"] == "skipped", interface
+        assert denied[interface]["status"] == "warn", interface
+
+
+def test_t29_allowed_and_denied_scans_parity_cli_mcp_tui(
+    t29_check_results: dict[str, dict[str, dict[str, Any]]],
+    t29_status_results: dict[str, dict[str, Any]],
+) -> None:
+    """Allowed and denied scans agree across CLI, MCP and the interactive
+    TUI check: the denied aggregate and the granted aggregate are identical
+    across all three interfaces, and granting build/download flips the
+    `test` step and the aggregate outcome on each. Extra check: the TUI's
+    non-interactive JSON Overview (`ui --json`, which never runs checks) is
+    permission-flag-invariant, so its denied and granted snapshots are
+    identical to each other and to plain `rush status`."""
+    denied, granted = t29_check_results["denied"], t29_check_results["granted"]
+
+    for interface in ("cli", "mcp", "tui"):
+        assert denied[interface]["status"] == "warn", interface
+        assert granted[interface]["status"] == "ok", interface
+        assert _t29_child_map(denied[interface])["test"] == "skipped", interface
+        assert _t29_child_map(granted[interface])["test"] != "skipped", interface
+
+    assert denied["cli"]["status"] == denied["mcp"]["status"] == denied["tui"]["status"]
+    assert (
+        granted["cli"]["status"] == granted["mcp"]["status"] == granted["tui"]["status"]
+    )
+    assert (
+        _t29_child_map(granted["cli"])
+        == _t29_child_map(granted["mcp"])
+        == _t29_child_map(granted["tui"])
+    )
+
+    # TUI Overview: `--allow-build`/`--allow-download` have zero effect on
+    # `ui --json`.
+    assert (
+        denied["tui_overview"] == granted["tui_overview"] == t29_status_results["tui"]
+    )
+
+
+def test_t29_user_outcome_parity(
+    t29_status_results: dict[str, dict[str, Any]],
+    t29_check_results: dict[str, dict[str, dict[str, Any]]],
+) -> None:
+    """The combined journey (brief's named test): status outcomes agree
+    across CLI, MCP, and TUI; check outcomes agree across CLI, MCP and the
+    interactive TUI check, denied and granted; and the TUI's read-only
+    Overview stays identical regardless of the check permission granted --
+    one pass proving the four requested user outcomes end to end."""
+    cli_fields = _t29_status_fields(t29_status_results["cli"])
+    mcp_fields = _t29_status_fields(t29_status_results["mcp"])
+    tui_fields = _t29_status_fields(t29_status_results["tui"])
+    assert cli_fields == mcp_fields == tui_fields
+
+    denied, granted = t29_check_results["denied"], t29_check_results["granted"]
+    assert (
+        _t29_child_map(denied["cli"])
+        == _t29_child_map(denied["mcp"])
+        == _t29_child_map(denied["tui"])
+    )
+    assert denied["cli"]["status"] == denied["mcp"]["status"] == "warn"
+    assert denied["tui"]["status"] == "warn"
+    assert granted["cli"]["status"] == granted["mcp"]["status"] == "ok"
+    assert granted["tui"]["status"] == "ok"
+
+    assert (
+        denied["tui_overview"] == granted["tui_overview"] == t29_status_results["tui"]
+    )
+
+
+# --- 2. the evidence doc contract -------------------------------------------
+
+
+_T29_REQUIRED_ROW_IDS = tuple(f"R{n:02d}" for n in range(1, 13))
+_T29_REQUIRED_COLUMNS = (
+    "starting state",
+    "outcome",
+    "route",
+    "visible result",
+    "failure",
+    "owner",
+    "runtime identity",
+)
+
+
+def _t29_evidence_text() -> str:
+    assert _T29_EVIDENCE_DOC.exists(), f"missing {_T29_EVIDENCE_DOC}"
+    return _T29_EVIDENCE_DOC.read_text(encoding="utf-8")
+
+
+def _t29_journey_table_rows(text: str) -> dict[str, list[str]]:
+    """The journey matrix: a markdown table whose header row names every
+    required column, and whose body rows are keyed by R01..R12."""
+    import re
+
+    lines = text.splitlines()
+    header_index = next(
+        (
+            i
+            for i, line in enumerate(lines)
+            if line.strip().startswith("|")
+            and all(col in line.lower() for col in _T29_REQUIRED_COLUMNS)
+        ),
+        None,
+    )
+    assert header_index is not None, "no journey table header with required columns"
+    rows: dict[str, list[str]] = {}
+    for line in lines[header_index + 1 :]:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        if not cells or not re.fullmatch(r"R\d{2}", cells[0]):
+            continue
+        rows[cells[0]] = cells
+    return rows
+
+
+def test_t29_evidence_doc_has_journey_rows_r01_to_r12() -> None:
+    """R01-R12 x {starting state, outcome, route, visible result,
+    failure/recovery, owner, runtime identity}: every row present exactly
+    once with every required column populated."""
+    text = _t29_evidence_text()
+    rows = _t29_journey_table_rows(text)
+    assert set(rows) == set(_T29_REQUIRED_ROW_IDS)
+    for row_id, cells in rows.items():
+        assert len(cells) >= 1 + len(_T29_REQUIRED_COLUMNS), (row_id, cells)
+        assert all(cell for cell in cells), (row_id, cells)
+
+
+def test_t29_evidence_doc_records_t26_counts_and_measured_duration() -> None:
+    """T26 counts (shell, native prompts, login, reload, manual edits = 0,
+    hidden prerequisites = 0) and a measured duration, not a speed claim."""
+    import re
+
+    text = _t29_evidence_text().lower()
+    for label in (
+        "shell",
+        "native prompt",
+        "login",
+        "reload",
+        "manual edit",
+        "hidden prerequisite",
+    ):
+        assert label in text, label
+    assert re.search(r"manual edit[s]?\D*[:=]?\D*0\b", text), "manual edits must be 0"
+    assert re.search(r"hidden prerequisite[s]?\D*[:=]?\D*0\b", text), (
+        "hidden prerequisites must be 0"
+    )
+    assert re.search(r"duration\D*\d", text), "no measured duration recorded"
+
+
+def test_t29_evidence_doc_has_phase71_consumes_section() -> None:
+    """A 'Phase 71 consumes' section, including the dashboard provision
+    frozen-identity requirement from T24."""
+    import re
+
+    text = _t29_evidence_text()
+    match = re.search(
+        r"##.*phase 71 consumes(.*?)(\n##\s|\Z)", text, re.IGNORECASE | re.DOTALL
+    )
+    assert match is not None, "no 'Phase 71 consumes' section"
+    section = match.group(1).lower()
+    assert "frozen" in section and "identity" in section
+    assert "dashboard" in section and "provision" in section
+
+
+# --- 3. G6/G8 real lane results ----------------------------------------------
+
+
+def _t29_lane_section(text: str, lane: str) -> str:
+    import re
+
+    match = re.search(
+        rf"##.*\b{lane}\b(.*?)(\n##\s|\Z)", text, re.IGNORECASE | re.DOTALL
+    )
+    assert match is not None, f"no '{lane}' section"
+    return match.group(1)
+
+
+def test_t29_evidence_doc_records_g6_and_g8_lane_results_or_blockers() -> None:
+    """G6 and G8 real-lane results are recorded, each as a result or an
+    explicit blocker (lane, reason)."""
+    import re
+
+    text = _t29_evidence_text()
+    for lane in ("G6", "G8"):
+        section = _t29_lane_section(text, lane)
+        has_result = re.search(r"result\s*:", section, re.IGNORECASE) is not None
+        has_blocker = (
+            re.search(
+                r"blocker\s*:.*\blane\b.*\breason\b", section, re.IGNORECASE | re.DOTALL
+            )
+            is not None
+        )
+        assert has_result or has_blocker, (lane, section[:200])

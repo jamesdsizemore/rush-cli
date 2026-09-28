@@ -5,6 +5,7 @@ Architecture §11.2.
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -16,7 +17,7 @@ import sys
 import threading
 import time
 import tomllib
-from collections.abc import Callable, Collection, Generator, Iterator
+from collections.abc import Callable, Collection, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -246,6 +247,33 @@ _SESSION_TREES: set[str] = set()
 # Set on a thread while `_held_by` runs lsof: the probe only reads the paths
 # it is handed, so they are not attributed to this process.
 _PROBING = threading.local()
+# Set when this process started a child whose environment resolves the real
+# data root (a real HOME): an entry that child created and released before
+# the next check is attributed to the test. Consumed by that check.
+_REAL_ROOT_CHILD = threading.Event()
+
+
+def _resolves_real_data_root(env: object) -> bool:
+    """Whether a child started with `env` (None: this process's own
+    environment) resolves the real data root, per `default_data_root`."""
+    child_env = os.environ if env is None else env
+    if not isinstance(child_env, Mapping) or not _REAL_HOME_GUARD:
+        return False
+    if os.name == "nt":
+        base = child_env.get("LOCALAPPDATA")
+        root = Path(base) / "Rush" if base else None
+    else:
+        home = child_env.get("HOME")
+        if not home:
+            import pwd
+
+            home = pwd.getpwuid(os.getuid()).pw_dir
+        if sys.platform == "darwin":
+            root = Path(home) / "Library" / "Application Support" / "Rush"
+        else:
+            xdg = child_env.get("XDG_DATA_HOME")
+            root = (Path(xdg) if xdg else Path(home) / ".local" / "share") / "rush"
+    return root == _REAL_HOME_GUARD["data_root"]
 
 
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_TRUNC | os.O_APPEND
@@ -282,8 +310,14 @@ def _record_real_root_write(event: str, args: tuple[object, ...]) -> None:
     elif event in ("os.remove", "os.rmdir", "shutil.rmtree"):
         _record_tree(args[0])
         return
+    elif event == "os.fork":
+        if _resolves_real_data_root(None):
+            _REAL_ROOT_CHILD.set()
+        return
     elif event == "subprocess.Popen":
         _, argv, cwd, env = args
+        if _resolves_real_data_root(env):
+            _REAL_ROOT_CHILD.set()
         values = list(argv) if isinstance(argv, (list, tuple)) else [argv]
         for value in (cwd, *values, *(env.values() if isinstance(env, dict) else ())):
             _record_tree(value)
@@ -322,14 +356,149 @@ def _record_tree(value: object) -> None:
             start = text.find(root, end)
 
 
-def _ps_parents() -> dict[int, int]:
-    """pid -> parent pid of every live process (empty without `ps`)."""
+class _GuardProbeError(Exception):
+    """A process or open-file probe of the real HOME guard failed."""
+
+
+class _PROCESSENTRY32W(ctypes.Structure):
+    """Win32 PROCESSENTRY32W, in fixed-width fields (wintypes.DWORD is 8
+    bytes off Windows)."""
+
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ProcessID", ctypes.c_uint32),
+        ("th32DefaultHeapID", ctypes.c_size_t),
+        ("th32ModuleID", ctypes.c_uint32),
+        ("cntThreads", ctypes.c_uint32),
+        ("th32ParentProcessID", ctypes.c_uint32),
+        ("pcPriClassBase", ctypes.c_int32),
+        ("dwFlags", ctypes.c_uint32),
+        ("szExeFile", ctypes.c_uint16 * 260),
+    ]
+
+
+class _RM_UNIQUE_PROCESS(ctypes.Structure):
+    _fields_ = [
+        ("dwProcessId", ctypes.c_uint32),
+        ("ProcessStartTime", ctypes.c_uint32 * 2),
+    ]
+
+
+class _RM_PROCESS_INFO(ctypes.Structure):
+    _fields_ = [
+        ("Process", _RM_UNIQUE_PROCESS),
+        ("strAppName", ctypes.c_uint16 * 256),
+        ("strServiceShortName", ctypes.c_uint16 * 64),
+        ("ApplicationType", ctypes.c_int32),
+        ("AppStatus", ctypes.c_uint32),
+        ("TSSessionId", ctypes.c_uint32),
+        ("bRestartable", ctypes.c_int32),
+    ]
+
+
+def _windows_process_snapshot() -> list[tuple[int, int]]:
+    """(pid, parent pid) of every live process, from the kernel32 Toolhelp
+    process snapshot."""
+    if sys.platform != "win32":
+        raise OSError("the Toolhelp process snapshot exists only on Windows")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    for step in (kernel32.Process32FirstW, kernel32.Process32NextW):
+        step.argtypes = (ctypes.c_void_p, ctypes.POINTER(_PROCESSENTRY32W))
+        step.restype = ctypes.c_int32
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot is None or snapshot == ctypes.c_void_p(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        entry = _PROCESSENTRY32W(dwSize=ctypes.sizeof(_PROCESSENTRY32W))
+        pairs: list[tuple[int, int]] = []
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            pairs.append((entry.th32ProcessID, entry.th32ParentProcessID))
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        if ctypes.get_last_error() != 18:  # ERROR_NO_MORE_FILES ends the walk
+            raise ctypes.WinError(ctypes.get_last_error())
+        return pairs
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
+def _windows_file_holders(path: str) -> set[int]:
+    """Pids of every process holding `path` open, from the Restart Manager
+    (lsof's Windows counterpart)."""
+    if sys.platform != "win32":
+        raise OSError("the Restart Manager exists only on Windows")
+    rstrtmgr = ctypes.WinDLL("rstrtmgr")
+    session = ctypes.c_uint32()
+    key = ctypes.create_unicode_buffer(33)  # CCH_RM_SESSION_KEY + 1
+    error = rstrtmgr.RmStartSession(ctypes.byref(session), 0, key)
+    if error:
+        raise ctypes.WinError(error)
+    try:
+        files = (ctypes.c_wchar_p * 1)(path)
+        error = rstrtmgr.RmRegisterResources(session, 1, files, 0, None, 0, None)
+        if error:
+            raise ctypes.WinError(error)
+        room = 0
+        while True:
+            infos = (_RM_PROCESS_INFO * room)()
+            needed, count, reasons = (
+                ctypes.c_uint32(),
+                ctypes.c_uint32(room),
+                ctypes.c_uint32(),
+            )
+            error = rstrtmgr.RmGetList(
+                session,
+                ctypes.byref(needed),
+                ctypes.byref(count),
+                infos,
+                ctypes.byref(reasons),
+            )
+            if error == 234:  # ERROR_MORE_DATA: make room for `needed`
+                room = needed.value
+                continue
+            if error:
+                raise ctypes.WinError(error)
+            return {infos[i].Process.dwProcessId for i in range(count.value)}
+    finally:
+        rstrtmgr.RmEndSession(session)
+
+
+def _process_parents() -> dict[int, int]:
+    """pid -> parent pid of every live process, from the platform's native
+    listing: the kernel32 Toolhelp snapshot on Windows, whose PATH can carry
+    Git for Windows' MSYS `ps` (MSYS pids, no `-o`); `ps` elsewhere (empty
+    without `ps`). A failed listing raises `_GuardProbeError` naming it."""
+    if os.name == "nt":
+        try:
+            return dict(_windows_process_snapshot())
+        except OSError as exc:
+            raise _GuardProbeError(
+                "the real HOME guard could not list processes with the Windows"
+                f" Toolhelp snapshot: {exc}"
+            ) from exc
     ps = shutil.which("ps")
     if ps is None:
         return {}
-    listing = subprocess.run(
-        [ps, "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=True
-    ).stdout
+    argv = [ps, "-A", "-o", "pid=,ppid="]
+    # The guard's own probe, run with the real HOME after a test: not a
+    # child of the test.
+    _PROBING.active = True
+    try:
+        listing = subprocess.run(
+            argv, capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        stderr = (getattr(exc, "stderr", None) or "").strip()
+        raise _GuardProbeError(
+            f"the real HOME guard could not list processes with `{' '.join(argv)}`:"
+            f" {exc} {stderr}".rstrip()
+        ) from exc
+    finally:
+        _PROBING.active = False
     parents: dict[int, int] = {}
     for line in listing.splitlines():
         pid, ppid = (int(field) for field in line.split())
@@ -339,7 +508,7 @@ def _ps_parents() -> dict[int, int]:
 
 def _descendant_pids(parents: dict[int, int] | None = None) -> set[int]:
     children: dict[int, list[int]] = {}
-    for pid, ppid in (_ps_parents() if parents is None else parents).items():
+    for pid, ppid in (_process_parents() if parents is None else parents).items():
         children.setdefault(ppid, []).append(pid)
     found: set[int] = set()
     stack = [os.getpid()]
@@ -351,11 +520,27 @@ def _descendant_pids(parents: dict[int, int] | None = None) -> set[int]:
     return found
 
 
-def _held_by(paths: Collection[str], pids: Collection[int]) -> set[str]:
-    """The paths one of `pids` holds open: an owner-liveness lock is held
-    for its owner's whole lifetime."""
+def _held_by(paths: Collection[str], pids: Collection[int] | None) -> set[str]:
+    """The paths one of `pids` (None: any process) holds open: an
+    owner-liveness lock is held for its owner's whole lifetime. On Windows
+    the Restart Manager names the holders; elsewhere lsof."""
+    if not paths or pids is not None and not pids:
+        return set()
+    if os.name == "nt":
+        held_on_windows: set[str] = set()
+        for path in paths:
+            try:
+                holders = _windows_file_holders(path)
+            except OSError as exc:
+                raise _GuardProbeError(
+                    "the real HOME guard could not list the processes holding"
+                    f" {path} with the Windows Restart Manager: {exc}"
+                ) from exc
+            if holders and (pids is None or not holders.isdisjoint(pids)):
+                held_on_windows.add(path)
+        return held_on_windows
     lsof = shutil.which("lsof")
-    if not paths or not pids or lsof is None:
+    if lsof is None:
         return set()
     # lsof exits 1 when no process has any of the files open.
     _PROBING.active = True
@@ -375,7 +560,11 @@ def _held_by(paths: Collection[str], pids: Collection[int]) -> set[str]:
     for line in fields.splitlines():
         if line.startswith("p"):
             pid = int(line[1:])
-        elif line.startswith("n") and pid in pids and line[1:] in by_real_path:
+        elif (
+            line.startswith("n")
+            and (pids is None or pid in pids)
+            and line[1:] in by_real_path
+        ):
             held.add(by_real_path[line[1:]])
     return held
 
@@ -392,11 +581,17 @@ def _written_under(root: Path) -> set[str]:
 def _created_entries(data_root: Path, before: set[str]) -> list[str]:
     """Entries this pytest process created or wrote under the data root since the
     last check and that still exist, plus new owners/ and project_locks/
-    entries (outside `before`) that one of its children holds. Entries of
-    unrelated processes are not attributed."""
+    entries (outside `before`) that it or one of its children holds, and,
+    after it started a child with the real data root, those no process
+    holds (that child created and released them). Entries of unrelated
+    processes are not attributed."""
     mine = _written_under(data_root)
     new = _watched_entries(data_root) - before - mine
-    return sorted(mine | _held_by(new, _descendant_pids()))
+    held = _held_by(new, _descendant_pids() | {os.getpid()})
+    if _REAL_ROOT_CHILD.is_set():
+        _REAL_ROOT_CHILD.clear()
+        held |= new - _held_by(new - held, None)
+    return sorted(mine | held)
 
 
 _REAL_HOME_GUARD: dict[str, Path] = {}
@@ -531,9 +726,12 @@ def pytest_runtest_teardown(item: pytest.Item) -> Generator[None]:
 
     def created_message() -> str:
         _join_new_threads(item.stash[_THREADS_BEFORE])
-        created = _created_entries(
-            _REAL_HOME_GUARD["data_root"], item.stash[_ENTRIES_BEFORE]
-        ) + sorted(_written_under(_REAL_HOME_GUARD["home"] / ".rush"))
+        try:
+            created = _created_entries(
+                _REAL_HOME_GUARD["data_root"], item.stash[_ENTRIES_BEFORE]
+            ) + sorted(_written_under(_REAL_HOME_GUARD["home"] / ".rush"))
+        except _GuardProbeError as exc:
+            return f"{item.nodeid}: {exc}"
         if not created:
             return ""
         return "\n".join(
@@ -674,7 +872,7 @@ def native_release_archive(tmp_path_factory: pytest.TempPathFactory) -> Path:
     build = tmp_path_factory.mktemp("pyinstaller")
     entry = build / "rush_entry.py"
     entry.write_text(
-        'from rush.cli import cli\n\nif __name__ == "__main__":\n    cli()\n',
+        'from rush.entry import main\n\nif __name__ == "__main__":\n    main()\n',
         encoding="utf-8",
     )
     if importlib.util.find_spec("PyInstaller") is not None:

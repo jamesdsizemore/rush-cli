@@ -578,7 +578,25 @@ def test_resize_guidance_below_60x20_keeps_state() -> None:
     _dispatch_key(state, "j", actions)  # ignored while too small
     assert state.section == "tokens"
     _dispatch_key(state, "f2", actions)
+    # While too small, resize_guidance covers the opened projects overlay,
+    # which is recorded to be restored unchanged.
+    assert "60x20" in _render(state, 50, 15)
+    assert state.section == "tokens"
+    assert state.overlay_under_resize == "projects"
+    selection = (
+        state.active_index,
+        state.project_selector_index,
+        state.nav_index,
+        project.selected_index,
+    )
+    _render(state, 120, 40)
     assert state.overlay == "projects"
+    assert (
+        state.active_index,
+        state.project_selector_index,
+        state.nav_index,
+        project.selected_index,
+    ) == selection
     _dispatch_key(state, "escape", actions)
     assert state.overlay is None and state.section == "tokens"
     _dispatch_key(state, "q", actions)
@@ -635,8 +653,8 @@ def test_resize_below_minimum_and_back_keeps_map_selection_and_expanded(
         ("f3", big),
         ("2", big),
         ("down", big),
-        ("+", big),  # expands file:a.py
-        ("-", small),  # waits: below 60x20
+        ("l", big),  # expands file:a.py
+        ("h", small),  # waits: below 60x20
         ("down", small),  # waits: below 60x20
         (None, big),
         ("down", big),  # acts again at full size

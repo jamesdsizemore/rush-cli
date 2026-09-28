@@ -317,7 +317,18 @@ def test_project_snapshot_has_overview_runs_memory_tokens_git_and_artifacts(
         "tokenizer_counted",
         "cache_hits",
         "estimated_avoided",
+        "unscoped",
+        "interval",
     }
+    assert set(snapshot["tokens"]["unscoped"]) >= {
+        "event_count",
+        "provider_events",
+        "tokenizer_packets",
+        "telemetry_events",
+        "identity_keys",
+    }
+    assert isinstance(snapshot["tokens"]["unscoped"]["event_count"], int)
+    assert set(snapshot["tokens"]["interval"]) == {"earliest", "latest"}
     assert snapshot["git"]["has_git"] is False
     assert snapshot["artifacts"]["project_id"] == project_id
 
