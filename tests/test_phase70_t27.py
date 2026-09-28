@@ -218,6 +218,42 @@ def _fake_claude_cli(args: Any, *_rest: Any, **_kwargs: Any) -> Any:
     return subprocess.CompletedProcess(argv, 0, "", "")
 
 
+# aislop resolves from the Rush runtime (its npm pin is read from the
+# installed launcher), never from a PATH placeholder.
+_ENGINE_PLACEHOLDERS = sorted(set(_ENGINE_VERSIONS) - {"aislop"})
+
+
+def _route_engines_installed(route_id: str) -> Any:
+    """A route whose positive outcome runs stubbed engines has them installed
+    for every outcome, so its denied/failure rows exercise the same host."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    modes = _MATRIX_CASES[route_id]["expect"].get("processes") or ()
+    modes = [modes] if isinstance(modes, str) else list(modes)
+    if {"clean-engines", "finding-engines"} & set(modes):
+        _stub_binaries_on_path(stack, _ENGINE_PLACEHOLDERS)
+    return stack
+
+
+def _stub_binaries_on_path(stack: Any, names: Any) -> None:
+    """Make each stubbed process resolvable on PATH, as on a host that has it
+    installed. Appended, so a host's own copy still wins; the stub answers
+    either way. Each placeholder fails loudly if it is ever really spawned."""
+    import tempfile
+    from unittest import mock
+
+    bindir = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+    for name in names:
+        exe = bindir / name
+        exe.write_text("#!/bin/sh\nexit 127\n")
+        exe.chmod(0o755)
+    path = os.environ.get("PATH", "")
+    stack.enter_context(
+        mock.patch.dict(os.environ, {"PATH": f"{path}{os.pathsep}{bindir}"})
+    )
+
+
 def _process_stub(spec: dict[str, Any]) -> Any:
     """`clean-engines`: engines answer with their clean output at the process
     boundary. `git`: real git only (a repository is the route's input)."""
@@ -230,6 +266,7 @@ def _process_stub(spec: dict[str, Any]) -> Any:
     engines = {"clean-engines": False, "finding-engines": True}
     for mode in modes:
         if mode in engines:
+            _stub_binaries_on_path(stack, _ENGINE_PLACEHOLDERS)
             for target in ("_run_subprocess_blocking", "_run_subprocess_cancellable"):
                 stack.enter_context(
                     mock.patch(
@@ -238,6 +275,7 @@ def _process_stub(spec: dict[str, Any]) -> Any:
                     )
                 )
     if "host-cli" in modes:
+        _stub_binaries_on_path(stack, ["claude"])
         stack.enter_context(mock.patch.object(subprocess, "run", _fake_claude_cli))
     real = frozenset(m for m in modes if m in ("git", "python"))
     if real:
@@ -734,7 +772,7 @@ def _assert_outcome(
             for rel, text in spec.get("setup", {}).items():
                 _write(Path(cwd), rel, text)
             seeded = _apply_seed(spec, Path(cwd), _materialize(args, fixture_dir))
-            with _process_stub(spec):
+            with _process_stub(spec), _route_engines_installed(route_id):
                 result = runner.invoke(cli, seeded)
         _assert_real_exercise(result)
         assert result.exit_code == spec["exit"], (
@@ -1493,8 +1531,7 @@ def test_t27_collection_route_json_lists_every_row(
 
 
 def _new_leaf_paths(tmp_path: Path, before: set[Path], cwd: Path) -> set[str]:
-    import re
-
+    from rush.mcp_mesh.lock_manager import MeshLockManager
     from rush.workflows.projects import default_data_root
 
     new = {p for p in tmp_path.rglob("*")} - before
@@ -1513,9 +1550,10 @@ def _new_leaf_paths(tmp_path: Path, before: set[Path], cwd: Path) -> set[str]:
             if text.startswith(real):
                 text = label + text[len(real) :]
                 break
-        text = re.sub(
-            r"_(private_)?var_folders_\S*?_fixture-project", "_<fixture-flat>", text
-        )
+        # A lock file's name is its target's absolute path, flattened.
+        fixture = tmp_path / "fixture-project"
+        for real in (fixture.resolve(), fixture):
+            text = text.replace(MeshLockManager._lock_name(real), "_<fixture-flat>")
         if text != "<cwd>":
             normalized.add(text)
     return normalized
@@ -2049,11 +2087,53 @@ def _allow_only_seed_engines(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "Popen", _SeedEnginePopen)
 
 
+# Seeded routes whose engine output comes from a process-boundary stub: CI's
+# quality job does not install radon (its tests are needs_radon-deselected).
+_RADON_STUBBED_ROUTES = {"gate"}
+
+
+def _radon_cc_stub(real: Any) -> Any:
+    """radon's `cc --json` report for the seeded files, at the process
+    boundary; every other spawn goes to `real`. Complexity is 1 + the
+    function's `if` count, radon's McCabe value for `_complex_fn`."""
+    import ast
+
+    def run(exec_argv: list[str], argv: list[str], **kwargs: Any) -> Any:
+        name, args = Path(argv[0]).name, list(argv[1:])
+        if name != "radon":
+            return real(exec_argv, argv, **kwargs)
+        if args == ["--version"]:
+            return subprocess.CompletedProcess(
+                argv, 0, f"radon {_ENGINE_VERSIONS['radon']}\n", ""
+            )
+        assert args[:2] == ["cc", "--json"], args
+        report = {
+            target: [
+                {
+                    "type": "function",
+                    "name": node.name,
+                    "lineno": node.lineno,
+                    "complexity": 1
+                    + sum(isinstance(n, ast.If) for n in ast.walk(node)),
+                }
+                for node in ast.parse(Path(target).read_text(encoding="utf-8")).body
+                if isinstance(node, ast.FunctionDef)
+            ]
+            for target in args[2:]
+        }
+        return subprocess.CompletedProcess(argv, 0, json.dumps(report), "")
+
+    return run
+
+
 def _run_seeded(
     route_id: str, workdir: Path, *, as_json: bool
 ) -> tuple[Any, list[tuple[int, int]], tuple[str, ...]]:
+    from contextlib import ExitStack
+
     import rush.cli as cli_module
     from rush.cli_support import rendering
+    from rush.runtime import subprocesses
     from rush.theme import ROW_CAP
 
     real = rendering.echo_rows
@@ -2068,9 +2148,20 @@ def _run_seeded(
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=workdir) as cwd:
         argv, expectations = _SEEDERS[route_id](Path(cwd))
-        with pytest.MonkeyPatch.context() as patch:
+        with pytest.MonkeyPatch.context() as patch, ExitStack() as stack:
             patch.setattr(cli_module, "echo_rows", spy)
             _allow_only_seed_engines(patch)
+            if route_id in _RADON_STUBBED_ROUTES:
+                _stub_binaries_on_path(stack, ["radon"])
+                for target in (
+                    "_run_subprocess_blocking",
+                    "_run_subprocess_cancellable",
+                ):
+                    patch.setattr(
+                        subprocesses,
+                        target,
+                        _radon_cc_stub(getattr(subprocesses, target)),
+                    )
             result = runner.invoke(cli, argv + (["--json"] if as_json else []))
     _assert_real_exercise(result)
     return result, calls, expectations
