@@ -118,6 +118,21 @@ def _actions(memory_run: _MemoryRunSpy) -> ScanActions:
     )
 
 
+def _drain(state: TuiState, actions: ScanActions) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    deadline = time.monotonic() + 2
+    tui_mod._pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        tui_mod._pump(state, actions)
+
+
+def _memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    tui_mod._handle_memory_key(state, key, actions)
+    _drain(state, actions)
+
+
 class _ScriptedReader:
     """Local copy of `tests/test_tui.py::_ScriptedReader` (this packet's
     allowed files forbid a shared helper module)."""
@@ -156,6 +171,13 @@ def _run(
         "_memory_sources_and_state",
         lambda project: (list(fixture_sources or []), None),
     )
+    dispatch = tui_mod._dispatch_key
+
+    def _dispatch_and_drain(state: TuiState, key: str, actions: ScanActions) -> None:
+        dispatch(state, key, actions)
+        _drain(state, actions)
+
+    monkeypatch.setattr(tui_mod, "_dispatch_key", _dispatch_and_drain)
     seed = ProjectSeed(name="demo", root=tmp_path / "project", results=[])
     return tui_mod.run_interactive_tui(
         [seed],
@@ -358,7 +380,7 @@ def test_t28d_promote_previews_before_applying(tmp_path: Path) -> None:
         {"promote": [{"raw": {"promoted": True, "new_tier": "verified"}}]}
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
-    tui_mod._handle_memory_key(state, "y", _actions(spy))
+    _memory_key(state, "y", _actions(spy))
     operations = [c["operation"] for c in spy.calls]
     assert "promote" in operations and len(spy.calls) >= 2, (
         "T28-D requires promote to preview (apply=False) before applying; "
@@ -380,7 +402,7 @@ def test_t28d_promote_uses_reviewed_grants_not_hardcoded(tmp_path: Path) -> None
         {"promote": [{"raw": {"promoted": True, "new_tier": "verified"}}]}
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
-    tui_mod._handle_memory_key(state, "y", _actions(spy))
+    _memory_key(state, "y", _actions(spy))
     apply_calls = [c for c in spy.calls if c["operation"] == "promote"]
     assert apply_calls, "promote was never dispatched"
     permissions = apply_calls[-1].get("permissions")
@@ -435,7 +457,7 @@ def _preview_form(
     elif form == "promote":
         tui_mod._memory_promote_selected(state, project, actions)
     elif form in ("archive", "restore"):
-        tui_mod._handle_memory_key(state, "a", actions)
+        _memory_key(state, "a", actions)
     elif form == "write_propose":
         # A create has no prior version: its preview names the new id with
         # expected revision 0 ("must not exist yet").
@@ -454,7 +476,7 @@ def _run_form(
 ) -> None:
     """Preview, then confirm with "y" (plan line 419: every form applies only on y)."""
     _preview_form(form, state, project, actions)
-    tui_mod._handle_memory_key(state, "y", actions)
+    _memory_key(state, "y", actions)
 
 
 @pytest.mark.parametrize(
@@ -633,7 +655,7 @@ def test_t28d_delete_cancel_makes_zero_apply_calls(tmp_path: Path) -> None:
     )
     actions = _actions(spy)
     tui_mod._memory_delete_preview(state, project, actions)
-    tui_mod._handle_memory_key(state, "n", actions)
+    _memory_key(state, "n", actions)
     assert state.memory_pending_delete is None
     apply_calls = [
         c
@@ -679,7 +701,7 @@ def test_t28d_promote_denied_insufficient_corroboration_regression(
         }
     )
     tui_mod._memory_promote_selected(state, project, _actions(spy))
-    tui_mod._handle_memory_key(state, "y", _actions(spy))
+    _memory_key(state, "y", _actions(spy))
     assert "insufficient_corroboration" in state.memory_message
 
 
@@ -700,7 +722,7 @@ def test_t28d_archive_selected_record(
     state = _run(tmp_path, ["M", "a"], spy, monkeypatch=monkeypatch)
     state.memory_items = [{"id": "a1", "artifact_version": 1, "archived_at": None}]
     state.memory_selected_index = 0
-    tui_mod._handle_memory_key(state, "a", _actions(spy))
+    _memory_key(state, "a", _actions(spy))
     archive_calls = [c for c in spy.calls if c["operation"] == "archive"]
     assert archive_calls, "T28-D requires an archive action; 'a' dispatched nothing"
 
@@ -715,7 +737,7 @@ def test_t28d_restore_clears_archived_flag(tmp_path: Path) -> None:
     ]
     state.memory_selected_index = 0
     spy = _MemoryRunSpy({"archive": [{"raw": {"code": "OK"}}]})
-    tui_mod._handle_memory_key(state, "a", _actions(spy))
+    _memory_key(state, "a", _actions(spy))
     archive_calls = [c for c in spy.calls if c["operation"] == "archive"]
     assert (
         archive_calls and archive_calls[-1].get("request", {}).get("archived") is False
@@ -1148,7 +1170,7 @@ def test_t28d_form_holds_preview_until_y(form: str, tmp_path: Path) -> None:
     assert pending["ids"] == ["a1"] and pending["versions"] == {"a1": 1}
     assert pending["owner_scope"] and pending["required_grants"] == ["cache_write"]
     assert "[y] apply" in state.memory_message
-    tui_mod._handle_memory_key(state, "y", actions)
+    _memory_key(state, "y", actions)
     applies = [c for c in spy.calls if (c.get("request") or {}).get("apply") is True]
     assert len(applies) == 1, f"{form}: y must apply once; calls {spy.calls!r}"
     permissions = applies[0].get("permissions")
@@ -1166,9 +1188,9 @@ def test_t28d_form_cancel_makes_zero_apply_calls(
     state, project, spy = _form_fixture(form, tmp_path)
     actions = _actions(spy)
     _preview_form(form, state, project, actions)
-    tui_mod._handle_memory_key(state, cancel_key, actions)
+    _memory_key(state, cancel_key, actions)
     assert "0 records written" in state.memory_message
-    tui_mod._handle_memory_key(state, "y", actions)
+    _memory_key(state, "y", actions)
     applies = [c for c in spy.calls if (c.get("request") or {}).get("apply") is True]
     assert not applies, f"{form}: cancel must make zero apply calls, got {applies!r}"
     assert getattr(state, "memory_pending_mutation", None) is None
@@ -1201,7 +1223,7 @@ def test_t28d_r_key_refreshes_recorded_conflict(tmp_path: Path) -> None:
     spy = _MemoryRunSpy(
         {"list": [{"status": "ok", "raw": [{"id": "a1", "artifact_version": 4}]}]}
     )
-    tui_mod._handle_memory_key(state, "r", _actions(spy))
+    _memory_key(state, "r", _actions(spy))
     assert state.mode == "memory_edit"
     assert state.memory_items[0]["artifact_version"] == 4
     assert state.memory_edit_conflict is None
@@ -1216,7 +1238,7 @@ def test_t28d_e_key_resets_edit_field_and_conflict(tmp_path: Path) -> None:
     state.memory_selected_index = 0
     state.memory_edit_field = "title"
     state.memory_edit_conflict = {"id": "a1", "expected_version": 3}
-    tui_mod._handle_memory_key(state, "e", _actions(_MemoryRunSpy()))
+    _memory_key(state, "e", _actions(_MemoryRunSpy()))
     assert state.mode == "memory_edit"
     assert state.memory_edit_field == "note"
     assert state.memory_edit_conflict is None

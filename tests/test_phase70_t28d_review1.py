@@ -27,6 +27,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, get_args
@@ -187,9 +188,23 @@ def _state(tmp_path: Path, *roots: Path, project_ids: tuple[str, ...] = ()) -> T
     return state
 
 
-def _keys(state: TuiState, actions: ScanActions, *keys: str) -> None:
+def _drain(state: TuiState, actions: ScanActions) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    deadline = time.monotonic() + 2
+    tui_mod._pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        tui_mod._pump(state, actions)
+
+
+def _keys(
+    state: TuiState, actions: ScanActions, *keys: str, drain: bool = True
+) -> None:
     for key in keys:
         tui_mod._dispatch_key(state, key, actions)
+        if drain:
+            _drain(state, actions)
 
 
 def _enter_memory(state: TuiState, actions: ScanActions) -> None:
@@ -214,17 +229,22 @@ def _cursor_to(state: TuiState, actions: ScanActions, artifact_id: str) -> None:
     raise AssertionError(f"{artifact_id} not listed: {_ids(state)}")
 
 
-def _switch_project(state: TuiState, actions: ScanActions, index: int) -> None:
-    """F3 chooser -> Projects -> project selector -> Enter on `index`, then Memory."""
-    _keys(state, actions, "f3")
+def _switch_project(
+    state: TuiState, actions: ScanActions, index: int, *, drain: bool = True
+) -> None:
+    """F3 chooser -> Projects -> project selector -> Enter on `index`, then Memory.
+    `drain=False` switches while a memory request is still in flight."""
+    _keys(state, actions, "f3", drain=drain)
     rows = [row_id for row_id, _ in tui_mod._chooser_rows()]
     target = rows.index("open_project_selector")
-    _keys(state, actions, *["down"] * (target - state.chooser_index), "enter")
+    _keys(
+        state, actions, *["down"] * (target - state.chooser_index), "enter", drain=drain
+    )
     assert state.mode == "project_selector", state.mode
     steps = (index - state.project_selector_index) % (
         len(state.projects) + len(tui_mod._SELECTOR_EXTRAS)
     )
-    _keys(state, actions, *["down"] * steps, "enter")
+    _keys(state, actions, *["down"] * steps, "enter", drain=drain)
     assert state.active_index == index
     _enter_memory(state, actions)
 
@@ -856,3 +876,193 @@ def test_r2_refresh_without_announce_keeps_the_outcome_message(
     tui_mod._memory_refresh(state, state.active_project, actions, announce=False)
 
     assert state.memory_message == "maintenance: expiry_sweep changed 1"
+
+
+# ---------------------------------------------------------------------------
+# T28 (plan line 431): memory work runs off the input path
+# ---------------------------------------------------------------------------
+
+
+def _await_post(state: TuiState) -> None:
+    """Waits (bounded) until a worker has posted to `state.result_queue`."""
+    deadline = time.monotonic() + 2
+    while state.result_queue.empty():
+        assert time.monotonic() < deadline, "no worker result was posted"
+        time.sleep(0.005)
+
+
+class _OffKeyThreadRun(_RealMemoryRun):
+    """Raises when called on the thread that dispatches keys."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.key_thread = threading.get_ident()
+
+    def __call__(self, root: Path, **kwargs: Any) -> Any:
+        if threading.get_ident() == self.key_thread:
+            raise AssertionError(
+                f"memory_run({kwargs.get('operation')}) ran on the key thread"
+            )
+        return super().__call__(root, **kwargs)
+
+
+class _GatedRun(_RealMemoryRun):
+    """Holds each call matching `root`/`operation` until `gate` is set."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.root: Path | None = None
+        self.operation: str | None = None
+        self.gate = threading.Event()
+        self.started = threading.Event()
+        self.finished = threading.Event()
+
+    def hold(self, *, root: Path | None = None, operation: str | None = None) -> None:
+        self.root, self.operation = root, operation
+        self.gate.clear()
+        self.started.clear()
+        self.finished.clear()
+
+    def __call__(self, root: Path, **kwargs: Any) -> Any:
+        held = (self.root is None or root == self.root) and (
+            self.operation is None or kwargs.get("operation") == self.operation
+        )
+        if not held or (self.root is None and self.operation is None):
+            return super().__call__(root, **kwargs)
+        self.started.set()
+        self.gate.wait(5)
+        try:
+            return super().__call__(root, **kwargs)
+        finally:
+            self.finished.set()
+
+
+def test_memory_key_path_never_calls_memory_run(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    _seed(root, "zq02")
+    _seed(root, "zq03", created_at=time.time() - 15 * _DAY)
+    run = _OffKeyThreadRun()
+    state = _state(tmp_path, root)
+    actions = _actions(run)
+    _enter_memory(state, actions)
+    _browse(state, actions)
+    assert sorted(_ids(state)) == ["zq01", "zq02", "zq03"], state.memory_message
+
+    _cursor_to(state, actions, "zq01")
+    _keys(state, actions, "x")
+    assert state.memory_expanded is not None, state.memory_message
+
+    _keys(state, actions, "a")
+    assert "archive preview" in state.memory_message
+    _keys(state, actions, "y")
+    assert _row(root, "zq01")["artifact_version"] == 2
+    assert _row(root, "zq01")["archived_at"] is not None
+
+    _cursor_to(state, actions, "zq02")
+    _keys(state, actions, "d")
+    assert "record(s) selected" in state.memory_message
+    _keys(state, actions, "y")
+    assert "zq02" not in _rows(root)
+    assert "deleted 1 record(s)" in state.memory_message
+
+    _keys(state, actions, "w")
+    assert "expiry_sweep 1" in state.memory_message
+    _keys(state, actions, "y")
+    assert _row(root, "zq03")["artifact_version"] == 2
+    assert {"list", "expand", "archive", "delete", "maintain"} <= set(run.operations)
+
+
+def test_memory_result_for_old_project_is_discarded(tmp_path: Path) -> None:
+    a = _root(tmp_path, "a")
+    b = _root(tmp_path, "b")
+    ids = (_register(tmp_path, a), _register(tmp_path, b))
+    _seed(a, "zq01", owner=OwnerScope("project", ids[0]))
+    b_files = _files(b)
+    run = _GatedRun()
+    state = _state(tmp_path, a, b, project_ids=ids)
+    actions = _actions(run)
+    _enter_memory(state, actions)
+    _browse(state, actions)
+    assert _ids(state) == ["zq01"], state.memory_message
+
+    run.hold(root=a, operation="archive")
+    tui_mod._dispatch_key(state, "a", actions)
+    assert run.started.wait(2)
+    # The preview is held only when its result is drained, never before.
+    assert state.memory_pending_mutation is None
+    assert state.memory_message == "working: archive preview..."
+
+    _switch_project(state, actions, 1, drain=False)
+    run.gate.set()
+    assert run.finished.wait(2)
+    _await_post(state)
+    tui_mod._pump(state, actions)
+
+    assert state.memory_pending_mutation is None
+    assert "archive preview" not in state.memory_message
+    assert "zq01" not in _screen(state)
+    _keys(state, actions, "y")
+    assert _files(b) == b_files
+    row = _row(a, "zq01")
+    assert (row["artifact_version"], row["archived_at"]) == (1, None)
+
+
+def test_help_and_escape_work_while_memory_request_in_flight(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    _seed(root, "zq01")
+    run = _GatedRun()
+    state = _state(tmp_path, root)
+    actions = _actions(run)
+    _enter_memory(state, actions)
+    _browse(state, actions)
+
+    run.hold(operation="expand")
+    tui_mod._dispatch_key(state, "x", actions)
+    assert run.started.wait(2)
+    assert state.memory_request is not None
+    assert state.memory_message == "working: expand..."
+
+    tui_mod._dispatch_key(state, "?", actions)
+    assert state.mode == "help"
+    assert state.memory_request is not None
+    tui_mod._dispatch_key(state, "escape", actions)
+    assert state.mode == "memory"
+    tui_mod._dispatch_key(state, "escape", actions)
+    assert state.mode == "memory"
+    assert state.memory_request is None
+    assert state.memory_message == "expand cancelled"
+    run.gate.set()
+    assert run.finished.wait(2)
+    _await_post(state)
+    tui_mod._pump(state, actions)
+    assert state.memory_expanded is None
+    assert state.memory_message == "expand cancelled"
+
+    run.hold(operation="expand")
+    tui_mod._dispatch_key(state, "x", actions)
+    assert run.started.wait(2)
+    tui_mod._dispatch_key(state, "n", actions)
+    assert state.mode == "memory"
+    assert state.memory_request is None
+    assert state.memory_message == "expand cancelled"
+    run.gate.set()
+    assert run.finished.wait(2)
+    _await_post(state)
+    tui_mod._pump(state, actions)
+    assert state.memory_expanded is None
+    # A second mutation key while one is in flight is refused, never queued.
+    run.hold(operation="archive")
+    tui_mod._dispatch_key(state, "a", actions)
+    assert run.started.wait(2)
+    tui_mod._dispatch_key(state, "d", actions)
+    assert "still running" in state.memory_message
+    tui_mod._dispatch_key(state, "q", actions)
+    assert state.should_quit
+    run.gate.set()
+    assert run.finished.wait(2)
+    _await_post(state)
+    tui_mod._pump(state, actions)
+    assert "archive preview" in state.memory_message
+    assert state.memory_pending_delete is None
+    assert run.operations.count("delete") == 0

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import codecs
+import copy
 import io
 import json
 import os
@@ -908,6 +909,12 @@ class TuiState:
     memory_owner_scope_kind: str = "project"
     memory_owner_scope_id: str = ""
     memory_owner_buffer: str | None = None
+    # T28 (plan line 431): the one memory request running on a worker thread
+    # ({"generation", "project_key", "operation"}), or None. `_drain_results`
+    # applies its result only while it is still this request for the active
+    # project; Escape/"n", a newer request or a project switch make it stale.
+    memory_request: dict[str, Any] | None = None
+    memory_generation: int = 0
     # P66-06: Git history and every generated artifact (mode == "git").
     # `git_data` is the real `project_snapshot()` result loaded by
     # `_load_git_view` below -- reset on every project switch so a stale
@@ -2784,6 +2791,112 @@ def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bo
     return True
 
 
+# T28 (plan line 431): no memory work on the render/input path. A key records
+# one request and shows "working: <operation>..."; the handler body runs on a
+# worker thread against a private copy of the memory state and posts it to
+# `state.result_queue`. `_drain_results` then applies only the fields that body
+# changed, so every preview/confirm/refusal rule is the body's own, unchanged.
+_MEMORY_READS = frozenset({"list", "expand"})
+_MEMORY_STATE_FIELDS = (
+    "mode",
+    *(
+        f.name
+        for f in fields(TuiState)
+        if f.name.startswith("memory_")
+        and f.name not in ("memory_request", "memory_generation")
+    ),
+)
+
+
+def _memory_submit(
+    state: TuiState,
+    project: ProjectState,
+    actions: ScanActions,
+    operation: str,
+    body: Callable[[TuiState, ProjectState, ScanActions], None],
+) -> None:
+    """Run `body` on a worker thread. A read supersedes an in-flight read; any
+    other request while one is in flight is refused, never queued."""
+    running = state.memory_request
+    if running is not None and not (
+        operation in _MEMORY_READS and running["operation"] in _MEMORY_READS
+    ):
+        state.memory_message = f"memory {running['operation']} still running -- " + (
+            "wait for its outcome" if running["operation"] == "apply" else "wait or Esc"
+        )
+        return
+    scratch = copy.copy(state)
+    for name in _MEMORY_STATE_FIELDS:
+        setattr(scratch, name, copy.deepcopy(getattr(state, name)))
+    baseline = {
+        name: copy.deepcopy(getattr(scratch, name)) for name in _MEMORY_STATE_FIELDS
+    }
+    state.memory_generation += 1
+    generation = state.memory_generation
+    key = project_key(project)
+    state.memory_request = {
+        "generation": generation,
+        "project_key": key,
+        "operation": operation,
+    }
+    state.memory_message = f"working: {operation}..."
+    results = state.result_queue
+
+    def _worker() -> None:
+        try:
+            body(scratch, project, actions)
+        except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+            scratch.memory_message = f"memory {operation} failed: {exc}"
+        results.put(("memory", generation, key, scratch, baseline))
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def _apply_memory_result(
+    state: TuiState,
+    generation: int,
+    key: str,
+    scratch: TuiState,
+    baseline: dict[str, Any],
+) -> bool:
+    """Apply a drained memory result; False (discarded) when it was cancelled,
+    superseded, or built for a project other than the active one."""
+    request = state.memory_request
+    if (
+        request is None
+        or request["generation"] != generation
+        or not state.projects
+        or project_key(state.active_project) != key
+    ):
+        return False
+    state.memory_request = None
+    for name, before in baseline.items():
+        after = getattr(scratch, name)
+        if name == "mode":
+            # Help or another section opened meanwhile keeps the screen.
+            if after != before and state.mode == before:
+                state.mode = after
+        elif name == "memory_message" or after != before:
+            setattr(state, name, after)
+    return True
+
+
+def _memory_cancel_request(state: TuiState) -> None:
+    """Escape/"n" while a request runs: its result is discarded. An apply has
+    already been sent to the store, so it is never reported as cancelled."""
+    running = state.memory_request
+    if running is None:
+        return
+    if running["operation"] == "apply":
+        state.memory_message = (
+            "memory apply is running and cannot be cancelled -- "
+            "its outcome shows when it finishes"
+        )
+        return
+    state.memory_request = None
+    state.memory_message = f"{running['operation']} cancelled"
+
+
 _MEMORY_FILTER_FIELDS = ("trust", "source", "freshness", "archived", "owner")
 _MEMORY_PAGE_ROWS = 20
 
@@ -3103,7 +3216,9 @@ def _handle_memory_create_key(state: TuiState, key: str, actions: ScanActions) -
         state.memory_create_field = fields[(idx + 1) % len(fields)]
         return
     if key == "enter":
-        _memory_create_commit(state, state.active_project, actions)
+        _memory_submit(
+            state, state.active_project, actions, "write preview", _memory_create_commit
+        )
         return
     buf = state.memory_create_buffer or {}
     current = buf.get(state.memory_create_field, "")
@@ -3686,7 +3801,7 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         current = state.memory_subject
         index = subjects.index(current) if current in subjects else -1
         state.memory_subject = subjects[(index + 1) % len(subjects)]
-        _memory_refresh(state, project, actions)
+        _memory_submit(state, project, actions, "list", _memory_refresh)
         return
     if key == "/":
         state.mode = "memory_search"
@@ -3702,13 +3817,17 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
                 state.memory_selected_ids.add(item_id)
         return
     if key == "x":
-        _memory_expand_selected(state, project, actions)
+        _memory_submit(state, project, actions, "expand", _memory_expand_selected)
         return
     if key == "p":
-        _memory_promote_selected(state, project, actions)
+        _memory_submit(
+            state, project, actions, "promote preview", _memory_promote_selected
+        )
         return
     if key == "r" and state.memory_edit_conflict is not None:
-        _memory_edit_refresh_and_rereview(state, project, actions)
+        _memory_submit(
+            state, project, actions, "list", _memory_edit_refresh_and_rereview
+        )
         return
     if key == "e":
         if _memory_selected_item(state) is not None:
@@ -3724,30 +3843,45 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         )
         return
     if key == "a":
-        _memory_archive_selected(state, project, actions)
+        _memory_submit(
+            state, project, actions, "archive preview", _memory_archive_selected
+        )
         return
     if key == "d":
-        _memory_delete_preview(state, project, actions)
+        _memory_submit(
+            state, project, actions, "delete preview", _memory_delete_preview
+        )
         return
     if key == "w":
-        _memory_maintain_preview(state, project, actions)
+        _memory_submit(
+            state, project, actions, "maintenance preview", _memory_maintain_preview
+        )
         return
     if key == "y":
         if _memory_held_for_other_project(state, project):
             return
         if state.memory_pending_mutation is not None:
-            _memory_mutation_apply(state, project, actions)
+            apply = _memory_mutation_apply
         elif state.memory_pending_maintain is not None:
-            _memory_maintain_apply(state, project, actions)
+            apply = _memory_maintain_apply
+        elif state.memory_pending_delete is not None:
+            apply = _memory_delete_apply
         else:
-            _memory_delete_apply(state, project, actions)
+            return
+        _memory_submit(state, project, actions, "apply", apply)
+        return
+    if key == "?":
+        state.mode = "help"
+        return
+    if key == "q":
+        _quit(state, actions)
         return
 
 
 def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "enter":
         state.mode = "memory"
-        _memory_refresh(state, state.active_project, actions)
+        _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
         return
     if key == "escape":
         state.mode = "memory"
@@ -3790,7 +3924,7 @@ def _handle_memory_filter_key(state: TuiState, key: str, actions: ScanActions) -
         state.memory_filter_owner = buf["owner"].strip() or None
         state.memory_filter_buffer = None
         state.mode = "memory"
-        _memory_refresh(state, state.active_project, actions)
+        _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
         return
     current = buf.get(state.memory_filter_field, "")
     if key == "backspace":
@@ -3850,8 +3984,10 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
         state.memory_edit_buffer = None
         return
     if key == "enter":
-        _memory_edit_commit(state, state.active_project, actions)
         state.mode = "memory"
+        _memory_submit(
+            state, state.active_project, actions, "edit preview", _memory_edit_commit
+        )
         return
     if key == "tab":
         item = _memory_selected_item(state)
@@ -4562,6 +4698,9 @@ def _drain_results(state: TuiState) -> bool:
             post = state.result_queue.get_nowait()
         except queue.Empty:
             return applied
+        if post[0] == "memory":  # ("memory", generation, key, scratch, baseline)
+            applied = _apply_memory_result(state, *post[1:]) or applied
+            continue
         if isinstance(post[0], str):  # ("grant", kind, target, ok, payload)
             _apply_project_grant(state, *post[1:])
             applied = True
@@ -4658,6 +4797,7 @@ def _handle_project_selector_key(
         state.active_index = state.project_selector_index
         state.memory_items = []
         _memory_clear_held(state)
+        state.memory_request = None  # the old project's result is stale
         state.memory_expanded = None
         state.memory_message = ""
         state.git_data = None
@@ -4676,7 +4816,7 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     if section == "git":
         _load_git_view(state, project, actions)
     elif section == "memory":
-        _memory_refresh(state, project, actions)
+        _memory_submit(state, project, actions, "list", _memory_refresh)
     elif section in _SECTION_LOADERS:
         state.load_requests.add((project_key(project), section))
 
@@ -5451,6 +5591,12 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         # The Memory section's own key handler never swallows the global
         # section chooser (its text-entry sub-modes still do).
         _open_section_chooser(state, actions)
+        return
+    if state.memory_request is not None and (
+        (key == "escape" and state.mode.startswith("memory"))
+        or (key == "n" and state.mode == "memory")
+    ):
+        _memory_cancel_request(state)
         return
     handler = modal.get(state.mode)
     if handler is not None:

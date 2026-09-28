@@ -102,9 +102,18 @@ def _pump_until(
 
 
 def _keys(state: TuiState, actions: ScanActions, *keys: str) -> None:
+    deadline_extra = 2
     for key in keys:
         _dispatch_key(state, key, actions)
         _pump(state, actions)
+        if state.memory_request is not None:
+            deadline = time.monotonic() + deadline_extra
+            while state.memory_request is not None:
+                assert time.monotonic() < deadline, (
+                    f"still in flight: {state.memory_request}"
+                )
+                time.sleep(0.005)
+                _pump(state, actions)
 
 
 class _IdleReader:
