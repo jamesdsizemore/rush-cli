@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 import tomllib
-from collections.abc import Callable, Collection, Generator, Iterator
+from collections.abc import Callable, Collection, Generator, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -246,6 +246,33 @@ _SESSION_TREES: set[str] = set()
 # Set on a thread while `_held_by` runs lsof: the probe only reads the paths
 # it is handed, so they are not attributed to this process.
 _PROBING = threading.local()
+# Set when this process started a child whose environment resolves the real
+# data root (a real HOME): an entry that child created and released before
+# the next check is attributed to the test. Consumed by that check.
+_REAL_ROOT_CHILD = threading.Event()
+
+
+def _resolves_real_data_root(env: object) -> bool:
+    """Whether a child started with `env` (None: this process's own
+    environment) resolves the real data root, per `default_data_root`."""
+    child_env = os.environ if env is None else env
+    if not isinstance(child_env, Mapping) or not _REAL_HOME_GUARD:
+        return False
+    if os.name == "nt":
+        base = child_env.get("LOCALAPPDATA")
+        root = Path(base) / "Rush" if base else None
+    else:
+        home = child_env.get("HOME")
+        if not home:
+            import pwd
+
+            home = pwd.getpwuid(os.getuid()).pw_dir
+        if sys.platform == "darwin":
+            root = Path(home) / "Library" / "Application Support" / "Rush"
+        else:
+            xdg = child_env.get("XDG_DATA_HOME")
+            root = (Path(xdg) if xdg else Path(home) / ".local" / "share") / "rush"
+    return root == _REAL_HOME_GUARD["data_root"]
 
 
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_TRUNC | os.O_APPEND
@@ -282,8 +309,14 @@ def _record_real_root_write(event: str, args: tuple[object, ...]) -> None:
     elif event in ("os.remove", "os.rmdir", "shutil.rmtree"):
         _record_tree(args[0])
         return
+    elif event == "os.fork":
+        if _resolves_real_data_root(None):
+            _REAL_ROOT_CHILD.set()
+        return
     elif event == "subprocess.Popen":
         _, argv, cwd, env = args
+        if _resolves_real_data_root(env):
+            _REAL_ROOT_CHILD.set()
         values = list(argv) if isinstance(argv, (list, tuple)) else [argv]
         for value in (cwd, *values, *(env.values() if isinstance(env, dict) else ())):
             _record_tree(value)
@@ -327,9 +360,15 @@ def _ps_parents() -> dict[int, int]:
     ps = shutil.which("ps")
     if ps is None:
         return {}
-    listing = subprocess.run(
-        [ps, "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=True
-    ).stdout
+    # The guard's own probe, run with the real HOME after a test: not a
+    # child of the test.
+    _PROBING.active = True
+    try:
+        listing = subprocess.run(
+            [ps, "-A", "-o", "pid=,ppid="], capture_output=True, text=True, check=True
+        ).stdout
+    finally:
+        _PROBING.active = False
     parents: dict[int, int] = {}
     for line in listing.splitlines():
         pid, ppid = (int(field) for field in line.split())
@@ -351,11 +390,11 @@ def _descendant_pids(parents: dict[int, int] | None = None) -> set[int]:
     return found
 
 
-def _held_by(paths: Collection[str], pids: Collection[int]) -> set[str]:
-    """The paths one of `pids` holds open: an owner-liveness lock is held
-    for its owner's whole lifetime."""
+def _held_by(paths: Collection[str], pids: Collection[int] | None) -> set[str]:
+    """The paths one of `pids` (None: any process) holds open: an
+    owner-liveness lock is held for its owner's whole lifetime."""
     lsof = shutil.which("lsof")
-    if not paths or not pids or lsof is None:
+    if not paths or pids is not None and not pids or lsof is None:
         return set()
     # lsof exits 1 when no process has any of the files open.
     _PROBING.active = True
@@ -375,7 +414,11 @@ def _held_by(paths: Collection[str], pids: Collection[int]) -> set[str]:
     for line in fields.splitlines():
         if line.startswith("p"):
             pid = int(line[1:])
-        elif line.startswith("n") and pid in pids and line[1:] in by_real_path:
+        elif (
+            line.startswith("n")
+            and (pids is None or pid in pids)
+            and line[1:] in by_real_path
+        ):
             held.add(by_real_path[line[1:]])
     return held
 
@@ -392,11 +435,17 @@ def _written_under(root: Path) -> set[str]:
 def _created_entries(data_root: Path, before: set[str]) -> list[str]:
     """Entries this pytest process created or wrote under the data root since the
     last check and that still exist, plus new owners/ and project_locks/
-    entries (outside `before`) that one of its children holds. Entries of
-    unrelated processes are not attributed."""
+    entries (outside `before`) that it or one of its children holds, and,
+    after it started a child with the real data root, those no process
+    holds (that child created and released them). Entries of unrelated
+    processes are not attributed."""
     mine = _written_under(data_root)
     new = _watched_entries(data_root) - before - mine
-    return sorted(mine | _held_by(new, _descendant_pids()))
+    held = _held_by(new, _descendant_pids() | {os.getpid()})
+    if _REAL_ROOT_CHILD.is_set():
+        _REAL_ROOT_CHILD.clear()
+        held |= new - _held_by(new - held, None)
+    return sorted(mine | held)
 
 
 _REAL_HOME_GUARD: dict[str, Path] = {}

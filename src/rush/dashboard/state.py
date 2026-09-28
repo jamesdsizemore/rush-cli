@@ -1741,6 +1741,17 @@ class OwnerLock:
         # Intentionally never fcntl.LOCK_UN'd / os.close()'d here -- see
         # class docstring: the kernel is the only thing that releases it.
 
+    def release(self) -> None:
+        """Give up this lock before process exit: only for an owner that
+        rebinds to another data root (a TUI whose data root changed), whose
+        identity under the old root ends here."""
+        if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+            # runner reachable in this environment.
+            self._windows_park.set()
+            self._windows_thread.join()
+            return
+        os.close(self._fd)  # closing the descriptor drops the flock
+
     def _acquire_windows_mutex(self) -> None:  # pragma: no cover -- Windows-
         # only; no runner reachable in this environment.
         """`CreateMutexW` + zero-timeout `WaitForSingleObject` on a

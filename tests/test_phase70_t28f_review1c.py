@@ -130,7 +130,9 @@ def test_scan_start_never_probes_the_dashboard_on_the_key_path(
         return None
 
     monkeypatch.setattr(cli_module, "_check_descriptor_liveness", _hung_health_probe)
-    monkeypatch.setattr(tui, "_tui_owner_instance_id", lambda: "tui:review1c")
+    monkeypatch.setattr(
+        tui, "_tui_owner_instance_id", lambda data_root=None: "tui:review1c"
+    )
     monkeypatch.setattr(tui, "_admit_local_run", lambda *a, **k: None)
 
     local_work: list[str] = []
@@ -203,7 +205,9 @@ def test_cancel_while_starting_is_honored(
     pressed while the start worker is still resolving the owner returns at
     once, and the start then launches and dispatches nothing."""
     admit_calls: list[object] = []
-    monkeypatch.setattr(tui, "_tui_owner_instance_id", lambda: "tui:review1c")
+    monkeypatch.setattr(
+        tui, "_tui_owner_instance_id", lambda data_root=None: "tui:review1c"
+    )
     monkeypatch.setattr(
         tui, "_admit_local_run", lambda *a, **k: admit_calls.append((a, k))
     )

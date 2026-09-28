@@ -1415,9 +1415,12 @@ alone -- never gate on `_OWNER_LOCK` independently, or a reset that only
 clears `_OWNER_INSTANCE` leaves `_OWNER_LOCK` stale and wrongly blocks the
 very re-mint that reset was asking for.
 """
+_OWNER_ROOT: dict[str, Path] = {}
+"""The data root each minted owner id's lock was taken under, keyed by that
+id, so a restored or reset `_OWNER_INSTANCE` always maps to its own root."""
 
 
-def _tui_owner_instance_id() -> str | None:
+def _tui_owner_instance_id(data_root: Path | None = None) -> str | None:
     """P69-01.2j/S15: this TUI process's own executor identity, minted once
     and backed by a real owner-liveness lock retained (not merely acquired
     and discarded) for the process's lifetime -- so recovery can tell "this
@@ -1433,21 +1436,36 @@ def _tui_owner_instance_id() -> str | None:
     every project this coordinator runs -- one project finishing must never
     release or re-attempt a lock another still-running local project needs.
     There is no per-project close; the lock is only ever released by the
-    kernel at process exit.
+    kernel at process exit -- or here, when the TUI's data root differs from
+    the one the retained lock was taken under: the lock lives under
+    `data_root` (the TUI state's own, else the default resolved now), and a
+    lock under another root is released and a new one taken.
     """
+    from rush.setup.provision import DataRootUnavailableError, default_data_root
+
+    try:
+        root = data_root if data_root is not None else default_data_root()
+    except DataRootUnavailableError:  # the same hard stop as a failed lock
+        return None
+    if _OWNER_INSTANCE and _OWNER_ROOT.get(_OWNER_INSTANCE[0]) != root:
+        _OWNER_ROOT.pop(_OWNER_INSTANCE[0], None)
+        _OWNER_INSTANCE.clear()
+        if _OWNER_LOCK:
+            _OWNER_LOCK[0].release()
     if not _OWNER_INSTANCE:
         _OWNER_LOCK.clear()
         owner_instance_id = f"tui:{uuid.uuid4()}"
         from rush.dashboard.state import OwnerLock
 
         try:
-            lock = OwnerLock(owner_instance_id)
+            lock = OwnerLock(owner_instance_id, data_root=root)
         except Exception:  # noqa: BLE001 -- any acquisition failure (lock
             # already held, unreadable data root) is a hard stop for local
             # ownership, never a silently-swallowed no-op.
             return None
         _OWNER_INSTANCE.append(owner_instance_id)
         _OWNER_LOCK.append(lock)
+        _OWNER_ROOT[owner_instance_id] = root
     return _OWNER_INSTANCE[0] if _OWNER_INSTANCE else None
 
 
@@ -1880,16 +1898,24 @@ def _start_scan_thread(
     project: ProjectState,
     actions: ScanActions,
     permissions: ExecutionPermissions | None = None,
+    *,
+    data_root: Path | None = None,
 ) -> None:
     # T28-B: only the reviewed grants run the scan; unreviewed = none.
     granted = permissions if permissions is not None else ExecutionPermissions()
     _start_off_key_path(
-        project, "scan_start", lambda: _begin_scan(project, actions, granted)
+        project,
+        "scan_start",
+        lambda: _begin_scan(project, actions, granted, data_root=data_root),
     )
 
 
 def _begin_scan(
-    project: ProjectState, actions: ScanActions, granted: ExecutionPermissions
+    project: ProjectState,
+    actions: ScanActions,
+    granted: ExecutionPermissions,
+    *,
+    data_root: Path | None = None,
 ) -> None:
     plan = actions.plan_scan(project.root)
     owner = _dashboard_owner_for(project, actions)
@@ -1903,7 +1929,7 @@ def _begin_scan(
         )
         return
 
-    owner_instance_id = _tui_owner_instance_id()
+    owner_instance_id = _tui_owner_instance_id(data_root)
     if owner_instance_id is None:
         # S15: a lock that cannot be acquired is a hard stop, never
         # permission to reserve/launch unowned local work.
@@ -2026,12 +2052,20 @@ def _start_rescan_thread(
     project: ProjectState,
     actions: ScanActions,
     expected_attempt_id: str | None = None,
+    *,
+    data_root: Path | None = None,
 ) -> None:
     baseline_run_id = project.run_id
     _start_off_key_path(
         project,
         "rescan",
-        lambda: _begin_rescan(project, actions, baseline_run_id, expected_attempt_id),
+        lambda: _begin_rescan(
+            project,
+            actions,
+            baseline_run_id,
+            expected_attempt_id,
+            data_root=data_root,
+        ),
     )
 
 
@@ -2040,6 +2074,8 @@ def _begin_rescan(
     actions: ScanActions,
     baseline_run_id: str | None,
     expected_attempt_id: str | None,
+    *,
+    data_root: Path | None = None,
 ) -> None:
     # T28-B: the reviewed attempt (resolved now when no review carried it);
     # a newer attempt makes the rescan refuse.
@@ -2065,7 +2101,7 @@ def _begin_rescan(
         )
         return
 
-    owner_instance_id = _tui_owner_instance_id()
+    owner_instance_id = _tui_owner_instance_id(data_root)
     if owner_instance_id is None:
         # S15: same hard stop as `_start_scan_thread` -- an unacquired
         # lifetime lock never means proceed unowned.
@@ -2152,7 +2188,9 @@ def _begin_rescan(
     _worker()
 
 
-def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> None:
+def _start_initial_check_thread(
+    project: ProjectState, actions: ScanActions, *, data_root: Path | None = None
+) -> None:
     """P69-06a: runs the initial `CHECK_SUITE` as a background job the
     interactive loop attaches to at startup, instead of `ui_cmd` blocking
     interface startup on it. Self-contained like `_start_rescan_thread`
@@ -2167,17 +2205,21 @@ def _start_initial_check_thread(project: ProjectState, actions: ScanActions) -> 
     a local daemon thread carrying this process's own owner-instance lock id
     and run id, so the subprocesses it spawns stay fenced and reapable."""
     _start_off_key_path(
-        project, "initial check", lambda: _begin_check(project, actions)
+        project,
+        "initial check",
+        lambda: _begin_check(project, actions, data_root=data_root),
     )
 
 
-def _begin_check(project: ProjectState, actions: ScanActions) -> None:
+def _begin_check(
+    project: ProjectState, actions: ScanActions, *, data_root: Path | None = None
+) -> None:
     owner = _dashboard_owner_for(project, actions)
     if owner is not None:
         _run_dashboard_owned(project, owner, "check_suite", {})
         return
 
-    owner_instance_id = _tui_owner_instance_id()
+    owner_instance_id = _tui_owner_instance_id(data_root)
     if owner_instance_id is None:
         # S15: same hard stop as `_start_scan_thread` -- an unacquired
         # lifetime lock never means proceed unowned.
@@ -2632,10 +2674,18 @@ def _execute_grant(
     try:
         if kind == "start_scan":
             _start_scan_thread(
-                project, actions, _permissions_of(grant.get("_permissions", ()))
+                project,
+                actions,
+                _permissions_of(grant.get("_permissions", ())),
+                data_root=state.data_root,
             )
         elif kind == "rescan":
-            _start_rescan_thread(project, actions, grant.get("expected attempt"))
+            _start_rescan_thread(
+                project,
+                actions,
+                grant.get("expected attempt"),
+                data_root=state.data_root,
+            )
         elif kind == "setup_apply":
             _start_setup_apply_thread(
                 project,
@@ -3377,7 +3427,7 @@ def _memory_row_owner(
 _MEMORY_OWNER_SCOPE_KINDS = ("project", "user", "session", "agent")
 
 
-def _tui_session_owner_scope_id() -> str | None:
+def _tui_session_owner_scope_id(data_root: Path | None = None) -> str | None:
     """This standalone TUI invocation's `session`-kind owner id (P69-07 subsection b).
 
     A `rush ui` run with no dashboard server never creates a `DashboardAuth` session, so
@@ -3386,7 +3436,7 @@ def _tui_session_owner_scope_id() -> str | None:
     already scoped to exactly this invocation, and never an authentication credential.
     `None` when the owner lifetime lock could not be acquired (no identity exists).
     """
-    return _tui_owner_instance_id()
+    return _tui_owner_instance_id(data_root)
 
 
 def _resolve_registered_project_id(root: Path) -> str | None:
@@ -3403,7 +3453,9 @@ def _resolve_registered_project_id(root: Path) -> str | None:
         return None
 
 
-def _default_owner_scope_id(kind: str, project: ProjectState) -> str:
+def _default_owner_scope_id(
+    kind: str, project: ProjectState, data_root: Path | None = None
+) -> str:
     """The derived id for an owner kind that has one. `project` is this project's own
     registered canonical id (M09) when one was resolved at load time, falling back to
     the legacy root-path identity only for an unregistered project; `session` is this
@@ -3412,14 +3464,16 @@ def _default_owner_scope_id(kind: str, project: ProjectState) -> str:
     if kind == "project":
         return project.project_id or str(project.root)
     if kind == "session":
-        return _tui_session_owner_scope_id() or ""
+        return _tui_session_owner_scope_id(data_root) or ""
     return ""
 
 
 def _memory_owner_scope(state: TuiState, project: ProjectState) -> dict[str, str]:
     """The `owner_scope` payload every TUI memory mutation sends (P69-07 CONNECT)."""
     kind = state.memory_owner_scope_kind
-    identifier = state.memory_owner_scope_id or _default_owner_scope_id(kind, project)
+    identifier = state.memory_owner_scope_id or _default_owner_scope_id(
+        kind, project, state.data_root
+    )
     return {"kind": kind, "id": identifier}
 
 
@@ -4252,7 +4306,9 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "o":
         state.mode = "memory_owner"
         state.memory_owner_buffer = state.memory_owner_scope_id or (
-            _default_owner_scope_id(state.memory_owner_scope_kind, project)
+            _default_owner_scope_id(
+                state.memory_owner_scope_kind, project, state.data_root
+            )
         )
         return
     if key == "a":
@@ -4366,7 +4422,7 @@ def _handle_memory_owner_key(state: TuiState, key: str, actions: ScanActions) ->
         ]
         state.memory_owner_scope_kind = next_kind
         state.memory_owner_buffer = _default_owner_scope_id(
-            next_kind, state.active_project
+            next_kind, state.active_project, state.data_root
         )
         return
     if key == "enter":
@@ -5854,7 +5910,9 @@ def _start_check(state: TuiState, actions: ScanActions) -> None:
     if actions.run_check_suite is None:
         state.message = "no check suite configured"
         return
-    _start_initial_check_thread(state.active_project, actions)
+    _start_initial_check_thread(
+        state.active_project, actions, data_root=state.data_root
+    )
     state.message = "analysis started"
 
 

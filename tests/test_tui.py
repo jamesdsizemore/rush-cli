@@ -1320,7 +1320,9 @@ def test_admit_local_run_refuses_to_reserve_work_when_owner_lock_acquisition_fai
     swallow that continued regardless."""
     import rush.tui as tui_module
 
-    monkeypatch.setattr(tui_module, "_tui_owner_instance_id", lambda: None)
+    monkeypatch.setattr(
+        tui_module, "_tui_owner_instance_id", lambda data_root=None: None
+    )
     admit_calls: list[object] = []
     monkeypatch.setattr(
         tui_module,
