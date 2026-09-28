@@ -1138,6 +1138,11 @@ def test_baseline_attempt_id_differs_from_executing_attempt_id_for_resume(
             )
 
         _wait_until(_resumed)
+        # Drain the resume to terminal so no scan worker outlives this test's
+        # data-root isolation.
+        _wait_operation_terminal(
+            base_url, project_id, cookie, resume_body["data"]["operation_id"]
+        )
     finally:
         server.shutdown()
         server.server_close()
@@ -1231,6 +1236,11 @@ def test_fresh_execution_after_release_receives_a_new_attempt_id(
             )
 
         _wait_until(_second_resume_done)
+        # Drain the second resume to terminal so no scan worker outlives this
+        # test's data-root isolation.
+        _wait_operation_terminal(
+            base_url, project_id, cookie, second_resume_body["data"]["operation_id"]
+        )
     finally:
         server.shutdown()
         server.server_close()
