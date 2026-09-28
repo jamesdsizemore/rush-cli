@@ -68,6 +68,7 @@ from rush.tools.base import ToolResult
 from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.project import ProjectTool
 from rush.tools.setup_wizard import run_setup_wizard
+from rush.workflows import projects as wp
 from rush.workflows.project_run import (
     _MANIFEST_RELATIVE,
     ScanHandoff,
@@ -3233,21 +3234,28 @@ _MAX_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
 
 def _read_artifact_content_page(
-    root: Path, entry: dict[str, Any], rel_path: str, *, offset: int, limit: int
+    root: Path,
+    entry: dict[str, Any],
+    rel_path: str,
+    *,
+    offset: int,
+    limit: int,
+    project_id: str | None = None,
+    data_root: Path | None = None,
 ) -> dict[str, Any]:
-    """M12: bounded, path-traversal-safe byte-range content page for the
-    artifact-download route (plan §3.6: artifact reads paginate at
-    1MiB/page) -- resolved only from this exact run/attempt's own captured
-    immutable snapshot (`CandidateResult.artifact_snapshots`, `project_run.py`),
-    never from the live/staged current-project tree. A reference minted for
-    one attempt can therefore never return another attempt's (or another
-    candidate's) bytes for the same declared logical path, even when both
-    declared the identical filename. Raw bytes travel base64-encoded
-    (`content_base64`), never UTF-8-decoded -- lossless for binary content
-    and for multi-byte characters that straddle a page boundary. A manifest
-    that predates this fix (or a candidate that never captured this path)
-    has no snapshot entry: reported as `immutable_content_unavailable`,
-    never a live-file fallback."""
+    """M12: bounded byte-range content page for the artifact-download route
+    (plan §3.6: artifact reads paginate at 1MiB/page), resolved only from
+    this exact run/attempt's own captured immutable snapshot
+    (`CandidateResult.artifact_snapshots`, `project_run.py`), never from the
+    live/staged current-project tree. T28-E: a thin adapter over the shared
+    `workflows/projects.py::read_project_artifact_page` (containment,
+    identity and cursor validation live there, so CLI/TUI/web cannot
+    diverge): it only finds this run/attempt/tool's recorded snapshot
+    sha256 for `rel_path`, builds the reader's cursor, and maps
+    `next_cursor` back to this route's `next_offset`. A manifest that
+    predates snapshot capture (or a candidate that never captured this path)
+    is reported as `immutable_content_unavailable`, never a live-file
+    fallback. Raw bytes travel base64-encoded (`content_base64`)."""
     run_id = entry.get("run_id")
     attempt_id = entry.get("attempt_id")
     tool_id = entry.get("tool_id")
@@ -3262,40 +3270,51 @@ def _read_artifact_content_page(
             if item.get("candidate_id") == tool_id:
                 snapshot = (item.get("artifact_snapshots") or {}).get(rel_path)
                 break
-    if not isinstance(snapshot, dict):
+    if manifest is None or not isinstance(snapshot, dict):
         return {
             "path": rel_path,
             "error": "immutable_content_unavailable",
             "content_base64": None,
         }
-    immutable_path = snapshot.get("immutable_path")
-    total_size = snapshot.get("size")
-    try:
-        target = (root / str(immutable_path)).resolve()
-        target.relative_to(root.resolve())
-    except (ValueError, OSError):
-        return {"path": rel_path, "error": "invalid_path", "content_base64": None}
-    if not target.is_file():
-        return {"path": rel_path, "error": "not_found", "content_base64": None}
-    offset = max(0, offset)
-    limit = max(1, min(limit, _MAX_ARTIFACT_PAGE_BYTES))
-    try:
-        with target.open("rb") as handle:
-            handle.seek(offset)
-            chunk = handle.read(limit)
-    except OSError:
-        return {"path": rel_path, "error": "read_failed", "content_base64": None}
-    next_offset = (
-        offset + len(chunk) if offset + len(chunk) < (total_size or 0) else None
+    # The reader re-resolves `root` and refuses a cursor naming any other
+    # project, so an id taken from the route or the manifest is only a hint;
+    # a CHECK_SUITE manifest records none and resolves through the registry.
+    project_id = (
+        project_id
+        or manifest.get("project_id")
+        or wp.resolve_project(root, data_root=data_root)["project_id"]
     )
+    cursor = wp._b64url_encode(
+        json.dumps(
+            {
+                "project_id": project_id,
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "tool_id": tool_id,
+                "path": rel_path,
+                "sha256": snapshot.get("sha256"),
+                "offset": 0,
+            }
+        ).encode("utf-8")
+    )
+    page = wp.read_project_artifact_page(
+        root, cursor, data_root=data_root, offset=max(0, offset), limit=limit
+    )
+    if page.get("error"):
+        return page
+    next_cursor = page.get("next_cursor")
     return {
-        "path": rel_path,
-        "offset": offset,
-        "size": total_size,
-        "content_base64": base64.b64encode(chunk).decode("ascii"),
-        "next_offset": next_offset,
-        "sha256": snapshot.get("sha256"),
-        "media_type": snapshot.get("media_type"),
+        "path": page.get("path"),
+        "offset": page.get("offset"),
+        "size": page.get("size"),
+        "content_base64": page.get("content_base64"),
+        "next_offset": (
+            json.loads(wp._b64url_decode(next_cursor))["offset"]
+            if next_cursor
+            else None
+        ),
+        "sha256": page.get("sha256"),
+        "media_type": page.get("media_type"),
     }
 
 
@@ -5254,7 +5273,12 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         limit = _MAX_ARTIFACT_PAGE_BYTES
                     root = Path(resolve_project(project_id)["root"])
                     result["content"] = _read_artifact_content_page(
-                        root, entry, rel_path, offset=offset, limit=limit
+                        root,
+                        entry,
+                        rel_path,
+                        offset=offset,
+                        limit=limit,
+                        project_id=project_id,
                     )
             body = _success_body(
                 request_id,

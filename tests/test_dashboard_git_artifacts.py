@@ -273,6 +273,7 @@ def _repo_state(root: Path) -> tuple[str, str]:
 def _write_manifest(
     root: Path,
     *,
+    project_id: str,
     run_id: str,
     scheduled: list[dict[str, Any]],
     attempt_id: str | None = None,
@@ -285,7 +286,7 @@ def _write_manifest(
         "attempt_id": attempt_id,
         "git_link": git_link or {},
         "plan_id": f"plan-{run_id}",
-        "project_id": "unused-by-reader",
+        "project_id": project_id,
         "root": str(root),
         "run_state": "completed",
         "severity": "warn",
@@ -586,6 +587,7 @@ def test_git_scan_link_requires_matching_source_revision_not_just_path(
     # Matches the commit exactly: linked.
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-connect",
         scheduled=[
             _scheduled_item("matching-tool", "quality", artifacts=["src/app.py"]),
@@ -601,6 +603,7 @@ def test_git_scan_link_requires_matching_source_revision_not_just_path(
     # not match this commit -- must NOT be linked despite the path overlap.
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-stale",
         scheduled=[
             _scheduled_item("stale-tool", "quality", artifacts=["src/app.py"]),
@@ -811,6 +814,7 @@ def test_artifacts_section_lists_every_manifest_entry_with_bounded_pagination(
     project_id, root = _register(tmp_path, "artifacts-repo")
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         scheduled=[
             _scheduled_item("tool-a", "quality"),
@@ -858,7 +862,10 @@ def test_artifacts_section_missing_artifact_expand_returns_found_false(
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "missing-artifact-repo")
     _write_manifest(
-        root, run_id="run-1", scheduled=[_scheduled_item("tool-a", "quality")]
+        root,
+        project_id=project_id,
+        run_id="run-1",
+        scheduled=[_scheduled_item("tool-a", "quality")],
     )
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
@@ -891,6 +898,7 @@ def test_artifacts_section_unknown_output_type_gets_generic_safe_redacted_view(
     (root / "profile.out").write_text(hostile_line + "\n", encoding="utf-8")
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-profiler",
         scheduled=[
             _scheduled_item(
@@ -942,6 +950,7 @@ def test_artifact_content_route_supports_paged_download(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-dl",
         scheduled=[
             _scheduled_item(
@@ -1185,6 +1194,7 @@ def test_download_more_than_two_pages_containing_split_utf8_nul_and_0xff_bytes_r
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-bin",
         scheduled=[
             _scheduled_item(
@@ -1248,6 +1258,7 @@ def test_a_reference_and_offset_for_attempt_a_never_selects_attempt_bs_bytes(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-a",
         attempt_id="attempt-a",
         scheduled=[
@@ -1261,6 +1272,7 @@ def test_a_reference_and_offset_for_attempt_a_never_selects_attempt_bs_bytes(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-b",
         attempt_id="attempt-b",
         scheduled=[
@@ -1312,6 +1324,7 @@ def test_two_attempts_of_same_run_produce_distinct_artifact_references(
 
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         attempt_id="run-1-attempt-a",
         scheduled=[_scheduled_item("tool-a", "quality")],
@@ -1326,6 +1339,7 @@ def test_two_attempts_of_same_run_produce_distinct_artifact_references(
 
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         attempt_id="run-1-attempt-b",
         scheduled=[_scheduled_item("tool-a", "quality")],
@@ -1356,6 +1370,7 @@ def test_list_project_artifacts_surfaces_persisted_git_link_provenance(
     }
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         scheduled=[_scheduled_item("tool-a", "quality")],
         git_link=git_link,

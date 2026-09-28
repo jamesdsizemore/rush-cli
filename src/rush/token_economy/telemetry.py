@@ -327,14 +327,40 @@ def read_summary_readonly(
 
     db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
     sql, params = _summary_query(project_id, run_id, agent_id, session_id)
+    requested = {
+        column
+        for column, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
+    legacy = False
 
     def read(conn: sqlite3.Connection) -> tuple[int, int, int] | None:
+        nonlocal legacy
         if not sqlite_has_table(conn, "token_events"):
             return None
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(token_events)")}
+        if not requested <= columns:
+            # Legacy schema: rows carry no stored identity, so they are
+            # unscoped and never attributed to a scoped selection.
+            legacy = True
+            return 0, 0, 0
         count, total_raw, total_comp = conn.execute(sql, params).fetchone()
         return int(count), int(total_raw), int(total_comp)
 
     row = read_sqlite_readonly(db_path, read)
+    if legacy:
+        return {
+            **_summary_payload(0, 0, 0),
+            "available": True,
+            "unscoped": True,
+            "reason": "legacy telemetry rows carry no run/agent/session identity",
+            "path": str(db_path),
+        }
     if row is None:
         return {
             **_summary_payload(0, 0, 0),

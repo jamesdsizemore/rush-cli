@@ -18,6 +18,7 @@ always executes.
 from __future__ import annotations
 
 import base64
+import codecs
 import io
 import json
 import os
@@ -60,6 +61,9 @@ _DETAIL_CONTEXT_LINES = 4
 _DETAIL_MAX_BYTES = 1024 * 1024
 # Lines of file text rendered below the scroll start; the panel crops the rest.
 _DETAIL_WINDOW_LINES = 200
+# T28-E: one `read_project_artifact_page` request while inspecting an
+# artifact; an inspect press follows next_cursor up to `_DETAIL_MAX_BYTES`.
+_ARTIFACT_PAGE_BYTES = 64 * 1024
 
 # T28-A: TUI-local bindings appended to the shared DEFAULT_KEYBINDINGS; the
 # live `_KEYMAP` is built from both once `ACTIONS` (below) is defined, so every
@@ -110,6 +114,16 @@ _TUI_KEYBINDINGS = [
         key="x",
         action_name="setup_retry",
         description="Setup: regenerate the review after a failed stage",
+    ),
+    KeybindingAction(
+        key="i",
+        action_name="artifact_inspect",
+        description="Artifacts: inspect the selected artifact (press again for more)",
+    ),
+    KeybindingAction(
+        key="e",
+        action_name="artifact_export",
+        description="Artifacts: review, then export the selected artifact",
     ),
     KeybindingAction(key="right", action_name="map_expand", description="Expand"),
     KeybindingAction(key="l", action_name="map_expand", description="Expand"),
@@ -1811,13 +1825,28 @@ def _load_git_view(
         state.git_message = "git view unavailable"
         return
     try:
-        state.git_data = actions.git_snapshot(project.root)
+        state.git_data = actions.git_snapshot(project.root, data_root=state.data_root)
         state.git_message = ""
     except Exception as exc:  # noqa: BLE001 -- injectable Phase65/workflows
         # seam (`actions.git_snapshot`); a failed load must surface to the
         # user, never crash key dispatch or the render loop.
         state.git_data = None
         state.git_message = f"git view failed: {exc}"
+        return
+    git = (state.git_data or {}).get("git") or {}
+    if project.project_id is None or not git.get("has_git"):
+        return
+    from rush.workflows import projects as wp
+
+    try:
+        branch = wp.project_git_branch(project.project_id, data_root=state.data_root)
+        worktree = wp.project_git_worktree(
+            project.project_id, data_root=state.data_root
+        )
+    except (wp.ProjectError, OSError) as exc:
+        state.git_message = f"git branch/worktree read failed: {exc}"
+        return
+    state.git_data = {**(state.git_data or {}), "branch": branch, "worktree": worktree}
 
 
 def _handle_search_key(state: TuiState, key: str) -> None:
@@ -1844,6 +1873,9 @@ def _execute_grant(
     kind = grant["kind"]
     if kind.startswith("project_"):
         _start_project_grant(state, grant)
+        return
+    if kind == "artifact_export":
+        _export_artifact(state, grant)
         return
     if kind == "setup_retry":
         _regenerate_setup_review(state, grant)
@@ -2915,21 +2947,283 @@ def _load_tokens_section(
         return "unavailable", "project not registered", None
     from rush.workflows.projects import project_token_usage
 
-    return "populated", None, project_token_usage(project_id, data_root=data_root)
+    data = dict(project_token_usage(project_id, data_root=data_root))
+    data["_cache_key"] = _tokens_cache_key(root, {})
+    return "populated", None, data
 
 
-def _load_artifacts_section(
-    root: Path, project_id: str | None, data_root: Path | None, actions: ScanActions
-) -> LoadOutcome:
-    if project_id is None:
-        return "unavailable", "project not registered", None
-    from rush.workflows.projects import list_project_artifacts
+def _tokens_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Tokens reload only when root, filter, or telemetry mtime changes."""
+    db = Path(root) / ".rush" / "telemetry" / "tokens.db"
+    mtimes: list[Any] = []
+    for path in (db, db.with_name("tokens.db-wal")):
+        try:
+            mtimes.append(path.stat().st_mtime_ns)
+        except OSError:
+            mtimes.append(None)
+    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
 
-    data = list_project_artifacts(project_id, data_root=data_root)
+
+def _refresh_tokens_view(state: TuiState, project: ProjectState) -> SectionView:
+    """The cached Tokens view: one read per root/filter/telemetry-mtime change,
+    never one per painted frame."""
+    view = state.views.setdefault((project_key(project), "tokens"), SectionView())
+    key = _tokens_cache_key(project.root, view.filters)
+    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
+        return view
+    from rush.workflows import projects as wp
+
+    if project.project_id is None:
+        view.state, view.reason, view.data = (
+            "unavailable",
+            "project not registered",
+            {"_cache_key": key},
+        )
+        return view
+    filters = {k: v for k, v in view.filters.items() if not str(k).startswith("_")}
+    try:
+        data = dict(
+            wp.project_token_usage(
+                project.project_id, data_root=state.data_root, **filters
+            )
+        )
+    except (wp.ProjectError, OSError) as exc:
+        view.state, view.reason = "failed", str(exc) or type(exc).__name__
+        view.data = {"_cache_key": key}
+        return view
+    data["_cache_key"] = key
+    view.state, view.reason, view.data = "populated", None, data
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return view
+
+
+def _artifacts_cache_key(root: Path, filters: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Artifacts reload only when root, filter, an attempt manifest or the
+    handoff directory changes."""
+    root = Path(root)
+    paths = sorted(root.glob(".rush/runs/*/attempts/*/manifest.json"))
+    mtimes: list[Any] = []
+    for path in [*paths, root / ".rush" / "handoffs"]:
+        try:
+            mtimes.append((path.as_posix(), path.stat().st_mtime_ns))
+        except OSError:
+            mtimes.append((path.as_posix(), None))
+    return (str(root), tuple(sorted(filters.items())), tuple(mtimes))
+
+
+def _refresh_artifacts_view(state: TuiState, project: ProjectState) -> SectionView:
+    """The cached Artifacts index (`list_project_artifacts`): one read per
+    root/filter/manifest change, never one per painted frame."""
+    view = state.views.setdefault((project_key(project), "artifacts"), SectionView())
+    key = _artifacts_cache_key(project.root, view.filters)
+    if isinstance(view.data, Mapping) and view.data.get("_cache_key") == key:
+        return view
+    from rush.workflows import projects as wp
+
+    if project.project_id is None:
+        view.state, view.reason, view.data = (
+            "unavailable",
+            "project not registered",
+            {"_cache_key": key},
+        )
+        return view
+    try:
+        data = dict(
+            wp.list_project_artifacts(project.project_id, data_root=state.data_root)
+        )
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        view.state, view.reason = "failed", str(exc) or type(exc).__name__
+        view.data = {"_cache_key": key}
+        return view
+    data["_cache_key"] = key
     lists = [v for v in data.values() if isinstance(v, list)]
     if lists and not any(lists):
-        return "empty", "no artifacts recorded yet", data
-    return "populated", None, data
+        view.state, view.reason = "empty", "no artifacts recorded yet"
+    else:
+        view.state, view.reason = "populated", None
+    view.data = data
+    view.selection = min(view.selection, max(0, len(_captured_rows(view)) - 1))
+    view.scroll = 0
+    view.loaded_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return view
+
+
+def _captured_rows(view: SectionView) -> list[Mapping[str, Any]]:
+    data = view.data if isinstance(view.data, Mapping) else {}
+    return [row for row in data.get("captured") or [] if isinstance(row, Mapping)]
+
+
+def _selected_artifact(view: SectionView) -> Mapping[str, Any] | None:
+    rows = _captured_rows(view)
+    return rows[view.selection] if 0 <= view.selection < len(rows) else None
+
+
+def _artifact_cursor(project_id: str, item: Mapping[str, Any]) -> str:
+    """The first-page cursor binding project/run/attempt/tool/path/sha256."""
+    payload = {
+        "project_id": project_id,
+        "run_id": item.get("run_id"),
+        "attempt_id": item.get("attempt_id"),
+        "tool_id": item.get("tool_id"),
+        "path": item.get("path"),
+        "sha256": item.get("sha256"),
+        "offset": 0,
+    }
+    return base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
+    """Read the selected captured artifact through `read_project_artifact_page`,
+    following next_cursor until `_DETAIL_MAX_BYTES`; pressing again continues
+    from where the last press stopped. Binary bytes are never rendered."""
+    project = state.active_project
+    view = _refresh_artifacts_view(state, project)
+    item = _selected_artifact(view)
+    if item is None or project.project_id is None or not isinstance(view.data, dict):
+        state.message = "no captured artifact selected"
+        return
+    detail = view.data.get("_detail")
+    if not isinstance(detail, dict) or detail.get("ref") != item.get("artifact_ref"):
+        detail = {
+            "ref": item.get("artifact_ref"),
+            "item": dict(item),
+            "next_cursor": _artifact_cursor(project.project_id, item),
+            "decoder": codecs.getincrementaldecoder("utf-8")(),
+            "text": "",
+            "offset": 0,
+            "end": 0,
+            "size": item.get("size"),
+            "binary": False,
+            "error": None,
+        }
+        view.data["_detail"] = detail
+    elif detail["next_cursor"] is None:
+        state.message = "end of artifact"
+        return
+    from rush.workflows import projects as wp
+
+    cursor = detail["next_cursor"]
+    chunks: list[bytes] = []
+    read = 0
+    while cursor is not None and read < _DETAIL_MAX_BYTES:
+        try:
+            page = wp.read_project_artifact_page(
+                project.project_id,
+                cursor,
+                data_root=state.data_root,
+                limit=min(_ARTIFACT_PAGE_BYTES, _DETAIL_MAX_BYTES - read),
+            )
+        except (wp.ProjectError, OSError, ValueError) as exc:
+            page = {"error": str(exc) or type(exc).__name__}
+        chunk = b"" if page.get("error") else base64.b64decode(page["content_base64"])
+        if not chunk:
+            detail["error"] = page.get("error") or "read_failed"
+            cursor = None
+            break
+        chunks.append(chunk)
+        read += len(chunk)
+        detail["size"] = page.get("size", detail["size"])
+        cursor = page.get("next_cursor")
+    data = b"".join(chunks)
+    detail["next_cursor"] = cursor
+    detail["offset"], detail["end"] = detail["end"], detail["end"] + len(data)
+    if b"\x00" in data:
+        detail["binary"] = True
+    if not detail["binary"]:
+        try:
+            detail["text"] = detail["decoder"].decode(data, final=cursor is None)
+        except UnicodeDecodeError:
+            detail["binary"] = True
+    if detail["binary"]:
+        detail["text"] = ""
+    view.scroll = 0
+    state.message = (
+        f"artifact read failed: {detail['error']}"
+        if detail["error"]
+        else f"read bytes {detail['offset']}-{detail['end']} of {detail['size']}"
+    )
+
+
+def _artifact_export_destination(root: Path, item: Mapping[str, Any]) -> Path:
+    """`<root>/.rush/exports/<sha256 prefix>-<file name>`, every part reduced
+    to `[A-Za-z0-9._-]` so a hostile recorded path cannot pick the target."""
+
+    def clean(value: object) -> str:
+        text = "".join(
+            c if c.isascii() and (c.isalnum() or c in "._-") else "_"
+            for c in str(value)
+        )
+        return text.lstrip(".")
+
+    name = clean(Path(str(item.get("path") or "")).name) or "artifact"
+    digest = clean(item.get("sha256") or "")[:12] or "unknown"
+    return Path(root) / ".rush" / "exports" / f"{digest}-{name}"
+
+
+def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
+    """Open the export review; nothing is written until it is confirmed."""
+    project = state.active_project
+    view = _refresh_artifacts_view(state, project)
+    item = _selected_artifact(view)
+    if item is None or project.project_id is None:
+        state.message = "no captured artifact selected"
+        return
+    _open_grant(
+        state,
+        {
+            "kind": "artifact_export",
+            "grants": "artifact_write",
+            "destination": str(_artifact_export_destination(project.root, item)),
+            "run_id": item.get("run_id"),
+            "attempt_id": item.get("attempt_id"),
+            "tool_id": item.get("tool_id"),
+            "path": item.get("path"),
+            "size": item.get("size"),
+            "sha256": item.get("sha256"),
+            "_identity": _review_identity(state),
+        },
+    )
+    state.overlay = "grant_review"
+
+
+def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
+    """The confirmed export: exactly one `export_project_artifact` call."""
+    from rush.workflows import projects as wp
+
+    project = state.active_project
+    destination = Path(grant["destination"])
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        result = wp.export_project_artifact(
+            project.project_id or str(project.root),
+            run_id=str(grant["run_id"]),
+            attempt_id=str(grant["attempt_id"]),
+            tool_id=str(grant["tool_id"]),
+            path=str(grant["path"]),
+            destination=destination,
+            permissions=ExecutionPermissions(artifact_write=True),
+            data_root=state.data_root,
+            expected_sha256=grant.get("sha256"),
+        )
+    except (wp.ProjectError, OSError, ValueError) as exc:
+        state.message = f"export failed: {exc}"
+        return
+    state.message = f"exported {result['path']} ({result['size']} bytes)" + (
+        ", identical file already there" if result.get("noop") else ""
+    )
+
+
+def _artifacts_move(state: TuiState, step: int) -> None:
+    """j/k: scroll the open artifact text, else move the artifact selection."""
+    view = state.views.get((project_key(state.active_project), "artifacts"))
+    if view is None or not isinstance(view.data, Mapping):
+        return
+    if isinstance(view.data.get("_detail"), Mapping):
+        view.scroll = max(0, view.scroll + step)
+        return
+    count = len(_captured_rows(view))
+    if count:
+        view.selection = max(0, min(count - 1, view.selection + step))
 
 
 def _load_setup_section(
@@ -2947,7 +3241,6 @@ _SECTION_LOADERS: dict[
     "overview": _load_overview_section,
     "scans": _load_scans_section,
     "tokens": _load_tokens_section,
-    "artifacts": _load_artifacts_section,
     "setup": _load_setup_section,
 }
 
@@ -3047,6 +3340,7 @@ def _drain_results(state: TuiState) -> bool:
                 data=data,
                 loaded_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 generation=generation,
+                filters=dict(prior.filters) if prior is not None else {},
             )
         elif prior is not None and prior.data is not None:
             prior.state = "stale"
@@ -3307,6 +3601,8 @@ def _cursor(step: int) -> Callable[[TuiState, ScanActions], None]:
             _scroll_detail(state.active_project, step)
         elif state.section == "setup":
             _setup_move(state, step)
+        elif state.section == "artifacts":
+            _artifacts_move(state, step)
         else:
             _move_selection(state.active_project, step)
 
@@ -3445,12 +3741,19 @@ def _cancel(state: TuiState, actions: ScanActions) -> None:
         state.mode = _SECTION_MODES.get(state.section, "list")
     elif state.mode in ("git", "map"):
         _enter_section(state, "overview", actions)
+    elif state.section == "artifacts":
+        view = state.views.get((project_key(state.active_project), "artifacts"))
+        if view is not None and isinstance(view.data, dict):
+            view.data.pop("_detail", None)
+            view.scroll = 0
     state.message = ""
 
 
 def _refresh(state: TuiState, actions: ScanActions) -> None:
     if state.section == "git":
         _load_git_view(state, state.active_project, actions)
+    elif state.section == "artifacts":
+        state.views.pop((project_key(state.active_project), "artifacts"), None)
     elif state.section in _SECTION_LOADERS:
         state.load_requests.add((project_key(state.active_project), state.section))
     state.message = f"refreshing {SECTION_LABELS[state.section]}"
@@ -3665,6 +3968,10 @@ ACTIONS: tuple[Action, ...] = (
     Action("toggle_memory_admin", "Memory", "Navigation", (), _goto("memory")),
     Action("toggle_git_view", "Git", "Navigation", (), _goto("git")),
     Action("goto_tokens", "Tokens", "Navigation", (), _goto("tokens")),
+    Action("artifact_inspect", "Inspect", "Section", ("artifacts",), _artifact_inspect),
+    Action(
+        "artifact_export", "Export", "Section", ("artifacts",), _artifact_export_review
+    ),
     Action(
         "start_check",
         "Check",
@@ -3960,7 +4267,11 @@ def _view_state_lines(label: str, view: SectionView | None) -> list[Text]:
 def _data_lines(data: Any) -> list[Text]:
     """A loaded section payload as bounded literal `key: value` lines."""
     if isinstance(data, Mapping):
-        items = [(k, v) for k, v in data.items() if k != "registration"]
+        items = [
+            (k, v)
+            for k, v in data.items()
+            if k != "registration" and not str(k).startswith("_")
+        ]
     elif isinstance(data, list):
         items = list(enumerate(data))
     else:
@@ -4099,6 +4410,10 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     label = SECTION_LABELS[section]
     if section == "setup":
         return _render_setup(state, project)
+    if section == "artifacts":
+        return _render_artifacts(state, project)
+    if section == "tokens":
+        _refresh_tokens_view(state, project)
     view = state.views.get((project_key(project), section))
     lines: list[Any] = _view_state_lines(label, view)
     if view is None:
@@ -4106,6 +4421,102 @@ def _render_section_view(state: TuiState, project: ProjectState) -> Panel:
     else:
         lines.extend(_data_lines(view.data))
     return Panel(Group(*lines), title=label, style=THEME["border"])
+
+
+_ARTIFACT_ERROR_GUIDANCE = {
+    "immutable_content_unavailable": (
+        "the captured snapshot is missing or changed; rerun the scan to capture "
+        "it again (the live file is never substituted)"
+    ),
+    "not_found": "no captured snapshot is recorded for this artifact",
+}
+
+
+def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
+    """Every captured artifact (identity/type/run/size, paginated around the
+    selection), the other shared evidence buckets, and the inspected text.
+    Every recorded string goes through `_safe`."""
+    view = _refresh_artifacts_view(state, project)
+    lines: list[Any] = list(_view_state_lines("Artifacts", view))
+    rows = _captured_rows(view)
+    page = view.selection // PAGE_SIZE
+    page_rows, total_pages = paginate(rows, page)
+    table = Table(
+        expand=True, title=f"Captured ({len(rows)}) page {page + 1}/{total_pages}"
+    )
+    table.add_column("", width=2)
+    table.add_column("identity (tool:path)")
+    table.add_column("type")
+    table.add_column("run / attempt")
+    table.add_column("size", width=10)
+    for idx, row in enumerate(page_rows):
+        table.add_row(
+            Text(">" if page * PAGE_SIZE + idx == view.selection else ""),
+            _safe(f"{row.get('tool_id')}:{row.get('path')}"),
+            _safe(f"{row.get('category')} {row.get('media_type') or 'unknown'}"),
+            _safe(f"{row.get('run_id')} / {row.get('attempt_id')}"),
+            _safe(row.get("size")),
+        )
+    lines.append(table)
+    data = view.data if isinstance(view.data, Mapping) else {}
+    for bucket, items in data.items():
+        if bucket == "captured" or str(bucket).startswith("_"):
+            continue
+        if not isinstance(items, list) or not items:
+            continue
+        lines.append(_safe(f"{bucket} ({len(items)})", "bold"))
+        for item in items[:PAGE_SIZE]:
+            if isinstance(item, Mapping):
+                ref = item.get("artifact_ref") or item.get("path") or ""
+                item_type = f"{item.get('category', '')} {item.get('kind', '')}"
+                lines.append(_safe(f"  {ref}  {item_type}"))
+            else:
+                lines.append(_safe(f"  {item}"))
+    detail = data.get("_detail")
+    if isinstance(detail, Mapping):
+        lines.extend(_artifact_detail_lines(detail, view.scroll))
+    lines.append(Text("i:Inspect  e:Export  j/k:Select  F5:Refresh", style="dim"))
+    return Panel(Group(*lines), title="Artifacts", style=THEME["border"])
+
+
+def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]:
+    item = detail.get("item") or {}
+    size = detail.get("size")
+    media = item.get("media_type") or "unknown"
+    lines = [
+        _safe(
+            f"{detail.get('ref')}  {size} bytes  {media}  "
+            f"sha256 {str(item.get('sha256') or '-')[:12]}",
+            "bold",
+        )
+    ]
+    error = detail.get("error")
+    if error:
+        guidance = _ARTIFACT_ERROR_GUIDANCE.get(str(error), "")
+        lines.append(
+            _safe(f"read failed: {error}" + (f" -- {guidance}" if guidance else ""))
+        )
+    if detail.get("binary"):
+        lines.append(
+            _safe(
+                f"binary content ({size} bytes, {media}) is not rendered; "
+                "press e to export it",
+                "yellow",
+            )
+        )
+    elif detail.get("end", 0) > detail.get("offset", 0):
+        text_lines = str(detail.get("text") or "").split("\n")
+        start = min(scroll, max(0, len(text_lines) - 1))
+        lines.append(
+            _safe(f"bytes {detail.get('offset')}-{detail.get('end')} of {size}", "dim")
+        )
+        lines.append(_safe("\n".join(text_lines[start : start + _DETAIL_WINDOW_LINES])))
+    if detail.get("next_cursor"):
+        remaining = (size or 0) - detail.get("end", 0)
+        lines.append(
+            _safe(f"more: {remaining} bytes remain; press i to continue", "bold yellow")
+        )
+    return lines
 
 
 def _load_map_snapshot(project: ProjectState) -> dict[str, Any] | None:
@@ -4325,13 +4736,32 @@ def _render_git_panel(state: TuiState) -> Panel:
     executable markup")."""
     data = state.git_data or {}
     git = data.get("git") or {}
+    worktree = data.get("worktree") or {}
     lines: list[Any] = [
         _safe(
-            f"has_git={git.get('has_git')}  head={git.get('head') or '-'}  "
-            f"dirty={git.get('dirty')}",
+            f"has_git={git.get('has_git')}  "
+            f"branch={(data.get('branch') or {}).get('branch') or '-'}  "
+            f"head={git.get('head') or '-'}  dirty={git.get('dirty')}",
             "cyan",
         )
     ]
+    if worktree.get("toplevel"):
+        lines.append(
+            _safe(
+                f"worktree={worktree.get('toplevel')}  "
+                f"git_dir={worktree.get('git_common_dir')}",
+                "cyan",
+            )
+        )
+    if state.git_data is not None:
+        if git.get("state") == "empty" or git.get("has_git") is False:
+            lines.append(_safe("No Git repository at this project root", "bold yellow"))
+        elif git.get("state") == "failed":
+            lines.append(
+                _safe("Git read failed: HEAD/status could not be read", "bold red")
+            )
+        elif git.get("dirty") is False:
+            lines.append(_safe("No changes: the working tree is clean", "green"))
 
     history = git.get("history") or []
     history_table = Table(expand=True, title=f"History ({len(history)})")
