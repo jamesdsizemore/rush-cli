@@ -4,6 +4,28 @@
 
 `rush --help` lists the everyday set — `status`, `check`, `lint`, `review`, `security`, `test`, `memory`, `setup`, `install`, `agent`, `mcp` — plus a category index. Registered commands fall under one of seven categories: `quality`, `security`, `test`, `workflow`, `memory`, `services`, `administration`. Use `rush help` to list the categories, `rush help CATEGORY` to list the commands in one, and `rush --help-all` to list all registered command names at once (including everyday-set members and category-only names).
 
+Example, listing one category:
+
+```console
+$ rush help memory
+memory:
+  context
+  flight-recorder
+  session
+```
+
+An unknown category is refused with exit code 2 and the list of valid categories, so the fix is to re-run with one of the names it prints:
+
+```console
+$ rush help nosuchcat
+Usage: rush help [OPTIONS] [CATEGORY]
+Try 'rush help --help' for help.
+
+Error: Unknown category 'nosuchcat'. Valid categories: quality, security, test, workflow, memory, services, administration
+```
+
+On a narrow terminal (for example `COLUMNS=40`) the help keeps the start of every description and wraps the rest onto the next line; with `NO_COLOR` set it emits no escape sequences.
+
 ## Recover an omitted context pack
 
 When `rush context pack --budget N --allow-cache-write --json` returns `skipped` with `metadata.context_envelope.recovery.state: "available"`, pass its handle to `rush context retrieve HANDLE --json`. Without explicit cache-write permission, an insufficient budget returns `recovery.state: "not_created"` with `cache_write_required` and writes no CCR data. Stored payloads are redacted before local persistence; an unknown handle returns `error` ("Context handle was not found.", `recovery.state: "not_found"`, exit code 2).
@@ -564,6 +586,16 @@ Compare performance metrics against `.rush/baselines.json` regression thresholds
 * `--json`: Emit canonical result JSON. Permission flags are listed by `rush benchmark check --help`.
 
 
+
+### Removed command names
+
+These older names are not registered. Scripts that call them get "No such command"; use the current entrypoint instead.
+
+- `toon-inspect`: TOON is an internal serialization component, not a CLI command. There is no replacement command.
+- `skeletonize`: use `rush token outline FILE_PATH`.
+- `context-cache`: the current context commands are listed by `rush context --help`.
+- `ccr-retrieve`: use `rush context retrieve CHUNK_HASH`. It takes a chunk hash and has no semantic `--query` option.
+- `context-mistakes`: use `rush context mistakes`.
 
 ## Output File Write Safety & Containment (Phase 55)
 

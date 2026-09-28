@@ -232,7 +232,7 @@ def test_default_help_keeps_one_line_descriptions():
     assert list(rows) == [n for n in _EVERYDAY_SET]
     for name in _EVERYDAY_SET:
         desc = rows[name]
-        assert desc
+        assert desc.removesuffix("...").strip(), f"{name} shows no description"
         cmd = cli.get_command(click.Context(cli), name)
         assert cmd is not None, f"{name} not resolvable via cli.get_command"
         assert cmd.get_short_help_str(1000).startswith(
@@ -289,6 +289,12 @@ def test_help_category_lists_every_member(category):
     assert result.exit_code == 0
     for name in expected:
         assert name in result.output, f"{name} missing from `help {category}`"
+    listed = [
+        line.strip()
+        for line in result.output.splitlines()
+        if line.startswith("  ") and line.strip()
+    ]
+    assert sorted(listed) == expected, f"`help {category}` lists extra names"
 
 
 def test_help_unknown_category_exits_2_for_the_right_reason():
@@ -362,6 +368,31 @@ def test_keep_green_narrow_terminal_help_stays_legible(monkeypatch):
     assert "Commands:" in help_text
 
 
+def test_narrow_terminal_help_keeps_a_word_of_every_everyday_description(
+    monkeypatch,
+):
+    """At COLUMNS=40 every everyday row still starts with its description's
+    first word, never a bare "..." (T25 review round 2: `install`)."""
+    monkeypatch.setenv("COLUMNS", "40")
+    ctx = click.Context(cli, info_name="rush", terminal_width=None)
+    body = cli.get_help(ctx).split("Commands:", 1)[1].split("Categories:", 1)[0]
+    rows: dict[str, str] = {}
+    current = None
+    for line in body.splitlines():
+        match = re.match(r"^  (\S+)\s+(.*)$", line)
+        if match and match.group(1) in _EVERYDAY_SET:
+            current = match.group(1)
+            rows[current] = match.group(2)
+        elif current and line.strip():
+            rows[current] += " " + line.strip()
+    assert list(rows) == list(_EVERYDAY_SET)
+    for name, desc in rows.items():
+        cmd = cli.get_command(click.Context(cli), name)
+        assert cmd is not None
+        first_word = cmd.get_short_help_str(1000).split()[0]
+        assert desc.startswith(first_word), (name, desc)
+
+
 def test_keep_green_no_color_help_has_no_escape_bytes():
     result = _invoke(["--help"], env={"NO_COLOR": "1"})
     assert result.exit_code == 0
@@ -427,6 +458,18 @@ _SECTION_81_DOCS = tuple(
     )
 )
 
+# Plan section 8.1 documentation/catalog set members outside the Cursor scope
+# (phase plans and reports are exempt from the product-mention rule): their
+# `rush ...` citations must still resolve.
+_SECTION_81_CITATION_ONLY_DOCS = tuple(
+    _REPO_ROOT / rel
+    for rel in (
+        "docs/phase-plans/README.md",
+        "docs/reports/phase-64-66-documentation-coverage.md",
+        "examples/rush.toml",
+    )
+)
+
 _INLINE_CITATION_RE = re.compile(r"`(rush [^`\n]*)`")
 _CURSOR_RE = re.compile(
     r"\bCursor\b"
@@ -435,6 +478,11 @@ _CURSOR_RE = re.compile(
     r"|cursor-agent"
     r"|(?i:claude|codex|zed|windsurf)[`'\"]?\s*[,/|]\s*[`'\"]?cursor\b"
     r"|\bcursor[`'\"]?\s*(?:\((?:JSON|JSONC)\))?\s*[,/|]\s*[`'\"]?(?i:claude|codex|zed|windsurf)"
+    r"|\bcursor\.com\b"
+    r"|\bgenerate_cursor\w*"
+    r"|\bcursor_(?:dir|rules|config|p)\b"
+    r"|(?i:\bconnect\s+|--agent[=\s]+|--client[=\s]+)cursor\b"
+    r"|(?i:\bcursor\s+(?:ide|editor|cli)\b)"
 )
 
 
@@ -541,6 +589,16 @@ _CURSOR_PATTERN_CASES = (
     ("cursor-agent", True),
     ("agents `claude`, `cursor`, `codex`", True),
     ("cursor(JSON)/zed", True),
+    ("McpConfigGenerator.generate_cursor_config(tmp_path)", True),
+    ('config_file = cursor_dir / "mcp.json"', True),
+    ("rush agent connect cursor", True),
+    ("rush install --agent cursor", True),
+    ("see https://cursor.com/docs", True),
+    ("open Cursor IDE settings", True),
+    ("open cursor ide settings", True),
+    ("ensure_cursor_key()", False),
+    ("cursor_offset", False),
+    ("cursor.key gets created", False),
     ("INVALID_CURSOR", False),
     ("next_cursor", False),
     ("cursor pagination", False),
@@ -597,6 +655,23 @@ def test_no_cursor_product_mention_in_docs():
             if _CURSOR_RE.search(line):
                 hits.append(f"{rel}:{lineno}: {line.strip()[:120]}")
     assert not hits, "Cursor product mention(s):\n" + "\n".join(hits)
+
+
+@pytest.mark.parametrize(
+    "doc_path", _SECTION_81_CITATION_ONLY_DOCS, ids=lambda p: p.name
+)
+def test_section_81_citation_only_docs_resolve(doc_path):
+    """The rest of the plan section 8.1 set: every `rush ...` citation
+    resolves and the obsolete five-tool wording is gone (T25 review round 2)."""
+    assert doc_path.is_file(), f"{doc_path} missing from the repo"
+    text = doc_path.read_text()
+    failures = [
+        msg
+        for citation in _extract_rush_citations(text)
+        if (msg := _resolve_citation(citation)) is not None
+    ]
+    assert not failures, "stale command citations:\n" + "\n".join(failures)
+    assert "Five tools" not in text, "obsolete five-tool wording still present"
 
 
 # ---------------------------------------------------------------------------
@@ -674,6 +749,7 @@ def test_command_category_alias_inherits_canonical_category(alias_name, canonica
     group_name = alias_name.split()[0]
     canonical_category = command_category(canonical_name)
     assert canonical_category in _ALL_CATEGORIES
+    assert command_category(alias_name, cli) == canonical_category
     assert canonical_category != command_category(group_name), (
         f"{alias_name!r} must inherit {canonical_name!r}'s category, "
         f"not its group {group_name!r}'s"

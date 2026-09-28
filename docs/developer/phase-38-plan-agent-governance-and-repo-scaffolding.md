@@ -251,23 +251,6 @@ class McpConfigGenerator:
     """Generates standard MCP client configurations for VS Code."""
 
     @staticmethod
-    def generate_cursor_config(repo_root: Path) -> Path:
-        cursor_dir.mkdir(parents=True, exist_ok=True)
-        config_file = cursor_dir / "mcp.json"
-
-        config = {
-            "mcpServers": {
-                "rush": {
-                    "command": "rush",
-                    "args": ["mcp", "serve"],
-                    "env": {},
-                }
-            }
-        }
-        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
-        return config_file
-
-    @staticmethod
     def generate_vscode_config(repo_root: Path) -> Path:
         vscode_dir = repo_root / ".vscode"
         vscode_dir.mkdir(parents=True, exist_ok=True)
@@ -730,7 +713,6 @@ def governance_sync_cmd():
         click.echo("[FAIL] AGENTS.md not found.", err=True)
         raise SystemExit(1)
 
-    McpConfigGenerator.generate_cursor_config(Path.cwd())
     McpConfigGenerator.generate_vscode_config(Path.cwd())
 
     click.echo(
@@ -866,21 +848,20 @@ def test_agents_md_synchronizer(tmp_path: Path):
     sync = AgentsMdSynchronizer(tmp_path)
     results = sync.sync_all()
 
-    assert len(results) == 5
-    assert cursor_rules.exists()
-    assert "# Policy" in cursor_rules.read_text(encoding="utf-8")
+    assert len(results) == 4
+    windsurf_rules = tmp_path / ".windsurfrules"
+    assert windsurf_rules.exists()
+    assert "# Policy" in windsurf_rules.read_text(encoding="utf-8")
 
     antigravity_rules = tmp_path / ".gemini" / "antigravity" / "rules.md"
     assert antigravity_rules.exists()
 
 
 def test_mcp_config_generator(tmp_path: Path):
-    cursor_p = McpConfigGenerator.generate_cursor_config(tmp_path)
     vscode_p = McpConfigGenerator.generate_vscode_config(tmp_path)
 
-    assert cursor_p.exists()
     assert vscode_p.exists()
-    assert "rush" in cursor_p.read_text(encoding="utf-8")
+    assert "rush" in vscode_p.read_text(encoding="utf-8")
 
 
 def test_workspace_boundary_guard(tmp_path: Path):
@@ -960,6 +941,7 @@ def test_agent_budget_guard():
 
 
 def test_forbidden_rule_scanner(tmp_path: Path):
+    bad_rule_file = tmp_path / ".windsurfrules"
     bad_rule_file.write_text("Always run git push --force on main.", encoding="utf-8")
 
     findings = ForbiddenRuleScanner.scan_file(bad_rule_file)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -501,14 +502,28 @@ EVERYDAY_SET = (
 )
 
 
-def command_category(name: str) -> str:
+_ALIAS_RE = re.compile(r"Alias for `rush ([\w-]+(?: [\w-]+)?)`")
+
+
+def command_category(name: str, group: click.Group | None = None) -> str:
     """Resolve `name`'s help category: pinned override first, else its real
-    ToolSpec category (an alias inherits whatever its own name resolves to,
-    same as any other command -- no group-based guessing)."""
+    ToolSpec category. A subcommand path (e.g. "context gain") that `group`
+    registers with "Alias for `rush X`" help inherits X's category, never
+    its containing group's."""
     override = CLI_CATEGORY_OVERRIDES.get(name)
     if override is not None:
         return override
-    return TOOL_SPECS[name].category
+    if name in TOOL_SPECS or group is None:
+        return TOOL_SPECS[name].category
+    command: click.Command | None = group
+    for part in name.split():
+        command = (
+            command.commands.get(part) if isinstance(command, click.Group) else None
+        )
+    match = _ALIAS_RE.search((command.help or "") if command is not None else "")
+    if match is None:
+        raise KeyError(name)
+    return command_category(match.group(1), group)
 
 
 def _live_names(group: click.Group, ctx: click.Context) -> list[str]:
@@ -517,6 +532,9 @@ def _live_names(group: click.Group, ctx: click.Context) -> list[str]:
 
 def _members_of_category(names: list[str], category: str) -> list[str]:
     return sorted(name for name in names if command_category(name) == category)
+
+
+_MIN_SHORT_HELP = 30
 
 
 def format_everyday_commands(
@@ -531,7 +549,13 @@ def format_everyday_commands(
         for name in EVERYDAY_SET
         if (cmd := group.get_command(ctx, name)) is not None and not cmd.hidden
     ]
-    limit = formatter.width - 6 - max((len(name) for name, _ in commands), default=0)
+    # A narrow terminal must still show a word of every description: below
+    # _MIN_SHORT_HELP characters write_dl wraps the text instead of cutting
+    # it down to "...".
+    limit = max(
+        formatter.width - 6 - max((len(name) for name, _ in commands), default=0),
+        _MIN_SHORT_HELP,
+    )
     rows: list[tuple[str, str]] = [
         (name, cmd.get_short_help_str(limit)) for name, cmd in commands
     ]

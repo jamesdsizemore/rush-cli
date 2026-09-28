@@ -6,6 +6,28 @@ Current authority: generated Click metadata from `uv run rush --help` and `uv ru
 
 `rush --help` lists the everyday set — `status`, `check`, `lint`, `review`, `security`, `test`, `memory`, `setup`, `install`, `agent`, `mcp` — plus a category index. Registered commands fall under one of seven categories: `quality`, `security`, `test`, `workflow`, `memory`, `services`, `administration`. Use `rush help` to list the categories, `rush help CATEGORY` to list the commands in one, and `rush --help-all` to list all registered command names at once (including everyday-set members and category-only names).
 
+Example, listing one category:
+
+```console
+$ rush help memory
+memory:
+  context
+  flight-recorder
+  session
+```
+
+An unknown category is refused with exit code 2 and the list of valid categories, so the fix is to re-run with one of the names it prints:
+
+```console
+$ rush help nosuchcat
+Usage: rush help [OPTIONS] [CATEGORY]
+Try 'rush help --help' for help.
+
+Error: Unknown category 'nosuchcat'. Valid categories: quality, security, test, workflow, memory, services, administration
+```
+
+On a narrow terminal (for example `COLUMNS=40`) the help keeps the start of every description and wraps the rest onto the next line; with `NO_COLOR` set it emits no escape sequences.
+
 ## `session resume`
 
 `rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli|9router_cli|omniroute_api} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI or fixed loopback provider route. `9router_cli` starts Codex with fixed local 9Router environment variables and no model argument; it requires `RUSH_9ROUTER_API_KEY` but never retains it. Z.AI is intentionally deferred; `9router_api` returns canonical `skipped`.
