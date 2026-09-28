@@ -24,6 +24,7 @@ import termios
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -734,3 +735,126 @@ def test_windows_f2_f3_shift_tab_decode_to_named_actions_not_escape(
     assert reader.read_key(1.0) == "f3"
     assert reader.read_key(1.0) == "shift_tab"
     assert reader.read_key(1.0) == "up"  # a plain arrow still decodes too
+
+
+class _WinConsole:
+    """Scripted `msvcrt` (kbhit/getwch) plus the kernel32 console-mode calls
+    `raw_terminal` makes on Windows. `refuse` makes SetConsoleMode fail for
+    that flag; `no_console` makes GetConsoleMode fail (input is not a
+    console)."""
+
+    def __init__(
+        self, chars: list[str], *, refuse: int = 0, no_console: bool = False
+    ) -> None:
+        self.chars = list(chars)
+        self.modes = {-10: 0x01F7, -11: 0x0003}
+        self.refuse = refuse
+        self.no_console = no_console
+
+    def kbhit(self) -> bool:
+        return bool(self.chars)
+
+    def getwch(self) -> str:
+        return self.chars.pop(0)
+
+    def kernel32(self) -> object:
+        import types
+
+        def get_mode(handle: int, mode: Any) -> int:
+            if self.no_console:
+                return 0
+            mode.contents.value = self.modes[handle]
+            return 1
+
+        def set_mode(handle: int, mode: int) -> int:
+            if mode & self.refuse:
+                return 0
+            self.modes[handle] = mode
+            return 1
+
+        return types.SimpleNamespace(
+            GetStdHandle=lambda which: which,
+            GetConsoleMode=get_mode,
+            SetConsoleMode=set_mode,
+        )
+
+
+def _windows(monkeypatch: pytest.MonkeyPatch, console: _WinConsole) -> None:
+    sys.path.insert(0, _REPO_SRC)
+    from rush.dashboard import terminal_input
+
+    monkeypatch.setattr(terminal_input, "_WINDOWS", True)
+    monkeypatch.setattr(terminal_input, "_windows_kernel32", console.kernel32)
+    monkeypatch.setitem(sys.modules, "msvcrt", console)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError, KeyboardInterrupt])
+def test_windows_console_vt_mode_saved_and_restored(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    error: type[BaseException] | None,
+) -> None:
+    """`raw_terminal` turns on VT input (0x0200) and VT output (0x0004) and
+    bracketed paste on Windows, and restores both console modes and turns
+    bracketed paste off on a clean exit, an exception and an interrupt."""
+    console = _WinConsole(["\x1b", "[", "A"])
+    _windows(monkeypatch, console)
+    from rush.dashboard import terminal_input
+
+    original = dict(console.modes)
+    reader = terminal_input.WindowsKeyReader()
+
+    def body() -> None:
+        with terminal_input.raw_terminal():
+            assert console.modes == {-10: 0x01F7 | 0x0200, -11: 0x0003 | 0x0004}
+            assert reader.read_key(0.2) == "up"
+            if error is not None:
+                raise error
+
+    if error is None:
+        body()
+    else:
+        with pytest.raises(error):
+            body()
+    assert console.modes == original
+    assert terminal_input._WINDOWS_VT_INPUT == [False]
+    out = capfd.readouterr().out
+    assert out.count("\x1b[?2004h") == 1 and out.count("\x1b[?2004l") == 1
+    assert out.index("\x1b[?2004h") < out.index("\x1b[?2004l")
+
+
+@pytest.mark.parametrize(
+    ("refuse", "no_console"), [(0x0200, False), (0x0004, False), (0, True)]
+)
+def test_windows_console_refusing_vt_falls_back_to_msvcrt_reader(
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+    refuse: int,
+    no_console: bool,
+) -> None:
+    """A console that refuses VT input or VT output (or input that is not a
+    console) keeps its original modes, gets no bracketed-paste request, and
+    the msvcrt reader decodes scan codes; any multi-character burst there
+    is one literal paste, never keys (a pasted `qq` must not quit twice)."""
+    console = _WinConsole(
+        ["\xe0", "H", "q", "q", "j", "j", "\r", "x"],
+        refuse=refuse,
+        no_console=no_console,
+    )
+    _windows(monkeypatch, console)
+    from rush.dashboard import terminal_input
+
+    original = dict(console.modes)
+    reader = terminal_input.WindowsKeyReader()
+    with terminal_input.raw_terminal():
+        assert console.modes == original
+        keys = []
+        for _ in range(8):
+            key = reader.read_key(0.02)
+            if key is None:
+                break
+            keys.append(key)
+    assert keys == ["up", "paste:qqjj", "enter", "x"]
+    assert console.modes == original
+    assert "\x1b[?2004" not in capfd.readouterr().out
