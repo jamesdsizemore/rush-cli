@@ -862,3 +862,231 @@ def test_windows_console_refusing_vt_falls_back_to_msvcrt_reader(
     assert keys == ["up", "paste:qqjj", "enter", "x"]
     assert console.modes == original
     assert "\x1b[?2004" not in capfd.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Ctrl-C in a real PTY (T29 native walkthrough: an idle Ctrl-C never exited)
+# ---------------------------------------------------------------------------
+#
+# `controlling=True`: the PTY is the child's controlling terminal and the
+# child leads its foreground process group, so the line discipline turns
+# Ctrl-C into SIGINT for it. `controlling=False`: the PTY is the child's
+# stdin/stdout but not its controlling terminal -- what a launcher that
+# runs the program outside the terminal's foreground group hands it. There
+# the line discipline has nobody to signal, so Ctrl-C must reach the TUI as
+# the 0x03 input byte. Both are a real Ctrl-C keypress on a real PTY.
+
+_CTRL_C_LAUNCHER = """
+import fcntl, runpy, sys, termios
+from pathlib import Path
+if {controlling!r}:
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+sys.argv = {argv!r}
+def _modes():
+    # PENDIN is kernel state, not a mode: the line discipline sets it itself
+    # when canonical mode returns with input pending (after Ctrl-C's flush).
+    attrs = termios.tcgetattr(0)
+    attrs[3] &= ~getattr(termios, "PENDIN", 0)
+    return attrs
+_original = _modes()
+try:
+    runpy.{run}
+finally:
+    # Read back here: once a session leader exits, macOS revokes its
+    # controlling terminal and the parent can no longer query it.
+    Path({restored_path!r}).write_text(str(_modes() == _original))
+"""
+
+_ALT_SCREEN_ON = b"\x1b[?1049h"
+_ALT_SCREEN_OFF = b"\x1b[?1049l"
+_CURSOR_SHOWN = b"\x1b[?25h"
+_ANSI_ANY = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+class _CtrlCChild:
+    """A real child on a real PTY; its launcher records whether the
+    terminal modes it exits with equal the ones it started with."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        run: str,
+        argv: list[str],
+        *,
+        controlling: bool,
+        rows: int = 24,
+        cols: int = 80,
+    ) -> None:
+        import subprocess
+
+        home = tmp_path / "home"
+        home.mkdir()
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k not in ("XDG_DATA_HOME", "RUSH_DATA_ROOT", "NO_COLOR")
+        }
+        env.update(HOME=str(home), PYTHONPATH=_REPO_SRC, TERM="xterm-256color")
+        self.master_fd, slave_fd = os.openpty()
+        _set_pty_size(self.master_fd, rows, cols)
+        self.restored_path = tmp_path / "restored"
+        launcher = tmp_path / "launcher.py"
+        launcher.write_text(
+            _CTRL_C_LAUNCHER.format(
+                controlling=controlling,
+                argv=argv,
+                run=run,
+                restored_path=str(self.restored_path),
+            )
+        )
+        self.out: list[bytes] = []
+        self.proc = subprocess.Popen(
+            [sys.executable, str(launcher)],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+            cwd=str(tmp_path),
+            start_new_session=True,
+            close_fds=True,
+        )
+        os.close(slave_fd)
+        _start_capture_thread(self.master_fd, self.out)
+
+    def output(self, start: int = 0) -> bytes:
+        return b"".join(self.out)[start:]
+
+    def text(self, start: int = 0) -> str:
+        return _ANSI_ANY.sub(b"", self.output(start)).decode(errors="replace")
+
+    def wait_for(self, what: str, predicate: Any, timeout: float = 20.0) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            if self.proc.poll() is not None:
+                break
+            time.sleep(0.02)
+        raise AssertionError(
+            f"{what} never happened (exit {self.proc.poll()}); "
+            f"tail: {self.text()[-800:]!r}"
+        )
+
+    def send(self, data: bytes) -> None:
+        os.write(self.master_fd, data)
+
+    def exit_within(self, seconds: float) -> tuple[int | None, float]:
+        start = time.monotonic()
+        while time.monotonic() - start < seconds and self.proc.poll() is None:
+            time.sleep(0.01)
+        return self.proc.poll(), time.monotonic() - start
+
+    def restored(self) -> bool:
+        return self.restored_path.read_text() == "True"
+
+    def close(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.kill()
+        self.proc.wait(timeout=10)
+        thread = _READER_THREADS.pop(self.master_fd, None)
+        if thread is not None:
+            thread.join(timeout=2.0)
+        _READER_ERRORS.pop(self.master_fd, None)
+        os.close(self.master_fd)
+
+
+@pytest.mark.parametrize("controlling", [True, False], ids=["sigint", "byte"])
+def test_ctrl_c_at_idle_exits_promptly_in_a_real_pty(
+    tmp_path: Path, capfd: pytest.CaptureFixture, controlling: bool
+) -> None:
+    """`rush ui <project>` with no running work: one Ctrl-C quits (the `q`
+    flow at idle) within 2 s, exit status 0, and the terminal modes, cursor
+    and alternate screen are restored."""
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "a.py").write_text("x = 1\n")
+    with capfd.disabled():
+        child = _CtrlCChild(
+            tmp_path,
+            "run_module('rush.cli', run_name='__main__', alter_sys=True)",
+            ["rush", "ui", str(project)],
+            controlling=controlling,
+        )
+        try:
+            child.wait_for(
+                "first frame",
+                lambda: _ALT_SCREEN_ON in child.output() and "?:Help" in child.text(),
+            )
+            time.sleep(0.3)
+            child.send(b"\x03")
+            status, elapsed = child.exit_within(2.0)
+            assert status == 0, (
+                f"idle Ctrl-C did not exit within 2 s (status {status}, "
+                f"{elapsed:.2f}s); tail: {child.text()[-400:]!r}"
+            )
+            assert child.restored(), "terminal modes were not restored"
+            tail = child.output()[-4096:]
+            assert _ALT_SCREEN_OFF in tail, "alternate screen was not left"
+            assert _CURSOR_SHOWN in tail, "cursor was not shown again"
+        finally:
+            child.close()
+
+
+_SLOW_CANCEL_ACTIONS_SRC = _CANCEL_ACTIONS_SRC.replace("_TOTAL = 40", "_TOTAL = 1000")
+
+
+@pytest.mark.parametrize("controlling", [True, False], ids=["sigint", "byte"])
+def test_ctrl_c_with_running_work_opens_the_quit_choice_in_a_real_pty(
+    tmp_path: Path, capfd: pytest.CaptureFixture, controlling: bool
+) -> None:
+    """Ctrl-C while a run is active never exits: it opens the quit choice
+    (Detach, Cancel run and stay, Return). Detach from it then cancels the
+    run, exits 0 and restores the terminal."""
+    result_path = tmp_path / "result.json"
+    harness = tmp_path / "harness.py"
+    harness.write_text(
+        _HARNESS_TEMPLATE.format(
+            src_root=_REPO_SRC,
+            actions_src=_SLOW_CANCEL_ACTIONS_SRC,
+            actions_expr="actions",
+            result_path=str(result_path),
+            ready_path=str(tmp_path / "ready"),
+        )
+    )
+    with capfd.disabled():
+        child = _CtrlCChild(
+            tmp_path,
+            f"run_path({str(harness)!r}, run_name='__main__')",
+            ["harness"],
+            controlling=controlling,
+            rows=40,
+            cols=120,
+        )
+        try:
+            child.wait_for("first frame", lambda: "?:Help" in child.text())
+            time.sleep(0.3)
+            child.send(b"s")
+            time.sleep(0.3)  # start_scan -> grant review
+            child.send(b"y")
+            time.sleep(0.5)
+            assert child.proc.poll() is None
+            mark = len(child.output())
+            child.send(b"\x03")
+            child.wait_for(
+                "quit choice",
+                lambda: "Cancel run, stay open" in child.text(mark),
+                timeout=2.0,
+            )
+            shown = child.text(mark)
+            for label in ("Detach", "Cancel run, stay open", "Return, keep observing"):
+                assert label in shown, f"quit choice {label!r} not shown"
+            assert child.proc.poll() is None, "Ctrl-C with running work exited"
+            child.send(b"d")
+            status, elapsed = child.exit_within(10.0)
+            assert status == 0, f"Detach did not exit (status {status}, {elapsed:.2f}s)"
+            assert child.restored(), "terminal modes were not restored"
+        finally:
+            child.close()
+    state = json.loads(result_path.read_text())
+    assert state["status"] == "cancelled", state["status"]
+    assert state["progress_history"][-1]["executed"] < 1000
