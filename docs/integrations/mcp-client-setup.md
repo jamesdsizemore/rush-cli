@@ -4,7 +4,7 @@
 
 No MCP client configuration, OAuth setting, or persistent Rush credential is required for provider continuation. Clients call the local `rush_continuity` tool and must request permission for supported user-owned CLI routes or fixed-loopback API routes. For `9router_cli`, set `RUSH_9ROUTER_API_KEY` only in the MCP server's process environment; Rush copies it only to the one Codex child process and never chooses a model.
 
-`rush agent list/connect/doctor` (Phase 65 [P65-05](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-05--discoverconnect-every-supported-local-agent-and-activate-memory-f35)) discovers Claude Desktop, Claude Code, Cursor, Windsurf, Zed, and Codex CLI, and registers Rush into each one's own config file without touching any other setting in that file. `rush install --agents all --memory on` ([Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42)) runs this automatically -- see §0 below. `rush_agent_connection` is registered against `src/rush/mcp.py`, the MCP-exposed equivalent of the CLI command below, wrapping the same `AgentConnectionTool` (`src/rush/tools/agent_connection.py`).
+`rush agent list/connect/doctor` (Phase 65 [P65-05](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-05--discoverconnect-every-supported-local-agent-and-activate-memory-f35)) discovers Claude Desktop, Claude Code, Windsurf, Zed, and Codex CLI, and registers Rush into each one's own config file without touching any other setting in that file. `rush install --agents all --memory on` ([Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42)) runs this automatically -- see §0 below. `rush_agent_connection` is registered against `src/rush/mcp.py`, the MCP-exposed equivalent of the CLI command below, wrapping the same `AgentConnectionTool` (`src/rush/tools/agent_connection.py`).
 
 ---
 
@@ -98,19 +98,6 @@ Claude Desktop must be **restarted** to pick up a config change.
 commands (idempotent: remove-then-add) when the `claude` executable is on `PATH`, falling back to the
 same format-preserving JSON edit otherwise. No restart needed -- Claude Code re-reads this file per
 invocation.
-
-### Cursor IDE (`~/.cursor/mcp.json`)
-```json
-{
-  "mcpServers": {
-    "rush": {
-      "command": "/usr/local/bin/rush",
-      "args": ["mcp", "serve", "--profile", "core"]
-    }
-  }
-}
-```
-Restart Cursor after connecting.
 
 ### Windsurf (`~/.codeium/windsurf/mcp_config.json`)
 ```json

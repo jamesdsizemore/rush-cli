@@ -7,7 +7,7 @@ Superseded by [ADR-0049](0049-typed-artifact-memory-schema-and-trust-tiers.md).
 Accepted (v0.2.0 / Phase 41A-41B)
 
 ## Context
-AI coding agents (Claude Code, Cursor Composer, Windsurf, Cline) suffer from context amnesia across prompt turns, lose track of architectural decisions, repeatedly attempt previously failed patches, and thrash token budgets with redundant whole-file context dumps.
+AI coding agents (Claude Code, Windsurf, Cline) suffer from context amnesia across prompt turns, lose track of architectural decisions, repeatedly attempt previously failed patches, and thrash token budgets with redundant whole-file context dumps.
 
 ## Decision
 1. Implement a **Unified Dual-Layer Memory Engine** in `src/rush/memory/engine.py` using local-first SQLite WAL storage (`.rush/memory.db`).

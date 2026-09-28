@@ -54,17 +54,9 @@ rush plugin run check-api-contracts .
 
 ## 3. Exporting Agent Skills
 
-Autonomous AI agents (such as Cursor, Claude Code, Cline, and Hermes) discover tools through standardized Agent Skill manifests (`SKILL.md`).
+Autonomous AI agents (such as Claude Code, Cline, and Hermes) discover tools through standardized Agent Skill manifests (`SKILL.md`).
 
-Historical skill-export proposal: these `skills` commands are not registered. Accepted agent integration remains planned in [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
-
-```text
-# Export Rush tools as Agent Skills
-rush skills export --format claude --output .gemini/skills/rush/
-
-# Synchronize skills across all AI assistants
-rush skills sync
-```
+Historical skill-export proposal: no `skills` command is registered. Accepted agent integration remains planned in [Phase 65](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md).
 
 ### Skill/Pattern Memory (Phase 61)
 

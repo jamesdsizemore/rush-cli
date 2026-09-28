@@ -113,7 +113,7 @@ rush security . --export-sarif artifacts/security.sarif --allow-artifact-write
 ## 7. Model Context Protocol (MCP) Server for AI Agents
 
 ```bash
-# Start local stdio MCP server for Cursor, Claude Code, or Windsurf
+# Start local stdio MCP server for Claude Code or Windsurf
 rush mcp serve
 ```
 

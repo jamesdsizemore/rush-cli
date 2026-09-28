@@ -2,7 +2,7 @@
 
 As a vibecoder, your primary currency is **tokens**.
 
-Every time you paste a 1,500-line file into Cursor or Claude Code, two things happen:
+Every time you paste a 1,500-line file into Claude Code, two things happen:
 1. **You pay for all 1,500 lines** on every single turn of the conversation.
 2. **The AI gets slower and dumber**: Large context windows dilute the model's attention, leading to missed instructions and subtle bugs.
 

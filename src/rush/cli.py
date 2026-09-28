@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
 import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
@@ -26,7 +27,12 @@ from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
 warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 from . import __version__
-from .cli_support.catalog_commands import build_catalog_path_command
+from .cli_support.catalog_commands import (
+    build_catalog_path_command,
+    build_help_command,
+    format_everyday_commands,
+    help_all_option,
+)
 from .cli_support.options import (
     _extract_permissions,
     permission_options,
@@ -83,13 +89,68 @@ __all__ = [
 ]
 
 
+class RushHelpFormatter(click.HelpFormatter):
+    """Narrows the option-table first column so long option terms (e.g.
+    ``--log-level``) don't force overflowing wrapped lines in narrow
+    terminals."""
+
+    def write_dl(
+        self,
+        rows: Iterable[tuple[str, str]],
+        col_max: int = 30,
+        col_spacing: int = 2,
+    ) -> None:
+        super().write_dl(
+            rows,
+            col_max=min(col_max, max(self.width // 3, 10)),
+            col_spacing=col_spacing,
+        )
+
+
+class RushContext(click.Context):
+    """Lets help wrap to the real terminal width, down to 20 columns
+    (Click's HelpFormatter floors width at 50)."""
+
+    formatter_class = RushHelpFormatter
+
+    def make_formatter(self) -> click.HelpFormatter:
+        formatter = super().make_formatter()
+        if self.terminal_width is None:
+            formatter.width = max(
+                min(shutil.get_terminal_size().columns, formatter.width + 2) - 2,
+                20,
+            )
+        return formatter
+
+
 class RushGroup(click.Group):
     """Click group dynamically resolving mesh commands while preserving public operations inventory."""
+
+    context_class = RushContext
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         if cmd_name == "lock":
             return lock_cmd_group
         return super().get_command(ctx, cmd_name)
+
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        format_everyday_commands(self, ctx, formatter)
+
+    def get_help(self, ctx: click.Context) -> str:
+        # ctx may not be a RushContext (e.g. built by hand), so widen the
+        # formatter here too, not only in RushContext.make_formatter.
+        formatter = RushHelpFormatter(
+            width=ctx.terminal_width, max_width=ctx.max_content_width
+        )
+        if ctx.terminal_width is None:
+            formatter.width = max(
+                min(shutil.get_terminal_size().columns, formatter.width + 2) - 2,
+                20,
+            )
+        self.format_help(ctx, formatter)
+        return formatter.getvalue().rstrip("\n")
 
 
 @click.group(
@@ -98,6 +159,7 @@ class RushGroup(click.Group):
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(__version__, "--version", "-V", message="%(version)s")
+@help_all_option
 @click.option(
     "--log-level",
     envvar="RUSH_LOG_LEVEL",
@@ -109,8 +171,6 @@ class RushGroup(click.Group):
 def cli(ctx: click.Context, log_level: str) -> None:
     """rush — agentic code-quality tools for coding agents.
 
-    \b
-    Five tools: review, lint, format, test, security.
     Pairs well with `npx @nanonets/graft` for context-graph queries.
     """
     setup_logging(log_level)
@@ -6401,6 +6461,9 @@ def lock_inspect_cmd(path: Path) -> None:
     root = _resolve_project_root(path)
     res = MeshLockManager.inspect(root, path)
     echo(json.dumps(res, indent=2))
+
+
+cli.add_command(build_help_command(cli))
 
 
 if __name__ == "__main__":

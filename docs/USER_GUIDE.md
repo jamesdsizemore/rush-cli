@@ -76,7 +76,7 @@ Whenever Rush finishes checking your project, it assigns a clear **Status** to t
 
 ---
 
-## 4. Coding with AI Assistants (Cursor, Claude, Cline & Friends)
+## 4. Coding with AI Assistants (Claude, Cline & Friends)
 
 If you use AI coding assistants, Rush is your new best friend. AI models are lightning fast, but they can occasionally write repetitive code ("AI slop"), forget to write tests, or propose dangerous commands.
 

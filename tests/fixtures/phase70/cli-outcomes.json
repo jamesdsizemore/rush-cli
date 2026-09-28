@@ -3175,6 +3175,45 @@
     "blocker": null
   },
   {
+    "id": "help",
+    "argv": [
+      "help"
+    ],
+    "canonical": "rush help",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Categories:",
+        "rush help quality"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "help lists the fixed command categories, which are never empty"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "help",
+        "nosuchcat"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Unknown category 'nosuchcat'"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli_support.catalog_commands:build_help_command",
+    "blocker": null
+  },
+  {
     "id": "hook.run",
     "argv": [
       "hook",

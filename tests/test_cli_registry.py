@@ -26,7 +26,9 @@ def test_catalog_path_command_uses_the_tool_name_and_standard_options() -> None:
 
 
 def test_cli_help_contains_every_registered_catalog_tool() -> None:
-    result = CliRunner().invoke(cli, ["--help"])
+    # T25: the default --help shows the everyday set; --help-all lists every
+    # registered command.
+    result = CliRunner().invoke(cli, ["--help-all"])
 
     assert result.exit_code == 0
     for name in ("review", "lint", "format", "test", "security"):

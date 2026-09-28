@@ -99,7 +99,7 @@ The rise of "vibe-coding"—developing complex software via high-velocity AI con
 |                                                                                         |
 | CATEGORY 4: SECURITY & AGENT GOVERNANCE                                                 |
 | 13. rush vibecoder 007              -> High-entropy secret scanner & credential masker  |
-| 14. rush vibecoder governance-sync  -> AGENTS.md compiler for Cursor, Windsurf, Copilot|
+| 14. rush vibecoder governance-sync  -> AGENTS.md compiler for Windsurf, Copilot|
 | 15. rush vibecoder sandbox          -> Ephemeral git worktree isolated agent workspace  |
 | 16. rush vibecoder hook-guard       -> SHA-256 pre-commit tamper verification           |
 |                                                                                         |
@@ -998,7 +998,7 @@ The following specific documents across the `/docs` tree must be created or upda
 #### A. User-Facing Documentation
 - **[`docs/USER_GUIDE.md`](file:///C:/Users/james/developer/rush-cli/docs/USER_GUIDE.md)**: Add "Vibe-Coding with Rush: Sub-Second AI Engineering Safeguards" guide.
 - **[`docs/CLI_REFERENCE.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_REFERENCE.md)**: Document `rush vibecoder run`, `rush vibecoder watch`, `rush vibecoder audit` (flags: `--strict-types`, `--fix-safe`, `--sub-second`).
-- **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for integrating Rush with Cursor, Windsurf, and Claude Code during rapid prototyping sessions.
+- **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for integrating Rush with Windsurf and Claude Code during rapid prototyping sessions.
 - **[`docs/RECIPE_BOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/RECIPE_BOOK.md)**: Add automated pre-save feedback loop recipes.
 - **[`docs/EXAMPLES.md`](file:///C:/Users/james/developer/rush-cli/docs/EXAMPLES.md)**: Show example vibe-coding session reports and before/after cleanup diffs.
 - **[`docs/TUTORIALS.md`](file:///C:/Users/james/developer/rush-cli/docs/TUTORIALS.md)**: Add step-by-step tutorial on vibe-coding a full-stack SaaS with Rush guardrails active.

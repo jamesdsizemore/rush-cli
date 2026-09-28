@@ -293,7 +293,7 @@ class RiskMatrixCalculator:
 
 ```python
 class AgentsMdSynchronizer:
-    """Compiles canonical AGENTS.md instructions to .cursorrules, .clinerules, etc."""
+    """Compiles canonical AGENTS.md instructions to .clinerules, etc."""
 
     def sync_all(self) -> list[SyncResult]: ...
 

@@ -8,7 +8,7 @@ If `rush context pack` reports `recovery.state: "available"`, use its CCR handle
 
 Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, through `9router_cli`, or through OmniRoute's fixed local API, with explicit `--allow-network`. `9router_cli` uses the installed Codex CLI and fixed local 9Router; set `RUSH_9ROUTER_API_KEY` in the invoking process and do not provide a model. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred.
 
-AI coding assistants like **Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
+AI coding assistants like **Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
 
 However, working with AI models without guardrails introduces common frustrations:
 1. **Hallucinations**: The AI invents non-existent APIs or writes placeholder stubs that do nothing.
@@ -35,7 +35,7 @@ Rush includes a built-in local Model Context Protocol (MCP) server. Current sour
 uv run --directory /absolute/path/to/rush-cli rush mcp serve
 ```
 
-### Adding Rush to Cursor, Claude Code, or Cline:
+### Adding Rush to Claude Code or Cline:
 Add Rush to your assistant's MCP configuration (`settings.json` or `claude_desktop_config.json`):
 
 ```json
@@ -119,12 +119,12 @@ Rush will flag useless comment repetitions (like `# This function adds two numbe
 
 ## 4. Keeping Agent Rules Synchronized with `rush governance`
 
-If your team uses multiple AI tools across different developers (Cursor, Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
+If your team uses multiple AI tools across different developers (Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
 
 ```bash
 uv run rush governance sync
 ```
-Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
+Rush automatically updates `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
 
 ---
 

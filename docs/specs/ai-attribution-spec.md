@@ -5,7 +5,7 @@
 
 ## 2. Commit Classification
 - **AI-Generated (`is_ai_gen`)**: Commits where the author or trailers explicitly indicate automated generation (e.g. `Generated-by: rush-cli-agent`, `Agent: AutoScaffolder`). Emits rule `ai-attribution` with `INFO_AI_GENERATED`.
-- **AI-Assisted (`is_ai_assist`)**: Commits with `Co-authored-by:` naming an AI entity (e.g. Claude, Copilot, Cursor, ChatGPT), or containing `Model:` / `AI-Assisted:` trailers. Emits rule `ai-attribution` with `INFO_AI_ASSISTED`.
+- **AI-Assisted (`is_ai_assist`)**: Commits with `Co-authored-by:` naming an AI entity (e.g. Claude, Copilot, ChatGPT), or containing `Model:` / `AI-Assisted:` trailers. Emits rule `ai-attribution` with `INFO_AI_ASSISTED`.
 - **Human**: Commits without AI attribution markers.
 
 ## 3. Shallow History Handling
