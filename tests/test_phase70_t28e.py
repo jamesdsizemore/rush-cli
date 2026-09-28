@@ -1331,12 +1331,12 @@ def test_export_project_artifact_interrupted_write_removes_only_its_own_partial(
     other_partial = tmp_path / "unrelated.txt.partial"
     other_partial.write_bytes(b"a different in-flight export, must survive")
 
-    original_replace = os.replace
+    original_link = os.link
 
     def _boom(*_args: Any, **_kwargs: Any) -> None:
-        raise OSError("simulated interruption before os.replace")
+        raise OSError("simulated interruption before os.link")
 
-    monkeypatch.setattr(os, "replace", _boom)
+    monkeypatch.setattr(os, "link", _boom)
 
     with pytest.raises(OSError):
         wp.export_project_artifact(
@@ -1350,7 +1350,7 @@ def test_export_project_artifact_interrupted_write_removes_only_its_own_partial(
             data_root=data_root,
         )
 
-    monkeypatch.setattr(os, "replace", original_replace)
+    monkeypatch.setattr(os, "link", original_link)
     assert not destination.exists()
     assert not list(tmp_path.glob("interrupted.txt*.partial"))
     assert other_partial.exists(), (

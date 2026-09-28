@@ -4556,7 +4556,7 @@ def _artifact_inspect(state: TuiState, actions: ScanActions) -> None:
         except (wp.ProjectError, OSError, ValueError) as exc:
             page = {"error": str(exc) or type(exc).__name__}
         chunk = b"" if page.get("error") else base64.b64decode(page["content_base64"])
-        if not chunk:
+        if page.get("error") or (not chunk and page.get("next_cursor") is not None):
             detail["error"] = page.get("error") or "read_failed"
             cursor = None
             break
@@ -4608,12 +4608,23 @@ def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
     if item is None or project.project_id is None:
         state.message = "no captured artifact selected"
         return
+    from rush.io.physical_paths import ContainmentError
+    from rush.workflows import projects as wp
+
+    destination = _artifact_export_destination(project.root, item)
+    try:
+        wp.check_export_destination(project.root, destination)
+    except ContainmentError:
+        state.message = (
+            f"export refused: {destination} resolves outside the project root"
+        )
+        return
     _open_grant(
         state,
         {
             "kind": "artifact_export",
             "grants": "artifact_write",
-            "destination": str(_artifact_export_destination(project.root, item)),
+            "destination": str(destination),
             "run_id": item.get("run_id"),
             "attempt_id": item.get("attempt_id"),
             "tool_id": item.get("tool_id"),
@@ -4627,13 +4638,14 @@ def _artifact_export_review(state: TuiState, actions: ScanActions) -> None:
 
 
 def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
-    """The confirmed export: exactly one `export_project_artifact` call."""
+    """The confirmed export: exactly one `export_project_artifact` call (it
+    creates the contained `.rush/exports` parent itself)."""
+    from rush.io.physical_paths import ContainmentError
     from rush.workflows import projects as wp
 
     project = state.active_project
     destination = Path(grant["destination"])
     try:
-        destination.parent.mkdir(parents=True, exist_ok=True)
         result = wp.export_project_artifact(
             project.project_id or str(project.root),
             run_id=str(grant["run_id"]),
@@ -4645,7 +4657,7 @@ def _export_artifact(state: TuiState, grant: Mapping[str, Any]) -> None:
             data_root=state.data_root,
             expected_sha256=grant.get("sha256"),
         )
-    except (wp.ProjectError, OSError, ValueError) as exc:
+    except (wp.ProjectError, OSError, ValueError, ContainmentError) as exc:
         state.message = f"export failed: {exc}"
         return
     state.message = f"exported {result['path']} ({result['size']} bytes)" + (
@@ -5975,6 +5987,8 @@ def _overview_lines(data: Mapping[str, Any]) -> list[Text]:
     git = evidence.get("git") or {}
     if not git.get("has_git"):
         lines.append(Text("Git: unavailable -- no Git repository"))
+    elif git.get("state") == "empty":
+        lines.append(Text("Git: empty repository -- no commits yet"))
     elif git.get("head") is None:
         lines.append(Text("Git: unavailable -- git could not read HEAD"))
     else:
@@ -6216,6 +6230,8 @@ def _artifact_detail_lines(detail: Mapping[str, Any], scroll: int) -> list[Text]
                 "yellow",
             )
         )
+    elif not error and size == 0:
+        lines.append(_safe("empty captured content (0 bytes)", "dim"))
     elif detail.get("end", 0) > detail.get("offset", 0):
         text_lines = str(detail.get("text") or "").split("\n")
         start = min(scroll, max(0, len(text_lines) - 1))
@@ -6642,8 +6658,10 @@ def _render_git_panel(state: TuiState) -> Panel:
             )
         )
     if state.git_data is not None:
-        if git.get("state") == "empty" or git.get("has_git") is False:
+        if git.get("has_git") is False:
             lines.append(_safe("No Git repository at this project root", "bold yellow"))
+        elif git.get("state") == "empty":
+            lines.append(_safe("Empty repository: no commits yet", "bold yellow"))
         elif git.get("state") == "failed":
             lines.append(
                 _safe("Git read failed: HEAD/status could not be read", "bold red")
