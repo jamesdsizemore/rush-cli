@@ -1451,6 +1451,37 @@ test SHA-256 is `2d84ae89ed32714a94b97a5fda6e8c6d14bf92f414b21ce129637ddc9352791
 Independent source review passed. No runtime/package source changed from the
 verified `1364158` native candidate; subsequent changes are CI/test/docs only.
 
+### Current macOS candidate and installed-package receipts — 2026-10-04
+
+[CI run 37226805311](https://github.com/jamesdsizemore/rush-cli/actions/runs/37226805311)
+binds source `ae692827e14aaf318e7157bbb9b03d649ae57bb1`. macOS job
+`111508016968` passed npm warmup, native build, wheel/sdist checks, native
+origin/MCP checks and upload. Artifact `11312023919`, named
+`rush-macos-ae692827e14aaf318e7157bbb9b03d649ae57bb1`, has uploaded ZIP digest
+`e8b1c747a0704e812bcf4b4a323af73ad78e630fe3d36bdd420675a075ee2a4a`.
+Downloaded `SOURCE_COMMIT` matches that revision; `shasum -a 256 -c SHA256SUMS`
+passed. Archive SHA-256 is
+`8c9a54a9eca73d644eea4d793be5401d72d20d6a3edbaa07c7c82535d0a7587e`;
+extracted executable SHA-256 is
+`f96d0ee4356f4c10ff3382c7449012c0753c650fd4f1fb21e400db9e26e2ff03`.
+The existing installed-artifact helper, run locally once against only this
+downloaded native archive under `nice -n 15` and single-thread caps, returned
+`status="passed"`, `origin_verified=true`, `import_clean=true`,
+`mcp_initialized=true`, and empty stderr. No local build or full suite ran.
+
+Current Ubuntu installed-artifact job `111508017076` and Windows job
+`111508017071` both passed independent wheel/sdist origin and clean-import
+checks. These are current-candidate package receipts; they do not establish
+every native Linux/Windows executable or recovery requirement. Windows tests
+reported 57 passed and three transferred Phase 71 UI failures; its later ACL
+gate remained skipped. Linux Quality was still running at this checkpoint.
+
+Runtime source, lock, package metadata and installed-artifact helper are
+unchanged between `1364158` and `ae69282`. The reviewed G6 consent packet above
+still binds its distinct `1364158` binary; it must not be represented as this
+new executable. Actual G6, retained T26/T29/G8 journeys, skipped backend gates
+and final acceptance reconciliation remain open.
+
 ### Proposed continuation of existing backend CI gates — consent pending
 
 Current UI failures prevent existing later backend gates from running. This

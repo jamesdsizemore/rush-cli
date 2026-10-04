@@ -2,6 +2,16 @@
 
 Status: in progress, 2026-10-03. No phase acceptance or final handoff claimed.
 
+Current checkpoint (2026-10-04): `ae69282` macOS CI warmup/build/probe/upload
+and downloaded native origin/import/MCP probe passed. Current Linux/Windows
+wheel/sdist probes passed; Windows reported 57 passed and three Phase 71 UI
+failures. Linux Quality remains in progress. Real-host G6 packet consent,
+retained end-to-end journeys, skipped backend gates and final frozen review
+remain open. The current evidence-report checkpoint supersedes older dated
+execution states below; transferred UI remains Phase 71. Production attribution
+repair is implemented with focused regression and review evidence; final CI
+acceptance is still required.
+
 Current priority (owner correction, 2026-10-03): finish existing Phase 70 CI
 blockers and full gates. Linux/Windows testing uses existing CI lanes; no
 separate native machines requested. Separate production Aislop attribution
