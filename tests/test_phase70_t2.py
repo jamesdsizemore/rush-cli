@@ -474,6 +474,97 @@ def test_t02_install_failure_restores_the_manual_entry(tmp_path: Path, monkeypat
     assert json.loads(config_path.read_text()) == original
 
 
+@pytest.mark.parametrize("parent", ["mcp_servers.rush", 'mcp_servers."rush"'])
+def test_t02_codex_conversion_removes_approval_subtables_and_restores_bytes(
+    tmp_path: Path, monkeypatch, parent: str
+):
+    import tomllib
+
+    from rush.tools.install import install_native_agent_plugin
+
+    _install_subprocess_spy(monkeypatch)
+    homes = _isolated_homes(tmp_path, monkeypatch)
+    config_path = homes["codex"] / "config.toml"
+    unrelated = (
+        '# keep exact spacing\nmodel = "chosen"\n\n'
+        'notes = """\n[mcp_servers.rush]\nkeep literal header\n"""\n'
+        '[mcp_servers.other]\ncommand = "/other"\n\n'
+        '[mcp_servers.rush_extra]\ncommand = "/extra"\n'
+    )
+    original = (
+        unrelated[: unrelated.index("[mcp_servers.other]")]
+        + f'[{parent}] # manual registration\ncommand = "/old/rush"\n'
+        + 'args = ["mcp", "serve"]\n'
+        + unrelated[unrelated.index("[mcp_servers.other]") :]
+        + '[mcp_servers."rush".tools.rush_status]\napproval_mode = "approve"\n'
+        + "[mcp_servers.rush.tools.'rush.test']\napproval_mode = 'approve'\n"
+    ).encode()
+    config_path.write_bytes(original)
+    observed = []
+
+    def fail_install(argv, **_kwargs):
+        converted = config_path.read_bytes()
+        observed.append(converted)
+        assert converted == unrelated.encode()
+        assert "rush" not in tomllib.loads(converted.decode())["mcp_servers"]
+        return subprocess.CompletedProcess(argv, 1, "", "install failed")
+
+    monkeypatch.setattr(subprocess, "run", fail_install)
+    plugin_root = tmp_path / "root"
+    plugin_root.mkdir()
+    state = install_native_agent_plugin(
+        host="codex",
+        plugin_root=plugin_root,
+        manual_config_path=config_path,
+        consent=True,
+    )
+    assert observed
+    assert state["state"] == "failed"
+    assert config_path.read_bytes() == original
+
+
+def test_t02_successful_codex_conversion_restores_nested_entry_after_fresh_edit(
+    tmp_path: Path, monkeypatch
+):
+    import tomllib
+
+    from rush.integrations.agents import _upsert_toml_table
+    from rush.tools.install import install_native_agent_plugin
+
+    _install_subprocess_spy(monkeypatch)
+    homes = _isolated_homes(tmp_path, monkeypatch)
+    config_path = homes["codex"] / "config.toml"
+    unrelated = '# preserved\nmodel = "chosen"\n'
+    original = (
+        unrelated
+        + '[mcp_servers.rush]\ncommand = "/old/rush"\nargs = ["mcp", "serve"]\n'
+        + "[mcp_servers.rush.tools.'rush.status']\napproval_mode = 'approve'\n"
+    )
+    entry = tomllib.loads(original)["mcp_servers"]["rush"]
+    config_path.write_text(original)
+    plugin_root = tmp_path / "root"
+    plugin_root.mkdir()
+    state = install_native_agent_plugin(
+        host="codex",
+        plugin_root=plugin_root,
+        manual_config_path=config_path,
+        consent=True,
+    )
+    assert state["state"] == "installed"
+    fresh = config_path.read_text() + '\n[history]\npersistence = "none"\n'
+    config_path.write_text(fresh)
+    restored = _upsert_toml_table(fresh, ("mcp_servers", "rush"), entry)
+    assert restored.startswith(fresh)
+    assert tomllib.loads(restored)["mcp_servers"]["rush"] == entry
+    updated = _upsert_toml_table(
+        original,
+        ("mcp_servers", "rush"),
+        {"command": "/new/rush", "args": ["mcp", "serve"]},
+    )
+    assert updated.endswith(original[original.index("[mcp_servers.rush.tools") :])
+    assert tomllib.loads(updated)["mcp_servers"]["rush"]["tools"] == entry["tools"]
+
+
 def test_t02_never_two_rush_servers_active_after_conversion(
     tmp_path: Path, monkeypatch
 ):

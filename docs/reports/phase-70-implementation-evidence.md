@@ -1964,3 +1964,54 @@ without a production change. This is installed executable/transport acceptance,
 not a Codex model-session verdict. Restarting the native session must refresh its
 catalog before actual Codex test/edit/hook acceptance closes G6/T26/T29/G8.
 Phase 70 remains open. Private installation/recovery receipt stays untracked.
+
+### Owner-observed Codex pickup and migration correction — 2026-10-04
+
+After restarting the native CLI, the owner reported an actual `rush_status`
+result for `/Users/jamesdsizemore/Developer/rush-cli`: registered project,
+missing `rush.toml`, incomplete latest run
+`fa05ce62-c2b7-4e81-8b81-e9d841c37d8d`, stale published result with 371 findings,
+installed but unprobed required engines, idle activity and unverified agent
+capabilities. This is **owner-observed native Codex MCP pickup**, beyond the
+preceding SDK-only acceptance. No transcript/hash is invented for this report.
+The `warn` is a successful domain result. Its setup recommendation is not an
+instruction to mutate the primary checkout; that setup was not executed.
+
+The next approved temporary native-plugin attempt exposed a specific existing
+migration defect. Codex had saved `[mcp_servers.rush.tools.rush_status]` with
+`approval_mode = "approve"`. Manual-entry conversion removed the parent
+transport table but retained this descendant. The native marketplace command
+then rejected bootstrap configuration with `invalid transport` in
+`mcp_servers.rush`, before plugin installation or fixture registration.
+Automatic failure rollback restored the complete original configuration
+byte-for-byte; current SHA-256 is
+`8794f54cd3beab2db0cde4821404af49c6e1fed8b268b81570b98ca343c1a477`.
+
+Materialized temporary plugin files were removed. Ownership ledger contains
+zero entries, activation file is absent, and both plugin roots are absent.
+Disconnect explicitly retained original unmanaged manual entries with
+`ownership_unproven`; these expected guards are not zero-conflict receipts or
+owned-resource leaks. Installed executable still matches accepted `f8b2f6ee`.
+The narrow correction is now implemented and independently reviewed.
+`_remove_toml_table` removes the parsed selected parent/descendant paths,
+including quoted/noncontiguous tables, while retaining unrelated bytes and
+multiline literals. `_toml_value` renders saved nested dictionaries as valid
+TOML inline tables with quoted keys. Ordinary command/profile upsert behavior
+is unchanged; existing descendant approval settings remain intact.
+
+Removal regressions first failed twice; restoration separately reproduced
+`TOMLDecodeError`. The corrected five focused cases passed in 0.32 seconds;
+the complete T2 file passed **43 tests in 3.15 seconds**. Tests execute actual
+conversion, exact failed-install rollback and successful selected-entry
+restoration after fresh unrelated history metadata. Ruff check/format and two
+independent frozen source reviews passed. Frozen `agents.py` SHA-256:
+`720a609460054676631b984a650b85c86f7a492288067f94a50c9c1a13b2789a`;
+`test_phase70_t2.py` SHA-256:
+`c2b075ed719d529190bf78e6ad475336c2fb5fa59db83b3cc26271e80d1b5358`.
+
+This correction still needs current-source CI/native artifact and actual
+packaged Codex test/edit/hook/timeout/disable acceptance. The earlier `f8b2f6ee`
+artifact does not contain the migration fix. Fresh-CAS cleanup must restore an
+absent selected entry, skip an already-original entry and reject divergent
+entries; rendering tests do not substitute for live cleanup. Phase 70 remains
+open; no blanket client failure or completed native journey is asserted.

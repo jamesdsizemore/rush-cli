@@ -429,6 +429,15 @@ def _toml_value(value: Any) -> str:
         return json.dumps(value)
     if isinstance(value, list):
         return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return (
+            "{ "
+            + ", ".join(
+                f"{json.dumps(key)} = {_toml_value(item)}"
+                for key, item in value.items()
+            )
+            + " }"
+        )
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
@@ -2729,19 +2738,30 @@ class AgentDisconnectResult:
 
 
 def _remove_toml_table(text: str, table_path: tuple[str, ...]) -> str | None:
-    header = "[" + ".".join(table_path) + "]"
     lines = text.splitlines(keepends=True)
-    start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
-    if start is None:
-        return None
-    end = next(
-        (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")),
-        len(lines),
-    )
-    before = lines[:start]
-    if end == len(lines) and before and not before[-1].strip():
-        before = before[:-1]
-    return "".join(before + lines[end:])
+    kept: list[str] = []
+    removing = False
+    found = False
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith("["):
+            try:
+                table = tomllib.loads(line)
+                # A header-shaped line inside a multiline string is not a table.
+                tomllib.loads("".join(lines[: index + 1]))
+            except tomllib.TOMLDecodeError:
+                pass
+            else:
+                path: list[str] = []
+                while table:
+                    key, table = next(iter(table.items()))
+                    path.append(key)
+                    if isinstance(table, list):
+                        table = table[0]
+                removing = tuple(path[: len(table_path)]) == table_path
+                found |= removing
+        if not removing:
+            kept.append(line)
+    return "".join(kept) if found else None
 
 
 def _remove_json_like_entry(text: str, servers_key: tuple[str, ...]) -> str | None:

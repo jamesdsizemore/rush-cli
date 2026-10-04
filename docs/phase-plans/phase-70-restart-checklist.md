@@ -485,3 +485,11 @@ installation now matches the accepted artifact; both host configuration files
 remain byte-identical and prior executable recovery copy is retained. Current
 full and core profiles both include `rush_status`. Missing status in the old
 installation did not prove an empty native client catalog or a Codex defect.
+
+### Current Codex acceptance task — 2026-10-04
+
+- [x] Owner refreshed native Codex and observed actual `rush_status` result for registered primary project; MCP pickup is proven. Its `warn` reports missing configuration/stale incomplete results, not a transport failure.
+- [x] Reproduce native manual-to-plugin conversion failure after Codex saved a nested tool approval table; verify automatic whole-file rollback and remove temporary plugin resources. Preserve unmanaged original entries.
+- [x] Correct shared TOML removal and nested-entry restoration: selected Rush parent/descendants removed, saved approval dictionaries rendered as valid TOML, unrelated bytes and failed-install rollback preserved. Realistic regressions, all 43 T2 tests, Ruff and frozen reviews passed.
+- [ ] Rebuild reviewed source through existing CI and verify native installed artifact; run actual packaged Codex fixture journey without blind inventory probes or primary setup.
+- [ ] Finish native test/edit/repair/timeout/disable/cleanup acceptance before closing Phase 70 or merging. Existing successful backend/Claude observations remain valid; UI stays Phase 71.
