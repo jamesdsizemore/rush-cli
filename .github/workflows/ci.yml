@@ -334,7 +334,7 @@ jobs:
       - name: Build distribution packages
         run: uv build
 
-      - name: Build native macOS candidate
+      - name: Install native macOS build dependencies
         if: runner.os == 'macOS'
         shell: bash
         run: |
@@ -342,6 +342,23 @@ jobs:
           unset PYTHONPATH PYTHONHOME
           uv sync --all-extras --frozen --python 3.12
           uv pip install pyinstaller
+
+      - name: Warm aislop's npm runtime for native macOS probes
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
+
+      - name: Build native macOS candidate
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          unset PYTHONPATH PYTHONHOME
           cat > rush_entry.py <<'PYEOF'
           from rush.entry import main
 

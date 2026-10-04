@@ -396,8 +396,8 @@ Latest strict run: 79.80 seconds; no all-three-size PASS is claimed.
 - [x] Record additive ownership amendments in Phase 70, Phase 71 and restart plans.
 - [x] Pass frozen-source Ruff check/format and mypy; preserve interrupted G7 evidence without claiming PASS.
 - [x] Correct production attribution; frozen review and regression passed. Candidate `8341cd8` passed five engine/artifact CI jobs; full CI failed on recorded Windows prerequisite and transferred UI checks.
-- [ ] Native Windows facts obtained; confirm reviewed privilege-restoring fixture correction and remaining CI gates; no local full suite/build.
-- [ ] Approved macOS CI artifact route implemented; confirm matching native artifact, then complete retained real-host consent/acceptance.
+- [ ] Windows denial correction cleared in current CI's 57 passes; finish skipped backend gates and remaining CI conclusions; no local full suite/build.
+- [ ] Current macOS artifact passed CI and local native probe with matching source/checksum; refreshed real-host packet still requires consent and actual acceptance.
 - [ ] Close retained Phase 70 gates before Phase 71; transferred UI checks remain required there.
 
 This section supersedes earlier checklist sequencing that kept UI acceptance

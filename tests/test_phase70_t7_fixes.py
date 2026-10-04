@@ -837,7 +837,7 @@ def test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync() -> None:
         assert step.get("shell") == "bash", name
         assert step["env"] == {"AISLOP_NO_TELEMETRY": "1", "DO_NOT_TRACK": "1"}
         assert not any("needs_aislop" in run for run in runs), name
-    assert len(synced) == 5, synced
+    assert len(synced) == 6, synced
 
 
 def test_setup_result_renders_permission_blocked_engine_with_one_recovery() -> None:

@@ -1327,3 +1327,161 @@ not yet exercised the correction. CI workflow source review passed on
 Existing `tests/test_ci_contract.py` passed all four checks in 0.17 seconds;
 this verifies workflow prerequisites and structure, not native execution.
 Current documentation parity and whitespace checks also passed.
+
+### Native candidate acceptance and refreshed G6 packet — 2026-10-04
+
+[CI run 37224078305](https://github.com/jamesdsizemore/rush-cli/actions/runs/37224078305)
+binds source `13641585249a7f79ca0b7bc66caf409fc1c1e808`. The macOS artifact job
+passed wheel/sdist origin/import checks and native origin/MCP initialization,
+then uploaded `rush-macos-13641585249a7f79ca0b7bc66caf409fc1c1e808`, artifact ID
+`11311730096`. The uploaded ZIP digest is
+`2be7001e93de0c23ab79085f8fd3f4ba2e022bd9657117fe627c906a9a2397de`.
+Downloaded `SOURCE_COMMIT` equals that candidate. Native archive SHA-256 is
+`cca8b0f340a366c30f011000b67f4485a10e54183096efc14afa7a48ac26f3be`;
+checksum verification returned `rush-darwin-arm64.tar.gz: OK`. The existing
+native-only probe also passed on the owner's arm64 macOS, with
+`origin_verified`, `import_clean` and `mcp_initialized` all true. No local build
+or full suite ran. Windows reported three failed and 57 passed in 155.20s:
+the corrected denial test was selected without failure/skip; remaining failures
+are the same three Phase 71 UI cases. The later Windows data-directory ACL
+step was skipped. The completed run failed overall: six of eight jobs passed.
+Linux Quality reported four failed, 6,469 passed and 26 deselected in 1,202.00
+seconds. Three failures are the recorded Phase 71 UI cases; the new retained
+failure is `test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync`:
+the new artifact job's dev sync lacked the existing npm-cache warmup. Mypy,
+documentation parity, dependency audit and whitespace steps were all skipped.
+
+This packet supersedes the earlier G6 executable/config binding. It is a
+preview only; no real-home install, hook activation or model call has run.
+
+1. Use the verified executable
+   `/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/.scratch/phase-70-native-1364158/native/rush`,
+   SHA-256 `7640df34559c155e9456540dea4de604c74b950af2be6ae13dc104a624cca985`.
+   Actual acceptance project is
+   `/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/.scratch/phase-70-g6-1364158/project`;
+   it currently contains only `fixture.py` and `README.md`, without guidance or
+   `.rush` activation. Exact managed guidance and all ten rendered plugin
+   resources are reviewable under sibling `preview/`.
+   `preview/CLAUDE.md` is 671 bytes, SHA-256
+   `24b649860d44e2d09d492fb787a2f354d2b97f5ee658da24f40f3c6e551c772b`;
+   `preview/AGENTS.md` is 665 bytes, SHA-256
+   `1c72c9578cc8cd81f8401948edf93473f842ba9d54577870097828b207d232bd`.
+   All 14 fixture/preview files match their projected bytes and hashes.
+2. Back up `/Users/jamesdsizemore/.claude.json` (0644) and
+   `/Users/jamesdsizemore/.codex/config.toml` (0600) privately, retaining modes.
+   Whole-file SHA-CAS preview snapshots are Claude
+   `ca1ddbf6345c492f8d8e6d102144e29bb0fab3d0d6ef7aa9f7988641ff4c7bbf`
+   to `e04acb1e8243c3490681cfb9de276a42368c43f136b70b2665b478e5f926f49c`,
+   removing only the 200-byte unowned Rush entry (entry digest
+   `26d4d43b3b17d04dc2fc907238d674a6defa49b532d104b4c3f23dbab508c127`);
+   Codex `d9850291648b1ec0198854e254be4addb32230a0e128a285f73bc2cb8837e382`
+   to `2c0f503091fba29d7032d93bcc1aca9318df485f03617064f60c53f417e3b509`,
+   removing only the 120-byte entry (entry digest
+   `1b31316aff56df750ef668be2af99d32b113e8d259a630119c6132fbd1818862`).
+   Re-preview immediately before apply on whole-file drift; preserve every
+   unrelated setting. Consent binds the selected Rush entries and removal
+   delta; unrelated Claude metadata drift alone does not require new consent
+   when those entry digests and the exact removal remain unchanged.
+3. Materialize the rendered candidate-bound native plugins under
+   `/Users/jamesdsizemore/Library/Application Support/Rush/agent-plugins/0.3.0/{claude,codex}/`.
+   Rush also owns `agents/owned.json` and transient `agents/agents.lock` under
+   that Rush data root. Captured native install commands are:
+   `claude plugin marketplace add <claude-root> --scope user`,
+   `claude plugin install rush@rush-local --scope user`,
+   `codex plugin marketplace add <codex-root>`, and
+   `codex plugin add rush@rush-local`. Both MCP templates select `core`.
+   Hook templates grant no activation; hooks require separate explicit opt-in.
+4. Connect only Claude Code/Codex to the contained project and install the
+   previewed managed guidance using these verified current invocations:
+
+   ```sh
+   RUSH_G6_CANDIDATE='/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/.scratch/phase-70-native-1364158/native/rush'
+   RUSH_G6_PROJECT='/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/.scratch/phase-70-g6-1364158/project'
+   rtk proxy "$RUSH_G6_CANDIDATE" agent connect claude-code --session phase70-g6-claude-native --project "$RUSH_G6_PROJECT" --rush-binary "$RUSH_G6_CANDIDATE" --consent --install-guidance --allow-cache-write --allow-artifact-write --json
+   rtk proxy "$RUSH_G6_CANDIDATE" agent connect codex --session phase70-g6-codex-native --project "$RUSH_G6_PROJECT" --rush-binary "$RUSH_G6_CANDIDATE" --consent --install-guidance --allow-cache-write --allow-artifact-write --json
+   ```
+
+   Add `--acknowledge` only after actual host pickup has been observed.
+   Normal connect requires the existing fixture directory, not registration.
+   If the separate D3 hook opt-in is approved, first run candidate
+   `project add "$RUSH_G6_PROJECT" --allow-cache-write --json`, capture whether
+   it created a new entry plus exact ID/revision, then add
+   `--enable-agent-hooks` to each contained connection. The verified project-add
+   canonicalizer resolves this literal directory without ascending to the
+   surrounding development Git worktree.
+   Exercise actual skill/context, granted and
+   denied access, faulty edit/feedback, timeout and disable/disconnect behavior.
+   Run hosts serially, with no full local suite/build or broad engine workload.
+   The D3 hook activation is separate opt-in; omit `--hook-result-cache` and
+   retain `recovery_cache_write=false`. No Cursor or unrelated project writes.
+5. Disconnect owned project components with candidate
+   `rush agent disconnect claude-code --project <project>` and
+   `rush agent disconnect codex --project <project>`. Native cleanup uses
+   `claude plugin uninstall rush@rush-local --scope user`,
+   `claude plugin marketplace remove rush-local`,
+   `codex plugin remove rush@rush-local`, and
+   `codex plugin marketplace remove rush-local`.
+   Installer journal rolls back removed manual entries on install failure;
+   successful disconnect does not restore those original entries. Restore
+   them separately with existing JSON/TOML upsert plus fresh SHA-CAS, preserving
+   concurrent non-Rush settings. Verify modes/digests, host readback and absence
+   of owned activation. For a registration created solely by the hook test,
+   compensate through existing
+   `rush.workflows.projects.unregister_project(project_id, expected_revision=revision)`;
+   use the captured created=true ID/revision, never a preexisting registration.
+   That helper removes only the selected registry entry and descriptor whose
+   bytes still match its original. It rejects revision drift but preserves a
+   changed descriptor without raising. Check descriptor removal/readback
+   separately and stop if it is retained.
+   Native host bookkeeping follows its native commands;
+   no all-home journal/rollback claim is made. Stop on restoration conflict.
+
+G6 remains unexecuted until this refreshed packet's required consent.
+
+The added macOS job's warmup invariant has since been repaired using the same
+version-pinned, telemetry-disabled npm-cache warmup as the five existing jobs.
+Dependency sync now has its own step; warmup follows it before native build.
+The existing strict job-count assertion changes from five synchronized jobs
+to six. Its exact selector passed in 0.16 seconds after the initial missing
+warmup/count failures; the four existing CI-contract checks passed in 0.33
+seconds alongside the intermediate warmup-count failure. Native npm warming
+still requires the next CI execution. Frozen workflow SHA-256 is
+`72f139977c11114c59b30487ef39e2fc7a4be14968a2491b00d8127dffaeed6f`;
+test SHA-256 is `2d84ae89ed32714a94b97a5fda6e8c6d14bf92f414b21ce129637ddc93527910`.
+Independent source review passed. No runtime/package source changed from the
+verified `1364158` native candidate; subsequent changes are CI/test/docs only.
+
+### Proposed continuation of existing backend CI gates — consent pending
+
+Current UI failures prevent existing later backend gates from running. This
+five-line conditional change to `.github/workflows/ci.yml` would run the four
+Linux G7 post-test gates and Windows ACL gate unless cancelled. Original test
+failures and overall failed status remain visible. No new job, runner or test
+selection is proposed. The earlier no-CI-edit decision was superseded only for
+macOS artifact production; this separate amendment is not applied or approved.
+
+```diff
+       - name: Release gate typecheck (mypy)
++        if: ${{ !cancelled() }}
+         run: uv run mypy src/rush
+
+       - name: Verify documentation parity & links
++        if: ${{ !cancelled() }}
+         run: uv run python scripts/sync_docs.py --check
+
+       - name: Audit dependencies
++        if: ${{ !cancelled() }}
+         run: uv run pip-audit
+
+       - name: Check whitespace
++        if: ${{ !cancelled() }}
+         run: git diff --check
+
+       - name: Verify Windows dashboard data-directory ACL contract
++        if: ${{ !cancelled() }}
+         run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q
+```
+
+Verification requires the next exact candidate run to execute all five existing
+steps despite transferred UI failures, retaining each actual conclusion and
+log. This check is unexecuted; static structure alone cannot accept these gates.
