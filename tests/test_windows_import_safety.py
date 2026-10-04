@@ -639,130 +639,139 @@ def test_windows_query_denial_keeps_owner_record(
         ctypes.c_uint32,
         ctypes.c_void_p,
     )
+    for query in (advapi.GetKernelObjectSecurity, advapi.GetTokenInformation):
+        query.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+        )
+    windows_kernel.GetCurrentThread.restype = ctypes.c_void_p
+    windows_kernel.GetCurrentProcess.restype = ctypes.c_void_p
+    advapi.OpenThreadToken.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    advapi.OpenProcessToken.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    advapi.LookupPrivilegeValueW.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.c_wchar_p,
+        ctypes.c_void_p,
+    )
+    advapi.AdjustTokenPrivileges.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.POINTER(ctypes.c_uint32),
+    )
     windows_kernel.LocalFree.argtypes = (ctypes.c_void_p,)
     descriptor = ctypes.c_void_p()
     assert advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(
         "D:P", 1, ctypes.byref(descriptor), None
     )
-    process = None
+    process, original_security = None, None
+    token = ctypes.c_void_p()
+    privilege_changed = False
+    previous = (ctypes.c_uint32 * 4)()
     try:
-        process = windows_kernel.OpenProcess(0x00040000, False, proc.pid)
-        assert process
-        assert advapi.SetKernelObjectSecurity(process, 0x00000004, descriptor)
-    finally:
-        if process:
-            windows_kernel.CloseHandle(process)
-        windows_kernel.LocalFree(descriptor)
-
-    probe = windows_kernel.OpenProcess(0x1000, False, proc.pid)
-    diagnostic = {}
-    if probe:
-        windows_kernel.CloseHandle(probe)
-        for query in (advapi.GetKernelObjectSecurity, advapi.GetTokenInformation):
-            query.argtypes = (
-                ctypes.c_void_p,
-                ctypes.c_uint32,
-                ctypes.c_void_p,
-                ctypes.c_uint32,
-                ctypes.POINTER(ctypes.c_uint32),
-            )
-        advapi.GetSecurityDescriptorDacl.argtypes = (
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_int),
-            ctypes.POINTER(ctypes.c_void_p),
-            ctypes.POINTER(ctypes.c_int),
+        process = windows_kernel.OpenProcess(0x00060000, False, proc.pid)
+        assert process  # READ_CONTROL | WRITE_DAC; retain DACL restoration access.
+        size = ctypes.c_uint32()
+        assert not advapi.GetKernelObjectSecurity(
+            process, 4, None, 0, ctypes.byref(size)
         )
-        process = windows_kernel.OpenProcess(0x00020000, False, proc.pid)
-        assert process
-        try:
-            size = ctypes.c_uint32()
-            assert not advapi.GetKernelObjectSecurity(
-                process, 4, None, 0, ctypes.byref(size)
-            )
-            assert ctypes.get_last_error() == 122  # ERROR_INSUFFICIENT_BUFFER
-            security = ctypes.create_string_buffer(size.value)
-            assert advapi.GetKernelObjectSecurity(
-                process, 4, security, size.value, ctypes.byref(size)
-            )
-            present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), ctypes.c_void_p()
-            assert advapi.GetSecurityDescriptorDacl(
-                security,
-                ctypes.byref(present),
-                ctypes.byref(dacl),
-                ctypes.byref(defaulted),
-            )
-            diagnostic["dacl_present"] = bool(present.value)
-            diagnostic["dacl_null"] = not bool(dacl.value)
-            # ACL header: BYTE revision, BYTE padding, WORD size, WORD AceCount.
-            diagnostic["dacl_ace_count"] = (
-                ctypes.c_uint16.from_address(dacl.value + 4).value
-                if dacl.value
-                else None
-            )
-        finally:
-            windows_kernel.CloseHandle(process)
-
-        windows_kernel.GetCurrentThread.restype = ctypes.c_void_p
-        windows_kernel.GetCurrentProcess.restype = ctypes.c_void_p
-        advapi.OpenThreadToken.argtypes = (
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.c_int,
-            ctypes.POINTER(ctypes.c_void_p),
+        assert ctypes.get_last_error() == 122  # ERROR_INSUFFICIENT_BUFFER
+        saved_security = ctypes.create_string_buffer(size.value)
+        assert advapi.GetKernelObjectSecurity(
+            process, 4, saved_security, size.value, ctypes.byref(size)
         )
-        advapi.OpenProcessToken.argtypes = (
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_void_p),
-        )
-        advapi.LookupPrivilegeValueW.argtypes = (
-            ctypes.c_wchar_p,
-            ctypes.c_wchar_p,
-            ctypes.c_void_p,
-        )
-        token = ctypes.c_void_p()
+        original_security = saved_security
+        assert advapi.SetKernelObjectSecurity(process, 4, descriptor)
+        # CI's enabled SeDebugPrivilege bypasses even an empty process DACL.
         if not advapi.OpenThreadToken(
-            windows_kernel.GetCurrentThread(), 8, True, ctypes.byref(token)
+            windows_kernel.GetCurrentThread(), 0x28, True, ctypes.byref(token)
         ):
             assert ctypes.get_last_error() == 1008  # ERROR_NO_TOKEN
             assert advapi.OpenProcessToken(
-                windows_kernel.GetCurrentProcess(), 8, ctypes.byref(token)
+                windows_kernel.GetCurrentProcess(), 0x28, ctypes.byref(token)
             )
-        try:
-            debug_luid = (ctypes.c_uint32 * 2)()
-            assert advapi.LookupPrivilegeValueW(None, "SeDebugPrivilege", debug_luid)
-            size = ctypes.c_uint32()
-            assert not advapi.GetTokenInformation(token, 3, None, 0, ctypes.byref(size))
-            assert ctypes.get_last_error() == 122
-            privileges = ctypes.create_string_buffer(size.value)
-            assert advapi.GetTokenInformation(
-                token, 3, privileges, size.value, ctypes.byref(size)
+        debug_luid = (ctypes.c_uint32 * 2)()
+        assert advapi.LookupPrivilegeValueW(None, "SeDebugPrivilege", debug_luid)
+        size = ctypes.c_uint32()
+        assert not advapi.GetTokenInformation(token, 3, None, 0, ctypes.byref(size))
+        assert ctypes.get_last_error() == 122
+        privileges = ctypes.create_string_buffer(size.value)
+        assert advapi.GetTokenInformation(
+            token, 3, privileges, size.value, ctypes.byref(size)
+        )
+        # TOKEN_PRIVILEGES: DWORD count, then LUID_AND_ATTRIBUTES (3 DWORDs).
+        words = (ctypes.c_uint32 * (size.value // 4)).from_buffer(privileges)
+        debug_enabled = any(
+            words[index] == debug_luid[0]
+            and words[index + 1] == debug_luid[1]
+            and bool(words[index + 2] & 2)
+            for index in range(1, 1 + 3 * words[0], 3)
+        )
+        if debug_enabled:
+            disabled = (ctypes.c_uint32 * 4)(1, debug_luid[0], debug_luid[1], 0)
+            returned = ctypes.c_uint32()
+            assert advapi.AdjustTokenPrivileges(
+                token,
+                False,
+                disabled,
+                ctypes.sizeof(previous),
+                previous,
+                ctypes.byref(returned),
             )
-            # TOKEN_PRIVILEGES: DWORD count, then LUID_AND_ATTRIBUTES (3 DWORDs).
-            words = (ctypes.c_uint32 * (size.value // 4)).from_buffer(privileges)
-            diagnostic["SeDebugPrivilege_enabled"] = any(
-                words[index] == debug_luid[0]
-                and words[index + 1] == debug_luid[1]
-                and bool(words[index + 2] & 2)
-                for index in range(1, 1 + 3 * words[0], 3)
-            )
-        finally:
-            windows_kernel.CloseHandle(token)
-    assert not probe, diagnostic
-    assert ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED
+            privilege_changed = True
+            assert ctypes.get_last_error() == 0
 
-    denied = {**record, "windows_job_name": f"Local\\Missing-{uuid.uuid4().hex}"}
-    subprocesses._write_owned_process_records(owner, [denied], data_root=tmp_path)
-    outcome = subprocesses.reap_owner_processes(owner, data_root=tmp_path)
-    assert outcome["reconcilable"] is False
-    assert outcome["terminated"] == []
-    assert outcome["termination_unconfirmed"] == [proc.pid]
-    assert subprocesses.read_owned_process_records(owner, data_root=tmp_path) == [
-        {**denied, "termination_unconfirmed": True}
-    ]
-    assert all(
-        windows_kernel.WaitForSingleObject(handle, 0) == 0x102 for handle in handles
-    )
+        probe = windows_kernel.OpenProcess(0x1000, False, proc.pid)
+        try:
+            assert not probe
+            assert ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED
+        finally:
+            if probe:
+                windows_kernel.CloseHandle(probe)
+
+        denied = {**record, "windows_job_name": f"Local\\Missing-{uuid.uuid4().hex}"}
+        subprocesses._write_owned_process_records(owner, [denied], data_root=tmp_path)
+        outcome = subprocesses.reap_owner_processes(owner, data_root=tmp_path)
+        assert outcome["reconcilable"] is False
+        assert outcome["terminated"] == []
+        assert outcome["termination_unconfirmed"] == [proc.pid]
+        assert subprocesses.read_owned_process_records(owner, data_root=tmp_path) == [
+            {**denied, "termination_unconfirmed": True}
+        ]
+        assert all(
+            windows_kernel.WaitForSingleObject(handle, 0) == 0x102 for handle in handles
+        )
+    finally:
+        try:
+            if privilege_changed:
+                assert advapi.AdjustTokenPrivileges(
+                    token, False, previous, 0, None, None
+                )
+                assert ctypes.get_last_error() == 0
+        finally:
+            try:
+                if original_security is not None:
+                    assert advapi.SetKernelObjectSecurity(process, 4, original_security)
+            finally:
+                if token.value:
+                    windows_kernel.CloseHandle(token)
+                if process:
+                    windows_kernel.CloseHandle(process)
+                windows_kernel.LocalFree(descriptor)
 
 
 @pytest.mark.windows_only

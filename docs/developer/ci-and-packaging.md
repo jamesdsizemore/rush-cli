@@ -26,8 +26,12 @@ rtk proxy uv build --python 3.12
 ## 2. GitHub Actions CI Matrix (`.github/workflows/ci.yml`)
 
 The quality job runs on Ubuntu; installed-artifact probes and Windows runtime
-contracts execute on their respective CI runners. Phase 70 uses these existing
-Linux/Windows lanes and local macOS checks. Record each run's actual revision,
+contracts execute on their respective CI runners. The artifact matrix also
+includes `macos-15` arm64. Its PR-head checkout builds the native candidate with
+the existing release recipe, probes the generated archive, and uploads
+`rush-macos-<source SHA>` containing the archive, `SHA256SUMS` and `SOURCE_COMMIT`.
+The upload runs only after probes pass. This route is configured; acceptance
+requires the actual CI result and downloaded candidate checks. Record each run's actual revision,
 URL and conclusion; an older run does not accept new source.
 Existing Linux quality and Windows contracts jobs also execute installed TUI
 journeys against their built native archive. `RUSH_G8_NATIVE_ARCHIVE`,
@@ -57,7 +61,14 @@ passes and inspect each actual action, grant, cancellation and recovery result.
 3. **Unit & Engine Reference Tests**: `pytest tests/ -q`.
 4. **Vulnerability Audit**: `pip-audit`.
 5. **Distribution Build**: `uv build`.
-6. **Isolated Artifact Probes (Finding R-001 Closed)**: Matrix job across `ubuntu-latest` and `windows-latest` executing `scripts/probe_installed_artifacts.py` in scrubbed virtual environments.
+6. **Isolated Artifact Probes**: Matrix job across `ubuntu-latest`, `windows-latest` and `macos-15` executing `scripts/probe_installed_artifacts.py` in scrubbed virtual environments.
+
+Download the selected run's `rush-macos-<source SHA>` artifact into an isolated
+directory. Confirm `SOURCE_COMMIT` equals the intended candidate, run
+`shasum -a 256 -c SHA256SUMS` from that directory, and probe its native archive
+on matching arm64 macOS. An upload digest proves artifact integrity; it is not
+a signed build attestation. G6 still requires actual Claude Code/Codex adoption
+and the separately approved real-home preview/consent packet.
 
 ---
 

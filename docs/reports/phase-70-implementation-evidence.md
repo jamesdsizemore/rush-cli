@@ -1222,3 +1222,108 @@ owner-retention and live-child assertions remain. Native execution of this
 amendment is pending; it is diagnostic evidence collection, not a claimed fix.
 Real Claude Code/Codex acceptance and a current macOS artifact remain open.
 The earlier `/tmp` G7 log is historical; it is unavailable after host restart.
+
+Candidate `abb21323d17e94b90751e7981924eecade21c546` produced actual
+[Windows diagnostic evidence](https://github.com/jamesdsizemore/rush-cli/actions/runs/37223022740/job/111496986692):
+`dacl_present: True`, `dacl_null: False`, `dacl_ace_count: 0`,
+`SeDebugPrivilege_enabled: True`. The installed empty DACL is genuine;
+enabled debug privilege bypasses its access check. The bounded fixture
+correction must temporarily disable that privilege, preserve its exact prior
+state and restore it in cleanup. Native owner-retention acceptance remains
+pending the corrected fixture, not replaced by these diagnostic facts.
+The job reported four failed and 56 passed in 102.87 seconds; its three UI
+failures remain Phase 71 inputs. Overall run conclusion is still pending.
+
+### Approved macOS CI artifact route — execution pending
+
+G5/G6 require a current native macOS executable. Existing CI has only Ubuntu
+and Windows artifact probes; the release workflow's macOS build requires a
+version tag and publishes assets. Neither route currently supplies the needed
+nonpublishing macOS candidate. The owner explicitly approved extending the
+existing artifact job. The following change is applied and statically reviewed,
+not yet executed. It supersedes the earlier no-CI-edit decision for this route.
+The [official runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+confirms `macos-15` arm64, matching the local host. Upload action v4.6.2 is bound
+to [verified immutable revision](https://github.com/actions/upload-artifact/commit/ea165f8d65b6e75b540449e92b4886f43607fa02).
+
+```diff
+     strategy:
++      fail-fast: false
+       matrix:
+-        os: [ubuntu-latest, windows-latest]
++        os: [ubuntu-latest, windows-latest, macos-15]
+
+       - name: Check out repository
+         uses: actions/checkout@v7.0.1
++        with:
++          ref: ${{ matrix.os == 'macos-15' && github.event.pull_request.head.sha || github.sha }}
+
+       - name: Build distribution packages
+         run: uv build
+
++      - name: Build native macOS candidate
++        if: runner.os == 'macOS'
++        shell: bash
++        run: |
++          test "$(uname -m)" = arm64
++          unset PYTHONPATH PYTHONHOME
++          uv sync --all-extras --frozen --python 3.12
++          uv pip install pyinstaller
++          cat > rush_entry.py <<'PYEOF'
++          from rush.entry import main
++
++          if __name__ == "__main__":
++              main()
++          PYEOF
++          uv run --no-sync --python 3.12 pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations --collect-data rush.dashboard --collect-submodules tiktoken_ext rush_entry.py
++          uv run --no-sync --python 3.12 python -c "
++          import platform
++          from pathlib import Path
++          import rush
++          from scripts.probe_installed_artifacts import build_release_archive, select_platform_asset, write_sha256sums
++          archive = build_release_archive(Path('dist/rush'), Path('dist'), select_platform_asset(platform.system(), platform.machine()), rush.__version__)
++          write_sha256sums([archive], Path('dist/SHA256SUMS'))
++          "
++          git rev-parse HEAD > dist/SOURCE_COMMIT
+
+       - name: Probe installed wheel and sdist independently
+         run: uv run python scripts/probe_installed_artifacts.py --json
+
++      - name: Upload verified macOS candidate
++        if: runner.os == 'macOS'
++        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
++        with:
++          name: rush-macos-${{ github.event.pull_request.head.sha || github.sha }}
++          if-no-files-found: error
++          path: |
++            dist/rush-darwin-*.tar.gz
++            dist/SHA256SUMS
++            dist/SOURCE_COMMIT
+```
+
+After downloading that run's named artifact into isolated `dist/`, execute:
+
+```sh
+rtk proxy cat dist/SOURCE_COMMIT
+rtk proxy sh -c 'cd dist && shasum -a 256 -c SHA256SUMS'
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev python scripts/probe_installed_artifacts.py --dist-dir dist --checkout-root /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70 --json
+```
+
+Required results: source commit equals the selected candidate, checksum `OK`,
+native probe `status: passed`, `origin_verified: true`, `import_clean: true`
+and `mcp_initialized: true`, with native agent assets verified. These checks
+are unexecuted and require the matching CI run and host
+architecture. Actual G6 host acceptance still requires its separate packet
+consent; an artifact probe cannot substitute for host adoption.
+
+The Windows cause-specific fixture correction is frozen at
+`18e85f31fab5a788a52563c7ee8c63252579767168cc831341a97a46a53cf79c`.
+It replaces the resolved diagnostic with conditional effective-token debug
+privilege disable and exact `PreviousState` restoration, while saving/restoring
+the original DACL and preserving actual denial, owner retention and liveness.
+Ruff check/format and independent frozen source review passed; native CI has
+not yet exercised the correction. CI workflow source review passed on
+`565929b0557fdc0175b888357b6b74e17ef6a56135150f8eaa5efa2730ad73ea`.
+Existing `tests/test_ci_contract.py` passed all four checks in 0.17 seconds;
+this verifies workflow prerequisites and structure, not native execution.
+Current documentation parity and whitespace checks also passed.
