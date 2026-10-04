@@ -17,13 +17,24 @@ checksum/probe rollback cases both passed on macOS against downloaded
 selections; their new CI execution remains pending.
 Windows ACL, mypy, docs parity/links, dependency audit and whitespace gates
 were all skipped. The G6 fixture now has one real greeting assertion, verified
-by direct Python 3.12 invocation. Real-host G6 consent, provisioned
+by direct Python 3.12 invocation. Real-host G6 execution, provisioned
 native timeout route, actual host/hook/timeout/model acceptance, retained
 end-to-end journeys and final frozen review remain open. The current
 evidence-report checkpoint supersedes older dated
 execution states below; transferred UI remains Phase 71. Production attribution
 repair is implemented with focused regression and review evidence; final CI
 acceptance is still required.
+
+Owner execution approval (2026-10-04): temporary real Claude Code/Codex
+configuration conversion, native plugins/guidance, scoped fixture hooks and
+cleanup/restoration are approved. Exactly five existing backend CI gate
+conditionals are approved, applied and frozen-reviewed; their actual next-run
+results remain required. Run `37230144466`, head `4e1aab6`, reports Windows
+59 passed and the same three Phase 71 UI failures, with no skips. Existing
+selection includes both new compiled rollback cases; the two-pass increase
+and exhaustive unchanged failure list establish their native Windows PASS.
+Linux's new cases were still running at this checkpoint. Approval closes the
+permission gate, not G6 or Phase 70 acceptance.
 
 Current priority (owner correction, 2026-10-03): finish existing Phase 70 CI
 blockers and full gates. Linux/Windows testing uses existing CI lanes; no

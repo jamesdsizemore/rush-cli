@@ -528,3 +528,23 @@ Phase 68 standalone setup permission architecture is preserved except the explic
 Plan review readiness means all tasks have resolved behavior, files, sequencing, TDD and acceptance contracts on a recorded hash. It is distinct from owner ratification, implementation authorization, passing implementation gates, merge and release. A ready plan can require future host acceptance and data-cleanup consent; it cannot claim either already happened.
 
 Final plan-only review must cover every section, E1–E22, D1–D7, R01–R12, T1–T29, all material shared surfaces and native host sources, then independently attack corrected bytes. Record review coverage, findings, resolutions, commands/probes, final hash and pre-existing limitations in a separate internal review receipt. No code fixes, real installations or data cleanup are authorized by this document review.
+
+### Owner approval amendment — 2026-10-04: G6 and retained backend gates
+
+Owner instruction, “of course it is approved - Get this shit done!”, approves
+the refreshed concrete G6 packet and the five existing CI gate conditionals.
+G6 approval covers temporary selected Rush home-config changes, native plugin
+installation, scoped hook activation, actual Claude Code/Codex acceptance and
+the packet's disconnect/restoration checks; preserve unrelated settings and
+re-preview on drift under the recorded entry-digest/CAS boundaries. This
+supersedes consent-pending status for that packet; it does not itself prove
+host pickup, feedback, timeout, model context or restoration.
+
+The approved `.github/workflows/ci.yml` amendment adds only
+`if: ${{ !cancelled() }}` to existing Linux mypy, documentation parity/links,
+dependency audit and whitespace steps, plus the existing Windows data-directory
+ACL step. Each runs after earlier test failures unless cancelled; original
+test failures and failed job conclusions remain visible. Existing jobs,
+runners, test selections and Phase 71 UI ownership stay unchanged. Acceptance
+requires actual conclusions on the next frozen candidate; approval or static
+checks cannot close these five gates or Phase 70.

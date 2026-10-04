@@ -99,15 +99,19 @@ jobs:
           uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'posix-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
 
       - name: Release gate typecheck (mypy)
+        if: ${{ !cancelled() }}
         run: uv run mypy src/rush
 
       - name: Verify documentation parity & links
+        if: ${{ !cancelled() }}
         run: uv run python scripts/sync_docs.py --check
 
       - name: Audit dependencies
+        if: ${{ !cancelled() }}
         run: uv run pip-audit
 
       - name: Check whitespace
+        if: ${{ !cancelled() }}
         run: git diff --check
 
   static-tool-acceptance:
@@ -305,6 +309,7 @@ jobs:
           uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'windows-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
 
       - name: Verify Windows dashboard data-directory ACL contract
+        if: ${{ !cancelled() }}
         run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q
 
   artifact-probes:

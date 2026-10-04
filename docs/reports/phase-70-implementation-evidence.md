@@ -1482,14 +1482,16 @@ still binds its distinct `1364158` binary; it must not be represented as this
 new executable. Actual G6, retained T26/T29/G8 journeys, skipped backend gates
 and final acceptance reconciliation remain open.
 
-### Proposed continuation of existing backend CI gates — consent pending
+### Five existing backend CI gate conditionals — approved 2026-10-04
 
 Current UI failures prevent existing later backend gates from running. This
 five-line conditional change to `.github/workflows/ci.yml` would run the four
 Linux G7 post-test gates and Windows ACL gate unless cancelled. Original test
 failures and overall failed status remain visible. No new job, runner or test
 selection is proposed. The earlier no-CI-edit decision was superseded only for
-macOS artifact production; this separate amendment is not applied or approved.
+macOS artifact production. This separate amendment was unapproved and unapplied
+at its proposal checkpoint; the subsequent owner execution approval below
+authorizes exactly these five lines.
 
 ```diff
        - name: Release gate typecheck (mypy)
@@ -1646,3 +1648,39 @@ Linux Quality's full-suite filters also include both cases. Expected selection
 increases by two per platform; native Windows/Linux execution of these new
 compiled-candidate cases is still pending. Existing Phase 71 UI failures,
 five skipped backend gates and unexecuted G6 remain open.
+
+### Owner execution approval and Windows compiled rollback — 2026-10-04
+
+After the exact actions were restated, the owner explicitly replied:
+"of course it is approved - Get this shit done!" This authorizes reviewed
+temporary Claude Code/Codex Rush configuration conversion, native
+plugin/guidance installation, scoped fixture hook acceptance and cleanup with
+restoration, plus exactly five existing CI gates continuing unless cancelled.
+The five conditionals are applied and independently frozen-reviewed; four
+existing CI contract tests passed in 0.31 seconds. Existing failed tests and
+job status remain visible; no runner/job/test selection or UI assertion changed.
+Actual next-run results remain required. Earlier consent-pending statements
+are historical; permission is now granted, and G6 execution remains open.
+
+[Run 37230144466](https://github.com/jamesdsizemore/rush-cli/actions/runs/37230144466),
+head `4e1aab6339eef5886cfb589f0b9dd449e365bce9`, Windows job `111517916177`
+reported **59 passed, the same three transferred UI failures, 152.86 seconds**,
+with no skips. The existing whole-file selection includes both new compiled
+rollback cases; the two-pass increase and exhaustive unchanged failure list
+establish their native Windows PASS. Linux's new-case result was still pending
+at this checkpoint. Current Mac native/package probes and Ubuntu/Windows
+wheel/sdist jobs also passed; passing jobs do not close the remaining gates.
+
+Both current unowned Rush manual entries still match the reviewed conversion
+hashes (`26d4d43b…508c127` Claude, `1b31316a…188862` Codex), despite unrelated
+whole-config metadata changes. Private configuration backups preserve bytes
+and modes outside the repository. Native plugin roots and ownership ledger
+were absent before G6 writes. This does not authorize erasing future concurrent
+entries during cleanup.
+
+Node `v26.7.0` is available. Official npm registry resolution selected ESLint
+`10.12.0` through the existing catalog's `latest_stable` convention; installation
+used an explicit scratch prefix/cache and `--ignore-scripts`, leaving Rush's
+dependencies unchanged. The 35-second idle config and JS fault remain
+preview-only until the native timeout stage, so baseline host lint is unaffected.
+No actual host/model/hook acceptance has yet been claimed.
