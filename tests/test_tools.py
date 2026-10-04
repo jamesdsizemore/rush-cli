@@ -443,6 +443,53 @@ def test_test_preserves_explicit_nested_python_target(
     assert result["summary"] == "1 passed in 0.01s"
 
 
+def test_test_preserves_outer_engine_scope_for_owned_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from subprocess import CompletedProcess
+
+    import rush.engines.pytest as pytest_engine
+    from rush.runtime.binaries import (
+        AnalysisScope,
+        analysis_scope,
+        current_analysis_scope,
+    )
+
+    root = tmp_path / "project"
+    root.mkdir()
+    probe = tmp_path / "data" / "probes" / "owned"
+    probe.mkdir(parents=True)
+    (probe / "pyproject.toml").write_text('[project]\nname = "probe"\n')
+    (probe / "test_probe.py").write_text("def test_probe(): assert True\n")
+    calls = []
+    scopes = []
+
+    def engine_available(_binary):
+        scope = current_analysis_scope()
+        assert scope is not None
+        scopes.append(scope.logical_root)
+        return scope.logical_root == root
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs.get("cwd")))
+        return CompletedProcess(argv, 0, "1 passed in 0.01s\n", "")
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", engine_available)
+    monkeypatch.setattr(pytest_engine, "project_python", lambda _root: "/python")
+    monkeypatch.setattr(pytest_engine, "run_subprocess", run)
+    monkeypatch.setattr(pytest_engine.PytestEngine, "version", lambda self: "fixture")
+
+    with analysis_scope(AnalysisScope(root)):
+        result = TestTool()(probe, allow_build=True)
+
+    assert scopes == [root]
+    assert calls == [
+        (["/python", "-m", "pytest", str(probe), "--tb=line", "-q"], probe)
+    ]
+    assert result["status"] == "ok"
+    assert result["summary"] == "1 passed in 0.01s"
+
+
 def test_test_runs_pytest_on_python_repo(py_repo: Path):
     """A repo without tests → pytest collects nothing → ok (exit 5)."""
     tool = TestTool()

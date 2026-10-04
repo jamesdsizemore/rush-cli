@@ -135,8 +135,8 @@ runs the plugin's `PostToolUse` hook, which calls `rush agent hook claude` (or `
 codex`) with the host's event on stdin. The hook only checks an edit inside the activated,
 registered project; an edited path outside that project, or reached through a symlink, is excluded
 and named as such, and Rush's own tool calls are never rechecked (no recursion). The host wraps the
-hook in a 30-second timeout; Rush's own check stops around 25 seconds and reports the steps that did
-not run rather than hang. The model sees a bounded plain-text report (at most 8,192 bytes) in its
+hook in a 30-second timeout; Rush's own check stops around 15 seconds, reserving time for native
+startup and feedback, and reports the steps that did not run rather than hang. The model sees a bounded plain-text report (at most 8,192 bytes) in its
 context: an invocation ID, the checked scope, the overall status (with an incomplete-step count when
 the deadline or a cancellation cut steps short), each of the six check steps (`format`, `lint`,
 `typecheck`, `dead`, `slop`, `test`) with its own status, and findings (or `findings: none`). Add

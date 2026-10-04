@@ -39,7 +39,8 @@ HOOK_AGENTS = {"claude-code": "claude", "codex": "codex"}
 MAX_PAYLOAD_BYTES = 1024 * 1024
 MAX_OUTPUT_BYTES = 8192
 #: Below the plugins' `"timeout": 30`, so a slow check is reported, not killed.
-DEADLINE_SECONDS = 25.0
+# Reserve 15s of the host's 30s total budget for native startup and feedback.
+DEADLINE_SECONDS = 15.0
 ACTIVE_ENV = "RUSH_AGENT_HOOK_ACTIVE"
 _EDIT_TOOLS = {
     "claude": frozenset({"Write", "Edit", "MultiEdit"}),

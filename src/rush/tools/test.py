@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..permissions import ExecutionPermissions
+from ..runtime.binaries import current_analysis_scope
 from .base import ToolFn, ToolName, ToolResult
 from .common import elapsed_ms, now_ms, run_engine
 from .routing import detect_project_languages
@@ -68,12 +69,13 @@ class TestTool(ToolFn):
             project_root / "setup.py"
         ).exists():
             # Python project
+            scope = current_analysis_scope()
             r = run_engine(
                 ENGINES["pytest"],
                 path.resolve(),
                 [],
                 cwd=project_root,
-                project_root=project_root,
+                project_root=scope.logical_root if scope is not None else project_root,
                 tool_name="test",
                 permissions=permissions,
                 required_permissions=required,

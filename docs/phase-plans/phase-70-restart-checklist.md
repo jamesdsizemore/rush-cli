@@ -456,3 +456,14 @@ Latest strict run: 79.80 seconds; no all-three-size PASS is claimed.
 
 This section supersedes earlier checklist sequencing that kept UI acceptance
 in Phase 70. It does not claim either phase complete.
+
+### Superseding native/backend checklist — 2026-10-04
+
+- [x] Complete approved macOS CI extension and actual checksum-bound native origin/MCP probe at `8fd5f99`; all five backend gates executed and passed in CI `37235554376`.
+- [x] Exercise actual Claude native skill/seven core schemas, denied/granted fixture test, native fault edit, received F401 hook feedback and repair; receipt does not close the full host journey.
+- [ ] Freeze reviewed hook-startup deadline and setup-probe engine-scope repairs; run fresh CI and rebuilt cold-native timeout acceptance. Existing focused source regressions passed.
+- [ ] Finish actual Codex MCP pickup and both hosts' status/timeout/disable/restoration observations; approved real-home consent remains valid, with no repeated consent gate.
+- [ ] Reconcile all retained Phase 70 evidence and pertinent documentation, complete final frozen review and authorized commit/push. Phase 71 UI failures remain required in Phase 71.
+
+This checkpoint supersedes earlier pending-consent/CI statements without
+closing unexecuted native acceptance or claiming Phase 70 completion.

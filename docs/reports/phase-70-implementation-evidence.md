@@ -1790,3 +1790,57 @@ validation reports zero errors after receipt reconciliation.
 A fresh CI-triggering merge commit, rebuilt native artifact and remaining
 G6/G8 host acceptance are still required. No downstream implementation or
 Phase 70 completion is claimed by this documentation merge.
+
+### Native host and retained CI checkpoint — 2026-10-04
+
+Merge commit `8fd5f9962d3588699e3d4e1e8833794f4df291de` cleared the PR conflict
+and ran CI `37235554376`. All five backend gates actually passed: Windows ACL,
+mypy (474 source files), documentation parity/links, pip-audit and whitespace.
+All three installed-artifact jobs and the engine jobs passed. Linux reported
+6,473 passed, four failed and 26 deselected in 1,056.95 seconds. Three failures
+are the transferred Phase 71 UI checks; the fourth is the retained setup check.
+Windows reported 59 passed and three transferred UI failures in 171.59 seconds.
+The 26 Linux exclusions ran in their designated Windows/engine jobs: 24 passed,
+two Windows UI cases failed. No retained selector was omitted.
+
+The approved macOS CI artifact binds source `8fd5f99`: archive SHA-256
+`02cd4d6e682479127c110f2937305b4a4e0d4268df1b993474f1abe5be3b0e79`,
+binary SHA-256 `2c9d76c84aafae18adb5e3b7d0d706a14c248ade1692d249dd1a277a2accc93a`.
+The existing native-only probe passed origin isolation and MCP initialization
+outside the checkout. Source dispatch independently ran only the greeting
+fixture: `1 passed in 0.02s`.
+
+Actual Claude Code 2.1.289 loaded `rush:rush` and all seven core schemas.
+The closed native transcript contains ten tool calls: Skill, ToolSearch, two
+Reads, three tests, two Edits and one lint. Denied build was `skipped` with
+`not_run: permission_denied`; both granted fixture tests reported exactly
+`1 passed in 0.02s`. Successful native Edits introduced and removed unused
+`sys`. The model received F401 hook feedback and incomplete denied-test status,
+then repair feedback and clean lint. Initial `rush_status`, timeout, disable
+and current-attempt cleanup are not closed by that receipt.
+
+The genuine slow-ESLint native edit exposed a timeout defect: hook cancellation
+occurred after 30.156 seconds with no returned context, while the edit survived.
+Native startup alone measured 11.24 seconds; adding the internal 25-second
+deadline exceeds the unchanged 30-second total host contract. The internal
+deadline is now 15 seconds, reserving time for startup and feedback. The actual
+idle-child regression proves owned cancellation and remaining `not_run` steps;
+two focused tests passed in 1.29 seconds, with Ruff and frozen review passing.
+This source proof does not replace rebuilt cold-native timeout acceptance.
+
+The retained setup failure has a separate proven cause. Its owned nonce probe
+already contains `test_probe.py`; supplying the probe's discovered root for
+engine provenance overrode setup's ambient project scope and lost the project's
+provisioned pytest manifest. TestTool now preserves the ambient logical root
+for provenance while retaining the explicit requested target and probe cwd.
+The setup test failed in 21.72 seconds; it and both scope regressions passed
+in 17.90 seconds after the minimal repair. Ruff passed. Fresh frozen review,
+CI and rebuilt native acceptance remain required for the repaired subject.
+
+Codex 0.160.0 reports the native Rush plugin installed/enabled and lists its
+current binary/core transport. Actual isolated model sessions have not obtained
+Rush MCP tools, including a metadata-discovery attempt reporting zero Rush
+entries. A rejected quoted-key override was corrected; subsequent absence is
+not attributed to that rejected configuration. No Codex test/edit/hook success
+is claimed. Real-home temporary resources remain active for acceptance;
+current cleanup, G6/T26/T29/G8 and final Phase 70 release readiness remain open.

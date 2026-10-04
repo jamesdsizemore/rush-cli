@@ -559,6 +559,67 @@ def test_t07_concurrent_events_do_not_mix_findings(
 # ---------------------------------------------------------------------------
 
 
+def test_t07_deadline_cancels_inflight_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from rush.engines.eslint import EslintEngine
+    from rush.integrations import agent_hooks
+    from rush.runtime.subprocesses import run_subprocess
+
+    home = _isolated_home(tmp_path, monkeypatch)
+    data_root = _data_root_for(home)
+    root, project_id = _registered_project(tmp_path, data_root, "proj")
+    _write_activation(
+        data_root,
+        host="claude",
+        project_id=project_id,
+        canonical_root=str(root.resolve()),
+    )
+    target = root / "stall.js"
+    target.write_text("const unused = 1;\n")
+    started_marker = root / "started"
+    finished_marker = root / "finished"
+
+    def idle_engine(self, path, args, cwd=None, **kwargs):
+        return run_subprocess(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "from pathlib import Path; import time; "
+                    f"Path({str(started_marker)!r}).touch(); time.sleep(2); "
+                    f"Path({str(finished_marker)!r}).touch()"
+                ),
+            ],
+            cwd=cwd,
+            timeout=3,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(agent_hooks, "DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda _binary: True)
+    monkeypatch.setattr(EslintEngine, "run", idle_engine)
+    started = time.monotonic()
+    result = _invoke(
+        "claude",
+        json.dumps(
+            _payload(
+                host="claude", cwd=str(root), tool_name="Edit", file_path=str(target)
+            )
+        ),
+    )
+
+    assert result.exit_code == 0, result.output
+    text = json.loads(result.output)["hookSpecificOutput"]["additionalContext"]
+    assert started_marker.exists()
+    assert not finished_marker.exists()
+    assert time.monotonic() - started < 1.75
+    assert "hook_deadline" in text
+    assert "not_run" in text
+
+
 def test_t07_deadline_cancels_remaining_steps_as_not_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

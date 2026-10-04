@@ -114,7 +114,7 @@ The opt-in post-edit hook (`rush agent hook claude|codex`) prints a bounded plai
 
 - `Rush post-edit check (invocation <hex>)` -- a fresh `uuid4().hex` per event.
 - `scope: <what was checked>` -- `edited file <relative path>` when exactly one edited path resolves inside the activated project, or `project root <root> (<reason>)` when it cannot (`the event names several edited files`, or `the event carries no trustworthy edited path` -- the `apply_patch` case).
-- `overall: <status>` -- `ok`, `warn`, `fail`, `error`, or `skipped`, plus `; incomplete: N of 6 steps did not run` whenever the hook's own ~25-second internal deadline or a cancellation cut steps short; an incomplete run is never reported clean.
+- `overall: <status>` -- `ok`, `warn`, `fail`, `error`, or `skipped`, plus `; incomplete: N of 6 steps did not run` whenever the hook's own ~15-second internal deadline or a cancellation cut steps short; an incomplete run is never reported clean.
 - `steps:` followed by one line per check step in order -- `format`, `lint`, `typecheck`, `dead`, `slop`, `test` -- each `  <name>: <status>`, with its own one-line summary appended when the step reported one, and `(not reported)` or `(<disposition>: <cause>)` when a step never ran.
 - one `excluded edited path (outside the project or via a symlink): <raw path>` line per excluded path.
 - when the connection's `--hook-result-cache` stored the full result: `full result: result_handle <handle>` followed by the recovery calls, `rush_status(operation="result", result_handle="<handle>")` or `rush status <root> --result <handle> --json`; otherwise `full result: rush check <root> --json` (preceded by `recovery: <reason>` if storing was attempted and failed).
