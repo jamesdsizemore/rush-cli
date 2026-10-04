@@ -461,9 +461,20 @@ in Phase 70. It does not claim either phase complete.
 
 - [x] Complete approved macOS CI extension and actual checksum-bound native origin/MCP probe at `8fd5f99`; all five backend gates executed and passed in CI `37235554376`.
 - [x] Exercise actual Claude native skill/seven core schemas, denied/granted fixture test, native fault edit, received F401 hook feedback and repair; receipt does not close the full host journey.
-- [ ] Freeze reviewed hook-startup deadline and setup-probe engine-scope repairs; run fresh CI and rebuilt cold-native timeout acceptance. Existing focused source regressions passed.
+- [x] Freeze reviewed hook-startup deadline and setup-probe engine-scope repairs; CI `37237731524` and rebuilt cold-native Claude timeout passed at source `f8b2f6ee`.
 - [ ] Finish actual Codex MCP pickup and both hosts' status/timeout/disable/restoration observations; approved real-home consent remains valid, with no repeated consent gate.
 - [ ] Reconcile all retained Phase 70 evidence and pertinent documentation, complete final frozen review and authorized commit/push. Phase 71 UI failures remain required in Phase 71.
 
 This checkpoint supersedes earlier pending-consent/CI statements without
 closing unexecuted native acceptance or claiming Phase 70 completion.
+
+### Current retained acceptance — 2026-10-04
+
+- [x] Verify current CI: Linux 6,476 passes, three Phase 71 UI failures and 26 designated exclusions; Windows 59 passes and three Phase 71 UI failures. All five backend gates passed.
+- [x] Exercise current checksum-bound macOS artifact with actual Claude status/test/edit/repair/timeout; cold hook feedback returned in 26.613 seconds. Public disable left native edits working with no Rush check output.
+- [x] Disconnect temporary native resources and restore original selected home entries through fresh CAS; retain private transcripts and cleanup receipts.
+- [ ] Obtain actual native Codex Rush MCP pickup and complete its test/edit/hook journey. Installed/enabled registration passed; actual isolated catalog is empty. This is the remaining native-host acceptance blocker.
+- [ ] Close G6/T26/T29/G8 and Phase 70 only after Codex behavioral acceptance. Evidence reconciliation alone does not close these gates; transferred UI remains required in Phase 71.
+
+Runtime evidence binds source `f8b2f6eeffa5489cc39f8b3e93e898d6118551fc`.
+Later documentation-only reconciliation must preserve this artifact identity.

@@ -1844,3 +1844,88 @@ entries. A rejected quoted-key override was corrected; subsequent absence is
 not attributed to that rejected configuration. No Codex test/edit/hook success
 is claimed. Real-home temporary resources remain active for acceptance;
 current cleanup, G6/T26/T29/G8 and final Phase 70 release readiness remain open.
+
+### Superseding frozen-source acceptance — 2026-10-04
+
+**Phase 70 remains blocked on actual native Codex MCP acceptance.** Earlier
+registration, schema and standalone transport checks did not establish a
+successful Codex model/tool journey. Claude's observed native behaviors now
+pass; the two hosts must not be reported as a combined acceptance PASS.
+
+Source candidate `f8b2f6eeffa5489cc39f8b3e93e898d6118551fc` contains the reviewed
+15-second internal hook budget and ambient setup-probe provenance repair.
+[CI 37237731524](https://github.com/jamesdsizemore/rush-cli/actions/runs/37237731524)
+finished with six of eight jobs passing. Linux reported **6,476 passed, three
+failed, 26 deselected** in 1,104.14 seconds; the retained setup failure is fixed.
+Its failures are `test_plus_minus_expand_and_collapse_detail_in_git_and_memory`,
+`test_t28e_tokens_git_artifacts` and `test_installed_native_tui_real_terminal`.
+Windows reported **59 passed, three failed** in 175.60 seconds: dashboard asset
+line endings, F2/F3/Shift-Tab terminal journey and the existing native terminal
+attempt-directory collision. These are transferred Phase 71 UI requirements,
+not discarded failures. The unchanged 26 Linux exclusions remain assigned to
+their Windows/engine jobs. All five backend gates passed: Windows ACL (one test),
+mypy (474 source files), documentation parity/links, dependency audit and
+whitespace. Companion static checks passed 95 tests; real workloads passed five
+with 47 deselected; representative checks passed 28 plus seven matrix tests.
+Installed wheel/sdist/native probes and compiled checksum/probe rollback cases
+passed in their designated CI jobs.
+
+The approved [macOS artifact job](https://github.com/jamesdsizemore/rush-cli/actions/runs/37237731524/job/111540109730)
+produced artifact `11316282497`, named
+`rush-macos-f8b2f6eeffa5489cc39f8b3e93e898d6118551fc`. Download ZIP SHA-256:
+`79f6c44c624c2257767cd95ad43b62479056bcb14cd130f71df47838e63c23c3`.
+Native archive SHA-256:
+`311deb058aeba9d9d4fdd350ae62c5d432eca9b3118c1000555fa6c4a061f46f`.
+Native executable SHA-256:
+`fa0c308ed15ebbe975beea9e220dcfc06063f688b88c58d401e80b222e41a4ea`.
+`SOURCE_COMMIT` matches the full source candidate. The existing native-only
+probe passed isolated origin/import and MCP initialization outside the checkout.
+Documentation-only reconciliation does not change this artifact's source ID.
+
+Claude Code 2.1.289's closed current-source transcript contains **13 actual tool
+calls**, including native `rush:rush`, all seven core schemas, `rush_status`,
+denied and granted fixture tests, native fault/repair Edits and received hook
+feedback. Granted tests each reported `1 passed in 0.02s`. The deliberately
+35-second ESLint workload returned `cancelled: hook_deadline`, four remaining
+`not_run: hook_deadline` steps and an incomplete summary after **26.613 seconds**;
+the edit survived and no owned ESLint process remained. Hook context sizes were
+863, 624 and 704 bytes, below 8,192 bytes. Transcript SHA-256:
+`041a3bdf94fbac94c07a245a9a3aa008d38add9b03672709f82f75e24d63bbcf`.
+Independent frozen review passed these observed behaviors. The model's footer
+speculation about ancestor cwd does not override explicit target dispatch or
+the observed fixture inventory.
+
+Public disable returned `ok` with hook state `removed`. A resumed native Read
+and Edit succeeded while the host adapter returned exit zero and empty output;
+no Rush check feedback appeared. This proves disabled Rush checks, not absence
+of host hook events. Disabled transcript SHA-256:
+`1de936c3a81571e00fe267304198e90bd8ca74270cfcdb4163a71efa694b7f1f`.
+Independent frozen review passed the disable observation.
+
+Codex 0.160.0's actual metadata discovery still reports **zero Rush tools**.
+An isolated explicit current-binary core MCP transport diagnostic also returned
+`Rush catalog: []`; no native status call was available. Its transcript SHA-256:
+`2bde11427c45cffac0acab0775a226eafd57d1756d0ddc5c8cc853cfd115583a`.
+This diagnostic is not native-plugin acceptance. Native CLI configuration lists
+Rush enabled with the verified executable; successful standalone MCP probing
+therefore does not close actual client catalog pickup. The cause is unresolved;
+no vendor defect or successful Codex test/edit/hook behavior is asserted. Further
+blind paid model retries are not evidence. Required remaining route is actual
+native Codex pickup, followed by its behavioral acceptance on the frozen source.
+
+Temporary project/user native resources were disconnected with `ok` receipts
+and no conflicts or retained shared resources. Current-attempt registration was
+removed; temporary ESLint fault files were deleted after owned-byte checks.
+Original selected manual home entries were restored using fresh current-file
+CAS while preserving unrelated current metadata. Readback digests match the
+original selected entries: Claude
+`26d4d43b3b17d04dc2fc907238d674a6defa49b532d104b4c3f23dbab508c127`
+(mode `0644`), Codex
+`1b31316aff56df750ef668be2af99d32b113e8d259a630119c6132fbd1818862`
+(mode `0600`). Owned plugin/guidance/descriptor paths are absent. Private
+transcripts and recovery receipts remain untracked; no home configuration or
+secrets are published. This supersedes the preceding active-resource statement.
+
+G6/T26/T29/G8 remain open until the native Codex route is exercised. Current
+backend CI, Claude acceptance and cleanup are concrete progress; they are not
+full Phase 70 completion or authorization to start Phase 71.
