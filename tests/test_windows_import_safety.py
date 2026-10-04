@@ -655,12 +655,101 @@ def test_windows_query_denial_keeps_owner_record(
         windows_kernel.LocalFree(descriptor)
 
     probe = windows_kernel.OpenProcess(0x1000, False, proc.pid)
-    try:
-        assert not probe
-        assert ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED
-    finally:
-        if probe:
-            windows_kernel.CloseHandle(probe)
+    diagnostic = {}
+    if probe:
+        windows_kernel.CloseHandle(probe)
+        for query in (advapi.GetKernelObjectSecurity, advapi.GetTokenInformation):
+            query.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+                ctypes.POINTER(ctypes.c_uint32),
+            )
+        advapi.GetSecurityDescriptorDacl.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_int),
+        )
+        process = windows_kernel.OpenProcess(0x00020000, False, proc.pid)
+        assert process
+        try:
+            size = ctypes.c_uint32()
+            assert not advapi.GetKernelObjectSecurity(
+                process, 4, None, 0, ctypes.byref(size)
+            )
+            assert ctypes.get_last_error() == 122  # ERROR_INSUFFICIENT_BUFFER
+            security = ctypes.create_string_buffer(size.value)
+            assert advapi.GetKernelObjectSecurity(
+                process, 4, security, size.value, ctypes.byref(size)
+            )
+            present, defaulted, dacl = ctypes.c_int(), ctypes.c_int(), ctypes.c_void_p()
+            assert advapi.GetSecurityDescriptorDacl(
+                security,
+                ctypes.byref(present),
+                ctypes.byref(dacl),
+                ctypes.byref(defaulted),
+            )
+            diagnostic["dacl_present"] = bool(present.value)
+            diagnostic["dacl_null"] = not bool(dacl.value)
+            # ACL header: BYTE revision, BYTE padding, WORD size, WORD AceCount.
+            diagnostic["dacl_ace_count"] = (
+                ctypes.c_uint16.from_address(dacl.value + 4).value
+                if dacl.value
+                else None
+            )
+        finally:
+            windows_kernel.CloseHandle(process)
+
+        windows_kernel.GetCurrentThread.restype = ctypes.c_void_p
+        windows_kernel.GetCurrentProcess.restype = ctypes.c_void_p
+        advapi.OpenThreadToken.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi.OpenProcessToken.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        advapi.LookupPrivilegeValueW.argtypes = (
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_void_p,
+        )
+        token = ctypes.c_void_p()
+        if not advapi.OpenThreadToken(
+            windows_kernel.GetCurrentThread(), 8, True, ctypes.byref(token)
+        ):
+            assert ctypes.get_last_error() == 1008  # ERROR_NO_TOKEN
+            assert advapi.OpenProcessToken(
+                windows_kernel.GetCurrentProcess(), 8, ctypes.byref(token)
+            )
+        try:
+            debug_luid = (ctypes.c_uint32 * 2)()
+            assert advapi.LookupPrivilegeValueW(None, "SeDebugPrivilege", debug_luid)
+            size = ctypes.c_uint32()
+            assert not advapi.GetTokenInformation(token, 3, None, 0, ctypes.byref(size))
+            assert ctypes.get_last_error() == 122
+            privileges = ctypes.create_string_buffer(size.value)
+            assert advapi.GetTokenInformation(
+                token, 3, privileges, size.value, ctypes.byref(size)
+            )
+            # TOKEN_PRIVILEGES: DWORD count, then LUID_AND_ATTRIBUTES (3 DWORDs).
+            words = (ctypes.c_uint32 * (size.value // 4)).from_buffer(privileges)
+            diagnostic["SeDebugPrivilege_enabled"] = any(
+                words[index] == debug_luid[0]
+                and words[index + 1] == debug_luid[1]
+                and bool(words[index + 2] & 2)
+                for index in range(1, 1 + 3 * words[0], 3)
+            )
+        finally:
+            windows_kernel.CloseHandle(token)
+    assert not probe, diagnostic
+    assert ctypes.get_last_error() == 5  # ERROR_ACCESS_DENIED
 
     denied = {**record, "windows_job_name": f"Local\\Missing-{uuid.uuid4().hex}"}
     subprocesses._write_owned_process_records(owner, [denied], data_root=tmp_path)

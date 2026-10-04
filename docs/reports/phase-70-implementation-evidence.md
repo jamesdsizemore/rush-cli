@@ -1162,7 +1162,7 @@ their checks. Real-host G6 packet consent remains pending.
 ### Resource stop and resumed CI verification — 2026-10-04
 
 Latest full G7 was stopped after the owner reported the laptop crashing:
-exit 137, 44% collection progress, five failure markers, 829.1 seconds.
+exit 137, 44% pytest progress, five failure markers, 829.1 seconds.
 Log: `/tmp/rush-phase70-g7-final-nonui-v6r8k2p1/pytest.log` (3,348 bytes).
 The interrupted output contains no named traceback; neither PASS nor five
 diagnosed defects is claimed. All seven owned process IDs were absent after
@@ -1190,3 +1190,35 @@ verify normalization, not actual upstream project-inventory coverage.
 Source SHA-256: `a4f843086da92daf6bad8a6274d2e9edff53c0e3599d81207aaf624ac8046963`;
 test SHA-256: `41fc1b3937178521031f0d45b0a288970fdd7fad2454502b1111e2c9cb6d1f97`.
 Full current CI and rebuilt-artifact verification remain required.
+
+### Current CI checkpoint and Windows diagnostic — 2026-10-04
+
+Candidate `8341cd8e470751a39a86c6bdc3dfeb66fb30181b` completed
+[CI run 37218787048](https://github.com/jamesdsizemore/rush-cli/actions/runs/37218787048)
+with overall FAILURE. Five jobs passed: static real-binary acceptance,
+representative Python engines, real-workload engine contracts, and installed
+artifact probes on Ubuntu and Windows. Linux Quality reported 6,470 passed,
+three failed and 26 deselected in 1,196.70 seconds. Its three failures are
+transferred Phase 71 UI requirements: detail expansion in
+`test_phase70_t28f_review1.py`, hostile artifact-path rendering in
+`test_phase70_tui_usability_ef.py`, and wrapped owner-scope text in
+`test_tui_terminal.py`. Later Quality steps were skipped; their acceptance
+remains open. These results do not establish overall Phase 70 acceptance.
+
+Windows runtime reported four failed and 56 passed in 106.89 seconds.
+Three failures are Phase 71 inputs: dashboard asset newline parity,
+F2/F3/Shift-Tab console setup, and the installed TUI journey's existing attempt
+directory. Retained Phase 70 failure is
+`test_windows_query_denial_keeps_owner_record`: its prerequisite query returned
+handle 1124 after applying `D:P`, before owner-record retention could execute.
+Neither a production defect nor the effective privilege/DACL cause is proven.
+
+The same test now has a frozen, independently reviewed diagnostic amendment,
+SHA-256 `d06587dc2a3fe6be88466407ba765a51d93a81ccef3b50514615748ad2849d65`.
+On unexpected query success it reports installed DACL presence, null state,
+ACE count and effective-token `SeDebugPrivilege` state. Handles close;
+no privilege writes, mocks or skips were added. Genuine access-denial,
+owner-retention and live-child assertions remain. Native execution of this
+amendment is pending; it is diagnostic evidence collection, not a claimed fix.
+Real Claude Code/Codex acceptance and a current macOS artifact remain open.
+The earlier `/tmp` G7 log is historical; it is unavailable after host restart.

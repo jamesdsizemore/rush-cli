@@ -395,8 +395,9 @@ Latest strict run: 79.80 seconds; no all-three-size PASS is claimed.
 - [x] Check exact Phase 71 plan; preserve all UI work/requirements and stop UI execution.
 - [x] Record additive ownership amendments in Phase 70, Phase 71 and restart plans.
 - [x] Pass frozen-source Ruff check/format and mypy; preserve interrupted G7 evidence without claiming PASS.
-- [ ] Repair exact production attribution, freeze candidate and execute heavy integration/artifact/real-engine checks in CI; no local full suite/build.
-- [ ] Complete retained real-host consent/acceptance and current backend/platform CI evidence.
+- [x] Correct production attribution; frozen review and regression passed. Candidate `8341cd8` passed five engine/artifact CI jobs; full CI failed on recorded Windows prerequisite and transferred UI checks.
+- [ ] Obtain native Windows DACL/token facts from reviewed diagnostic, repair observed cause and complete remaining CI gates; no local full suite/build.
+- [ ] Complete retained real-host consent/acceptance and current macOS artifact evidence.
 - [ ] Close retained Phase 70 gates before Phase 71; transferred UI checks remain required there.
 
 This section supersedes earlier checklist sequencing that kept UI acceptance
