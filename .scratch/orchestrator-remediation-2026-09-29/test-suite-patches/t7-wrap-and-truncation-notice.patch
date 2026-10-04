@@ -1,0 +1,48 @@
+--- a/tests/test_phase70_t28c_review2.py
++++ b/tests/test_phase70_t28c_review2.py
+@@ -227,5 +227,7 @@
+         [ProjectSeed(name="proj", root=root, results=[unscoped])], actions, None
+     )
+     _keys(state, actions, "f3", "3")
+-    text = _render(state, 200, 50)
++    # The outcome pane prints `target: <root> (project root; no targets recorded)` and wraps it
++    # at the pane width, so the terminal width grows with the temp path's length.
++    text = _render(state, 200 + 4 * len(str(root)), 50)
+     assert "(project root; no targets recorded)" in text, text
+--- a/tests/test_phase70_tui_usability.py
++++ b/tests/test_phase70_tui_usability.py
+@@ -299,7 +299,7 @@
+     old.rename(new)
+     actions = _actions(load_overview=load_overview)
+     state = _launch([ProjectSeed(name="new", root=new)], actions, data_root)
+-    text = _render(state, 300, 50)
++    text = _render(state, 300 + 4 * len(str(old.resolve())), 50)
+     assert f"Project root moved: registered root missing: {old.resolve()}" in text
+     assert "[R] Relink to the new root (reviewed)" in text
+     assert "[A] Add this folder" not in text
+--- a/tests/test_phase70_tui_usability_ef.py
++++ b/tests/test_phase70_tui_usability_ef.py
+@@ -464,7 +464,7 @@
+     assert "big.txt" in text, f"changed files of the selected commit: {text}"
+     assert "+line-00000" in text, f"diff of the selected commit: {text}"
+     assert f"line-{bound + 40:05d}" not in text, "the diff must stay bounded"
+-    assert "more" in text, f"a truncated diff must say more remains: {text}"
++    assert "... more: diff cut at" in text, f"a truncated diff must say more remains: {text}"
+ 
+     # Next page, then expand the oldest commit's exact diff.
+     _keys(state, actions, "]")
+--- a/src/rush/tui.py
++++ b/src/rush/tui.py
+@@ -7441,11 +7441,11 @@
+         lines.append(_safe("changed: " + ", ".join(map(str, expanded["paths"]))))
+     if expanded["error"]:
+         lines.append(_safe(f"diff unavailable: {expanded['error']}", "bold red"))
+-    lines.extend(_safe(str(line)) for line in expanded["lines"])
+     if expanded["truncated"]:
+         lines.append(
+             _safe(f"... more: diff cut at {len(expanded['lines'])} lines", "yellow")
+         )
++    lines.extend(_safe(str(line)) for line in expanded["lines"])
+     return lines
+ 
+ 

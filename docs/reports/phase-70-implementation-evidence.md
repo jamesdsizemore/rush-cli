@@ -1758,3 +1758,35 @@ G6 successful native edits, received faulty-edit feedback, timeout and
 subsequent acceptance cleanup remain open. No Phase 70 completion or final
 handoff is claimed. This checkpoint supersedes earlier pending CI results and
 consent statements without closing unexecuted host acceptance.
+
+### CI-trigger merge reconciliation — 2026-10-04
+
+Commit `3f8bf5a8b19fc82216442a83eaa2bdc63a37d47c` was pushed, but no CI run
+started: PR 2 became conflicting after upstream `main` advanced to `a58c8bf`.
+The required branch merge contains upstream documentation and scratch inputs,
+with no upstream runtime/test/script/workflow changes. Its sole conflict was
+the Phase 73 plan status paragraph; resolution preserves the complete newer
+upstream plan byte-for-byte. The three reviewed Phase 70 runtime/test hashes
+remain unchanged. The PR itself is not merged or released.
+
+Upstream introduced 31 documentation files and changed four existing plan
+fingerprints. Coverage now records 481 documents: two added planning
+instructions, 24 planned internal artifacts and five historical reports.
+Existing runtime contracts and unrelated raw receipt objects are preserved.
+Two imported documents had machine-local provenance or repository links;
+repairs preserve provenance text and use verified repository-relative targets.
+
+The imported audit's 79 anchors exposed a shared validator defect, not 79
+broken GitHub links. Pinned upstream GitHub blob metadata confirms inline-code
+underscores are retained in actual anchors. An attempted fragment rewrite was
+restored exactly to upstream bytes. The validator now uses already-installed
+MarkdownIt inline tokens to preserve literal/code underscores while removing
+emphasis delimiters, then retains its existing character and duplicate rules.
+The new actual `check_docs` regression failed with two missing anchors in
+0.27 seconds; it and existing dash/broken-link checks passed in 0.46 seconds.
+Ruff check/format and independent frozen review passed. Existing inventory/link
+validation reports zero errors after receipt reconciliation.
+
+A fresh CI-triggering merge commit, rebuilt native artifact and remaining
+G6/G8 host acceptance are still required. No downstream implementation or
+Phase 70 completion is claimed by this documentation merge.

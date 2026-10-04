@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from markdown_it import MarkdownIt
 from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
 
 # The MCP SDK's own pydantic-settings model has a `lifespan` field with an
@@ -189,7 +190,16 @@ def _markdown_links(text: str) -> list[str]:
 
 def _slug(value: str) -> str:
     value = re.sub(r"<[^>]+>", "", value)
-    value = re.sub(r"[`*_~]", "", value).strip().lower()
+    tokens = MarkdownIt().parseInline(value)[0].children or []
+    value = (
+        "".join(
+            token.content
+            for token in tokens
+            if token.type in {"text", "code_inline", "image"}
+        )
+        .strip()
+        .lower()
+    )
     value = "".join(
         char
         for char in value

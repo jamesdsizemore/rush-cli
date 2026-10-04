@@ -14,6 +14,14 @@ were removed without conflicts; original manual Rush entries and modes were
 CAS-restored. Current evidence report supplies exact receipts and supersedes
 older checkpoints below.
 
+CI-trigger checkpoint: pushed scope fix `3f8bf5a` could not start CI while
+PR 2 conflicted with newer upstream documentation. Branch merge retains the
+newer Phase 73 plan exactly; runtime fix hashes are unchanged. Imported docs
+coverage and links are reconciled, including a corrected GitHub underscore
+anchor validator. Remaining sequence: commit/push reviewed merge, consume
+fresh native artifact, complete both host journeys and cleanup, reconcile
+final native/CI receipts and perform frozen final review.
+
 Current checkpoint (2026-10-04): CI run `37226805311`, source `ae69282`,
 completed failure: six of eight jobs passed. Linux Quality reported 6470 passed,
 three Phase 71 UI failures and 26 deselected in 1251.15 seconds; Windows

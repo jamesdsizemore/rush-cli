@@ -223,6 +223,23 @@ def test_github_style_dash_heading_anchor_passes(tmp_path: Path) -> None:
     assert check_docs(root, contracts=CONTRACTS) == []
 
 
+def test_github_style_underscore_heading_anchors_pass(tmp_path: Path) -> None:
+    root = _fixture(tmp_path)
+    index = root / "docs/index.md"
+    index.write_text(
+        "# `rush_token_outline`\n\n[Code](#rush_token_outline)\n\n"
+        "# plain_name\n\n[Literal](#plain_name)\n\n"
+        "# _Packet_\n\n[Emphasis](#packet)\n",
+        encoding="utf-8",
+    )
+    _write_report(
+        root,
+        [_entry(root, "docs/index.md"), _entry(root, "docs/nested/guide.md")],
+    )
+
+    assert check_docs(root, contracts=CONTRACTS) == []
+
+
 def test_missing_registered_command_fails(tmp_path: Path) -> None:
     root = _fixture(tmp_path)
     incomplete = {**CONTRACTS, "cli": {}}

@@ -1,0 +1,44 @@
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -578,6 +578,10 @@
+     return {path for path in written if os.path.lexists(path)}
+ 
+ 
++_LAST_LISTING = float("-inf")
++_LISTING_INTERVAL_SECONDS = 5.0
++
++
+ def _created_entries(data_root: Path, before: set[str]) -> list[str]:
+     """Entries this pytest process created or wrote under the data root since the
+     last check and that still exist, plus new owners/ and project_locks/
+@@ -585,8 +589,14 @@
+     after it started a child with the real data root, those no process
+     holds (that child created and released them). Entries of unrelated
+     processes are not attributed."""
++    global _LAST_LISTING
+     mine = _written_under(data_root)
+     new = _watched_entries(data_root) - before - mine
++    now = time.monotonic()
++    if not new and now - _LAST_LISTING < _LISTING_INTERVAL_SECONDS:
++        _REAL_ROOT_CHILD.clear()
++        return sorted(mine)
++    _LAST_LISTING = now
+     held = _held_by(new, _descendant_pids() | {os.getpid()})
+     if _REAL_ROOT_CHILD.is_set():
+         _REAL_ROOT_CHILD.clear()
+@@ -652,6 +662,15 @@
+             "ZERO SKIP GUARD",
+             ["skipped (the owner rule is zero skips):", *_SKIPPED],
+         )
++    if _LAST_LISTING != float("-inf"):
++        try:
++            _process_parents()
++        except _GuardProbeError as exc:
++            _fail_session(
++                session,
++                "PROCESS LISTING GUARD",
++                [f"the real HOME guard could not list processes at session end: {exc}"],
++            )
+     data_root = _REAL_HOME_GUARD["data_root"]
+     after = _real_home_snapshot(_REAL_HOME_GUARD["home"], data_root)
+     changed = _session_changes(_REAL_HOME_BEFORE, after)
