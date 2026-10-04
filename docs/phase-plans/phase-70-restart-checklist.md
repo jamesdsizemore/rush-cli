@@ -2,12 +2,25 @@
 
 Status: in progress, 2026-10-03. No phase acceptance or final handoff claimed.
 
-Current checkpoint (2026-10-04): `ae69282` macOS CI warmup/build/probe/upload
-and downloaded native origin/import/MCP probe passed. Current Linux/Windows
-wheel/sdist probes passed; Windows reported 57 passed and three Phase 71 UI
-failures. Linux Quality remains in progress. Real-host G6 packet consent,
-retained end-to-end journeys, skipped backend gates and final frozen review
-remain open. The current evidence-report checkpoint supersedes older dated
+Current checkpoint (2026-10-04): CI run `37226805311`, source `ae69282`,
+completed failure: six of eight jobs passed. Linux Quality reported 6470 passed,
+three Phase 71 UI failures and 26 deselected in 1251.15 seconds; Windows
+reported 57 passed and three Phase 71 UI failures. The prior macOS warmup
+regression is absent from the current full-suite failure list. macOS npm
+warmup/build/probe/upload, downloaded native origin/import/MCP probe and
+current Linux/Windows wheel/sdist probes passed. Windows native checksum,
+origin/version/MCP assertions passed before its UI asset assertion failed;
+Linux native artifact checks and existing installation rollback selectors passed
+under the verified full-suite selection. The new compiled-candidate
+checksum/probe rollback cases both passed on macOS against downloaded
+`ae69282` bytes. Both selectors are included by existing Linux/Windows CI
+selections; their new CI execution remains pending.
+Windows ACL, mypy, docs parity/links, dependency audit and whitespace gates
+were all skipped. The G6 fixture now has one real greeting assertion, verified
+by direct Python 3.12 invocation. Real-host G6 consent, provisioned
+native timeout route, actual host/hook/timeout/model acceptance, retained
+end-to-end journeys and final frozen review remain open. The current
+evidence-report checkpoint supersedes older dated
 execution states below; transferred UI remains Phase 71. Production attribution
 repair is implemented with focused regression and review evidence; final CI
 acceptance is still required.

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.probe_installed_artifacts import (
     probe_installed_artifact,
     probe_native_artifact,
@@ -256,3 +258,99 @@ def test_native_artifact_needs_no_checkout_python_or_uv(
                 proc.wait(timeout=5)
             reader.join(timeout=5)
             proc.stdout.close()
+
+
+@pytest.mark.parametrize("failure", ["checksum", "probe"])
+def test_native_install_failure_restores_previous_executable(
+    tmp_path: Path, native_release_archive: Path, failure: str
+) -> None:
+    """Exercise real native execution and rollback with a controlled candidate fault."""
+    import os
+    import platform
+    import subprocess
+    import tarfile
+    import zipfile
+
+    from rush.tools.install import InstallError, InstallTool
+
+    archive = native_release_archive
+    sums = (archive.parent / "SHA256SUMS").read_text(encoding="utf-8")
+    assert archive.name == select_platform_asset(platform.system(), platform.machine())
+    assert verify_archive_checksum(archive, archive.parent / "SHA256SUMS") is True
+    binary_name = "rush.exe" if os.name == "nt" else "rush"
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as packed:
+            previous_bytes = packed.read(binary_name)
+    else:
+        with tarfile.open(archive, "r:gz") as packed:
+            member = packed.extractfile(binary_name)
+            assert member is not None
+            with member:
+                previous_bytes = member.read()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    previous = bin_dir / binary_name
+    previous.write_bytes(previous_bytes)
+    previous.chmod(0o755)
+    env = scrub_environment(
+        {
+            "PATH": "C:\\Windows\\System32" if os.name == "nt" else "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
+            "TEMP": str(tmp_path),
+            "TMP": str(tmp_path),
+            "TMPDIR": str(tmp_path),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+        }
+    )
+    if os.name == "nt":
+        env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
+        env["windir"] = env["SystemRoot"]
+    observed: list[subprocess.CompletedProcess[str]] = []
+
+    def execute(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    before = execute([str(previous), "--version"])
+    assert before.returncode == 0, before.stderr
+
+    def failed_probe(args: list[str]) -> subprocess.CompletedProcess[str]:
+        assert args == [str(previous), "--version"]
+        healthy = execute(args)
+        assert healthy.returncode == 0, healthy.stderr
+        assert healthy.stdout == before.stdout
+        rejected = execute([args[0], "--rush-invalid-install-verification-option"])
+        assert rejected.returncode == 2, rejected.stderr
+        observed.extend((healthy, rejected))
+        # Both real processes ended; damage only this freshly installed candidate.
+        previous.write_bytes(b"broken candidate")
+        return rejected
+
+    if failure == "checksum":
+        sums = "0" * 64 + f"  {archive.name}\n"
+    with pytest.raises(InstallError) as raised:
+        InstallTool()._install_binary(
+            bin_dir=bin_dir,
+            asset_name=archive.name,
+            os_name=platform.system(),
+            archive_bytes=archive.read_bytes(),
+            sums_text=sums,
+            prober=failed_probe,
+        )
+    expected = "CHECKSUM_MISMATCH" if failure == "checksum" else "BINARY_VERIFY_FAILED"
+    assert raised.value.code == expected
+    assert len(observed) == (0 if failure == "checksum" else 2)
+    assert previous.read_bytes() == previous_bytes
+    restored = execute([str(previous), "--version"])
+    assert restored.returncode == 0, restored.stderr
+    assert restored.stdout == before.stdout

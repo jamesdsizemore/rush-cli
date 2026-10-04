@@ -1516,3 +1516,133 @@ macOS artifact production; this separate amendment is not applied or approved.
 Verification requires the next exact candidate run to execute all five existing
 steps despite transferred UI failures, retaining each actual conclusion and
 log. This check is unexecuted; static structure alone cannot accept these gates.
+
+### Final current-candidate CI receipt — 2026-10-04
+
+[Run 37226805311](https://github.com/jamesdsizemore/rush-cli/actions/runs/37226805311)
+completed **failure**, source `ae692827e14aaf318e7157bbb9b03d649ae57bb1`:
+six of eight jobs passed. This terminal receipt supersedes the in-progress
+Quality checkpoint above; historical results remain historical.
+
+Linux Quality job `111508016980` reported **6470 passed, three failed,
+26 deselected in 1251.15 seconds**. Its complete failure list contains only
+the transferred Phase 71 UI selectors:
+
+- `tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory`: expanded detail is `None`.
+- `tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts`: rendered artifact path omits literal `[/bad]`.
+- `tests/test_tui_terminal.py::test_installed_native_tui_real_terminal`: expected contiguous `owner scope = project:` wraps across terminal lines.
+
+The retained warmup regression selector
+`tests/test_phase70_t7_fixes.py::test_every_ci_job_with_aislop_warms_its_npm_runtime_after_sync`
+is absent from that failure list. The selected full suite reports no skipped
+tests; `-q` does not provide individual named PASS receipts.
+
+Windows contracts job `111508016966` reported **57 passed, three failed in
+155.31 seconds**. The corrected query-denial fixture has no reported failure
+or skip. Remaining failures are the same transferred Phase 71 UI selectors:
+`test_native_artifact_needs_no_checkout_python_or_uv` (packaged LF versus
+checkout CRLF), `test_windows_f2_f3_shift_tab_decode_to_named_actions_not_escape`
+(console child exit 1), and `test_windows_installed_tui_real_console_journey`
+(`FileExistsError [WinError 183]` creating the existing attempt directory).
+
+The current Windows native artifact failure traceback supplies narrower
+positive evidence: its current-source session archive
+`rush-windows-x86_64.zip` passed platform filename and `SHA256SUMS` assertions,
+then `probe_native_artifact` passed status, origin, MCP initialization and
+version assertions. Dashboard readiness and HTTP 200 also passed before the
+UI asset bytes assertion failed. These reached assertions prove those checks;
+they do not make the containing test PASS or close native UI/recovery acceptance.
+Read-only selection reconciliation establishes that Linux's unmarked
+`test_native_artifact_needs_no_checkout_python_or_uv` is included by the full
+suite filters. It is absent from the exhaustive failure list, with no skips,
+so its native artifact assertions passed. The same reconciliation includes
+`test_bad_checksum_leaves_previous_install_intact`,
+`test_interrupted_upgrade_restores_prior_executable`, and
+`test_binary_verify_failure_restores_prior_executable`; all passed. These
+exercise real `InstallTool` rollback using downloader fixture bytes and a
+failing POSIX executable, preserving the prior executable. Windows selection
+omits `tests/test_bootstrap_install.py`; the macOS artifact job runs probes.
+At that CI checkpoint, native Windows and macOS installation rollback was
+unexecuted; the subsequent macOS compiled-candidate receipt follows below. Linux's
+installed terminal journey failed its transferred UI owner-label assertion;
+no native UI acceptance is inferred.
+
+Current-candidate Ubuntu installed job `111508017076` and Windows installed
+job `111508017071` passed independent wheel/sdist origin and clean-import
+probes. macOS job `111508016968` passed actual npm warmup, native build,
+wheel/sdist probes, native origin/MCP probe and upload; artifact `11312023919`
+and downloaded-byte receipts are recorded above. Real static binaries job
+`111508016836`, representative engines job `111508016999` and executed
+workloads job `111508017069` also passed.
+
+All five retained backend gates were **skipped**: Windows data-directory ACL,
+Linux mypy, documentation parity/links, dependency audit and whitespace.
+Their actual acceptance remains open; the conditional proposal above remains
+unapproved and unapplied. Six passing jobs do not close Phase 70.
+
+Native readiness gaps remain explicit. The G6 fixture now additionally contains
+`test_fixture.py` (103 bytes; SHA-256
+`322698c4735737284ba825a08170e6258cd75515eadaaa7ec4a39b96c2185d5d`):
+
+```python
+from fixture import greeting
+
+
+def test_greeting() -> None:
+    assert greeting() == "Rush G6 fixture"
+```
+
+Direct Python 3.12 invocation passed that actual domain assertion; pytest and
+native `rush_test` have not run. Existing fixture bytes are unchanged. Its
+unused `os` import remains an intentional F401 defect, so lint feedback must
+exercise that actual defect; the greeting assertion correctly passes both
+before and after removing the import. No domain failure was manufactured.
+This isolated test adds no host guidance, activation or engine installation.
+The ESLint
+native timeout route was identified, but `command -v eslint` returned exit 1:
+no PATH engine is available for that route. No actual real-host, hook, timeout
+or model-context acceptance has been completed. These fixture/provisioning
+gaps and required consent remain distinct from the passing native artifact
+probes; no Phase 70 completion or G6 acceptance is claimed.
+
+### Compiled-candidate installation fault/recovery — 2026-10-04
+
+The existing Linux installer regressions also ran on Darwin arm64: three
+passed in 0.36 seconds. They returned exact `CHECKSUM_MISMATCH`,
+`EXTRACT_FAILED`, and `BINARY_VERIFY_FAILED`, preserving prior shell-fixture
+bytes. This establishes platform installer behavior, not compiled-candidate
+recovery by itself.
+
+The new portable parameterized selector
+`tests/test_phase52_installed_artifacts.py::test_native_install_failure_restores_previous_executable`
+reuses the existing session native archive, with `checksum` and `probe` cases.
+Both plain-function cases passed on macOS against the downloaded `ae69282`
+archive (SHA-256 `8c9a54a9eca73d644eea4d793be5401d72d20d6a3edbaa07c7c82535d0a7587e`).
+Bad checksum raised `InstallError` with code `CHECKSUM_MISMATCH`, preserving compiled executable
+bytes and working `--version`. The probe case ran the actual installed native
+`--version` successfully, then an actual invalid CLI option returned exit 2.
+After those processes ended, the callback deliberately replaced only the new
+candidate with `b"broken candidate"` and returned that real failed process
+result. `InstallTool._install_binary` raised `InstallError` with code
+`BINARY_VERIFY_FAILED`, restored the original
+compiled bytes exactly, and the restored `--version` matched healthy output.
+This is controlled checksum/prober fault injection; it does not claim the
+default version probe spontaneously fails on a healthy candidate. These cases
+exercise the shared private installation primitive, not the public
+`InstallTool.run` result route.
+
+Runs used fresh isolated temporary HOME/UserProfile roots, Python 3.12.12,
+`nice -n 15` and thread caps. No pytest archive/build fixture, full suite,
+engine, model, hook or real-home installation ran; temporary roots were
+removed. Test SHA-256 remained
+`2d34845ee8b88fc3f13b9e066de4f249eff9bfba71250abd2cfdd4c52ebc2e1c`
+and `src/rush/tools/install.py` remained
+`d735a3aebbb8cc3ed69f55a36090875ba9917aeb3b4424bbedf6cca3cedd4902`
+before/after execution. Ruff check/format and independent frozen test review
+passed. No UI assertion, production implementation or CI workflow changed.
+
+Existing Windows contracts explicitly select the containing test file;
+Linux Quality's full-suite filters also include both cases. Expected selection
+increases by two per platform; native Windows/Linux execution of these new
+compiled-candidate cases is still pending. Existing Phase 71 UI failures,
+five skipped backend gates and unexecuted G6 remain open.
