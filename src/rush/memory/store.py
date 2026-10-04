@@ -1143,6 +1143,35 @@ class TypedArtifactStore:
             "created_at": row["created_at"],
         }
 
+    @staticmethod
+    def read_artifact_receipts_readonly(
+        project_root: Path, artifact_id: str, version: int, *, limit: int = 8
+    ) -> list[dict[str, Any]]:
+        """Bounded committed effects for one exact artifact revision; never opens a writer."""
+        db = Path(project_root) / ".rush" / "memory.db"
+
+        def read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+            if not sqlite_has_table(conn, "mutation_receipts"):
+                return []
+            rows = conn.execute(
+                "SELECT operation_id, kind, revision, created_at "
+                "FROM mutation_receipts WHERE artifact_id = ? AND revision = ? "
+                "ORDER BY created_at DESC, operation_id LIMIT ?",
+                (artifact_id, version, max(1, min(limit, 32))),
+            ).fetchall()
+            return [
+                {
+                    "id": row["operation_id"],
+                    "artifact_version": row["revision"],
+                    "kind": row["kind"],
+                    "origin": "mutation",
+                    "timestamp": row["created_at"],
+                }
+                for row in rows
+            ]
+
+        return read_sqlite_readonly(db, read) or []
+
     def search_candidates(
         self,
         subject: MemorySubject,
@@ -2527,6 +2556,7 @@ class TypedArtifactStore:
         *,
         user_stated: bool,
         candidate_sources: list[str] | None = None,
+        candidate_refs: list[dict[str, Any]] | None = None,
         expected_version: int | None = None,
         owner_scope: OwnerScope | None = None,
         receipt_operation_id: str | None = None,
@@ -2553,6 +2583,38 @@ class TypedArtifactStore:
             if row is None:
                 raise KeyError(artifact_id)
             self._require_owner(row, artifact_id, owner_scope)
+            if candidate_refs is not None:
+                candidate = _row_to_artifact(
+                    row, default_owner_scope=self._owner_scope_default
+                )
+                candidate_sources = []
+                for ref in candidate_refs:
+                    peer_row = conn.execute(
+                        "SELECT * FROM memory_artifacts WHERE id = ?", (ref["id"],)
+                    ).fetchone()
+                    peer = (
+                        _row_to_artifact(
+                            peer_row, default_owner_scope=self._owner_scope_default
+                        )
+                        if peer_row is not None
+                        else None
+                    )
+                    if (
+                        peer is None
+                        or peer.artifact_version != ref["version"]
+                        or peer.source != ref["source"]
+                        or peer.subject != candidate.subject
+                        or peer.symbol_ref != candidate.symbol_ref
+                        or peer.content != candidate.content
+                        or peer.owner_scope != candidate.owner_scope
+                        or peer.trust_tier == "STATED"
+                        or peer.stale
+                        or peer.archived_at is not None
+                    ):
+                        raise VersionConflictError(
+                            f"promotion corroborator {ref['id']!r} changed since review"
+                        )
+                    candidate_sources.append(peer.source)
             artifact, decision = promote_stored_artifact(
                 conn,
                 artifact_id,

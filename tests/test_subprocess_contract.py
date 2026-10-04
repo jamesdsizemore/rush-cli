@@ -1110,6 +1110,145 @@ def test_windows_job_name_is_namespaced_and_pid_scoped() -> None:
     assert name_a != name_b, "each call mints its own unique suffix"
 
 
+def _mock_windows_identity_kernel(monkeypatch, fault: str):
+    import ctypes
+    from types import SimpleNamespace
+
+    closed: list[int] = []
+    error = {
+        "absent": 87,
+        "access_denied": 5,
+        "unknown": 0,
+        "query_failed": 6,
+        "same_process": 0,
+        "reused_pid": 0,
+    }[fault]
+
+    def open_process(*_args):
+        return 77 if fault in ("query_failed", "same_process", "reused_pid") else 0
+
+    def get_process_times(_handle, creation, *_times):
+        creation._obj.dwHighDateTime = 2
+        creation._obj.dwLowDateTime = 4 if fault == "reused_pid" else 3
+        return fault != "query_failed"
+
+    def open_job(*_args):
+        return 0
+
+    def close_handle(handle):
+        closed.append(handle)
+
+    kernel = SimpleNamespace(
+        OpenProcess=open_process,
+        GetProcessTimes=get_process_times,
+        OpenJobObjectW=open_job,
+        CloseHandle=close_handle,
+    )
+
+    def load(name, *, use_last_error):
+        assert (name, use_last_error) == ("kernel32", True)
+        return kernel
+
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error, raising=False)
+    return closed
+
+
+@pytest.mark.parametrize(
+    "fault,confirmed",
+    [
+        ("absent", True),
+        ("access_denied", False),
+        ("unknown", False),
+        ("query_failed", False),
+        ("same_process", False),
+        ("reused_pid", True),
+    ],
+)
+def test_windows_identity_confirmation_keeps_uncertain_durable_records(
+    monkeypatch, owned_data_root: Path, fault: str, confirmed: bool
+) -> None:
+    from types import SimpleNamespace
+
+    closed = _mock_windows_identity_kernel(monkeypatch, fault)
+    monkeypatch.setattr(subprocesses, "sys", SimpleNamespace(platform="win32"))
+    subprocesses._record_owned_process(
+        "windows-owner",
+        "run-a",
+        4242,
+        windows_job_name="Local\\RushJob-test",
+        windows_creation_time=(2 << 32) | 3,
+        windows_job_assigned=True,
+    )
+    record = subprocesses.read_owned_process_records("windows-owner")[0]
+    outcome = subprocesses.reap_owner_processes("windows-owner", timeout=0)
+    assert outcome == {
+        "owner_instance_id": "windows-owner",
+        "run_id": None,
+        "terminated": [4242] if confirmed else [],
+        "termination_unconfirmed": [] if confirmed else [4242],
+        "reconcilable": confirmed,
+    }
+    assert subprocesses.read_owned_process_records("windows-owner") == (
+        [] if confirmed else [{**record, "termination_unconfirmed": True}]
+    )
+    assert closed == (
+        [77] if fault in ("query_failed", "same_process", "reused_pid") else []
+    )
+
+
+def test_windows_launch_identity_query_error_never_releases_gate_and_cleans_up(
+    monkeypatch, owned_data_root: Path
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    _mock_windows_identity_kernel(monkeypatch, "access_denied")
+    monkeypatch.setattr(
+        subprocesses,
+        "sys",
+        SimpleNamespace(
+            platform="win32",
+            executable=sys.executable,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules, "msvcrt", SimpleNamespace(get_osfhandle=lambda fd: fd)
+    )
+    monkeypatch.setattr(subprocess, "STARTUPINFO", SimpleNamespace, raising=False)
+    proc = SimpleNamespace(pid=4242)
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(subprocesses, "_create_kill_on_close_job", lambda _name: 88)
+    monkeypatch.setattr(subprocesses, "_assign_process_to_job", lambda *_args: True)
+    reaped = []
+    monkeypatch.setattr(subprocesses, "_reap_gate_process", reaped.append)
+    closed = []
+    real_close = subprocesses._close_fd
+
+    def close(fd):
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(subprocesses, "_close_fd", close)
+    with pytest.raises(OSError, match="OpenProcess"):
+        subprocesses._launch_gated_process_windows(
+            ["engine"],
+            popen_kwargs={},
+            env={},
+            owner_instance_id="windows-owner",
+            run_id="run-a",
+        )
+    assert reaped == [proc]
+    assert len(closed) == 2
+    for fd in closed:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    assert subprocesses.read_owned_process_records("windows-owner") == []
+
+
 # S03's remaining 9 named regression tests (mutex acquire/release,
 # abandoned-mutex dead-owner detection, gate-wrapper blocking, job-object
 # tree kill/nesting/PID-reuse/recovery-restart) all require real WinAPI

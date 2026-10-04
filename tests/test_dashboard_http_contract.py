@@ -3302,6 +3302,118 @@ def test_concurrent_old_schema_startup_migration_is_race_free(tmp_path) -> None:
     assert result.attempt_id == "attempt-1"
 
 
+@pytest.mark.parametrize(
+    ("wait_result", "owned", "observed"),
+    [
+        (0x00000000, True, "dead"),
+        (0x00000080, True, "dead"),
+        (0x00000102, False, "alive"),
+        (0xFFFFFFFF, False, "activity_unverified"),
+        (0x00000103, False, "activity_unverified"),
+    ],
+)
+def test_windows_owner_mutex_wait_results_fail_closed(
+    tmp_path, monkeypatch, wait_result, owned, observed
+) -> None:
+    """Only owned mutex results admit startup, recovery or project mutation."""
+    import ctypes
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, Mock
+
+    kernel = MagicMock()
+    kernel.CreateMutexW.return_value = 41
+    kernel.OpenMutexW.return_value = 41
+    kernel.WaitForSingleObject.return_value = wait_result
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False
+    )
+    monkeypatch.setattr(dashboard_state, "sys", SimpleNamespace(platform="win32"))
+
+    lock = object.__new__(OwnerLock)
+    lock.owner_instance_id = "owner-windows-wait"
+    try:
+        if owned:
+            lock._acquire_windows_mutex()
+            assert lock._windows_mutex_handle == 41
+        else:
+            with pytest.raises(dashboard_state.OwnerLockError):
+                lock._acquire_windows_mutex()
+    finally:
+        if hasattr(lock, "_windows_park"):
+            lock.release()
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    with claim_dead_owner("owner-windows-wait", data_root=tmp_path) as claimed:
+        assert claimed is owned
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    assert dashboard_state.observe_owner("owner-windows-wait", tmp_path) == observed
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    entered = []
+    project_id = "project-windows-wait"
+    if owned:
+        with cross_process_project_lock(project_id):
+            entered.append("outer")
+            with cross_process_project_lock(project_id):
+                entered.append("inner")
+        assert entered == ["outer", "inner"]
+    else:
+        with (
+            pytest.raises(OSError, match="WaitForSingleObject failed"),
+            cross_process_project_lock(project_id),
+        ):
+            entered.append("unowned")
+        assert entered == []
+    kernel.WaitForSingleObject.assert_called_once_with(41, 0xFFFFFFFF)
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+    assert dashboard_state._cross_process_lock_depth.held[project_id] == 0
+
+    if not owned:
+        ledger = MutationLedger(db_path=tmp_path / "admission.db")
+        _seed_operation(ledger, "op-foreign")
+        ledger.admit(
+            "project-a",
+            execution_identity="scan_start:plan-1",
+            slot_id="op-foreign",
+            operation_id="op-foreign",
+            run_id="run-foreign",
+            plan_id="plan-1",
+            owner_instance_id="owner-windows-wait",
+        )
+        ledger.register_pending_outcome(
+            "op-foreign",
+            operation_id="op-foreign",
+            payload={"status": "success", "run_id": "run-foreign"},
+            owner_instance_id="owner-windows-wait",
+        )
+        admission = ledger.admission_for_project("project-a")
+        pending = ledger.pending_outcome("op-foreign")
+        status = ledger.get_operation_status("op-foreign")
+        reaper = Mock(side_effect=AssertionError("unowned mutex must not reap"))
+        monkeypatch.setattr("rush.runtime.subprocesses.reap_owner_processes", reaper)
+
+        assert (
+            reconcile_admissions(
+                ledger,
+                data_root=tmp_path,
+                recovering_owner_instance_id="owner-recovering",
+            )
+            == 0
+        )
+        assert ledger.admission_for_project("project-a") == admission
+        assert ledger.pending_outcome("op-foreign") == pending
+        assert ledger.get_operation_status("op-foreign") == status
+        reaper.assert_not_called()
+
+
 def test_windows_mutex_name_is_deterministic_and_namespaced() -> None:
     """S03 item 1: pure string derivation, testable without a Windows
     runner -- deterministic per owner, namespaced, never colliding across

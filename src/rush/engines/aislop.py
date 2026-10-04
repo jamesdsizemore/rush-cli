@@ -221,6 +221,7 @@ class AislopEngine(Engine):
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         findings: list[Finding] = []
         base = Path(raw.get("cwd") or path)
+        version = self.version()
         for item in raw.get("findings", []):
             sev = item.get("severity", "warning").lower()
             if "filePath" in item:
@@ -249,6 +250,24 @@ class AislopEngine(Engine):
                     or item.get("explanation"),
                 }
             )
+            if (
+                version == "0.16.1"
+                and item.get("engine") == "security"
+                and item.get("rule") == "security/vulnerable-dependency"
+                and item.get("filePath") == "requirements.txt"
+            ):
+                # 0.16.1 invokes pip-audit without binding target requirements.
+                finding = findings[-1]
+                finding["path"] = ""
+                finding["message"] = (
+                    "External Python environment audit; not an audit of target dependencies. "
+                    + finding["message"]
+                )
+                finding["extensions"] = {
+                    "scope": "external_environment",
+                    "reported_path": item["filePath"],
+                    "attribution_basis": "aislop_0.16.1_unbound_pip_audit",
+                }
 
         parsed = raw.get("parsed")
         reported = isinstance(parsed, list) or (
@@ -309,7 +328,7 @@ class AislopEngine(Engine):
         return ToolResult(
             tool=tool_name,
             engine=self.name,
-            engine_version=self.version(),
+            engine_version=version,
             status=status,
             duration_ms=raw.get("duration_ms", 0),
             summary=summary,

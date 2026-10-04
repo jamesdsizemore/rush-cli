@@ -717,3 +717,114 @@ def test_mcp_agent_connection_profile_fields_are_strict(extra):
     )
     assert result["status"] == "error"
     assert result["raw"]["error"]["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+def test_native_plugin_profile_preview_migration_and_omission(
+    tmp_path, monkeypatch, agent, host
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.setup.provision import default_data_root
+    from rush.tools import install as install_mod
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    home = Path.home()
+    data = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    config = agents_mod.ADAPTERS[agent].config_paths(sys.platform, home)[0]
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        b'{"mcpServers":{}}\n' if host == "claude" else b"# untouched host config\n"
+    )
+    config.write_bytes(original)
+    roots = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data
+    )
+    plugin = roots[host]
+    agents_mod.record_native_plugin_install(
+        host=host, plugin_root=plugin, data_root=data
+    )
+    mcp = plugin / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    extra_args = ["--project", "native-project", "--session", "native-session"]
+    value = json.loads(mcp.read_bytes())
+    value["mcpServers"]["rush"]["args"].extend(extra_args)
+    mcp.write_text(json.dumps(value))
+    with agents_mod._ledger_lock(data):
+        rows, version = agents_mod._load_ledger(data)
+        for row in rows.values():
+            if row["path"] == str(plugin):
+                row["written_sha256"] = agents_mod.owned_path_digest(plugin)
+        agents_mod._save_ledger(data, rows, version)
+    before = mcp.read_bytes()
+    ledger = agents_mod.ownership_ledger_path(data).read_bytes()
+    calls = []
+
+    def refresh(commands):
+        calls.append(commands)
+        # Native refresh must run after ledger lock release.
+        with agents_mod._ledger_lock(data):
+            pass
+
+    monkeypatch.setattr(install_mod, "_run_host_commands", refresh)
+    tool = AgentConnectionTool()
+    options = {
+        "action": "connect",
+        "session_id": "profile",
+        "project_root": root,
+        "rush_binary": RUSH_BINARY,
+        "home": home,
+        "data_root": data,
+        "permissions": ExecutionPermissions(cache_write=True, artifact_write=True),
+    }
+    for consent, state in ((False, "pending"), (lambda preview: False, "declined")):
+        result = tool.run(agent, profile="full", confirm_profile=consent, **options)
+        assert result["status"] == "skipped"
+        assert result["raw"]["migration"]["state"] == state
+        assert result["raw"]["migration"]["config_path"] == str(mcp)
+        assert mcp.read_bytes() == before
+        assert agents_mod.ownership_ledger_path(data).read_bytes() == ledger
+        assert not agents_mod.agent_memory_store_path(project_root=root).exists()
+        assert calls == []
+    result = tool.run(agent, profile="full", confirm_profile=True, **options)
+    assert result["status"] == "ok", result
+    assert result["raw"]["migration"]["state"] == "applied"
+    assert result["raw"]["probe"]["profile"] == "full"
+    assert result["raw"]["apply"]["method"] == "native_plugin"
+    assert "restart" in result["raw"]["reload"]
+    assert json.loads(mcp.read_bytes())["mcpServers"]["rush"]["args"] == [
+        "mcp",
+        "serve",
+        *extra_args,
+        "--profile",
+        "full",
+    ]
+    assert calls == [install_mod._plugin_upgrade_commands(host, plugin)]
+    full_bytes = mcp.read_bytes()
+    omitted = tool.run(agent, **options)
+    assert omitted["status"] == "ok"
+    assert mcp.read_bytes() == full_bytes
+    assert len(calls) == 1
+    rows = json.loads(agents_mod.ownership_ledger_path(data).read_bytes())[
+        "data"
+    ].values()
+    assert all(
+        row["written_sha256"] == agents_mod.owned_path_digest(plugin)
+        for row in rows
+        if row["path"] == str(plugin)
+    )
+    assert config.read_bytes() == original
+
+    core = tool.run(agent, profile="core", confirm_profile=True, **options)
+    assert core["status"] == "ok"
+    assert json.loads(mcp.read_bytes())["mcpServers"]["rush"]["args"] == [
+        "mcp",
+        "serve",
+        *extra_args,
+        "--profile",
+        "core",
+    ]
+    assert calls == [install_mod._plugin_upgrade_commands(host, plugin)] * 2
+    assert config.read_bytes() == original

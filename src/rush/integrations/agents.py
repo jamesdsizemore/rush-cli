@@ -56,6 +56,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, overload
 
+from rush.io.atomic_file import SanitizedJsonValue
 from rush.memory.transactions import CASMapTransaction, StoreError
 from rush.setup.provision import default_data_root
 
@@ -628,7 +629,7 @@ class RegistrationStep:
 class AgentApplyResult:
     agent_id: str
     ok: bool
-    method: Literal["native", "config-edit"]
+    method: Literal["native", "config-edit", "native_plugin"]
     config_path: Path | None
     backup_path: Path | None
     restart_required: bool
@@ -1000,6 +1001,7 @@ def initialize_agent_memory(
     project_root: Path | None = None,
     data_root: Path | None = None,
     consent: bool = False,
+    _journal: WriteJournal | None = None,
 ) -> dict[str, Any]:
     """Create (or reset) the observation/readiness entry for one scope.
 
@@ -1026,6 +1028,8 @@ def initialize_agent_memory(
         }
         return {"schema_version": 1, "entries": entries}
 
+    if _journal is not None:
+        return _journaled_memory_update(tx, mutator, key, _journal)
     snapshot = tx.update(mutator)
     return snapshot.data["entries"][key]
 
@@ -1101,6 +1105,7 @@ def acknowledge_agent_connection(
     *,
     project_root: Path | None = None,
     data_root: Path | None = None,
+    _journal: WriteJournal | None = None,
 ) -> dict[str, Any]:
     """Flip an initialized scope to connected. This is the only path to `connected=True`."""
     tx = _readiness_transaction(project_root=project_root, data_root=data_root)
@@ -1116,6 +1121,8 @@ def acknowledge_agent_connection(
         entries[key] = {**entry, "connected": True, "acknowledged_at": time.time()}
         return {"schema_version": 1, "entries": entries}
 
+    if _journal is not None:
+        return _journaled_memory_update(tx, mutator, key, _journal)
     snapshot = tx.update(mutator)
     return snapshot.data["entries"][key]
 
@@ -1245,7 +1252,9 @@ def cas_unlink(path: Path, *, expected_sha256: str) -> None:
     path.unlink()
 
 
-def owned_path_digest(path: Path) -> str | None:
+def owned_path_digest(
+    path: Path, *, _replacement: tuple[Path, bytes] | None = None
+) -> str | None:
     """Digest of a Rush-owned file or directory tree; None when absent.
 
     A directory digest covers every entry's relative path plus its file
@@ -1272,9 +1281,12 @@ def owned_path_digest(path: Path) -> str | None:
             elif child.is_dir():
                 tree.update(f"{rel}/\n".encode())
             else:
-                tree.update(
-                    f"{rel}\0{_digest_or_none(_read_regular(child))}\n".encode()
+                digest = (
+                    _sha256(_replacement[1])
+                    if _replacement is not None and child == _replacement[0]
+                    else _digest_or_none(_read_regular(child))
                 )
+                tree.update(f"{rel}\0{digest}\n".encode())
     return tree.hexdigest()
 
 
@@ -2304,6 +2316,109 @@ def _apply_resource_locked(
     return {**report, "state": state}
 
 
+def _map_write_bytes(version: int, data: dict[str, Any]) -> bytes:
+    content = SanitizedJsonValue.from_value(
+        {"schema_version": "1.0.0", "version": version, "data": data}
+    )
+    return json.dumps(
+        content.value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _journaled_memory_update(
+    tx: CASMapTransaction,
+    mutator: Callable[[dict[str, Any]], dict[str, Any]],
+    key: str,
+    journal: WriteJournal,
+) -> dict[str, Any]:
+    snapshot = tx.read(allow_missing=True)
+    original = _read_regular(tx.file_path)
+    if (_digest_or_none(original) or "") != snapshot.content_hash:
+        raise CASConflictError(
+            tx.file_path, snapshot.content_hash, _digest_or_none(original)
+        )
+    data = mutator(snapshot.data)
+    content = _map_write_bytes(snapshot.version + 1, data)
+    tx.file_path.parent.mkdir(parents=True, exist_ok=True)
+    written = cas_replace_file(
+        tx.file_path,
+        content,
+        expected_sha256=_digest_or_none(original),
+        new_file_mode=0o600,
+    )
+    journal.record_file("agent_memory", tx.file_path, original, written)
+    return json.loads(content)["data"]["entries"][key]
+
+
+def _native_plugin_registration(
+    agent_id: str, binary: str | None, profile: str | None, data_root: Path
+) -> tuple[RegistrationStep, Path, str] | None:
+    host = next((host for host, aid in PLUGIN_HOSTS.items() if aid == agent_id), None)
+    if host is None:
+        return None
+    roots = installed_plugin_roots(host, data_root)
+    if not roots:
+        return None
+    if len(roots) != 1:
+        raise AgentConnectionError(
+            "native plugin registration is ambiguous; confirm installed version first"
+        )
+    root = roots[0]
+    if not root.resolve().is_relative_to((data_root / "agent-plugins").resolve()):
+        raise AgentConnectionError(
+            f"native plugin root outside managed destination: {root}"
+        )
+    digest = owned_path_digest(root)
+    rows = [
+        row
+        for row in _read_ledger_rows(data_root).values()
+        if row.get("host") == agent_id
+        and row.get("path") == str(root)
+        and row.get("kind") in ("native_plugin", "file_resource")
+    ]
+    if (
+        digest is None
+        or {row.get("kind") for row in rows} != {"native_plugin", "file_resource"}
+        or any(row.get("written_sha256") != digest for row in rows)
+    ):
+        raise AgentConnectionError(f"native plugin ownership conflict: {root}")
+    path = root / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    original = _read_regular(path)
+    if original is None:
+        raise AgentConnectionError(f"native plugin MCP file missing: {path}")
+    text = original.decode("utf-8")
+    current = _get_json_like_entry(text, ("mcpServers",))
+    if current is None:
+        raise AgentConnectionError(f"native plugin Rush registration missing: {path}")
+    args = current.get("args")
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        raise AgentConnectionError(f"native plugin argv malformed: {path}")
+    if profile is not None and any(
+        arg.split("=", 1)[0] == "--memory-session" for arg in args
+    ):
+        raise AgentConnectionError(
+            "restricted memory-session registration cannot migrate profiles"
+        )
+    resolved_binary = resolve_rush_binary(binary or current.get("command"))
+    entry = _planned_entry(current, resolved_binary, profile)
+    same = same_server_entry(current, entry)
+    step = RegistrationStep(
+        agent_id,
+        "config-edit",
+        path,
+        None,
+        None,
+        text if same else _upsert_json_like(text, ("mcpServers",), entry),
+        True,
+        _sha256(original),
+        entry=entry,
+        current_entry=current,
+        unchanged=same,
+        migration_profile=profile,
+    )
+    return step, root, digest
+
+
 def connect_agent(
     agent_id: str,
     *,
@@ -2344,15 +2459,26 @@ def connect_agent(
     _resolve_adapter(agent_id, config_path=None, config_format=None, servers_key=None)
     if project_root is not None and not Path(project_root).is_dir():
         raise AgentConnectionError(f"project root not found: {project_root}")
-    binary = resolve_rush_binary(rush_binary)
-    step = plan_agent_registration(
-        agent_id, rush_binary=binary, home=home, profile=profile
+    if not session_id:
+        raise AgentConnectionError("connect requires session_id")
+    resolved_data_root = data_root or default_data_root()
+    native = _native_plugin_registration(
+        agent_id, rush_binary, profile, resolved_data_root
     )
+    if native is None:
+        binary = resolve_rush_binary(rush_binary)
+        step = plan_agent_registration(
+            agent_id, rush_binary=binary, home=home, profile=profile
+        )
+    else:
+        step, plugin_root, plugin_digest = native
+        assert step.entry is not None
+        binary = step.entry["command"]
     migration, refused = _migration_consent(step, profile_consent)
     if refused is not None:
         return {"migration": {**(migration or {}), "state": refused}}
     prior_entry: dict[str, Any] | None = None
-    if agent_id in ADAPTERS:
+    if native is None and agent_id in ADAPTERS:
         try:
             _, prior_entry = read_registration_entry(agent_id, home=home)
         except (AgentConnectionError, ValueError, OSError):
@@ -2363,7 +2489,6 @@ def connect_agent(
             original_bytes = _read_regular(step.config_path)
 
     root = Path(project_root).resolve() if project_root is not None else None
-    resolved_data_root = data_root or default_data_root()
     guidance_plan, guidance = _preview_guidance(
         agent_id,
         project_root=project_root,
@@ -2375,26 +2500,89 @@ def connect_agent(
     with _ledger_lock(resolved_data_root):
         ledger, ledger_digest = _load_ledger(resolved_data_root)
         before = json.dumps(ledger, sort_keys=True)
+        ledger_path = ownership_ledger_path(resolved_data_root)
+        ledger_original = _read_regular(ledger_path)
         try:
-            applied = apply_agent_registration(step)
-            if applied.ok:
-                journal.record_undo(
-                    registration_undo(
-                        step, original_bytes=original_bytes, captured_entry=prior_entry
-                    )
+            if native is not None and owned_path_digest(plugin_root) != plugin_digest:
+                raise AgentConnectionError(
+                    f"native plugin changed since preview: {plugin_root}"
                 )
+            if native is not None:
+                native_rows = [
+                    row
+                    for row in ledger.values()
+                    if row.get("path") == str(plugin_root)
+                    and row.get("host") == agent_id
+                    and row.get("kind") in ("native_plugin", "file_resource")
+                ]
+                if {row.get("kind") for row in native_rows} != {
+                    "native_plugin",
+                    "file_resource",
+                } or any(
+                    row.get("written_sha256") != plugin_digest for row in native_rows
+                ):
+                    raise AgentConnectionError(
+                        f"native plugin ownership changed since preview: {plugin_root}"
+                    )
+                assert step.config_path is not None and step.new_text is not None
+                planned_digest = owned_path_digest(
+                    plugin_root,
+                    _replacement=(step.config_path, step.new_text.encode("utf-8")),
+                )
+                if owned_path_digest(plugin_root) != plugin_digest:
+                    raise AgentConnectionError("native plugin changed during planning")
+            applied = apply_agent_registration(step)
+            if native is not None and not applied.ok:
+                failed = {"apply": applied.to_dict(), "guidance": guidance}
+                if migration is not None:
+                    failed["migration"] = {
+                        **migration,
+                        "state": _migration_state(applied),
+                    }
+                return failed
+            if applied.ok:
+                if native is None:
+                    journal.record_undo(
+                        registration_undo(
+                            step,
+                            original_bytes=original_bytes,
+                            captured_entry=prior_entry,
+                        )
+                    )
+                elif not step.unchanged:
+                    assert step.config_path is not None and step.new_text is not None
+                    journal.record_file(
+                        "native_plugin",
+                        step.config_path,
+                        original_bytes,
+                        _sha256(step.new_text.encode("utf-8")),
+                    )
+                    if owned_path_digest(plugin_root) != planned_digest:
+                        raise AgentConnectionError("native plugin changed during apply")
+                    for row in ledger.values():
+                        if (
+                            row.get("path") == str(plugin_root)
+                            and row.get("host") == agent_id
+                            and row.get("kind") in ("native_plugin", "file_resource")
+                        ):
+                            row["written_sha256"] = planned_digest
             memory_entry = initialize_agent_memory(
                 agent_id,
                 session_id,
                 project_root=project_root,
                 data_root=data_root,
                 consent=consent,
+                **({"_journal": journal} if native is not None else {}),
             )
             if applied.ok and acknowledge:
                 memory_entry = acknowledge_agent_connection(
-                    agent_id, session_id, project_root=project_root, data_root=data_root
+                    agent_id,
+                    session_id,
+                    project_root=project_root,
+                    data_root=data_root,
+                    **({"_journal": journal} if native is not None else {}),
                 )
-            if applied.ok:
+            if applied.ok and native is None:
                 _record_registration_locked(
                     agent_id,
                     root,
@@ -2405,6 +2593,10 @@ def connect_agent(
                 )
             if guidance_plan is not None:
                 result = _apply_instructions_locked(guidance_plan, ledger, journal)
+                if native is not None and result.status == "conflict":
+                    raise AgentConnectionError(
+                        f"native guidance conflict: {result.conflict}"
+                    )
                 guidance = {
                     **guidance,
                     "state": result.status,
@@ -2414,15 +2606,73 @@ def connect_agent(
                 _apply_resource_locked(agent_id, resource, root, ledger, journal)
                 for resource in resources
             ]
+            if native is not None:
+                for report in resource_reports:
+                    if report["state"] == "conflict":
+                        raise AgentConnectionError(
+                            f"native resource conflict: {report['path']}: "
+                            f"{report['conflict']}"
+                        )
             if json.dumps(ledger, sort_keys=True) != before:
                 _save_ledger(resolved_data_root, ledger, ledger_digest)
+                if native is not None:
+                    journal.record_file(
+                        "ownership_ledger",
+                        ledger_path,
+                        ledger_original,
+                        _sha256(_map_write_bytes(ledger_digest + 1, ledger)),
+                    )
         except (AgentConnectionError, StoreError, OSError, ValueError) as exc:
             recovery = journal.rollback()
             raise AgentTransactionError(
                 f"agent connect failed and was rolled back: {exc}", recovery
             ) from exc
 
-    probe = probe_agent_connection(agent_id, home=home, rush_binary=binary)
+    if native is not None:
+        from rush.tools.install import _plugin_upgrade_commands, _run_host_commands
+
+        host = next(host for host, aid in PLUGIN_HOSTS.items() if aid == agent_id)
+        if not step.unchanged:
+            failure = _run_host_commands(_plugin_upgrade_commands(host, plugin_root))
+            if failure is not None:
+                with _ledger_lock(resolved_data_root):
+                    recovery = journal.rollback()
+                if not any(item["component"] == "native_plugin" for item in recovery):
+                    restore_failure = _run_host_commands(
+                        _plugin_upgrade_commands(host, plugin_root)
+                    )
+                    if restore_failure is not None:
+                        recovery.append(
+                            {
+                                "component": "native_plugin_cache",
+                                "path": str(plugin_root),
+                                "error": restore_failure,
+                            }
+                        )
+                raise AgentTransactionError(
+                    f"native plugin refresh failed: {failure}", recovery
+                )
+        assert step.config_path is not None and step.new_text is not None
+        if _read_regular(step.config_path) != step.new_text.encode("utf-8"):
+            with _ledger_lock(resolved_data_root):
+                recovery = journal.rollback()
+            raise AgentTransactionError(
+                "native plugin registration changed before readback", recovery
+            )
+        applied = AgentApplyResult(
+            agent_id, True, "native_plugin", step.config_path, None, True
+        )
+        probe = AgentStatus(
+            agent_id,
+            ADAPTERS[agent_id].display_name,
+            True,
+            step.config_path,
+            "registered",
+            True,
+            profile=classify_registration_profile(step.entry),
+        )
+    else:
+        probe = probe_agent_connection(agent_id, home=home, rush_binary=binary)
     connected: dict[str, Any] = {
         "apply": applied.to_dict(),
         "probe": probe.to_dict(),
@@ -2430,6 +2680,10 @@ def connect_agent(
         "guidance": guidance,
         "resources": resource_reports,
     }
+    if native is not None:
+        connected["reload"] = (
+            "restart the host session to load the native plugin registration"
+        )
     if migration is not None:
         connected["migration"] = {**migration, "state": _migration_state(applied)}
     return connected

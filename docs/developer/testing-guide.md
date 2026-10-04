@@ -24,7 +24,7 @@ Layer 9: Packaging & Clean Distribution Tests (Wheel and sdist installation smok
 
 ```bash
 # Run the full suite serially (~7 minutes; see below for what makes up that time)
-.venv/Scripts/python.exe -m pytest tests/ -q
+.venv/Scripts/python.exe -m pytest tests/ -q -m ""
 
 # Run specific test category
 .venv/Scripts/python.exe -m pytest tests/test_sync_docs.py -q

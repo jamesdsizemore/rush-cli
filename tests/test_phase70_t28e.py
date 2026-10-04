@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import io
 import json
 import os
 import sqlite3
@@ -1584,6 +1585,65 @@ def test_tui_artifacts_section_inspects_via_bounded_continuation(
     assert "B" * 10 in rendered, (
         f"second page content missing from render: {rendered!r}"
     )
+
+
+def test_tui_artifact_detail_visible_with_full_captured_page_at_compact_sizes(
+    tmp_path: Path,
+) -> None:
+    project_id, root, data_root = _project(tmp_path, "proj")
+    scheduled = []
+    payload = b"VISIBLE_CAPTURE_BYTES"
+    for index in range(26):
+        path = f"report-{index:02}.txt"
+        candidate = f"tool-{index:02}"
+        snapshot = _snapshot_artifact(
+            root,
+            run_id="run-a",
+            attempt_id="run-a-attempt-1",
+            candidate_id=candidate,
+            rel_path=path,
+            data=payload if index == 0 else f"capture {index}".encode(),
+        )
+        scheduled.append(
+            {
+                "candidate_id": candidate,
+                "category": "lint",
+                "outcome": "executed",
+                "child": {"status": "ok", "artifacts": [path]},
+                "artifact_snapshots": {path: snapshot},
+            }
+        )
+    _write_attempt(
+        root,
+        run_id="run-a",
+        attempt_id="run-a-attempt-1",
+        generation=1,
+        project_id=project_id,
+        scheduled=scheduled,
+    )
+    state = tui_mod.TuiState(
+        projects=[tui_mod.ProjectState(name="proj", root=root, project_id=project_id)],
+        data_root=data_root,
+    )
+    actions = tui_mod.default_scan_actions(ExecutionPermissions())
+    tui_mod._dispatch_key(state, "f3", actions)
+    tui_mod._dispatch_key(state, "7", actions)
+    _settle(state, actions, "artifacts")
+    _find_action("artifacts", "inspect").run(state, actions)
+
+    for width, height in ((80, 24), (60, 20)):
+        state.terminal_size = (width, height)
+        console = tui_mod.Console(
+            record=True, width=width, height=height, file=io.StringIO()
+        )
+        console.print(tui_mod.render_app(state))
+        visible = console.export_text()
+        assert "bytes 0-21 of 21" in visible, (width, height, visible)
+        assert "VISIBLE_CAPTURE_BYTES" in visible, (width, height, visible)
+        assert "Esc:List" in visible, (width, height, visible)
+
+    tui_mod._dispatch_key(state, "escape", actions)
+    assert "Captured (26)" in _render_text(state)
 
 
 def test_tui_export_review_writes_only_after_approval(

@@ -114,6 +114,11 @@ def test_benchmark_action_helper_sends_owner_scope_on_the_calls_it_makes(
 
 def test_tokens_snapshot_reflects_real_telemetry(ui_journey: dict[str, Any]) -> None:
     _assert_stage(ui_journey, "tokens")
+    snapshot = ui_journey["tokens_snapshot"]
+    assert snapshot["actual"]["raw_tokens"] == 100
+    assert snapshot["actual"]["sent_tokens"] == 40
+    assert snapshot["actual"]["events_count"] == 1
+    assert snapshot["estimated_avoided"]["tokens_saved"] == 60
 
 
 def test_git_snapshot_reports_real_repo_identity(ui_journey: dict[str, Any]) -> None:

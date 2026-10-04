@@ -1911,6 +1911,7 @@ def list_project_artifacts(
                         "attempt_id": manifest.get("attempt_id"),
                         "tool_id": item.get("candidate_id"),
                         "path": rel_path,
+                        "paths": [rel_path],
                         "sha256": snap.get("sha256"),
                         "size": snap.get("size"),
                         "media_type": snap.get("media_type"),
@@ -1981,7 +1982,7 @@ def expand_artifact_reference(
     "visibility of every manifest entry" -- a missing artifact degrades to an
     explicit state instead of a 500)."""
     payload = list_project_artifacts(project, data_root=data_root)
-    for bucket in ("scan_outputs", "handoffs", "memory"):
+    for bucket in ("scan_outputs", "captured", "handoffs", "memory"):
         for item in payload.get(bucket) or []:
             if item.get("artifact_ref") == artifact_ref:
                 return {
@@ -2690,7 +2691,7 @@ def read_project_artifact_page(
     tool_id, path, sha256, offset}`. The manifest and the immutable path are
     both reached through `PhysicalRoot.open_contained`, and the snapshot is
     opened by `open_contained_file` (per-component `dir_fd` + `O_NOFOLLOW`,
-    no hard link) and must be a regular file of the recorded size.
+    no hard link) and must match the recorded size and SHA-256.
     Errors are returned as `error`: `invalid_cursor | not_found |
     immutable_content_unavailable | invalid_path | read_failed`. An explicit
     `offset` (the HTTP adapter's byte offset) replaces the cursor's offset,
@@ -2771,8 +2772,19 @@ def read_project_artifact_page(
         st = os.fstat(fd)
         if st.st_size != total_size:
             return error("immutable_content_unavailable", rel_path)
-        os.lseek(fd, offset, os.SEEK_SET)
-        chunk = os.read(fd, limit)
+        digest = hashlib.sha256()
+        page = bytearray()
+        position = 0
+        while block := os.read(fd, _MAX_ARTIFACT_PAGE_BYTES):
+            digest.update(block)
+            start = max(0, offset - position)
+            end = min(len(block), offset + limit - position)
+            if start < end:
+                page.extend(block[start:end])
+            position += len(block)
+        if position != total_size or digest.hexdigest() != sha256:
+            return error("immutable_content_unavailable", rel_path)
+        chunk = bytes(page)
     except OSError:
         return error("read_failed", rel_path)
     finally:

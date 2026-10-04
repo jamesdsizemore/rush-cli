@@ -39,11 +39,21 @@ from pathlib import Path
 from typing import Any, get_args
 
 import pytest
+from rich.console import Console
 
+from rush import tui
 from rush import tui as tui_mod
 from rush.memory.maintenance import MaintenanceTask
-from rush.memory.store import MemoryArtifact, TypedArtifactStore, legacy_owner_scope
+from rush.memory.store import (
+    MemoryArtifact,
+    OwnerScope,
+    TypedArtifactStore,
+    VersionConflictError,
+    legacy_owner_scope,
+)
 from rush.permissions import ExecutionPermissions
+from rush.token_economy.telemetry import TelemetryStore
+from rush.tools.memory import MemoryTool
 from rush.tui import ProjectSeed, ProjectState, ScanActions, TuiState
 
 pytestmark = pytest.mark.usefixtures("_isolated_home", "_no_subprocess_spawns")
@@ -197,6 +207,31 @@ def _state_and_project(tmp_path: Path) -> tuple[TuiState, ProjectState]:
     state = TuiState(projects=[project])
     state.mode = "memory"
     return state, project
+
+
+def _seed_promote_row(
+    state: TuiState, project: ProjectState, item: dict[str, Any]
+) -> None:
+    """Keep spy preview tests grounded in the selected real source revision."""
+    project.root.mkdir(parents=True, exist_ok=True)
+    scope = tui_mod._memory_owner_scope(state, project)
+    item.update(
+        subject=state.memory_subject,
+        symbol_ref=None,
+        owner_scope=scope,
+    )
+    TypedArtifactStore(project.root).write(
+        MemoryArtifact(
+            id=item["id"],
+            family="memory",
+            subject=state.memory_subject,
+            trust_tier="EXTERNAL_WRITE",
+            content=item["content"],
+            source=item["source"],
+            created_at=time.time(),
+            owner_scope=OwnerScope(scope["kind"], scope["id"]),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -374,6 +409,7 @@ def test_t28d_promote_previews_before_applying(tmp_path: Path) -> None:
     preview/apply shape."""
     state, project = _state_and_project(tmp_path)
     item = {"id": "a1", "artifact_version": 1, "content": {}, "source": "cli"}
+    _seed_promote_row(state, project, item)
     state.memory_items = [item]
     state.memory_selected_index = 0
     spy = _MemoryRunSpy(
@@ -395,6 +431,7 @@ def test_t28d_promote_uses_reviewed_grants_not_hardcoded(tmp_path: Path) -> None
     applied permissions must reflect that, not the fixed constant."""
     state, project = _state_and_project(tmp_path)
     item = {"id": "a1", "artifact_version": 1, "content": {}, "source": "cli"}
+    _seed_promote_row(state, project, item)
     state.memory_items = [item]
     state.memory_selected_index = 0
     state.memory_pending_promote = {"required_grants": ["artifact_write"]}
@@ -505,6 +542,8 @@ def test_t28d_every_form_previews_with_reviewed_grants(
         # expected effect); every other form uses a live, unarchived row.
         "archived_at": "2026-01-01" if form == "restore" else None,
     }
+    if form == "promote":
+        _seed_promote_row(state, project, item)
     state.memory_items = [item]
     state.memory_selected_index = 0
     state.memory_selected_ids = {"a1"}
@@ -673,6 +712,7 @@ def test_t28d_promote_denied_insufficient_corroboration_regression(
     this is existing, correct T20-era behavior T28-D must not regress."""
     state, project = _state_and_project(tmp_path)
     item = {"id": "a1", "artifact_version": 1, "content": {}, "source": "cli"}
+    _seed_promote_row(state, project, item)
     state.memory_items = [item]
     state.memory_selected_index = 0
     # Preview first (never carries a denial: corroboration runs at apply), then the apply's denial.
@@ -1009,7 +1049,9 @@ def test_t28d_maintenance_module_gets_a_read_only_candidate_preview(
 # ---------------------------------------------------------------------------
 
 
-def test_t28d_edit_conflict_offers_refresh_and_rereview(tmp_path: Path) -> None:
+def test_t28d_edit_conflict_offers_refresh_and_rereview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Beyond keeping the entered content (already covered by
     `test_t28d_edit_conflict_keeps_entered_content`), the brief requires
     the conflict to "offer refresh/review, never blind retry." RED: today
@@ -1017,7 +1059,15 @@ def test_t28d_edit_conflict_offers_refresh_and_rereview(tmp_path: Path) -> None:
     state a re-review flow could act on, and no refreshed version is ever
     fetched."""
     state, project = _state_and_project(tmp_path)
-    item = {"id": "a1", "artifact_version": 3, "content": {"note": "orig"}}
+    owner = tui_mod._memory_owner_scope(state, project)
+    item = {
+        "id": "a1",
+        "artifact_version": 3,
+        "content": {"note": "orig"},
+        "source": "fixture-source",
+        "owner_scope": owner,
+    }
+    monkeypatch.setattr(tui_mod, "_memory_known_sources", lambda _: ["fixture-source"])
     state.memory_items = [item]
     state.memory_selected_index = 0
     state.memory_edit_buffer = "in-flight-edit"
@@ -1026,7 +1076,19 @@ def test_t28d_edit_conflict_offers_refresh_and_rereview(tmp_path: Path) -> None:
             "edit": [{"raw": {"code": "E_VERSION"}}],
             # A refresh/re-review re-fetches the row; its current version has
             # moved on from the stale `3` this edit started against.
-            "list": [{"status": "ok", "raw": [{"id": "a1", "artifact_version": 4}]}],
+            "list": [
+                {
+                    "status": "ok",
+                    "raw": [
+                        {
+                            "id": "a1",
+                            "artifact_version": 4,
+                            "source": "fixture-source",
+                            "owner_scope": owner,
+                        }
+                    ],
+                }
+            ],
         }
     )
     actions = _actions(spy)
@@ -1061,33 +1123,25 @@ def test_t28d_expand_renders_relationships_and_receipts_as_structured_sections(
     `Panel(Text(str(state.memory_expanded)), title="expanded")` -- a raw
     Python dict repr, never labelled "Relationships"/"Receipts" sections
     with one row per item carrying its own ID and version."""
-    state, project = _state_and_project(tmp_path)
-    item = {"id": "a1", "artifact_version": 1}
-    state.memory_items = [item]
-    state.memory_selected_index = 0
-    spy = _MemoryRunSpy(
-        {
-            "expand": [
-                {
-                    "raw": {
-                        "data": {
-                            "id": "a1",
-                            "artifact_version": 1,
-                            "content": {"note": "x"},
-                            "relationships": [
-                                {"id": "rel-1", "artifact_version": 2, "kind": "cites"}
-                            ],
-                            "receipts": [
-                                {"id": "rcpt-1", "artifact_version": 1, "kind": "read"}
-                            ],
-                        }
-                    }
-                }
-            ]
-        }
-    )
-    actions = _actions(spy)
-    tui_mod._memory_expand_selected(state, project, actions)
+    state, _project = _state_and_project(tmp_path)
+    state.memory_expanded = {
+        "id": "a1",
+        "version": 1,
+        "offset": 0,
+        "next_offset": None,
+        "complete": True,
+        "content": '{"note": "x"}',
+        "relationships": [{"id": "rel-1", "artifact_version": 2, "kind": "cites"}],
+        "relationships_complete": True,
+        "receipts": [
+            {
+                "id": "rcpt-1",
+                "artifact_version": 1,
+                "kind": "read",
+                "origin": "telemetry",
+            }
+        ],
+    }
 
     from rich.console import Console
 
@@ -1127,6 +1181,8 @@ def _form_fixture(
             "archived_at": "2026-01-01" if form == "restore" else None,
         }
     ]
+    if form == "promote":
+        _seed_promote_row(state, project, state.memory_items[0])
     state.memory_selected_index = 0
     state.memory_edit_buffer = "edited"
     preview = {
@@ -1213,15 +1269,41 @@ def test_t28d_pending_mutation_panel_shows_ids_versions_owner_grants(
     assert "grants ['cache_write']" in text and "[n]/[esc] cancel" in text
 
 
-def test_t28d_r_key_refreshes_recorded_conflict(tmp_path: Path) -> None:
+def test_t28d_r_key_refreshes_recorded_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Plan line 419 "offers refresh/review": with a recorded edit conflict,
     [r] re-fetches the row and reopens the editor on the fresh version."""
-    state, _project = _state_and_project(tmp_path)
-    state.memory_items = [{"id": "a1", "artifact_version": 3, "content": {"note": "o"}}]
+    state, project = _state_and_project(tmp_path)
+    owner = tui_mod._memory_owner_scope(state, project)
+    monkeypatch.setattr(tui_mod, "_memory_known_sources", lambda _: ["fixture-source"])
+    state.memory_items = [
+        {
+            "id": "a1",
+            "artifact_version": 3,
+            "content": {"note": "o"},
+            "source": "fixture-source",
+            "owner_scope": owner,
+        }
+    ]
     state.memory_selected_index = 0
     state.memory_edit_conflict = {"id": "a1", "expected_version": 3}
     spy = _MemoryRunSpy(
-        {"list": [{"status": "ok", "raw": [{"id": "a1", "artifact_version": 4}]}]}
+        {
+            "list": [
+                {
+                    "status": "ok",
+                    "raw": [
+                        {
+                            "id": "a1",
+                            "artifact_version": 4,
+                            "source": "fixture-source",
+                            "owner_scope": owner,
+                        }
+                    ],
+                }
+            ]
+        }
     )
     _memory_key(state, "r", _actions(spy))
     assert state.mode == "memory_edit"
@@ -1275,3 +1357,484 @@ def test_t28d_edit_prompt_names_selected_field(tmp_path: Path) -> None:
     console = Console(record=True, width=400)
     console.print(tui_mod._render_memory_admin(state))
     assert "edit title> abc" in console.export_text()
+
+
+def _screen(state: tui.TuiState, width: int = 60, height: int = 20) -> str:
+    console = Console(record=True, width=width, height=height, no_color=True)
+    console.print(tui.render_app(state))
+    return console.export_text()
+
+
+def test_memory_second_page_status_visible_at_small_terminal_sizes(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    owner = OwnerScope("project", "project-one")
+    for index in range(35):
+        store.write(
+            MemoryArtifact(
+                id=f"native-page-{index:02d}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"note": f"real page row {index}"},
+                source="native-pages",
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+    project = tui.ProjectState(name="project", root=root, project_id="project-one")
+    project.section = "memory"
+    state = tui.TuiState(projects=[project], data_root=tmp_path)
+    state.mode = "memory"
+    state.memory_subject = "domain_knowledge"
+    actions = tui.default_scan_actions()
+    tui._memory_refresh(state, project, actions)
+    assert len(state.memory_items) == 35
+    for width, height in ((80, 24), (60, 20)):
+        state.terminal_size = (width, height)
+        state.memory_selected_index = 0
+        tui._handle_memory_key(state, "]", actions)
+        assert state.memory_selected_index == 20
+        screen = _screen(state, width, height)
+        assert "page 2/2" in screen, (width, height, screen)
+        tui._handle_memory_key(state, " ", actions)
+        assert state.memory_selected_ids == {"native-page-20"}
+        checked_screen = _screen(state, width, height)
+        assert ">[x]" in checked_screen, (width, height, checked_screen)
+        state.memory_selected_ids.clear()
+        state.message = "declined"
+        tui._enter_section(state, "memory", actions)
+        tui._handle_memory_key(state, "o", actions)
+        for _ in range(4):
+            tui._handle_memory_owner_key(state, "tab", actions)
+        tui._handle_memory_owner_key(state, "enter", actions)
+        assert state.memory_owner_scope_kind == "project"
+        owner_screen = _screen(state, width, height)
+        assert "owner scope = project:project-one" in owner_screen, (
+            width,
+            height,
+            owner_screen,
+        )
+        state.message = "current cancellation notice"
+        assert "current cancellation notice" in _screen(state, width, height)
+        state.message = ""
+
+
+def test_memory_detail_decodes_exact_version_and_real_receipts(tmp_path: Path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    first = store.write(
+        MemoryArtifact(
+            id="detail-alpha",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "decoded persistent detail"},
+            source="review-a",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", "project-one"),
+        ),
+        receipt_operation_id="real-create-alpha",
+    )
+    for index in range(6):
+        second = store.write(
+            MemoryArtifact(
+                id=f"detail-beta-{index}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="EXTERNAL_WRITE",
+                content={"note": f"related real detail {index}"},
+                source=f"review-b-{index}",
+                created_at=time.time(),
+                owner_scope=OwnerScope("project", "project-one"),
+            )
+        )
+        linked = MemoryTool().run(
+            root,
+            operation="link",
+            request={
+                "source_id": first.id,
+                "source_version": first.artifact_version,
+                "target_id": second.id,
+                "target_version": second.artifact_version,
+                "kind": "depends_on",
+            },
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+        assert linked["raw"]["code"] == "OK"
+    telemetry = TelemetryStore(root)
+    for index in range(6):
+        assert telemetry.record_memory_event(
+            "expansion",
+            17 + index,
+            request_id=f"{first.id}:{first.artifact_version}:0",
+            event_id="expansion",
+            invocation_id=f"real-expand-alpha-{index}",
+            cache_write=True,
+        )
+    project = tui.ProjectState(name="project", root=root, project_id="project-one")
+    project.section = "memory"
+    state = tui.TuiState(projects=[project], data_root=tmp_path)
+    state.mode = "memory"
+    state.terminal_size = (60, 20)
+    state.memory_items = [
+        {
+            "id": first.id,
+            "artifact_version": first.artifact_version,
+            "source": first.source,
+            "subject": first.subject,
+            "symbol_ref": first.symbol_ref,
+            "owner_scope": {"kind": "project", "id": "project-one"},
+            "content": first.content,
+        }
+    ]
+    tui._memory_expand_selected(state, project, tui.default_scan_actions())
+    actions = tui.default_scan_actions()
+    frames = []
+    for _ in range(12):
+        frames.append(_screen(state))
+        before = state.memory_expanded["scroll"]
+        tui._handle_memory_key(state, "]", actions)
+        if state.memory_expanded["scroll"] == before:
+            break
+    visible = "\n".join(frames)
+    compact = "".join(char for char in visible if char.isalnum() or char == "-")
+    for marker in (
+        "decoded",
+        "persistent detail",
+        "detail-beta-5",
+        "real-create-alpha",
+        "real-expand-alpha-5",
+    ):
+        needle = "".join(char for char in marker if char.isalnum() or char == "-")
+        assert needle in compact, (marker, visible)
+
+
+def test_memory_promote_uses_two_real_current_sources_and_rejects_stale(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    owner = OwnerScope("project", "project-one")
+    records = [
+        store.write(
+            MemoryArtifact(
+                id=f"corroborated-{source}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="EXTERNAL_WRITE",
+                content={"note": "same grounded observation"},
+                source=source,
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+        for source in ("review-a", "review-b")
+    ]
+    project = tui.ProjectState(name="project", root=root, project_id="project-one")
+    state = tui.TuiState(projects=[project], data_root=tmp_path)
+    state.mode = "memory"
+    state.memory_items = [
+        {
+            "id": records[0].id,
+            "artifact_version": records[0].artifact_version,
+            "source": records[0].source,
+            "subject": records[0].subject,
+            "symbol_ref": records[0].symbol_ref,
+            "content": records[0].content,
+            "owner_scope": {"kind": "project", "id": "project-one"},
+        }
+    ]
+    actions = tui.default_scan_actions()
+    tui._memory_promote_selected(state, project, actions)
+    held = state.memory_pending_mutation
+    assert held is not None
+    refs = held["calls"][0]["request"]["candidate_refs"]
+    assert {ref["source"] for ref in refs} == {"review-a", "review-b"}
+    store.archive(
+        records[1].id,
+        expected_version=records[1].artifact_version,
+        scope="domain_knowledge",
+        owner_scope=owner,
+        apply=True,
+    )
+    state.memory_pending_mutation = held
+    tui._memory_mutation_apply(state, project, actions)
+    assert "changed since review" in state.memory_message
+    current = store.get_current(records[1].id)
+    assert current is not None
+    store.archive(
+        records[1].id,
+        expected_version=current.artifact_version,
+        scope="domain_knowledge",
+        owner_scope=owner,
+        apply=True,
+        archived=False,
+    )
+    state.memory_items = [
+        {
+            **state.memory_items[0],
+            "artifact_version": store.get_current(records[0].id).artifact_version,
+        }
+    ]
+    tui._memory_promote_selected(state, project, actions)
+    assert state.memory_pending_mutation is not None
+    tui._memory_mutation_apply(state, project, actions)
+    assert "promoted to STATED" in state.memory_message
+
+
+def test_memory_detail_pages_exact_bytes_and_refuses_stale_owner_or_missing_store(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "first"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    first = store.write(
+        MemoryArtifact(
+            id="same-id",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={
+                "note": "EARLYMARKER " * 3
+                + "A" * 230
+                + "MIDDLEMARKER " * 3
+                + "B" * 230
+                + "ENDMARKER " * 3
+                + "é🚀" * 50
+            },
+            source="source-a",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", "first"),
+        )
+    )
+    project = tui.ProjectState(name="first", root=root, project_id="first")
+    state = tui.TuiState(projects=[project], data_root=tmp_path)
+    state.mode = "memory"
+    state.terminal_size = (60, 20)
+    row = {
+        "id": first.id,
+        "artifact_version": first.artifact_version,
+        "source": first.source,
+        "owner_scope": {"kind": "project", "id": "first"},
+    }
+    state.memory_items = [row]
+    actions = tui.default_scan_actions()
+    offsets = []
+    frames = []
+    for _ in range(80):
+        tui._memory_expand_selected(state, project, actions)
+        expanded = state.memory_expanded
+        assert expanded is not None, state.memory_message
+        offsets.append(expanded["offset"])
+        while True:
+            frames.append(_screen(state))
+            rows = max(3, state.terminal_size[1] - 10)
+            detail = tui._memory_detail_lines(expanded, state.terminal_size[0])
+            if expanded["scroll"] + rows >= len(detail):
+                break
+            tui._handle_memory_key(state, "]", actions)
+        if expanded["complete"]:
+            break
+    else:
+        pytest.fail("exact content did not complete within 80 bounded pages")
+    assert len(offsets) > 1 and offsets == sorted(set(offsets))
+    assert expanded["content"] == store.get_version_content(
+        first.id, first.artifact_version
+    )
+    assert "�" not in expanded["content"]
+    final_page = expanded["pages"][-1]
+    assert final_page["next_offset"] is None
+    detail_text = "".join(
+        line.plain
+        for line in tui._memory_detail_lines(expanded, state.terminal_size[0])
+    )
+    assert (
+        f"bytes {final_page['offset']}..{len(expanded['content'].encode())} complete"
+        in detail_text
+    )
+    visible = "\n".join(frames)
+    compact = "".join(char for char in visible if char.isalnum() or char == "-")
+    for marker in ("EARLYMARKER", "MIDDLEMARKER", "ENDMARKER"):
+        assert marker in compact, (marker, visible)
+    last_page = expanded["page_index"]
+    while expanded["scroll"]:
+        tui._handle_memory_key(state, "[", actions)
+    tui._handle_memory_key(state, "[", actions)
+    assert expanded["page_index"] == last_page - 1
+    back = "".join(char for char in _screen(state) if char.isalnum() or char == ".")
+    assert f"bytes{expanded['pages'][last_page - 1]['offset']}.." in back
+
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    other = TypedArtifactStore(other_root).write(
+        MemoryArtifact(
+            id="same-id",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "other project only"},
+            source="source-a",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", "other"),
+        )
+    )
+    other_project = tui.ProjectState(name="other", root=other_root, project_id="other")
+    state.projects = [other_project]
+    state.memory_items = [
+        {
+            **row,
+            "artifact_version": other.artifact_version,
+            "owner_scope": {"kind": "project", "id": "other"},
+        }
+    ]
+    tui._memory_expand_selected(state, other_project, actions)
+    assert state.memory_expanded is not None
+    assert state.memory_expanded["offset"] == 0
+    assert "other project only" in state.memory_expanded["content"]
+    assert "EARLYMARKER" not in state.memory_expanded["content"]
+    state.projects = [project]
+    state.memory_items = [row]
+
+    row["owner_scope"] = {"kind": "project", "id": "another-owner"}
+    tui._memory_expand_selected(state, project, actions)
+    assert state.memory_expanded is None
+    assert "selected record changed" in state.memory_message
+    row["owner_scope"] = {"kind": "project", "id": "first"}
+    store.archive(
+        first.id,
+        expected_version=first.artifact_version,
+        scope="domain_knowledge",
+        owner_scope=OwnerScope("project", "first"),
+        apply=True,
+    )
+    tui._memory_expand_selected(state, project, actions)
+    assert state.memory_expanded is None
+    assert "E_VERSION" in state.memory_message
+
+    missing = tmp_path / "missing"
+    missing.mkdir()
+    missing_project = tui.ProjectState(
+        name="missing", root=missing, project_id="missing"
+    )
+    state.memory_items = [row]
+    tui._memory_expand_selected(state, missing_project, actions)
+    assert state.memory_expanded is None
+    assert not (missing / ".rush" / "memory.db").exists()
+
+
+def test_memory_receipt_readers_do_not_create_or_mutate_storage(tmp_path: Path) -> None:
+    from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    record = store.write(
+        MemoryArtifact(
+            id="receipt-one",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "owned"},
+            source="one",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", "one"),
+        ),
+        receipt_operation_id="real-write-one",
+    )
+    db = root / ".rush" / "memory.db"
+    before = db.stat().st_mtime_ns
+    rows = TypedArtifactStore.read_artifact_receipts_readonly(
+        root, record.id, record.artifact_version
+    )
+    assert [row["id"] for row in rows] == ["real-write-one"]
+    assert TypedArtifactStore.read_artifact_receipts_readonly(root, record.id, 99) == []
+    assert db.stat().st_mtime_ns == before
+    assert read_artifact_expansion_receipts_readonly(root, record.id, 1) == []
+    assert not (root / ".rush" / "telemetry" / "tokens.db").exists()
+
+
+def test_memory_promotion_transaction_rejects_changed_corrob_source(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    owner = OwnerScope("project", "one")
+    records = [
+        store.write(
+            MemoryArtifact(
+                id=f"peer-{source}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="EXTERNAL_WRITE",
+                content={"note": "same observation"},
+                source=source,
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+        for source in ("one", "two")
+    ]
+    refs = [
+        {"id": item.id, "version": item.artifact_version, "source": item.source}
+        for item in records
+    ]
+    candidate = store.write(
+        MemoryArtifact(
+            id="candidate",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "same observation"},
+            source="one",
+            created_at=time.time(),
+            owner_scope=owner,
+        )
+    )
+    store.archive(
+        records[1].id,
+        expected_version=records[1].artifact_version,
+        scope="domain_knowledge",
+        owner_scope=owner,
+        apply=True,
+    )
+    with pytest.raises(VersionConflictError, match="changed since review"):
+        store.promote(
+            candidate.id,
+            user_stated=False,
+            candidate_refs=refs,
+            expected_version=candidate.artifact_version,
+            owner_scope=owner,
+        )
+    current = store.get_current(candidate.id)
+    assert current is not None
+    assert current.trust_tier == "EXTERNAL_WRITE"
+    assert current.artifact_version == candidate.artifact_version
+
+
+def test_memory_legacy_telemetry_receipts_expose_no_unknown_identity(
+    tmp_path: Path,
+) -> None:
+    from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
+
+    root = tmp_path / "project"
+    db = root / ".rush" / "telemetry" / "tokens.db"
+    db.parent.mkdir(parents=True)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE memory_events (request_id TEXT, event_id TEXT, "
+            "kind TEXT, tokens INTEGER, timestamp INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO memory_events VALUES ('unrelated:1:0', 'expansion', "
+            "'expansion', 99, 1)"
+        )
+    before = db.stat().st_mtime_ns
+    assert read_artifact_expansion_receipts_readonly(root, "related", 1) == []
+    assert db.stat().st_mtime_ns == before

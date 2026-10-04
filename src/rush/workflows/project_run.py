@@ -124,6 +124,7 @@ from rush.memory.handoff import (
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.runtime.filesystem import atomic_write_bytes
+from rush.runtime.subprocesses import cancel_scope
 from rush.safety.redactor import sanitize_value
 from rush.tools import ALL_TOOLS
 from rush.tools.base import Finding, ToolResult
@@ -773,8 +774,8 @@ def _execute_candidate(
     its own owned subprocess mid-flight (via
     `rush.runtime.subprocesses.run_subprocess`'s optional `cancel_check`
     contract) rather than only at this function's own boundary. No catalog
-    tool implements this today -- every existing `ALL_TOOLS` candidate keeps
-    its exact prior behavior, unaffected."""
+    tool implements this today; `_run_candidates` supplies the same check to
+    generic candidates through its enclosing `cancel_scope`."""
     if candidate.kind == "engine":
         # M17: route through the canonical `rush.engines.ENGINES`/
         # `rush.catalog.ENGINE_SPECS` pair -- a registered engine with no
@@ -1212,17 +1213,21 @@ def _run_candidates(
             event="candidate_started",
             candidate_id=candidate.candidate_id,
         )
-        outcome, result = _execute_candidate(
-            candidate,
-            root=root,
-            permissions=permissions,
-            targets=plan.targets,
-            config=config,
-            tools_by_name=tools_by_name,
-            cancel_check=cancel_check,
-            owner_instance_id=owner_instance_id,
-            run_id=run_id,
-        )
+        with cancel_scope(cancel_check) as cancellation:
+            outcome, result = _execute_candidate(
+                candidate,
+                root=root,
+                permissions=permissions,
+                targets=plan.targets,
+                config=config,
+                tools_by_name=tools_by_name,
+                cancel_check=cancel_check,
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+            )
+        if cancellation is not None and cancellation.hit:
+            # `run_engine` marked a stopped subprocess; preserve that outcome.
+            outcome = "cancelled"
         for finding in result.get("findings") or []:
             cast(dict[str, Any], finding)["finding_id"] = _finding_id(
                 str(result.get("tool", candidate.candidate_id)),

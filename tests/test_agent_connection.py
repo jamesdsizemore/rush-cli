@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -450,3 +451,200 @@ def test_resolve_rush_binary_requires_explicit_or_path(
     monkeypatch.setattr(agents_mod.shutil, "which", lambda _name: None)
     with pytest.raises(AgentConnectionError):
         resolve_rush_binary(None)
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+@pytest.mark.parametrize("public", [False, True])
+def test_native_connect_preserves_manual_config_with_real_effects(
+    tmp_path, monkeypatch, agent, host, public
+):
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.integrations import agents as agents_mod
+    from rush.permissions import ExecutionPermissions
+    from rush.setup.provision import default_data_root
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    data = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    config = agents_mod.ADAPTERS[agent].config_paths(sys.platform, home)[0]
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        b'{"mcpServers":{"other":{"command":"other"}}}\n'
+        if host == "claude"
+        else b'# other config\n[mcp_servers.other]\ncommand = "other"\n'
+    )
+    config.write_bytes(original)
+    roots = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data
+    )
+    agents_mod.record_native_plugin_install(
+        host=host, plugin_root=roots[host], data_root=data
+    )
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append(args)
+        pytest.fail("native connect attempted manual host registration")
+
+    monkeypatch.setattr(agents_mod.subprocess, "run", forbidden)
+    if public:
+        result = CliRunner().invoke(
+            cli,
+            [
+                "agent",
+                "connect",
+                agent,
+                "--session",
+                "native-session",
+                "--project",
+                str(root),
+                "--rush-binary",
+                RUSH_BINARY,
+                "--install-guidance",
+                "--consent",
+                "--acknowledge",
+                "--allow-cache-write",
+                "--allow-artifact-write",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.exception
+        payload = json.loads(result.stdout)
+    else:
+        payload = AgentConnectionTool().run(
+            agent,
+            action="connect",
+            session_id="native-session",
+            project_root=root,
+            rush_binary=RUSH_BINARY,
+            install_guidance=True,
+            consent=True,
+            acknowledge=True,
+            permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+            home=home,
+            data_root=data,
+            resources=[
+                agents_mod.OwnedResource(
+                    "file_resource", ".rush/skills/extra.md", b"real resource\n"
+                )
+            ],
+        )
+        assert (root / ".rush/skills/extra.md").read_bytes() == b"real resource\n"
+    assert payload["status"] == "ok", payload
+    assert config.read_bytes() == original
+    assert calls == []
+    assert payload["raw"]["apply"]["method"] == "native_plugin"
+    assert payload["raw"]["probe"]["status"] == "registered"
+    assert payload["raw"]["probe"]["restart_required"] is True
+    guidance = root / ("CLAUDE.md" if host == "claude" else "AGENTS.md")
+    assert "<!-- rush:begin" in guidance.read_text()
+    memory = agents_mod.read_agent_memory_state(
+        agent, "native-session", project_root=root, data_root=data
+    )
+    assert memory["consent"] is True and memory["connected"] is True
+    rows = json.loads(agents_mod.ownership_ledger_path(data).read_bytes())[
+        "data"
+    ].values()
+    assert not any(row["kind"] == "mcp_entry" and row["host"] == agent for row in rows)
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+@pytest.mark.parametrize(
+    "problem", ["missing", "mutated", "ambiguous", "restricted", "stale", "unknown"]
+)
+def test_native_registration_conflicts_never_fall_back_to_manual(
+    tmp_path, monkeypatch, agent, host, problem
+):
+    import shutil
+
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    home = tmp_path / "home"
+    home.mkdir()
+    data = tmp_path / "data"
+    root = tmp_path / "project"
+    root.mkdir()
+    config = ADAPTERS[agent].config_paths(sys.platform, home)[0]
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"mcpServers":{}}' if host == "claude" else b"# empty host config\n"
+    config.write_bytes(original)
+    roots = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data
+    )
+    plugin = roots[host]
+    agents_mod.record_native_plugin_install(
+        host=host, plugin_root=plugin, data_root=data
+    )
+    mcp = plugin / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    if problem == "missing":
+        shutil.rmtree(plugin)
+    elif problem == "mutated":
+        mcp.write_bytes(mcp.read_bytes() + b" ")
+    elif problem == "ambiguous":
+        other = agents_mod.materialize_agent_plugins(
+            rush_binary=RUSH_BINARY, rush_version="9.9.9", data_root=data
+        )
+        agents_mod.record_native_plugin_install(
+            host=host, plugin_root=other[host], data_root=data
+        )
+    elif problem == "restricted":
+        value = json.loads(mcp.read_bytes())
+        value["mcpServers"]["rush"]["args"] = [
+            "mcp",
+            "serve",
+            "--memory-session",
+            "receiver",
+        ]
+        mcp.write_text(json.dumps(value))
+        with agents_mod._ledger_lock(data):
+            ledger, version = agents_mod._load_ledger(data)
+            for row in ledger.values():
+                if row["path"] == str(plugin):
+                    row["written_sha256"] = agents_mod.owned_path_digest(plugin)
+            agents_mod._save_ledger(data, ledger, version)
+    ledger_bytes = agents_mod.ownership_ledger_path(data).read_bytes()
+    consent_calls = []
+
+    def approve(preview):
+        consent_calls.append(preview)
+        if problem == "stale":
+            mcp.write_bytes(mcp.read_bytes() + b" ")
+        return True
+
+    result = AgentConnectionTool().run(
+        agent,
+        action="connect",
+        session_id="blocked",
+        rush_binary=RUSH_BINARY,
+        project_root=root,
+        home=home,
+        data_root=data,
+        profile="invalid" if problem == "unknown" else "full",
+        confirm_profile=approve,
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+    )
+    assert result["status"] == "error", result
+    expected = {
+        "missing": "ownership conflict",
+        "mutated": "ownership conflict",
+        "ambiguous": "ambiguous",
+        "restricted": "restricted memory-session",
+        "stale": "changed since preview",
+        "unknown": "unknown MCP profile",
+    }[problem]
+    assert expected in result["summary"]
+    assert config.read_bytes() == original
+    assert agents_mod.ownership_ledger_path(data).read_bytes() == ledger_bytes
+    assert not agents_mod.agent_memory_store_path(project_root=root).exists()
+    assert len(consent_calls) == (1 if problem == "stale" else 0)

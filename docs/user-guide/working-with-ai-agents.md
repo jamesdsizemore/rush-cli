@@ -111,9 +111,21 @@ actually verifies, current source:
 Post-edit checks are off until you opt in per host and per project:
 
 ```bash
-rush agent connect claude-code --session ID --project /absolute/path/to/project \
+rush agent connect claude-code --session ID --project /absolute/path/to/registered-project \
   --allow-cache-write --allow-artifact-write --enable-agent-hooks
 ```
+
+To stop checks for that registered project while keeping the native plugin:
+
+```bash
+rush agent connect claude-code --session ID --project /absolute/path/to/registered-project \
+  --allow-cache-write --allow-artifact-write --disable-agent-hooks
+```
+
+Use `codex` instead of `claude-code` for Codex. This disable-only command requires the native Rush
+plugin already installed. It removes the selected project's activation while leaving the plugin and
+host MCP registration in place; it does not start a second Rush server. If activation changed since
+Rush wrote it, Rush reports a conflict instead of removing it.
 
 The native plugin's own hook approval still applies -- `rush agent connect --enable-agent-hooks`
 records project-level consent, but the check only actually runs through the plugin installed by

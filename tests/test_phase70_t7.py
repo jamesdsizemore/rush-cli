@@ -890,6 +890,186 @@ def test_t07_connect_enable_flag_records_activation_with_result_cache_consent(
 
 
 @pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+@pytest.mark.parametrize("as_json", [True, False])
+@pytest.mark.parametrize("enable", [True, False])
+def test_t07_public_native_plugin_hooks_preserves_registration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent: str,
+    host: str,
+    as_json: bool,
+    enable: bool,
+) -> None:
+    from rush.integrations.agent_hooks import set_hook_activation
+    from rush.integrations.agents import (
+        ADAPTERS,
+        materialize_agent_plugins,
+        ownership_ledger_path,
+        record_native_plugin_install,
+    )
+
+    home = _isolated_home(tmp_path, monkeypatch)
+    data = _data_root_for(home)
+    root, _ = _registered_project(tmp_path, data, "proj")
+    config = ADAPTERS[agent].config_paths(sys.platform, home)[0]
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        b'{"mcpServers":{"other":{"command":"other"}}}\n'
+        if host == "claude"
+        else b'# preserve bytes\n[mcp_servers.other]\ncommand = "other"\n'
+    )
+    config.write_bytes(original)
+    roots = materialize_agent_plugins(
+        rush_binary=str(Path(sys.executable).resolve()), data_root=data
+    )
+    record_native_plugin_install(host=host, plugin_root=roots[host], data_root=data)
+    if not enable:
+        assert (
+            set_hook_activation(agent, root, enable=True, data_root=data)["state"]
+            == "applied"
+        )
+    bad = root / "bad.py"
+    bad.write_text("import os\n")
+    event = json.dumps(
+        _payload(
+            host=host,
+            cwd=str(root),
+            tool_name=_EDIT_TOOL_NAMES[host],
+            file_path=str(bad),
+        )
+    )
+    assert bool(_invoke(host, event).output) is (not enable)
+
+    if not as_json:
+        monkeypatch.setattr("rush.cli.os.isatty", lambda _fd: True)
+        monkeypatch.setattr("rush.cli._is_terminal", lambda _out: True)
+        monkeypatch.setattr(
+            "rush.cli._confirm_guidance",
+            lambda _plan: pytest.fail("hook-only connect prompted for guidance"),
+        )
+    calls = _install_subprocess_spy(monkeypatch)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "agent",
+            "connect",
+            agent,
+            "--session",
+            "hook-only",
+            "--rush-binary",
+            str(Path(sys.executable).resolve()),
+            "--project",
+            str(root),
+            "--enable-agent-hooks" if enable else "--disable-agent-hooks",
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            *(["--json"] if as_json else []),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    if as_json:
+        payload = json.loads(result.stdout)
+        assert payload["status"] == "ok", payload
+        assert payload["raw"]["hooks"]["state"] == ("applied" if enable else "removed")
+    else:
+        assert f"agent hooks: {'applied' if enable else 'removed'}" in result.output
+    assert config.read_bytes() == original
+    assert calls == []
+    rows = json.loads(ownership_ledger_path(data).read_text())["data"].values()
+    assert not any(row["kind"] == "mcp_entry" and row["host"] == agent for row in rows)
+    assert bool(_invoke(host, event).output) is enable
+    if not enable:
+        assert calls == []
+
+
+def test_t07_disable_with_explicit_guidance_callback_runs_connect_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.integrations.agent_hooks import set_hook_activation
+    from rush.integrations.agents import (
+        materialize_agent_plugins,
+        record_native_plugin_install,
+    )
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    home = _isolated_home(tmp_path, monkeypatch)
+    data = _data_root_for(home)
+    root, _ = _registered_project(tmp_path, data, "proj")
+    roots = materialize_agent_plugins(
+        rush_binary=str(Path(sys.executable).resolve()), data_root=data
+    )
+    record_native_plugin_install(
+        host="claude", plugin_root=roots["claude"], data_root=data
+    )
+    assert (
+        set_hook_activation("claude-code", root, enable=True, data_root=data)["state"]
+        == "applied"
+    )
+    previews = []
+
+    def decline(plan):
+        previews.append(plan)
+        return False
+
+    result = AgentConnectionTool().run(
+        "claude-code",
+        action="connect",
+        session_id="explicit-guidance",
+        rush_binary=str(Path(sys.executable).resolve()),
+        project_root=root,
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+        home=home,
+        data_root=data,
+        confirm_guidance=decline,
+        agent_hooks="disable",
+    )
+    assert len(previews) == 1
+    assert result["raw"]["guidance"]["state"] == "declined"
+    assert result["raw"]["hooks"]["state"] == "removed"
+
+
+def test_t07_interactive_disable_without_native_plugin_keeps_guidance_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = _isolated_home(tmp_path, monkeypatch)
+    data = _data_root_for(home)
+    root, _ = _registered_project(tmp_path, data, "proj")
+    previews = []
+    monkeypatch.setattr("rush.cli.os.isatty", lambda _fd: True)
+    monkeypatch.setattr("rush.cli._is_terminal", lambda _out: True)
+
+    def decline(plan):
+        previews.append(plan)
+        return False
+
+    monkeypatch.setattr("rush.cli._confirm_guidance", decline)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "agent",
+            "connect",
+            "claude-code",
+            "--session",
+            "non-native-disable",
+            "--rush-binary",
+            str(Path(sys.executable).resolve()),
+            "--project",
+            str(root),
+            "--disable-agent-hooks",
+            "--allow-cache-write",
+            "--allow-artifact-write",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert len(previews) == 1
+    assert "guidance: declined" in result.output
+    assert "agent hooks: absent" in result.output
+
+
+@pytest.mark.parametrize(
     ("agent", "extra", "message"),
     (
         ("cursor", ["--enable-agent-hooks"], "available for"),
@@ -936,3 +1116,94 @@ def test_t07_connect_hook_flags_rejected_before_any_write(
     assert message in payload["summary"]
     assert calls == []
     assert _snapshot(home) == before
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+@pytest.mark.parametrize("cache", [False, True])
+def test_t07_shared_native_hook_enable_disable_preserves_config(
+    tmp_path, monkeypatch, agent, host, cache
+):
+    from rush.integrations.agents import (
+        ADAPTERS,
+        materialize_agent_plugins,
+        ownership_ledger_path,
+        record_native_plugin_install,
+    )
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    home = _isolated_home(tmp_path, monkeypatch)
+    data = _data_root_for(home)
+    root, project_id = _registered_project(tmp_path, data, "proj")
+    config = ADAPTERS[agent].config_paths(sys.platform, home)[0]
+    config.parent.mkdir(parents=True, exist_ok=True)
+    original = (
+        b'{"mcpServers":{}}\n' if host == "claude" else b"# no manual Rush server\n"
+    )
+    config.write_bytes(original)
+    roots = materialize_agent_plugins(
+        rush_binary=str(Path(sys.executable).resolve()), data_root=data
+    )
+    record_native_plugin_install(host=host, plugin_root=roots[host], data_root=data)
+    tool = AgentConnectionTool()
+    options = {
+        "action": "connect",
+        "session_id": "native-hooks",
+        "rush_binary": str(Path(sys.executable).resolve()),
+        "project_root": root,
+        "home": home,
+        "data_root": data,
+        "permissions": ExecutionPermissions(cache_write=True, artifact_write=True),
+    }
+    calls = _install_subprocess_spy(monkeypatch)
+    before = _snapshot(home)
+    for overrides, operation, result_cache, status, message in (
+        (
+            {"permissions": ExecutionPermissions()},
+            "enable",
+            False,
+            "skipped",
+            "requires",
+        ),
+        ({"session_id": None}, "enable", False, "error", "connect requires session_id"),
+        ({"project_root": None}, "enable", False, "error", "pass --project PATH"),
+        (
+            {},
+            "disable",
+            True,
+            "error",
+            "--hook-result-cache needs --enable-agent-hooks",
+        ),
+    ):
+        rejected = tool.run(
+            agent,
+            agent_hooks=operation,
+            hook_result_cache=result_cache,
+            **{**options, **overrides},
+        )
+        assert rejected["status"] == status
+        assert message in rejected["summary"]
+        assert _snapshot(home) == before
+        assert calls == []
+    enabled = tool.run(agent, agent_hooks="enable", hook_result_cache=cache, **options)
+    assert enabled["status"] == "ok", enabled
+    assert enabled["raw"]["hooks"]["state"] == "applied"
+    assert json.loads(_activations_path(data).read_text())["activations"] == [
+        {
+            "host": host,
+            "project_id": project_id,
+            "canonical_root": str(root.resolve()),
+            "recovery_cache_write": cache,
+        }
+    ]
+    assert config.read_bytes() == original
+    assert calls == []
+    disabled = tool.run(agent, agent_hooks="disable", **options)
+    assert disabled["status"] == "ok", disabled
+    assert disabled["raw"]["hooks"]["state"] == "removed"
+    assert not _activations_path(data).exists()
+    assert config.read_bytes() == original
+    rows = json.loads(ownership_ledger_path(data).read_text())["data"].values()
+    assert not any(row["kind"] == "mcp_entry" and row["host"] == agent for row in rows)

@@ -27,8 +27,8 @@ tests/
 ## 2. Running Test Suites
 
 ```bash
-# Run all tests (deterministic, mock-isolated, fast)
-uv run --python 3.12 --extra dev python -m pytest tests/ -q
+# Run all tests, including slow tests
+uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ""
 
 # Run specific engine reference test suite
 uv run --python 3.12 --extra dev python -m pytest tests/test_semgrep_reference.py

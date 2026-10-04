@@ -1,3 +1,5 @@
+Current status: Current Aislop dependency-attribution behavior is documented in the [engine reference](reference/engine-directory.md); external-environment vulnerabilities remain visible without a fabricated project path.
+
 # Engine directory
 
 Current execution limitations: catalog engines are candidates, not proof every named adapter runs on every command. Lint/format can falsely report success (F09/F10). Mutation/fuzz/load/contract live paths run version probes, not workloads (F11). AI eval lacks required gates (F08). Imported-report modes remain separate; require native execution evidence until [P64-06–P64-11](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md) delivers the accepted fixes. See [Known issues](KNOWN_ISSUES.md).

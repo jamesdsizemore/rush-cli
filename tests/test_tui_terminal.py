@@ -916,29 +916,62 @@ class _CtrlCChild:
         controlling: bool,
         rows: int = 24,
         cols: int = 80,
+        native_argv: list[str] | None = None,
+        native_env: dict[str, str] | None = None,
     ) -> None:
         import subprocess
 
+        self.native = native_argv is not None
         home = tmp_path / "home"
-        home.mkdir()
+        home.mkdir(exist_ok=True)
         env = {
             k: v
             for k, v in os.environ.items()
             if k not in ("XDG_DATA_HOME", "RUSH_DATA_ROOT", "NO_COLOR")
         }
         env.update(HOME=str(home), PYTHONPATH=_REPO_SRC, TERM="xterm-256color")
+        if native_argv is not None:
+            env.pop("PYTHONPATH", None)
+            env.pop("PYTHONHOME", None)
+            env.pop("RUSH_REDUCED_MOTION", None)
+            env.update(native_env or {})
+        self.inputs: list[dict[str, Any]] = []
+        self.launch_context = {
+            "cwd": str(tmp_path),
+            **{
+                key: env.get(key)
+                for key in (
+                    "HOME",
+                    "TERM",
+                    "PYTHONPATH",
+                    "PYTHONHOME",
+                    "NO_COLOR",
+                    "RUSH_REDUCED_MOTION",
+                )
+            },
+        }
         self.master_fd, slave_fd = os.openpty()
         _set_pty_size(self.master_fd, rows, cols)
         self.restored_path = tmp_path / "restored"
         launcher = tmp_path / "launcher.py"
-        launcher.write_text(
-            _CTRL_C_LAUNCHER.format(
-                controlling=controlling,
-                argv=argv,
-                run=run,
-                restored_path=str(self.restored_path),
-            )
+        source = _CTRL_C_LAUNCHER.format(
+            controlling=controlling,
+            argv=argv,
+            run=run,
+            restored_path=str(self.restored_path),
         )
+        if native_argv is not None:
+            source = source.replace(
+                f"runpy.{run}",
+                "import signal, subprocess\n    "
+                "signal.signal(signal.SIGINT, lambda *_: None)\n    "
+                f"child = subprocess.Popen({native_argv!r})\n    "
+                "try:\n        code = child.wait()\n    "
+                "finally:\n        if child.poll() is None:\n            "
+                "child.kill()\n            child.wait()\n    "
+                "sys.exit(code)",
+            )
+        launcher.write_text(source)
         self.out: list[bytes] = []
         self.proc = subprocess.Popen(
             [sys.executable, str(launcher)],
@@ -950,6 +983,15 @@ class _CtrlCChild:
             start_new_session=True,
             close_fds=True,
         )
+        self.process_group = self.proc.pid
+        if self.native:
+            self.launch_context.update(
+                pid=self.proc.pid,
+                pgid=os.getpgid(self.proc.pid),
+                sid=os.getsid(self.proc.pid),
+            )
+            assert self.launch_context["pgid"] == self.process_group
+            assert self.launch_context["sid"] == self.proc.pid
         os.close(slave_fd)
         _start_capture_thread(self.master_fd, self.out)
 
@@ -974,6 +1016,8 @@ class _CtrlCChild:
 
     def send(self, data: bytes) -> None:
         os.write(self.master_fd, data)
+        if self.native:
+            self.inputs.append({"keys_hex": data.hex(), "at": time.monotonic()})
 
     def exit_within(self, seconds: float) -> tuple[int | None, float]:
         start = time.monotonic()
@@ -984,8 +1028,32 @@ class _CtrlCChild:
     def restored(self) -> bool:
         return self.restored_path.read_text() == "True"
 
+    def wait_group_gone(self) -> None:
+        if getattr(self, "_group_gone", False):
+            return
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(self.process_group, 0)
+            except ProcessLookupError:
+                self._group_gone = True
+                return
+            except PermissionError:
+                pass  # EPERM is not proof that an owned group is gone.
+            time.sleep(0.02)
+        raise AssertionError(f"owned process group {self.process_group} remained")
+
     def close(self) -> None:
-        if self.proc.poll() is None:
+        if getattr(self, "_closed", False):
+            return
+        if self.native and not getattr(self, "_group_gone", False):
+            import signal
+
+            try:
+                os.killpg(self.process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        elif self.proc.poll() is None:
             self.proc.kill()
         self.proc.wait(timeout=10)
         thread = _READER_THREADS.pop(self.master_fd, None)
@@ -993,6 +1061,124 @@ class _CtrlCChild:
             thread.join(timeout=2.0)
         _READER_ERRORS.pop(self.master_fd, None)
         os.close(self.master_fd)
+        self._closed = True
+
+
+def _close_native_child(child: _CtrlCChild, failure: BaseException | None) -> None:
+    try:
+        child.close()
+        child.wait_group_gone()
+    except Exception as cleanup_error:
+        if failure is None:
+            raise
+        failure.add_note(f"native cleanup failed: {cleanup_error!r}")
+
+
+def test_native_group_probe_permission_is_not_absence(monkeypatch) -> None:
+    child = _CtrlCChild.__new__(_CtrlCChild)
+    child.process_group = 42
+    clock = iter((0.0, 0.0, 6.0))
+    monkeypatch.setattr(time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+    probes = []
+
+    def denied(group, sig):
+        probes.append((group, sig))
+        raise PermissionError("owned group still present")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    with pytest.raises(AssertionError, match="owned process group 42 remained"):
+        child.wait_group_gone()
+    assert probes == [(42, 0)]
+
+
+def test_native_cleanup_preserves_original_failure(monkeypatch) -> None:
+    child = _CtrlCChild.__new__(_CtrlCChild)
+    monkeypatch.setattr(child, "close", lambda: None)
+
+    def remaining():
+        raise PermissionError("owned group still present")
+
+    monkeypatch.setattr(child, "wait_group_gone", remaining)
+    original = AssertionError(">Refresh never happened")
+    _close_native_child(child, original)
+    assert str(original) == ">Refresh never happened"
+    assert original.__notes__ == [
+        "native cleanup failed: PermissionError('owned group still present')"
+    ]
+    with pytest.raises(PermissionError, match="owned group still present"):
+        _close_native_child(child, None)
+
+
+def test_native_cleanup_never_signals_group_after_observed_absence(
+    tmp_path: Path, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with capfd.disabled():
+        child = _CtrlCChild(
+            tmp_path,
+            "run_module('rush.cli', run_name='__main__')",
+            [],
+            controlling=True,
+            native_argv=[sys.executable, "-c", "pass"],
+        )
+        try:
+            status, _ = child.exit_within(2.0)
+            assert status == 0
+            child.wait_group_gone()
+            assert child._group_gone is True
+
+            def forbidden_signal(group, sig):
+                raise AssertionError(f"signaled absent group {group} with {sig}")
+
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "killpg", forbidden_signal)
+                child.wait_group_gone()
+                child.close()
+            assert child._closed is True
+        finally:
+            child.close()
+
+
+def test_native_launcher_cleanup_reaps_descendants_after_launcher_exit(
+    tmp_path: Path, capfd: pytest.CaptureFixture
+) -> None:
+    marker = tmp_path / "descendant.pid"
+    descendant = (
+        "import os, signal, time\n"
+        "from pathlib import Path\n"
+        "signal.signal(signal.SIGHUP, signal.SIG_IGN)\n"
+        f"Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "time.sleep(60)\n"
+    )
+    script = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}])\n"
+        f"marker = Path({str(marker)!r})\n"
+        "deadline = time.monotonic() + 5\n"
+        "while not marker.is_file() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n"
+        "assert marker.is_file(), 'descendant did not signal readiness'\n"
+    )
+    with capfd.disabled():
+        child = _CtrlCChild(
+            tmp_path,
+            "run_module('rush.cli', run_name='__main__')",
+            [],
+            controlling=True,
+            native_argv=[sys.executable, "-c", script],
+        )
+        try:
+            child.wait_for(
+                "launcher exited with a surviving descendant",
+                lambda: marker.is_file() and child.proc.poll() == 0,
+            )
+            os.kill(int(marker.read_text()), 0)
+            child.close()
+
+            child.wait_group_gone()
+        finally:
+            child.close()
 
 
 @pytest.mark.parametrize("controlling", [True, False], ids=["sigint", "byte"])
@@ -1090,3 +1276,490 @@ def test_ctrl_c_with_running_work_opens_the_quit_choice_in_a_real_pty(
     state = json.loads(result_path.read_text())
     assert state["status"] == "cancelled", state["status"]
     assert state["progress_history"][-1]["executed"] < 1000
+
+
+if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
+
+    def test_installed_native_tui_real_terminal(
+        tmp_path: Path, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """T28 installed-binary terminal lane; never substitutes source execution."""
+        import hashlib
+        import platform
+        import shutil
+        import signal
+        import subprocess
+        import tarfile
+
+        from rush.workflows import projects
+        from rush.workflows.project_run import load_run_manifest, load_scan_events
+        from scripts.probe_installed_artifacts import (
+            compute_sha256,
+            scrub_environment,
+            verify_archive_checksum,
+        )
+
+        archive = Path(os.environ["RUSH_G8_NATIVE_ARCHIVE"]).resolve()
+        sums = Path(os.environ["RUSH_G8_NATIVE_SUMS"]).resolve()
+        receipt_dir = Path(os.environ["RUSH_G8_NATIVE_RECEIPT_DIR"]).resolve()
+        assert receipt_dir.is_dir(), receipt_dir
+        assert verify_archive_checksum(archive, sums), "native archive checksum failed"
+        installed = tmp_path / "installed"
+        installed.mkdir()
+        with tarfile.open(archive) as bundle:
+            bundle.extractall(installed, filter="data")
+        binary = installed / "rush"
+        assert binary.is_file() and os.access(binary, os.X_OK)
+        assert not binary.is_relative_to(Path(_REPO_SRC).parent)
+        version = subprocess.run(
+            [str(binary), "--version"],
+            cwd=tmp_path,
+            env=scrub_environment(),
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+        ).stdout.strip()
+        installed_version = (installed / "VERSION").read_text().strip()
+        assert installed_version and installed_version in version
+        assert shutil.which("pytest"), "native scan fixture requires real pytest"
+        engine_path = os.pathsep.join(
+            (str(Path(sys.executable).parent), "/usr/bin", "/bin")
+        )
+        assert all(
+            shutil.which(name, path=engine_path) is not None
+            for name in ("python3", "pytest", "git")
+        )
+        assert all(
+            shutil.which(name, path=engine_path) is None
+            for name in ("ollama", "llama-cli", "llama")
+        )
+        observations = []
+        for cols, rows in ((80, 24), (120, 40), (60, 20)):
+            work = tmp_path / f"terminal-{cols}x{rows}"
+            work.mkdir()
+            home = work / "home"
+            home.mkdir()
+            with monkeypatch.context() as patch:
+                patch.setenv("HOME", str(home))
+                patch.delenv("XDG_DATA_HOME", raising=False)
+                patch.delenv("RUSH_DATA_ROOT", raising=False)
+                roots = [work / "alpha", work / "beta"]
+                ids = []
+                for root in roots:
+                    root.mkdir()
+                    (root / "marker.txt").write_text("installed native evidence\n")
+                    for args in (
+                        ["init", "--quiet"],
+                        ["add", "marker.txt"],
+                        [
+                            "-c",
+                            "user.name=G8",
+                            "-c",
+                            "user.email=g8@example.test",
+                            "commit",
+                            "--quiet",
+                            "-m",
+                            "native-evidence",
+                        ],
+                    ):
+                        subprocess.run(
+                            ["git", "-C", str(root), *args],
+                            check=True,
+                            capture_output=True,
+                        )
+                    ids.append(projects.register_project(root).project_id)
+            seen = {}
+            keys_seen = []
+            resizes = []
+            native_env = {
+                "PATH": engine_path,
+                "VIRTUAL_ENV": sys.prefix,
+                **(
+                    {"NO_COLOR": "1"}
+                    if cols == 120
+                    else {"RUSH_REDUCED_MOTION": "1"}
+                    if cols == 60
+                    else {}
+                ),
+            }
+            with capfd.disabled():
+                child = _CtrlCChild(
+                    work,
+                    "run_module('rush.cli', run_name='__main__')",
+                    [],
+                    controlling=True,
+                    rows=rows,
+                    cols=cols,
+                    native_argv=[str(binary), "ui", "--allow-build", *map(str, roots)],
+                    native_env=native_env,
+                )
+                last_frame_start = 0
+                try:
+                    child.wait_for(
+                        "native alternate screen",
+                        lambda child=child: (
+                            _ALT_SCREEN_ON in child.output()
+                            and "?:Help" in child.text()
+                        ),
+                    )
+
+                    def press(
+                        keys: bytes,
+                        marker: str,
+                        child: _CtrlCChild = child,
+                        keys_seen: list[dict[str, str]] = keys_seen,
+                    ) -> str:
+                        nonlocal last_frame_start
+                        start = len(child.output())
+                        last_frame_start = start
+                        child.send(keys)
+                        child.wait_for(marker, lambda: marker in child.text(start))
+                        shown = child.text(start)
+                        keys_seen.append(
+                            {"keys_hex": keys.hex(), "marker": marker, "output": shown}
+                        )
+                        return shown
+
+                    for number, label, domain in (
+                        (1, "Overview", "registration:"),
+                        (2, "Map", ">[+] alpha"),
+                        (3, "Scans/Findings", "Scan history"),
+                        (4, "Memory", "owner=project:"),
+                        (5, "Tokens", "attribution:"),
+                        (6, "Git", "has_git=True"),
+                        (7, "Artifacts", "Captured (0)"),
+                        (8, "Setup/Agents", "Rush setup review"),
+                    ):
+                        press(b"\x1bOR", "[1-8] go")
+                        text = press(str(number).encode(), domain)
+                        assert label in text, (cols, rows, label, text[-1500:])
+                        if number == 4:
+                            assert f"owner=project:{ids[0]}" in text
+                        seen[label] = text
+                    press(b"\x1bOR", "[1-8] go")
+                    press(b"6", "has_git=True")
+                    press(b"\r", "diff --git a/marker.txt b/marker.txt")
+                    overview = press(b"\x1b", f"Overview  ({cols}x{rows})")
+                    assert "diff --git" not in overview
+                    press(b"\x1bOR", "[1-8] go")
+                    git_frame = press(b"6", f"Git  ({cols}x{rows})")
+                    assert "has_git=True" in git_frame
+                    press(b"\x1bOQ", ">alpha")
+                    press(b"\x1b[B", ">beta")
+                    press(b"\r", "[2/2] beta")
+                    press(b"\t", "[2/2] beta")
+                    press(b"\t", ">Refresh" if cols >= 80 else "[2/2] beta")
+                    # Actions are hidden at 60 columns. Their real scan review
+                    # proves forward focus traversal at every terminal size.
+                    press(b"\x1b[B", ">Check" if cols >= 80 else "[2/2] beta")
+                    press(b"\x1b[B", ">Scan" if cols >= 80 else "[2/2] beta")
+                    focus_review = press(b"\r", "Review before mutation: start_scan")
+                    assert "artifact_write" in focus_review
+                    assert "build" in focus_review and "cache_write" in focus_review
+                    press(b"n", "declined")
+                    assert not (roots[1] / ".rush" / "runs").exists()
+                    press(b"\x1b[A", ">Check" if cols >= 80 else "[2/2] beta")
+                    press(b"\x1b[A", ">Refresh" if cols >= 80 else "[2/2] beta")
+                    detail_focus = press(b"\x1b[Z", "[2/2] beta")
+                    assert ">Refresh" not in detail_focus
+                    press(b"\x1b[Z", "[2/2] beta")
+                    # Reverse traversal reaches nav, where Down/Enter changes
+                    # Overview to Map; Tab then restores list focus.
+                    press(b"\x1b[Z", "[2/2] beta")
+                    press(b"\x1b[B", ">2 Map" if cols >= 80 else "[2/2] beta")
+                    text = press(b"\r", ">[+] beta")
+                    assert "Map" in text and "[2/2] beta" in text
+                    press(b"\t", "[2/2] beta")
+                    press(b"\r", "Memories")
+                    press(b"\x1b[B", ">  Memories")
+                    press(b"/", "/")
+                    press(b"beta\r", ">[-] beta")
+                    overview = press(b"\x1b", f"Overview  ({cols}x{rows})")
+                    assert "map search /" not in overview
+                    press(b"\x1bOR", "[1-8] go")
+                    map_frame = press(b"2", f"Map  ({cols}x{rows})")
+                    assert "[2/2] beta" in map_frame
+                    press(b"/", "map search /")
+                    pasted = press(
+                        b"\x1b[200~" + "βqC".encode() + b"\x1b[2J\x1b[201~",
+                        "βqC",
+                    )
+                    assert "map search /βqC" in pasted
+                    assert _ALT_SCREEN_OFF not in child.output()
+                    assert not (roots[1] / ".rush" / "runs").exists()
+                    press(b"\x1b", "Map")
+                    press(b"?", "Exit Rush TUI")
+                    closed = press(b"\x1b", "Map")
+                    assert "Exit Rush TUI" not in closed
+                    press(b"\x1bOR", "[1-8] go")
+                    press(b"2", "beta")
+                    size_targets = ((60, 20), (120, 40), (80, 24))
+                    first_target = (size_targets.index((cols, rows)) + 1) % 3
+                    for width, height in (
+                        size_targets[first_target:] + size_targets[:first_target]
+                    ):
+                        start = len(child.output())
+                        _set_pty_size(child.master_fd, height, width)
+                        os.killpg(child.proc.pid, signal.SIGWINCH)
+                        child.wait_for(
+                            "native resize redraw",
+                            lambda child=child, start=start, width=width, height=height: (
+                                f"({width}x{height})" in child.text(start)
+                            ),
+                        )
+                        assert struct.unpack(
+                            "HHHH",
+                            fcntl.ioctl(child.master_fd, termios.TIOCGWINSZ, b"\0" * 8),
+                        )[:2] == (height, width)
+                        resizes.append(
+                            {"size": [width, height], "output": child.text(start)}
+                        )
+                    # Observe real idle writes, rather than equating NO_COLOR
+                    # with reduced motion or checking a source constant.
+                    time.sleep(0.3)
+                    idle_start = len(child.output())
+                    idle_started_at = time.monotonic()
+                    time.sleep(0.7)
+                    idle_bytes = len(child.output()) - idle_start
+                    idle_seconds = time.monotonic() - idle_started_at
+                    if native_env.get("RUSH_REDUCED_MOTION"):
+                        assert idle_bytes == 0
+                    else:
+                        assert idle_bytes > 0
+                    if native_env.get("NO_COLOR"):
+                        assert _ANSI_COLOR_CODE.search(child.output()) is None
+                    else:
+                        assert _ANSI_COLOR_CODE.search(child.output()) is not None
+
+                    press(b"\x1bOR", "[1-8] go")
+                    press(b"1", "registration:")
+                    config = roots[1] / "rush.toml"
+                    config.write_text("[tools\n")
+                    failed_config = press(b"\x1b[15~", "rush.toml: invalid")
+                    config.write_text("[tools]\n")
+                    recovered_config = press(b"\x1b[15~", "rush.toml: valid")
+
+                    # A real project test, run by Rush's discovered pytest
+                    # engine. Its gate makes cancellation observable without
+                    # replacing native dispatch or inventing engine output.
+                    (roots[1] / "pyproject.toml").write_text(
+                        '[tool.pytest.ini_options]\ntestpaths = ["test_native.py"]\n'
+                    )
+                    (roots[1] / "test_native.py").write_text(
+                        "import json, os, time\n"
+                        "from pathlib import Path\n"
+                        "def test_real_native_work():\n"
+                        f"    Path({str(roots[1] / 'native-started.json')!r}).write_text(json.dumps({{'pid': os.getpid()}}))\n"
+                        "    deadline = time.monotonic() + 30\n"
+                        f"    while not Path({str(roots[1] / 'native-release')!r}).exists() and time.monotonic() < deadline:\n"
+                        "        time.sleep(0.02)\n"
+                        f"    assert Path({str(roots[1] / 'native-release')!r}).exists(), 'native gate was not released'\n"
+                    )
+                    # Build is an explicit launch grant, still reviewed and
+                    # declined/accepted through the visible native form.
+                    reviewed = press(b"s", "Review before mutation: start_scan")
+                    assert "build" in reviewed and "cache_write" in reviewed
+                    assert "artifact_write" in reviewed
+                    press(b"n", "declined")
+                    assert not (roots[1] / "native-started.json").exists()
+                    assert not (roots[1] / ".rush" / "runs").exists()
+                    press(b"s", "Review before mutation: start_scan")
+                    child.send(b"y")
+                    child.wait_for(
+                        "real pytest start",
+                        lambda roots=roots: (
+                            roots[1] / "native-started.json"
+                        ).is_file(),
+                    )
+                    worker_pid = json.loads(
+                        (roots[1] / "native-started.json").read_text()
+                    )["pid"]
+                    child.send(b"c")
+                    child.wait_for(
+                        "durable cancellation request",
+                        lambda roots=roots: bool(
+                            list(
+                                (roots[1] / ".rush" / "runs").glob(
+                                    "*/attempts/*/cancel_requested.json"
+                                )
+                            )
+                        ),
+                    )
+                    cancel_path = next(
+                        (roots[1] / ".rush" / "runs").glob(
+                            "*/attempts/*/cancel_requested.json"
+                        )
+                    )
+                    cancellation = json.loads(cancel_path.read_text())
+                    child.wait_for(
+                        "durable cancellation acknowledgment",
+                        lambda roots=roots, cancellation=cancellation: (
+                            load_scan_events(
+                                roots[1],
+                                cancellation["run_id"],
+                                cancellation["attempt_id"],
+                            )["run_state"]
+                            == "cancelled"
+                        ),
+                    )
+                    press(b"\x1bOR", "[1-8] go")
+                    press(b"3", cancellation["run_id"])
+                    history_status = re.compile(
+                        re.escape(cancellation["run_id"]) + r"(?:(?!╰).)*cancelled",
+                        re.DOTALL,
+                    )
+                    frame_start = last_frame_start
+                    child.wait_for(
+                        "cancelled run in scan history",
+                        lambda child=child, frame_start=frame_start, history_status=history_status: (
+                            history_status.search(child.text(frame_start)) is not None
+                        ),
+                    )
+                    cancelled_display = child.text(last_frame_start)
+                    keys_seen[-1]["output"] = cancelled_display
+                    assert cancellation["run_id"] in cancelled_display
+                    scan_events = load_scan_events(
+                        roots[1], cancellation["run_id"], cancellation["attempt_id"]
+                    )
+                    assert scan_events["run_state"] == "cancelled"
+                    manifest = load_run_manifest(
+                        roots[1],
+                        cancellation["run_id"],
+                        attempt_id=cancellation["attempt_id"],
+                    )
+                    assert manifest["run_state"] == "cancelled"
+                    with pytest.raises(ProcessLookupError):
+                        os.kill(worker_pid, 0)
+                    (roots[1] / "native-release").touch()
+                    from test_windows_import_safety import (
+                        _exercise_native_artifact_actions,
+                        _exercise_native_memory_actions,
+                        _seed_native_artifact_actions,
+                        _seed_native_memory_actions,
+                    )
+
+                    artifact_entries = _seed_native_artifact_actions(roots[0], ids[0])
+                    memory_entries = _seed_native_memory_actions(roots[0], ids[0])
+                    press(b"\x1bOQ", roots[0].name)
+                    press(b"\x1b[A\r", "[1/2]")
+                    memory_actions = _exercise_native_memory_actions(
+                        roots[0], memory_entries, press
+                    )
+                    artifact_actions = _exercise_native_artifact_actions(
+                        roots[0], artifact_entries, press
+                    )
+                    child.send(b"q")
+                    status, quit_seconds = child.exit_within(10)
+                    assert status == 0
+                    assert child.restored()
+                    assert _ALT_SCREEN_OFF in child.output()
+                    assert _CURSOR_SHOWN in child.output()
+                    journey_output_sha256 = hashlib.sha256(child.output()).hexdigest()
+                    journey_inputs = child.inputs
+                    journey_context = child.launch_context
+                    assert journey_context["PYTHONPATH"] is None
+                    assert journey_context["PYTHONHOME"] is None
+                    child.wait_group_gone()
+                    child.close()
+                    last_frame_start = 0
+                    child = _CtrlCChild(
+                        work,
+                        "run_module('rush.cli', run_name='__main__')",
+                        [],
+                        controlling=True,
+                        rows=rows,
+                        cols=cols,
+                        native_argv=[str(binary), "ui", str(roots[1])],
+                        native_env=native_env,
+                    )
+                    child.wait_for(
+                        "idle native first frame",
+                        lambda child=child: (
+                            _ALT_SCREEN_ON in child.output()
+                            and "?:Help" in child.text()
+                        ),
+                    )
+                    child.send(b"\x03")
+                    status, interrupt_seconds = child.exit_within(2.0)
+                    assert status == 0
+                    assert child.restored()
+                    assert _ALT_SCREEN_OFF in child.output()
+                    assert _CURSOR_SHOWN in child.output()
+                    child.wait_group_gone()
+                    observations.append(
+                        {
+                            "size": [cols, rows],
+                            "projects": ids,
+                            "sections": seen,
+                            "keys": keys_seen,
+                            "resizes": resizes,
+                            "exit": status,
+                            "termios_restored": child.restored(),
+                            "platform": platform.platform(),
+                            "sys_platform": sys.platform,
+                            "TERM": "xterm-256color",
+                            "cwd": str(work),
+                            "HOME": str(home),
+                            "environment": native_env,
+                            "idle_bytes": idle_bytes,
+                            "idle_seconds": idle_seconds,
+                            "failed_config": failed_config,
+                            "recovered_config": recovered_config,
+                            "grant_review": reviewed,
+                            "cancel_request": cancellation,
+                            "scan_events": scan_events,
+                            "cancelled_display": cancelled_display,
+                            "scan_manifest": manifest,
+                            "artifact_actions": artifact_actions,
+                            "memory_actions": memory_actions,
+                            "worker_pid": worker_pid,
+                            "interrupt_exit_seconds": interrupt_seconds,
+                            "quit_exit_seconds": quit_seconds,
+                            "journey_output_sha256": journey_output_sha256,
+                            "journey_inputs": journey_inputs,
+                            "journey_context": journey_context,
+                            "interrupt_inputs": child.inputs,
+                            "interrupt_context": child.launch_context,
+                            "output_sha256": hashlib.sha256(child.output()).hexdigest(),
+                        }
+                    )
+                except BaseException as error:
+                    try:
+                        (receipt_dir / f"posix-failure-{cols}x{rows}.bin").write_bytes(
+                            child.output(last_frame_start)
+                        )
+                        (receipt_dir / f"posix-failure-{cols}x{rows}.json").write_text(
+                            json.dumps(
+                                {
+                                    "error": repr(error),
+                                    "context": child.launch_context,
+                                    "inputs": child.inputs,
+                                    "output": child.text(last_frame_start),
+                                },
+                                indent=2,
+                            )
+                        )
+                    except (OSError, TypeError, ValueError) as capture_error:
+                        error.add_note(
+                            f"native failure capture failed: {capture_error!r}"
+                        )
+                    raise
+                finally:
+                    _close_native_child(child, sys.exception())
+        receipt = {
+            "archive": str(archive),
+            "archive_sha256": compute_sha256(archive),
+            "binary": str(binary),
+            "binary_sha256": compute_sha256(binary),
+            "version": version,
+            "observations": observations,
+        }
+        path = receipt_dir / "posix-installed-tui.json"
+        path.write_text(json.dumps(receipt, indent=2))
+        assert json.loads(path.read_text()) == receipt
+        assert [item["size"] for item in observations] == [
+            [80, 24],
+            [120, 40],
+            [60, 20],
+        ]

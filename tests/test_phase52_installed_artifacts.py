@@ -167,8 +167,15 @@ def test_native_artifact_needs_no_checkout_python_or_uv(
     initialize handshake from a clean external directory with checkout/Python/uv absent
     from PATH (Phase 65: P65-01.3). `native_release_archive` (conftest.py) builds the
     archive from the current source once per session."""
+    import json
+    import os
     import platform
+    import queue
+    import subprocess
+    import threading
     import tomllib
+    import urllib.parse
+    import urllib.request
 
     pyproject_data = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
@@ -191,3 +198,61 @@ def test_native_artifact_needs_no_checkout_python_or_uv(
     assert result.origin_verified is True
     assert result.mcp_initialized is True
     assert result.stdout.strip() == expected_version
+
+    # Bundled Python/MCP alone does not prove the native dashboard's JS
+    # resources survived PyInstaller's data collection.
+    home = tmp_path / "dashboard-home"
+    home.mkdir()
+    env = {
+        "PATH": "C:\\Windows\\System32" if os.name == "nt" else "/usr/bin:/bin",
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "LOCALAPPDATA": str(home / "local"),
+        "XDG_DATA_HOME": str(home / "data"),
+    }
+    if os.name == "nt":
+        env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
+        env["windir"] = env["SystemRoot"]
+    binary = tmp_path / "extracted" / ("rush.exe" if os.name == "nt" else "rush")
+    with (tmp_path / "dashboard.stderr").open("w") as stderr:
+        proc = subprocess.Popen(
+            [str(binary), "dashboard", "--port", "0", "--no-open", "--json"],
+            cwd=tmp_path / "cwd_native",
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+        )
+        assert proc.stdout is not None
+        ready_lines: queue.Queue[str] = queue.Queue()
+        reader = threading.Thread(
+            target=lambda: ready_lines.put(proc.stdout.readline()), daemon=True
+        )
+        reader.start()
+        try:
+            readiness = json.loads(ready_lines.get(timeout=20))
+            assert readiness["ready"] is True
+            # Bootstrap fragment is private: retain only the public origin.
+            url = urllib.parse.urlsplit(readiness["url"])
+            origin = f"{url.scheme}://{url.netloc}"
+            for asset in ("application.js", "project_map.js"):
+                with urllib.request.urlopen(
+                    f"{origin}/assets/{asset}", timeout=5
+                ) as response:
+                    assert response.status == 200
+                    assert (
+                        response.read()
+                        == (
+                            PROJECT_ROOT / "src" / "rush" / "dashboard" / asset
+                        ).read_bytes()
+                    )
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+            reader.join(timeout=5)
+            proc.stdout.close()

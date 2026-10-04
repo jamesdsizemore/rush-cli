@@ -1,5 +1,7 @@
 # Phase 70: App usability, first-use setup, functional CLI/TUI, and agent adoption
 
+**Owner scope correction (2026-10-04):** The owner's current instruction assigns all UI implementation and acceptance to Phase 71. This supersedes the earlier Phase 70 TUI allocation: dashboard/TUI presentation, controls, motion, responsive behavior, installed terminal/browser journeys, and UI portions of T28/T29/G8 transfer intact to Phase 71. Existing code, requirements, tests and evidence are preserved; transferred checks are not waived or accepted. Phase 70 retains shared engines, permissions, identity, memory operations/receipts, setup, CLI/MCP, real Claude Code/Codex integration and their non-UI acceptance. Its completion gate covers those retained requirements; Phase 71 executes transferred UI gates after those prerequisites. No further UI work runs under Phase 70.
+
 Status: revised implementation specification; scope-correction review recorded in `.scratch/phase-70-plan-review/ux-reconciliation.md`. The earlier READY verdict on hash `5017d33081e90b0abac08e9c0417b2d0cccd88f4a6a713e44bb51a4df7b82212` is withdrawn because it omitted required UX/TUI work. Implementation not started by this review. Written 2026-09-22; revised 2026-09-24.
 
 ## 1. Goal, authority, and boundaries

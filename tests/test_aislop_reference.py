@@ -491,6 +491,66 @@ def test_aislop_parses_recorded_0161_diagnostics(monkeypatch, tmp_path: Path) ->
     ]
 
 
+def test_aislop_unbound_pip_audit_preserves_external_findings(
+    monkeypatch, tmp_path: Path
+) -> None:
+    from rush.contracts.results import adapt_legacy_finding, validate_finding
+
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "requirements.txt").write_text("requests==2.32.4\n")
+    (project / "app.py").write_text("import os\n")
+    ambient = tmp_path / "ambient"
+    ambient.mkdir()
+    (ambient / "requirements.txt").write_text("requests==2.19.1\n")
+    vulnerability = {
+        "engine": "security",
+        "rule": "security/vulnerable-dependency",
+        "filePath": "requirements.txt",
+        "line": 0,
+        "column": 0,
+        "severity": "error",
+        "message": "requests 2.19.1: PYSEC-2018-28; fixed in 2.20.0",
+    }
+    source = {
+        "engine": "lint",
+        "rule": "ruff/F401",
+        "filePath": "app.py",
+        "line": 1,
+        "column": 8,
+        "severity": "error",
+        "message": "`os` imported but unused",
+    }
+    report = {"diagnostics": [vulnerability, source]}
+    result, calls = _run_and_normalize(monkeypatch, project, json.dumps(report), 1)
+
+    assert calls[0][1] == project
+    assert result["status"] == "fail"
+    assert result["engine_version"] == "0.16.1"
+    assert result["raw"] == report
+    external, local = result["findings"]
+    assert external["path"] == ""
+    assert external["extensions"] == {
+        "scope": "external_environment",
+        "reported_path": "requirements.txt",
+        "attribution_basis": "aislop_0.16.1_unbound_pip_audit",
+    }
+    assert external["message"] == (
+        "External Python environment audit; not an audit of target dependencies. "
+        + vulnerability["message"]
+    )
+    assert external["severity"] == "error"
+    assert external["rule"] == "aislop/security/security/vulnerable-dependency"
+    assert local["path"] == str(project / "app.py")
+    assert local["message"] == source["message"]
+    assert "extensions" not in local
+    canonical = validate_finding(adapt_legacy_finding(external))
+    assert canonical.path == ""
+    assert canonical.extensions == external["extensions"]
+    assert canonical.severity == "error"
+    assert report["diagnostics"][0] == vulnerability
+
+
 def test_aislop_exit_one_with_warning_diagnostics_is_warn(
     monkeypatch, tmp_path: Path
 ) -> None:

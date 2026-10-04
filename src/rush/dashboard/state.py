@@ -125,7 +125,10 @@ def _acquire_cross_process_project_lock(
         if not handle:
             raise OSError(f"CreateMutexW failed for {name!r}")
         _INFINITE = 0xFFFFFFFF
-        kernel32.WaitForSingleObject(handle, _INFINITE)
+        wait_result = kernel32.WaitForSingleObject(handle, _INFINITE)
+        if wait_result not in (0x00000000, 0x00000080):
+            kernel32.CloseHandle(handle)
+            raise OSError(f"WaitForSingleObject failed for {name!r}: {wait_result:#x}")
         try:
             yield
         finally:
@@ -1681,8 +1684,8 @@ class ScanRunTracker:
 
 class OwnerLockError(RuntimeError):
     """Raised when this process's own owner-liveness lock cannot be
-    acquired -- the exact `owner_instance_id` is already held by another
-    live process. Should not happen in practice: `owner_instance_id` is
+    acquired -- another live process holds it or the OS acquisition fails.
+    Identity collision should not happen in practice: `owner_instance_id` is
     minted fresh (server identity + a random start nonce) per process
     start, per subsection h."""
 
@@ -1786,6 +1789,15 @@ class OwnerLock:
                 )
                 acquired.set()
                 return
+            if wait_result not in (0x00000000, 0x00000080):
+                kernel32.CloseHandle(handle)
+                failure.append(
+                    OwnerLockError(
+                        f"WaitForSingleObject failed for {name!r}: {wait_result:#x}"
+                    )
+                )
+                acquired.set()
+                return
             self._windows_mutex_handle = handle
             acquired.set()
             park.wait()
@@ -1830,9 +1842,8 @@ def claim_dead_owner(
         if not handle:
             yield False
             return
-        _WAIT_TIMEOUT = 0x00000102
         wait_result = kernel32.WaitForSingleObject(handle, 0)
-        if wait_result == _WAIT_TIMEOUT:
+        if wait_result not in (0x00000000, 0x00000080):
             kernel32.CloseHandle(handle)
             yield False
             return
@@ -1901,17 +1912,20 @@ def _observe_owner_windows(owner_instance_id: str) -> str:  # pragma: no cover
     held is `alive`, acquirable (released or abandoned) is `dead`."""
     import ctypes
 
-    synchronize, wait_timeout = 0x00100000, 0x00000102
+    synchronize, mutex_modify_state, wait_timeout = 0x00100000, 0x00000001, 0x00000102
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     kernel32.OpenMutexW.restype = ctypes.c_void_p
     handle = kernel32.OpenMutexW(
-        synchronize, False, _windows_mutex_name(owner_instance_id)
+        synchronize | mutex_modify_state, False, _windows_mutex_name(owner_instance_id)
     )
     if not handle:
         return "activity_unverified"
     try:
-        if kernel32.WaitForSingleObject(handle, 0) == wait_timeout:
+        wait_result = kernel32.WaitForSingleObject(handle, 0)
+        if wait_result == wait_timeout:
             return "alive"
+        if wait_result not in (0x00000000, 0x00000080):
+            return "activity_unverified"
         kernel32.ReleaseMutex(handle)
         return "dead"
     finally:

@@ -1324,6 +1324,11 @@ def t29_world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, An
     (root / "pyproject.toml").write_text(
         '[project]\nname = "fixture"\nversion = "0"\n', encoding="utf-8"
     )
+    # Keep real anti-pattern scan; exclude ambient interpreter dependency audit.
+    (root / ".aislop").mkdir()
+    (root / ".aislop" / "config.yml").write_text(
+        "version: 1\nsecurity:\n  audit: false\n", encoding="utf-8"
+    )
 
     patch = pytest.MonkeyPatch()
     patch.setenv("HOME", str(home))
@@ -1692,11 +1697,46 @@ def test_t29_evidence_doc_has_phase71_consumes_section() -> None:
 def _t29_lane_section(text: str, lane: str) -> str:
     import re
 
-    match = re.search(
-        rf"##.*\b{lane}\b(.*?)(\n##\s|\Z)", text, re.IGNORECASE | re.DOTALL
+    matches = list(
+        re.finditer(
+            rf"^##[ \t]+{re.escape(lane)}\b[^\n]*\n(.*?)(?=^##[ \t]+|\Z)",
+            text,
+            re.IGNORECASE | re.DOTALL | re.MULTILINE,
+        )
     )
-    assert match is not None, f"no '{lane}' section"
-    return match.group(1)
+    assert matches, f"no '{lane}' section"
+    return matches[-1].group(1)
+
+
+@pytest.mark.parametrize("lane", ["G6", "G8"])
+def test_t29_lane_section_selects_latest_explicit_record(
+    lane: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    latest = "Blocker: lane native execution; reason final binary pending.\n"
+    text = (
+        f"## {lane} historical acceptance\nResult: local source only.\n"
+        f"## Checkpoint\n{lane} acceptance remains open.\n"
+        f"## {lane} native acceptance\n{latest}"
+        f"## Follow-up\nG6/G7/G8 acceptance remains open.\n"
+    )
+    assert _t29_lane_section(text, lane) == latest
+    # A newer explicit record without evidence must reach the caller's failure.
+    assert _t29_lane_section(
+        text + f"## {lane} native acceptance\nPending.\n", lane
+    ) == ("Pending.\n")
+    other_lane = "G8" if lane == "G6" else "G6"
+    monkeypatch.setattr(
+        f"{__name__}._t29_evidence_text",
+        lambda: (
+            text
+            + f"## {other_lane} native acceptance\n{latest}"
+            + f"## {lane} native acceptance\nPending.\n"
+        ),
+    )
+    with pytest.raises(AssertionError, match=lane):
+        test_t29_evidence_doc_records_g6_and_g8_lane_results_or_blockers()
+    with pytest.raises(AssertionError, match=f"no '{lane}' section"):
+        _t29_lane_section(f"## Checkpoint\n{lane} remains open.\n", lane)
 
 
 def test_t29_evidence_doc_records_g6_and_g8_lane_results_or_blockers() -> None:

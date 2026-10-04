@@ -284,7 +284,11 @@ _ARCHIVE_REQUEST_KEYS = {
 # review time, and (maintain) the previewed candidate set.
 _WRITE_REQUEST_KEYS = {"apply", "required_grants"}
 # T28-D: a TUI promote of a listed row names that row and the version reviewed.
-_PROMOTE_REQUEST_KEYS = _WRITE_REQUEST_KEYS | {"source_id", "expected_version"}
+_PROMOTE_REQUEST_KEYS = _WRITE_REQUEST_KEYS | {
+    "source_id",
+    "expected_version",
+    "candidate_refs",
+}
 _MAINTAIN_REQUEST_KEYS = {
     "apply",
     "required_grants",
@@ -1631,6 +1635,85 @@ class MemoryTool(ToolFn):
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind, owner
         )
+        candidate_refs = (request or {}).get("candidate_refs")
+        if candidate_refs is not None:
+            if (
+                source_id is None
+                or not isinstance(candidate_refs, list)
+                or not 1 <= len(candidate_refs) <= 64
+                or any(
+                    not isinstance(ref, dict)
+                    or set(ref) != {"id", "version", "source"}
+                    or not isinstance(ref["id"], str)
+                    or not ref["id"]
+                    or type(ref["version"]) is not int
+                    or ref["version"] < 1
+                    or not isinstance(ref["source"], str)
+                    or not ref["source"]
+                    for ref in candidate_refs
+                )
+            ):
+                return self._result(
+                    started,
+                    "error",
+                    "invalid promotion candidate refs",
+                    operation="promote",
+                )
+            view, store_state = TypedArtifactStore.open_readonly_view(root)
+            if store_state is not None or view is None:
+                return self._result(
+                    started,
+                    "fail",
+                    f"promotion candidates unavailable: {store_state}",
+                    operation="promote",
+                    raw={"code": "E_VERSION", "reason": store_state},
+                )
+            try:
+                selected = view.get_current(source_id)
+                sources: set[str] = set()
+                valid = (
+                    selected is not None
+                    and selected.artifact_version == expected_version
+                )
+                valid = valid and any(ref["id"] == source_id for ref in candidate_refs)
+                if valid and selected is not None:
+                    valid = (
+                        selected.source == source
+                        and selected.subject == subject
+                        and selected.symbol_ref == symbol_ref
+                        and selected.content == content
+                        and selected.owner_scope == owner
+                        and selected.archived_at is None
+                    )
+                if valid:
+                    for ref in candidate_refs:
+                        current = view.get_current(ref["id"])
+                        if (
+                            current is None
+                            or current.artifact_version != ref["version"]
+                            or current.source != ref["source"]
+                            or current.subject != subject
+                            or current.symbol_ref != symbol_ref
+                            or current.content != content
+                            or current.owner_scope != owner
+                            or current.trust_tier == "STATED"
+                            or current.stale
+                            or current.archived_at is not None
+                        ):
+                            valid = False
+                            break
+                        sources.add(current.source)
+            finally:
+                view.close()
+            if not valid:
+                return self._result(
+                    started,
+                    "fail",
+                    "promotion candidates changed since review",
+                    operation="promote",
+                    raw={"code": "E_VERSION", "reason": "candidate changed"},
+                )
+            candidate_sources = sorted(sources)
         if source_id is not None and isinstance(expected_version, int):
             stale = self._promote_source_conflict(root, source_id, expected_version)
             if stale is not None:
@@ -1665,12 +1748,28 @@ class MemoryTool(ToolFn):
             artifact,
             receipt_operation_id=reserved.get("candidate_create"),
         )
-        stored, decision = store.promote(
-            stored.id,
-            user_stated=user_stated,
-            candidate_sources=candidate_sources,
-            receipt_operation_id=reserved.get("promotion"),
-        )
+        try:
+            stored, decision = store.promote(
+                stored.id,
+                user_stated=user_stated,
+                candidate_sources=candidate_sources,
+                candidate_refs=candidate_refs,
+                expected_version=stored.artifact_version,
+                owner_scope=owner,
+                receipt_operation_id=reserved.get("promotion"),
+            )
+        except VersionConflictError as exc:
+            return self._result(
+                started,
+                "fail",
+                f"Promotion candidate created but corroboration changed: {exc}",
+                operation="promote",
+                raw={
+                    "code": "E_VERSION",
+                    "reason": str(exc),
+                    "artifact": self._artifact_dict(stored),
+                },
+            )
         summary = (
             f"Promoted subject '{subject}' to STATED."
             if decision.promoted

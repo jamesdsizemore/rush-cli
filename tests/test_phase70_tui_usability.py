@@ -27,20 +27,25 @@ from typing import Any
 import pytest
 from rich.console import Console
 
+from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
 from rush.setup.provision import default_data_root
+from rush.token_economy.telemetry import TelemetryStore
 from rush.tools import setup_wizard
 from rush.tools.base import ToolResult
+from rush.tools.memory import MemoryTool
 from rush.tools.review import ReviewTool
 from rush.tui import (
     SECTION_LABELS,
     SECTIONS,
     ProjectSeed,
+    ProjectState,
     ScanActions,
     TuiState,
     _dispatch_key,
     _poll_running_scans,
     _pump,
     _reload_after_finished_work,
+    _section_actions,
     default_scan_actions,
     load_overview,
     project_key,
@@ -54,6 +59,93 @@ from rush.workflows.projects import (
     register_project,
     resolve_project,
 )
+
+
+def test_t28d_memory_workflows(tmp_path: Path, home: Path) -> None:
+    """Plan-named real-key Memory journey: exact content, relation, use/write receipts."""
+    root = tmp_path / "memory-project"
+    root.mkdir()
+    data_root = default_data_root()
+    registered = register_project(root, data_root=data_root)
+    store = TypedArtifactStore(root)
+    owner = OwnerScope("project", registered.project_id)
+    first = store.write(
+        MemoryArtifact(
+            id="journey-primary",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "visible exact memory"},
+            source="journey-a",
+            created_at=time.time(),
+            owner_scope=owner,
+        ),
+        receipt_operation_id="journey-write-receipt",
+    )
+    second = store.write(
+        MemoryArtifact(
+            id="journey-related",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "linked observation"},
+            source="journey-b",
+            created_at=time.time(),
+            owner_scope=owner,
+        )
+    )
+    from rush.permissions import ExecutionPermissions
+
+    linked = MemoryTool().run(
+        root,
+        operation="link",
+        request={
+            "source_id": first.id,
+            "source_version": first.artifact_version,
+            "target_id": second.id,
+            "target_version": second.artifact_version,
+            "kind": "depends_on",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert linked["raw"]["code"] == "OK"
+    assert TelemetryStore(root).record_memory_event(
+        "expansion",
+        7,
+        request_id=f"{first.id}:{first.artifact_version}:0",
+        event_id="expansion",
+        invocation_id="journey-use-receipt",
+        cache_write=True,
+    )
+    state = TuiState(
+        projects=[
+            ProjectState(
+                name="memory-project", root=root, project_id=registered.project_id
+            )
+        ],
+        data_root=data_root,
+    )
+    actions = default_scan_actions()
+    _keys(state, actions, "f3", "4", "x")
+    frames = []
+    for _ in range(12):
+        frames.append(_render(state, 60, 20))
+        before = state.memory_expanded["scroll"]
+        _keys(state, actions, "]")
+        if state.memory_expanded["scroll"] == before:
+            break
+    visible = "\n".join(frames)
+    compact = "".join(char for char in visible if char.isalnum() or char == "-")
+    for marker in (
+        "visible",
+        "exact memory",
+        "journey-related",
+        "journey-write-receipt",
+        "journey-use-receipt",
+    ):
+        needle = "".join(char for char in marker if char.isalnum() or char == "-")
+        assert needle in compact, (marker, visible)
+
 
 # -- shared journey helpers ---------------------------------------------------
 
@@ -389,6 +481,32 @@ def _a_zero_versus_unavailable(tmp_path: Path, home: Path) -> None:
     scans = _render(state, 200, 50)
     assert "Findings (unavailable: no tool completed)" in scans
     assert "Findings (0)" not in scans
+
+
+def test_narrow_footer_keeps_overview_registration_and_action_reason_visible(
+    tmp_path: Path, home: Path
+) -> None:
+    data_root = tmp_path / "data"
+    root = tmp_path / "proj"
+    root.mkdir()
+    record = register_project(root, data_root=data_root)
+    actions = _actions(load_overview=load_overview)
+    state = _launch([ProjectSeed(name="proj", root=root)], actions, data_root)
+
+    visible = _render(state, 60, 20)
+    compact = "".join(char for char in visible if char.isalnum())
+    assert record.project_id.replace("-", "") in compact, visible
+    assert "F3:Sections" in visible and "?:Help" in visible
+
+    for index, action in enumerate(_section_actions("overview")):
+        enabled, reason = action.enabled(state)
+        if enabled:
+            continue
+        state.focus = "actions"
+        state.action_index = index
+        selected = _render(state, 60, 20)
+        assert f">{action.label}" in selected
+        assert "".join(reason.split()) in "".join(selected.split())
 
 
 _SECTION_MARKERS = {

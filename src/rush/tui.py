@@ -3235,6 +3235,7 @@ def _memory_clear_held(state: TuiState) -> None:
     state.memory_pending_delete = None
     state.memory_edit_conflict = None
     state.memory_selected_ids = set()
+    state.memory_expanded = None
 
 
 def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bool:
@@ -3491,33 +3492,154 @@ def _memory_expand_selected(
     if item is None or actions.memory_run is None:
         state.memory_message = "no row selected"
         return
+    sources, store_state = _memory_sources_and_state(project)
+    if store_state is not None or not sources:
+        state.memory_expanded = None
+        state.memory_message = f"expand refused: {store_state or 'no memory store'}"
+        return
+    from rush.memory.store import TypedArtifactStore
+    from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
+
+    view, store_state = TypedArtifactStore.open_readonly_view(project.root)
+    if store_state is not None or view is None:
+        state.memory_expanded = None
+        state.memory_message = f"expand refused: {store_state or 'store unavailable'}"
+        return
+    try:
+        current = view.get_current(item["id"])
+    finally:
+        view.close()
+    owner = item.get("owner_scope") or {}
+    actual_owner = current.owner_scope if current is not None else None
+    if (
+        current is None
+        or current.artifact_version != item["artifact_version"]
+        or current.source != item.get("source")
+        or (
+            owner
+            and (
+                actual_owner is None
+                or owner != {"kind": actual_owner.kind, "id": actual_owner.id}
+            )
+        )
+    ):
+        state.memory_expanded = None
+        state.memory_message = (
+            f"expand refused: E_VERSION selected v{item['artifact_version']}, "
+            f"current v{current.artifact_version}"
+            if current is not None
+            and current.artifact_version != item["artifact_version"]
+            else "expand refused: selected record changed"
+        )
+        return
+    previous = state.memory_expanded or {}
+    same = (
+        previous.get("id") == item["id"]
+        and previous.get("version") == item["artifact_version"]
+        and previous.get("project_key") == project_key(project)
+    )
+    if same and previous.get("page_index", 0) + 1 < len(previous.get("pages", [])):
+        state.memory_expanded = {
+            **previous,
+            "page_index": previous["page_index"] + 1,
+            "scroll": 0,
+        }
+        state.memory_message = "expanded: cached next content page"
+        return
+    if same and previous.get("complete"):
+        state.memory_message = "expanded: complete; [ previous page"
+        return
+    offset = previous.get("next_offset") if same else 0
+    if same and offset is None:
+        offset = 0
     try:
         result = actions.memory_run(
             project.root,
             operation="expand",
-            request={"id": item["id"], "version": item["artifact_version"]},
-            session_allowlist=_memory_known_sources(project),
+            request={
+                "id": item["id"],
+                "version": item["artifact_version"],
+                "offset": offset,
+                "max_bytes": 256,
+                "max_tokens": 256,
+            },
+            session_allowlist=sources,
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"expand failed: {exc}"
         return
     raw = result.get("raw") or {}
     data = raw.get("data") if isinstance(raw, dict) else None
-    state.memory_expanded = data
+    if raw.get("code") != "OK" or not isinstance(data, dict):
+        state.memory_expanded = None
+        state.memory_message = (
+            f"expand refused: {raw.get('code', result.get('summary'))}"
+        )
+        return
+    # Keep exact bytes across pages: UTF-8 can split between two base64 slices.
+    prior = (
+        base64.b64decode(previous.get("content_bytes_base64", ""))
+        if same and offset
+        else b""
+    )
+    page_bytes = base64.b64decode(data["content_base64"], validate=True)
+    content_bytes = prior + page_bytes
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    content = decoder.decode(content_bytes, final=bool(data["complete"]))
+    earlier = codecs.getincrementaldecoder("utf-8")().decode(prior, final=False)
+    pages = list(previous.get("pages", [])) if same and offset else []
+    pages.append(
+        {
+            "offset": data["offset"],
+            "end_offset": data["offset"] + len(page_bytes),
+            "next_offset": data["next_offset"],
+            "complete": data["complete"],
+            "content": content[len(earlier) :],
+        }
+    )
+    related = actions.memory_run(
+        project.root,
+        operation="related",
+        request={"id": item["id"], "version": item["artifact_version"]},
+        session_allowlist=sources,
+    )
+    related_raw = related.get("raw") or {}
+    if related_raw.get("code") != "OK":
+        state.memory_expanded = None
+        state.memory_message = f"related refused: {related_raw.get('code')}"
+        return
+    relations = [
+        {**row, "artifact_version": row["version"]}
+        for row in related_raw["data"]["items"]
+    ]
+    mutation_receipts = TypedArtifactStore.read_artifact_receipts_readonly(
+        project.root, item["id"], item["artifact_version"]
+    )
+    expansion_receipts = read_artifact_expansion_receipts_readonly(
+        project.root, item["id"], item["artifact_version"]
+    )
+    state.memory_expanded = {
+        **data,
+        "project_key": project_key(project),
+        "content_bytes_base64": base64.b64encode(content_bytes).decode("ascii"),
+        "content": content,
+        "pages": pages,
+        "page_index": len(pages) - 1,
+        "scroll": 0,
+        "relationships": relations,
+        "relationships_complete": related_raw["data"]["complete"],
+        "receipts": mutation_receipts + expansion_receipts,
+        "receipts_bounded": len(mutation_receipts) == 8 or len(expansion_receipts) == 8,
+    }
     state.memory_message = (
-        "expanded" if data else str(raw.get("code", result.get("summary")))
+        "expanded: complete" if data["complete"] else "expanded: x next content page"
     )
 
 
 def _memory_promote_selected(
     state: TuiState, project: ProjectState, actions: ScanActions
 ) -> None:
-    """Real `promote` dispatch on the selected row's own content/source
-    (never a fabricated candidate) -- corroboration is evaluated by the
-    canonical `evaluate_promotion` gate, so a lone source is correctly
-    denied (`insufficient_corroboration`), matching the CLI/MCP behavior.
-    Acts on every targeted row (`_memory_targets`); one row's refused preview
-    holds nothing at all."""
+    """Promote with current, same-owner/content corroboration from real records."""
     items = _memory_targets(state)
     if not items or actions.memory_run is None:
         state.memory_message = "no row selected"
@@ -3526,6 +3648,66 @@ def _memory_promote_selected(
     state.memory_pending_promote = None
     held: list[dict[str, Any]] = []
     for item in items:
+        from rush.memory.store import TypedArtifactStore
+
+        view, store_state = TypedArtifactStore.open_readonly_view(project.root)
+        if store_state is not None or view is None:
+            state.memory_message = (
+                f"promote refused: {store_state or 'store unavailable'}"
+            )
+            return
+        try:
+            selected = view.get_current(item["id"])
+            if (
+                selected is None
+                or selected.artifact_version != item.get("artifact_version")
+                or selected.source != item.get("source")
+                or selected.archived_at is not None
+            ):
+                state.memory_message = "promote refused: selected record changed"
+                return
+            owner = selected.owner_scope
+            selected_owner = item.get("owner_scope")
+            if selected_owner and (
+                owner is None or selected_owner != {"kind": owner.kind, "id": owner.id}
+            ):
+                state.memory_message = "promote refused: selected owner changed"
+                return
+            refs = [
+                {
+                    "id": selected.id,
+                    "version": selected.artifact_version,
+                    "source": selected.source,
+                }
+            ]
+            known_sources = set(_memory_known_sources(project))
+            for row in view.list_artifact_refs():
+                if row["subject"] != selected.subject:
+                    continue
+                current = view.get_current(row["id"])
+                if (
+                    current is None
+                    or current.id == selected.id
+                    or current.source == selected.source
+                    or current.trust_tier == "STATED"
+                    or current.stale
+                    or current.archived_at is not None
+                    or current.symbol_ref != selected.symbol_ref
+                    or current.content != selected.content
+                    or current.owner_scope != owner
+                    or current.source not in known_sources
+                ):
+                    continue
+                refs.append(
+                    {
+                        "id": current.id,
+                        "version": current.artifact_version,
+                        "source": current.source,
+                    }
+                )
+                break
+        finally:
+            view.close()
         state.memory_pending_mutation = None
         _memory_write_preview(
             state,
@@ -3537,6 +3719,7 @@ def _memory_promote_selected(
             request_extra={
                 "source_id": item["id"],
                 "expected_version": item.get("artifact_version"),
+                "candidate_refs": refs,
             },
             subject=state.memory_subject,
             content=item.get("content") or {},
@@ -3544,7 +3727,7 @@ def _memory_promote_selected(
             symbol_ref=item.get("symbol_ref"),
             source_kind="local_tool",
             user_stated=False,
-            candidate_sources=[item.get("source", "")],
+            candidate_sources=sorted({ref["source"] for ref in refs}),
         )
         if state.memory_pending_mutation is None:
             return  # the refusal message is already set; nothing is held
@@ -4077,9 +4260,25 @@ def _memory_mutation_apply(
                 else ""
             )
             if raw.get("code") == "E_VERSION":
+                reviewed = pending["items"][index].get("artifact_version")
+                version_detail = ""
+                if type(reviewed) is int:
+                    from rush.memory.store import TypedArtifactStore
+
+                    view, _ = TypedArtifactStore.open_readonly_view(project.root)
+                    if view is not None:
+                        try:
+                            current = view.get_current(item_id)
+                        finally:
+                            view.close()
+                        if current is not None and current.artifact_version != reviewed:
+                            version_detail = f"; reviewed v{reviewed}, now v{current.artifact_version}"
+                        if current is not None and current.archived_at is not None:
+                            version_detail += "; it was archived"
                 messages.append(
                     f"{item_id} promotion refused: changed since review "
-                    f"({raw.get('reason')}); list refreshed, review it again"
+                    f"({raw.get('reason')}){version_detail}{candidate}; "
+                    "list refreshed, review it again"
                 )
                 refresh = True
             elif raw.get("promoted"):
@@ -4165,13 +4364,30 @@ def _memory_edit_refresh_and_rereview(
     conflict = state.memory_edit_conflict
     if conflict is None or actions.memory_run is None:
         return
+    held = next(
+        (item for item in state.memory_items if item.get("id") == conflict["id"]),
+        None,
+    )
+    source = held.get("source") if held is not None else None
+    owner = held.get("owner_scope") if held is not None else None
+    sources = _memory_known_sources(project)
+    if (
+        not isinstance(source, str)
+        or source not in sources
+        or not isinstance(owner, dict)
+        or not isinstance(owner.get("kind"), str)
+        or not isinstance(owner.get("id"), str)
+    ):
+        state.memory_message = f"{conflict['id']} not found on refresh"
+        return
     try:
         result = actions.memory_run(
             project.root,
             operation="list",
             subject=state.memory_subject,
-            session_allowlist=_memory_known_sources(project),
-            **_memory_list_kwargs(state),
+            session_allowlist=sources,
+            source_filter=source,
+            owner_filter=f"{owner['kind']}:{owner['id']}",
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"refresh failed: {exc}"
@@ -4181,7 +4397,10 @@ def _memory_edit_refresh_and_rereview(
         (
             row
             for row in rows or []
-            if isinstance(row, dict) and row.get("id") == conflict["id"]
+            if isinstance(row, dict)
+            and row.get("id") == conflict["id"]
+            and row.get("source") == source
+            and row.get("owner_scope") == owner
         ),
         None,
     )
@@ -4252,6 +4471,27 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
             )
         return
     if key in ("]", "["):
+        expanded = state.memory_expanded
+        if expanded is not None and expanded.get("project_key") == project_key(project):
+            rows = max(3, state.terminal_size[1] - 10)
+            count = len(_memory_detail_lines(expanded, state.terminal_size[0]))
+            scroll = expanded.get("scroll", 0)
+            if key == "[":
+                if scroll:
+                    expanded["scroll"] = max(0, scroll - rows)
+                elif expanded.get("page_index", 0):
+                    expanded["page_index"] -= 1
+                    expanded["scroll"] = 0
+            elif scroll + rows < count:
+                expanded["scroll"] = min(scroll + rows, max(0, count - rows))
+            elif expanded.get("page_index", 0) + 1 < len(expanded.get("pages", [])):
+                expanded["page_index"] += 1
+                expanded["scroll"] = 0
+            elif expanded.get("next_offset") is not None:
+                _memory_submit(
+                    state, project, actions, "expand", _memory_expand_selected
+                )
+            return
         if state.memory_items:
             page = state.memory_selected_index // _MEMORY_PAGE_ROWS
             page += 1 if key == "]" else -1
@@ -5431,6 +5671,8 @@ def _pump(state: TuiState, actions: ScanActions) -> bool:
             if project_key(project) == pkey and section in _SECTION_LOADERS:
                 if section not in project.pending:
                     _submit(state, project, section, actions)
+                else:
+                    state.load_requests.add((pkey, section))
                 break
     return applied
 
@@ -5492,6 +5734,7 @@ def _enter_section(state: TuiState, section: str, actions: ScanActions) -> None:
     if section == "git":
         _load_git_view(state, project, actions)
     elif section == "memory":
+        state.message = ""
         _memory_submit(state, project, actions, "list", _memory_refresh)
     elif section == "artifacts":
         # Nothing loaded: the worker load is queued; a loaded index gets an
@@ -6322,15 +6565,26 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
 
 
 def _keymap_footer(state: TuiState) -> Text:
+    if state.mode == "memory" and state.memory_expanded is not None:
+        return Text("x:Next  [/] :Scroll/Prev  -:Close  q:Quit", style="dim")
+    narrow = _width_branch(state.terminal_size[0]) == "narrow"
     parts = []
-    for action in (
-        _section_actions(state.section)[:_FOOTER_ACTIONS] if state.projects else []
-    ):
+    actions = _section_actions(state.section) if state.projects else []
+    selected = (
+        state.action_index % len(actions)
+        if state.focus == "actions" and actions
+        else -1
+    )
+    listed = list(enumerate(actions[:_FOOTER_ACTIONS]))
+    if selected >= _FOOTER_ACTIONS:
+        listed.append((selected, actions[selected]))
+    for index, action in listed:
         keys = [b.key for b in _BINDINGS if b.action_name == action.id]
         ok, reason = action.enabled(state)
-        parts.append(f"{keys[0]}:{action.label}" + ("" if ok else f" ({reason})"))
+        label = f">{action.label}" if index == selected else action.label
+        parts.append(f"{keys[0]}:{label}" + ("" if ok or narrow else f" ({reason})"))
     parts.extend(["F3:Sections", "F2:Projects", "?:Help"])
-    return Text(" | ".join(parts), style="dim")
+    return Text(("  " if narrow else " | ").join(parts), style="dim")
 
 
 def _render_progress_bar(progress: ScanProgress) -> Text:
@@ -6893,6 +7147,20 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
         )
     page = min(view.selection, max(0, len(rows) - 1)) // PAGE_SIZE
     page_rows, total_pages = paginate(rows, page)
+    data = view.data if isinstance(view.data, Mapping) else {}
+    detail = data.get("_detail")
+    if isinstance(detail, Mapping):
+        lines.append(
+            _safe(
+                f"Captured ({len(rows)}) of {total} page {page + 1}/{total_pages}  "
+                f"Evidence ({len(_evidence_rows(view))}) of "
+                f"{len(_evidence_rows(view, filtered=False))}",
+                "dim",
+            )
+        )
+        lines.extend(_artifact_detail_lines(detail, view.scroll))
+        lines.append(Text("i:Continue  e:Export  j/k:Scroll  Esc:List", style="dim"))
+        return Panel(Group(*lines), title="Artifacts", style=THEME["border"])
     table = Table(
         expand=True,
         title=f"Captured ({len(rows)}) of {total} page {page + 1}/{total_pages}",
@@ -6944,10 +7212,6 @@ def _render_artifacts(state: TuiState, project: ProjectState) -> Panel:
                 _safe(f"{len(_evidence_record_text(record).encode('utf-8'))} B"),
             )
         lines.append(evidence_table)
-    data = view.data if isinstance(view.data, Mapping) else {}
-    detail = data.get("_detail")
-    if isinstance(detail, Mapping):
-        lines.extend(_artifact_detail_lines(detail, view.scroll))
     lines.append(
         Text("i:Inspect  e:Export  j/k:Select  /:Search  F5:Refresh", style="dim")
     )
@@ -7224,37 +7488,45 @@ def _render_grant_review(grant: dict[str, Any]) -> Panel:
     )
 
 
-def _memory_expanded_panel(expanded: dict[str, Any]) -> Panel:
-    """T28-D: the exact expanded record as labelled sections -- record fields,
-    Relationships and Receipts, one row per item with its own id and version --
-    never a Python dict repr. Every cell goes through _safe (X3)."""
-    fields = Table(title="Record", expand=True, show_header=False)
-    fields.add_column("field", style="cyan")
-    fields.add_column("value")
-    for key, value in expanded.items():
-        if key in ("relationships", "receipts"):
-            continue
-        shown = (
-            json.dumps(value, sort_keys=True, default=str)
-            if isinstance(value, (dict, list))
-            else value
+def _memory_detail_lines(expanded: dict[str, Any], width: int) -> list[Text]:
+    """Every character of current decoded page and every returned relation/receipt."""
+    pages = expanded.get("pages") or []
+    index = expanded.get("page_index", 0)
+    page = pages[index] if pages else expanded
+    lines: list[Text] = []
+    # A character can consume two terminal cells; this fixed bound prevents
+    # Rich wrapping from hiding rows below the scroll window on narrow screens.
+    chunk = max(12, min(48, (width - 12) // 2))
+
+    def add(value: str, style: str = "cyan") -> None:
+        for start in range(0, max(1, len(value)), chunk):
+            lines.append(_safe(value[start : start + chunk], style))
+
+    add(
+        f"{expanded['id']} v{expanded['version']} "
+        f"bytes {page['offset']}..{page.get('end_offset', page['next_offset'])} "
+        f"{'complete' if page['complete'] else '[x] next page'}"
+    )
+    add("Content:")
+    add(page["content"], "white")
+    relations = expanded.get("relationships") or []
+    add("Relationships:" + (" none recorded" if not relations else ""))
+    for row in relations:
+        add(
+            f"{row['id']} v{row['artifact_version']} {row['kind']} {row.get('direction', '')}"
         )
-        fields.add_row(_safe(key), _safe(shown))
-    parts: list[Any] = [fields]
-    for key, title in (("relationships", "Relationships"), ("receipts", "Receipts")):
-        section = Table(title=title, expand=True)
-        section.add_column("id", style="cyan")
-        section.add_column("version")
-        section.add_column("kind")
-        for row in expanded.get(key) or []:
-            if isinstance(row, dict):
-                section.add_row(
-                    _safe(row.get("id", "")),
-                    _safe(row.get("artifact_version", "")),
-                    _safe(row.get("kind", "")),
-                )
-        parts.append(section)
-    return Panel(Group(*parts), title="expanded")
+    if not expanded.get("relationships_complete", True):
+        add("Related traversal incomplete at backend limit")
+    receipts = expanded.get("receipts") or []
+    add("Receipts:" + (" none recorded" if not receipts else ""))
+    for row in receipts:
+        add(
+            f"{row['id']} v{row['artifact_version']} {row['kind']} {row['origin']}"
+            + (f" tokens={row['tokens']}" if "tokens" in row else "")
+        )
+    if expanded.get("receipts_bounded"):
+        add("Receipt view bounded to latest 8 per ledger")
+    return lines
 
 
 def _render_memory_admin(state: TuiState) -> Panel:
@@ -7262,6 +7534,19 @@ def _render_memory_admin(state: TuiState) -> Panel:
     state -- never a static/example row. Render failures already surface via
     `state.memory_message` (set by the dispatch helpers above), so this
     function only ever formats whatever is currently in `state`."""
+    expanded = state.memory_expanded
+    if expanded is not None and expanded.get(
+        "project_key", project_key(state.active_project)
+    ) == project_key(state.active_project):
+        detail = _memory_detail_lines(expanded, state.terminal_size[0])
+        rows = max(3, state.terminal_size[1] - 10)
+        scroll = min(expanded.get("scroll", 0), max(0, len(detail) - rows))
+        end = min(len(detail), scroll + rows)
+        visible = detail[scroll:end]
+        visible.append(
+            _safe(f"rows {scroll + 1}-{end}/{len(detail)}  [/] scroll  x next  - close")
+        )
+        return Panel(Group(*visible), title="Memory detail", style="magenta")
     owner = _memory_owner_scope(state, state.active_project)
     lines: list[Any] = [
         _safe(
@@ -7322,17 +7607,17 @@ def _render_memory_admin(state: TuiState) -> Panel:
         cursor = ">" if idx == state.memory_selected_index else " "
         checked = "x" if item.get("id") in state.memory_selected_ids else " "
         table.add_row(
-            f"{cursor}[{checked}]",
+            _safe(f"{cursor}[{checked}]"),
             _safe(item.get("id", "")),
             _safe(item.get("trust_tier", "")),
             _safe(item.get("source", "")),
             "yes" if item.get("stale") else "no",
             style=_state_selection_style(state) if cursor == ">" else None,
         )
-    lines.append(table)
     lines.append(
         _safe(f"page {page + 1}/{pages}  ] next page  [ previous page", "cyan")
     )
+    lines.append(table)
 
     if state.memory_pending_mutation is not None:
         pending_mutation = state.memory_pending_mutation
@@ -7424,8 +7709,6 @@ def _render_memory_admin(state: TuiState) -> Panel:
                     "red",
                 )
             )
-    if state.memory_expanded is not None:
-        lines.append(_memory_expanded_panel(state.memory_expanded))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
@@ -7438,14 +7721,25 @@ def _git_expanded_lines(expanded: Mapping[str, Any] | None) -> list[Text]:
         return []
     lines = [_safe(str(expanded["title"]), "bold")]
     if expanded["paths"]:
-        lines.append(_safe("changed: " + ", ".join(map(str, expanded["paths"]))))
+        lines[0].append(_safe("  changed: " + ", ".join(map(str, expanded["paths"]))))
     if expanded["error"]:
         lines.append(_safe(f"diff unavailable: {expanded['error']}", "bold red"))
-    lines.extend(_safe(str(line)) for line in expanded["lines"])
     if expanded["truncated"]:
         lines.append(
             _safe(f"... more: diff cut at {len(expanded['lines'])} lines", "yellow")
         )
+    diff_lines = expanded["lines"]
+    patch_start = next(
+        (
+            index
+            for index, line in enumerate(diff_lines)
+            if str(line).startswith("diff --git ")
+        ),
+        0,
+    )
+    lines.extend(
+        _safe(str(line)) for line in diff_lines[patch_start:] + diff_lines[:patch_start]
+    )
     return lines
 
 
@@ -7463,12 +7757,14 @@ def _render_git_panel(state: TuiState) -> Panel:
     git = data.get("git") or {}
     worktree = data.get("worktree") or {}
     lines: list[Any] = [
+        *([_safe(state.git_message, "bold magenta")] if state.git_message else []),
+        *_git_expanded_lines(state.git_expanded),
         _safe(
             f"has_git={git.get('has_git')}  "
             f"branch={(data.get('branch') or {}).get('branch') or '-'}  "
             f"head={git.get('head') or '-'}  dirty={git.get('dirty')}",
             "cyan",
-        )
+        ),
     ]
     if worktree.get("toplevel"):
         lines.append(
@@ -7523,7 +7819,6 @@ def _render_git_panel(state: TuiState) -> Panel:
                 _safe(entry.get("path", "")),
             )
         lines.append(dirty_table)
-    lines.extend(_git_expanded_lines(state.git_expanded))
 
     artifacts = data.get("artifacts") or {}
     counts: dict[str, int] = {}
@@ -7539,8 +7834,6 @@ def _render_git_panel(state: TuiState) -> Panel:
                 "white",
             )
         )
-    if state.git_message:
-        lines.append(_safe(state.git_message, "bold magenta"))
     return Panel(Group(*lines), title="Git & Artifacts", style="blue")
 
 
@@ -7737,6 +8030,22 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
         return _render_progress_bar(project.progress)
     if state.message:
         return _safe(state.message, "bold magenta")
+    if state.mode == "memory":
+        return _safe(
+            state.memory_message
+            or ("Memory detail" if state.memory_expanded is not None else "Memory"),
+            "dim",
+        )
+    if state.mode == "git" and state.git_expanded is not None:
+        return _safe("Selected diff; - collapse", "dim")
+    if _width_branch(state.terminal_size[0]) == "narrow":
+        actions = _section_actions(state.section)
+        if state.focus == "actions" and actions:
+            action = actions[state.action_index % len(actions)]
+            ok, reason = action.enabled(state)
+            if not ok:
+                return _safe(f"{action.label}: {reason}", THEME["text_muted"])
+        return Text("")
     return _unavailable_line(state)
 
 
@@ -7926,11 +8235,18 @@ def render_app(state: TuiState) -> Layout:
         Layout(name="footer", size=3),
     )
 
-    header = _safe(
-        f"⚡ Rush Interactive Quality Explorer v{__version__}  "
-        f"[{(state.active_index or 0) + 1}/{len(state.projects)}] {project.name}  "
+    project_header = (
+        f"[{(state.active_index or 0) + 1}/{len(state.projects)}] {project.name}"
+    )
+    section_header = (
         f"{SECTION_LABELS[state.section]}  "
-        f"({state.terminal_size[0]}x{state.terminal_size[1]})",
+        f"({state.terminal_size[0]}x{state.terminal_size[1]})"
+    )
+    header = _safe(
+        f"{section_header}  {project_header}"
+        if _width_branch(state.terminal_size[0]) == "narrow"
+        else f"⚡ Rush Interactive Quality Explorer v{__version__}  "
+        f"{project_header}  {section_header}",
         _HEADER_STYLE,
     )
     layout["header"].update(Panel(header, style=_HEADER_STYLE))

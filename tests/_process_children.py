@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import pty
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +68,8 @@ def spawn_pty_child(
     Returns `(pid, master_fd)`: the parent reads/writes `master_fd` and
     waits on `pid`, the same shape callers got from `pty.fork()`.
     """
+    import pty
+
     master_fd, slave_fd = pty.openpty()
     code = (
         "import fcntl, termios\nfcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"

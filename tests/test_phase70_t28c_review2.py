@@ -227,5 +227,9 @@ def test_outcome_detail_shows_recorded_targets(tmp_path: Path, home: Path) -> No
         [ProjectSeed(name="proj", root=root, results=[unscoped])], actions, None
     )
     _keys(state, actions, "f3", "3")
-    text = _render(state, 200, 50)
-    assert "(project root; no targets recorded)" in text, text
+    for width in (200, 160):
+        text = _render(state, width, 50)
+        detail = " ".join(
+            line.rsplit("││", 1)[-1].strip("│ ") for line in text.splitlines()
+        )
+        assert "(project root; no targets recorded)" in " ".join(detail.split()), text

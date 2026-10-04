@@ -84,6 +84,10 @@ These work from anywhere in the interface unless a specific mode below overrides
 | `m` | Jump to the Tokens section |
 | `F5` | Refresh the current section |
 
+When focus reaches Actions, the selected action has a `>` marker in the footer, even when
+the Actions pane is outside the visible area. `Enter` runs that enabled action; `F5`
+refreshes the current section directly.
+
 `/` behaves differently per section: in Map it searches the map's own nodes, in Artifacts it
 searches the captured artifact index, in Tokens it opens a run/agent/session filter, and
 everywhere else (Scans/Findings) it filters the visible findings.
@@ -149,18 +153,19 @@ Inside the Memory section (`M`, or section `4`):
 | Key | Action |
 |---|---|
 | `↓`/`j`, `↑`/`k` | Move the selection |
-| `]` / `[` | Page forward / backward through the record list |
+| `]` / `[` | Page forward / backward through the record list; in detail, scroll visible content, related records, and receipts (or return to the cached prior content page) |
 | `f` | Open the filter form (`Tab` cycles fields, `Enter` applies, `Escape` cancels) |
 | `S` | Cycle the subject filter |
 | `/` | Search records by text |
-| `Space` | Select/deselect the highlighted record for a bulk action |
+| `Space` | Select/deselect the highlighted record for a bulk action (`>[x]` marks a selected row) |
 | `n` | Create a new memory record (`Tab` cycles fields, `Enter` previews and submits, `Escape` cancels) |
-| `x` | Expand the selected record |
+| `x` | Show the selected record's stored content, related records, and recorded write/use receipts; press again for the next bounded content page |
 | `+` | Expand the selected record (same as `x`) |
 | `-` | Collapse the selected record's detail |
 | `e` | Edit the selected record |
-| `o` | Set the owner scope for the next mutation |
+| `o` | Choose owner scope for the next mutation (`Tab` cycles kinds, `Enter` applies, `Escape` cancels) |
 | `a` | Preview archiving the selected record(s) |
+| `p` | Preview promotion using current, matching records from distinct sources |
 | `d` | Preview deleting the selected record(s) |
 | `w` | Preview maintenance (cleanup) on the record set |
 | `y` | Accept a pending preview (archive, delete, maintenance, or new-record submit) |
@@ -169,10 +174,16 @@ Inside the Memory section (`M`, or section `4`):
 | `?` | Show current key bindings |
 | `q` | Quit |
 
-Every write (create, edit, archive, delete, maintenance) previews first and applies only on
+Every write (create, edit, promote, archive, delete, maintenance) previews first and applies only on
 `y`; `n` or `Escape` cancels with nothing written. If another process edited a record between
 your edit and its review, the review is flagged as a conflict and `r` re-fetches it before
-you retry.
+you retry. Record page status stays above the list; after an owner change, the current
+owner and confirmation appear on screen. Expanded content shows its record version and byte
+position. `]` / `[` scroll visible detail rows; `x` continues until `complete`.
+Related records appear only when visible to the current project. Receipts name recorded
+operations and their version. Promotion requires genuinely corroborating, current
+records with the same subject, content, owner, and symbol from distinct sources; one source
+is denied. A changed corroborating record refuses promotion at confirmation.
 
 ---
 
@@ -206,6 +217,9 @@ Inside the Git section (`G`, or section `6`):
 | `-` | Collapse the diff detail |
 | `Enter` | Inspect the selected commit |
 
+Diff detail is bounded. When a diff exceeds the bound, `... more: diff cut at
+N lines` appears before its body, so clipping the body does not hide truncation.
+
 ---
 
 ## 8. Artifacts
@@ -214,10 +228,11 @@ Inside the Artifacts section (section `7`):
 
 | Key | Action |
 |---|---|
-| `↓`/`j`, `↑`/`k` | Move the selection |
+| `↓`/`j`, `↑`/`k` | Move the selection; scroll text while inspecting |
 | `/` | Search the captured artifact index |
 | `i` | Inspect the selected artifact (press again to see more of it) |
 | `e` | Review, then export the selected artifact |
+| `Escape` | Close inspection and return to the tables |
 
 The section shows two paginated tables sharing one selection: a **Captured** table (tool
 identity, path, type, run/attempt, size) for artifacts a tool captured directly, and an
@@ -225,6 +240,8 @@ identity, path, type, run/attempt, size) for artifacts a tool captured directly,
 item — scan outputs, handoffs, memory records, and any bucket added later. Selection moves
 through the Captured rows first, then the Evidence rows. `/` matches path, category, or media
 type in Captured rows, and bucket, identity, category, or kind in Evidence rows.
+Inspection puts captured content and its byte range in view at compact terminal sizes;
+`Escape` restores the full tables at the same selection.
 
 Export opens the same grant-review overlay as scans and checks: nothing is written to disk
 until you accept it with `y`.

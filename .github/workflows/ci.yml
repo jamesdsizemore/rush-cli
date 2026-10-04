@@ -60,7 +60,7 @@ jobs:
           if __name__ == "__main__":
               main()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations --collect-data rush.dashboard --collect-submodules tiktoken_ext rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -88,7 +88,15 @@ jobs:
       # skips, a needs_* test whose binary is not on PATH) is installed and run
       # by the static-tool-acceptance job below.
       - name: Run tests
-        run: uv run pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
+        env:
+          TERM: xterm-256color
+          RUSH_G8_NATIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-linux-x86_64.tar.gz
+          RUSH_G8_NATIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_G8_NATIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-native-terminal
+        run: |
+          mkdir -p "$RUSH_G8_NATIVE_RECEIPT_DIR"
+          uv run --no-sync env -u PYTHONPATH -u NO_COLOR python -m pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
+          uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'posix-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
 
       - name: Release gate typecheck (mypy)
         run: uv run mypy src/rush
@@ -277,7 +285,7 @@ jobs:
           if __name__ == "__main__":
               main()
           PYEOF
-          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations rush_entry.py
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations --collect-data rush.dashboard --collect-submodules tiktoken_ext rush_entry.py
           uv run --no-sync python -c "
           from pathlib import Path
           from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
@@ -287,7 +295,14 @@ jobs:
           "
 
       - name: Verify Windows contracts
-        run: uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q
+        env:
+          RUSH_G8_NATIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-windows-x86_64.zip
+          RUSH_G8_NATIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_G8_NATIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-native-terminal
+        run: |
+          uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py tests/test_windows_import_safety.py tests/test_dashboard_http_contract.py::test_windows_owner_mutex_wait_results_fail_closed -q
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'windows-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
 
       - name: Verify Windows dashboard data-directory ACL contract
         run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q

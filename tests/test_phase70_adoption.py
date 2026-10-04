@@ -43,12 +43,11 @@ import json
 import os
 import stat
 import time
-from multiprocessing import Process
 from pathlib import Path
 from typing import Any
 
 import pytest
-from _process_children import spawn_pty_child
+from _process_children import spawn_child, spawn_pty_child
 from click.testing import CliRunner
 
 from rush.integrations import agents as agents_mod
@@ -538,14 +537,17 @@ def test_t03_concurrent_connects_yield_one_lock_winner_and_consistent_ledger(
     """Two processes racing to connect the same agent/project never corrupt
     the ledger or double-insert the marker pair."""
     procs = [
-        Process(target=_worker_apply, args=(str(project_root), str(data_root)))
+        spawn_child(__name__, "_worker_apply", [str(project_root), str(data_root)])
         for _ in range(2)
     ]
-    for proc in procs:
-        proc.start()
-    for proc in procs:
-        proc.join(timeout=15)
-        assert proc.exitcode == 0
+    try:
+        for proc in procs:
+            assert proc.wait(timeout=15) == 0
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
     target = project_root / "AGENTS.md"
     text = target.read_text(encoding="utf-8")
@@ -891,3 +893,222 @@ def test_t03_apply_rollback_multi_component(
             "actual": hashlib.sha256(user_edit).hexdigest(),
         }
     ]
+
+
+@pytest.mark.parametrize("concurrent_memory", [False, True])
+@pytest.mark.parametrize("concurrent_plugin", [False, True])
+def test_native_connect_failure_restores_own_memory_and_profile(
+    fake_home,
+    project_root,
+    data_root,
+    monkeypatch,
+    concurrent_memory,
+    concurrent_plugin,
+):
+    from rush.permissions import ExecutionPermissions
+
+    roots = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data_root
+    )
+    plugin = roots["codex"]
+    agents_mod.record_native_plugin_install(
+        host="codex", plugin_root=plugin, data_root=data_root
+    )
+    mcp = plugin / "rush/mcp.json"
+    original = mcp.read_bytes()
+    user_plugin = original + b"\n "
+    ledger = agents_mod.ownership_ledger_path(data_root).read_bytes()
+    memory_path = agents_mod.agent_memory_store_path(project_root=project_root)
+    agents_mod.initialize_agent_memory(
+        "codex",
+        "old-session",
+        project_root=project_root,
+        data_root=data_root,
+        consent=True,
+    )
+    memory_original = memory_path.read_bytes()
+    user_memory = (
+        b'{"schema_version":"1.0.0","version":100,"data":{"user":"concurrent"}}'
+    )
+    resource = project_root / ".rush/extra.md"
+    real = agents_mod.cas_replace_file
+
+    def fail(path, data, **kwargs):
+        if Path(path) == resource:
+            assert (
+                agents_mod.read_agent_memory_state(
+                    "codex",
+                    "new-session",
+                    project_root=project_root,
+                    data_root=data_root,
+                )["connected"]
+                is True
+            )
+            if concurrent_memory:
+                memory_path.write_bytes(user_memory)
+            if concurrent_plugin:
+                mcp.write_bytes(user_plugin)
+            raise OSError("native resource failure")
+        return real(path, data, **kwargs)
+
+    monkeypatch.setattr(agents_mod, "cas_replace_file", fail)
+    result = AgentConnectionTool().run(
+        "codex",
+        action="connect",
+        session_id="new-session",
+        project_root=project_root,
+        rush_binary=RUSH_BINARY,
+        data_root=data_root,
+        home=fake_home,
+        profile="full",
+        confirm_profile=True,
+        install_guidance=True,
+        consent=True,
+        acknowledge=True,
+        resources=[
+            agents_mod.OwnedResource("file_resource", ".rush/extra.md", b"new resource")
+        ],
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+    assert mcp.read_bytes() == (user_plugin if concurrent_plugin else original)
+    assert agents_mod.ownership_ledger_path(data_root).read_bytes() == ledger
+    assert not resource.exists()
+    assert not (project_root / "AGENTS.md").exists()
+    assert memory_path.read_bytes() == (
+        user_memory if concurrent_memory else memory_original
+    )
+    recovery = result["raw"]["recovery_required"]
+    assert [row["component"] for row in recovery] == (
+        (["agent_memory", "agent_memory"] if concurrent_memory else [])
+        + (["native_plugin"] if concurrent_plugin else [])
+    )
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+@pytest.mark.parametrize("conflict", ["guidance", "resource"])
+def test_native_connect_component_conflict_rolls_back(
+    fake_home, project_root, data_root, monkeypatch, agent, host, conflict
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools import install as install_mod
+
+    plugin = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data_root
+    )[host]
+    agents_mod.record_native_plugin_install(
+        host=host, plugin_root=plugin, data_root=data_root
+    )
+    mcp = plugin / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    original = mcp.read_bytes()
+    ledger = agents_mod.ownership_ledger_path(data_root).read_bytes()
+    agents_mod.initialize_agent_memory(
+        agent, "prior", project_root=project_root, data_root=data_root, consent=True
+    )
+    memory = agents_mod.agent_memory_store_path(project_root=project_root)
+    memory_original = memory.read_bytes()
+    guidance = project_root / ("CLAUDE.md" if host == "claude" else "AGENTS.md")
+    resource = project_root / ".rush/extra.md"
+    user_bytes = b"user-owned concurrent content\n"
+    if conflict == "resource":
+        resource.write_bytes(user_bytes)
+    real = agents_mod.cas_replace_file
+
+    def concurrent_guidance(path, content, **kwargs):
+        if conflict == "guidance" and Path(path) == guidance:
+            guidance.write_bytes(user_bytes)
+        return real(path, content, **kwargs)
+
+    monkeypatch.setattr(agents_mod, "cas_replace_file", concurrent_guidance)
+
+    def no_refresh(commands):
+        pytest.fail(f"conflicted transaction refreshed host: {commands}")
+
+    monkeypatch.setattr(install_mod, "_run_host_commands", no_refresh)
+    result = AgentConnectionTool().run(
+        agent,
+        action="connect",
+        session_id="conflicted",
+        project_root=project_root,
+        rush_binary=RUSH_BINARY,
+        data_root=data_root,
+        home=fake_home,
+        profile="full",
+        confirm_profile=True,
+        install_guidance=True,
+        consent=True,
+        acknowledge=True,
+        resources=[
+            agents_mod.OwnedResource("file_resource", ".rush/extra.md", b"rush")
+        ],
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+    assert result["raw"]["recovery_required"] == []
+    assert mcp.read_bytes() == original
+    assert agents_mod.ownership_ledger_path(data_root).read_bytes() == ledger
+    assert memory.read_bytes() == memory_original
+    if conflict == "guidance":
+        assert guidance.read_bytes() == user_bytes
+        assert not resource.exists()
+    else:
+        assert not guidance.exists()
+        assert resource.read_bytes() == user_bytes
+
+
+@pytest.mark.parametrize(
+    ("agent", "host"), [("claude-code", "claude"), ("codex", "codex")]
+)
+def test_native_profile_refresh_failure_compensates_owned_state(
+    fake_home, project_root, data_root, monkeypatch, agent, host
+):
+    from rush.permissions import ExecutionPermissions
+    from rush.tools import install as install_mod
+
+    roots = agents_mod.materialize_agent_plugins(
+        rush_binary=RUSH_BINARY, data_root=data_root
+    )
+    plugin = roots[host]
+    agents_mod.record_native_plugin_install(
+        host=host, plugin_root=plugin, data_root=data_root
+    )
+    mcp = plugin / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    original = mcp.read_bytes()
+    ledger = agents_mod.ownership_ledger_path(data_root).read_bytes()
+    calls = []
+
+    def refresh(commands):
+        with agents_mod._ledger_lock(data_root):
+            pass
+        calls.append((commands, mcp.read_bytes()))
+        return (
+            {"state": "failed", "detail": "native refresh refused"}
+            if len(calls) == 1
+            else None
+        )
+
+    monkeypatch.setattr(install_mod, "_run_host_commands", refresh)
+    result = AgentConnectionTool().run(
+        agent,
+        action="connect",
+        session_id="native-refresh",
+        project_root=project_root,
+        rush_binary=RUSH_BINARY,
+        data_root=data_root,
+        home=fake_home,
+        profile="full",
+        confirm_profile=True,
+        install_guidance=True,
+        consent=True,
+        permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
+    )
+    assert result["status"] == "error"
+    assert result["raw"]["recovery_required"] == []
+    assert len(calls) == 2
+    assert json.loads(calls[0][1])["mcpServers"]["rush"]["args"][-1] == "full"
+    assert calls[1][1] == original
+    assert mcp.read_bytes() == original
+    assert agents_mod.ownership_ledger_path(data_root).read_bytes() == ledger
+    assert not agents_mod.agent_memory_store_path(project_root=project_root).exists()

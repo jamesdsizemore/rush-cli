@@ -1175,8 +1175,16 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
 
             # --- tokens ----------------------------------------------------
             start = time.monotonic()
-            TelemetryStore(project_root).record_savings(
-                "review", raw_tokens=100, compressed_tokens=40
+            telemetry = TelemetryStore(project_root)
+            telemetry.record_savings(
+                "review", raw_tokens=100, compressed_tokens=40, project_id=project_id
+            )
+            telemetry.record_savings("review", raw_tokens=1000, compressed_tokens=400)
+            telemetry.record_savings(
+                "review",
+                raw_tokens=2000,
+                compressed_tokens=800,
+                project_id=str(uuid.uuid4()),
             )
             tok_status, tok_snap = _snapshot(base_url, project_id, cookie, "tokens")
             timings_ms["tokens"] = round((time.monotonic() - start) * 1000, 3)
@@ -1184,7 +1192,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 "tokens",
                 tok_status == 200
                 and tok_snap.get("data", {}).get("actual", {}).get("raw_tokens", 0)
-                >= 100,
+                == 100,
                 f"status={tok_status}",
             )
 
@@ -1218,6 +1226,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         "coverage": coverage,
         "errors": errors,
         "memory_mutation_arguments_sent": memory_mutation_arguments_sent,
+        "tokens_snapshot": tok_snap.get("data", {}),
         "blockers": [
             (
                 "actual pixel layout at 360px/1280px and a real visual "

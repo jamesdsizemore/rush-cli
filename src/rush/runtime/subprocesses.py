@@ -233,7 +233,8 @@ def _assign_process_to_job(job_handle: int, pid: int) -> bool:  # pragma: no cov
 def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
     # -- Windows-only; no runner reachable in this environment.
     """The exact `FILETIME` (as a single int) a live process at `pid` was
-    created at, or `None` if no such process can be opened. S03 item 4's
+    created at, or `None` if the PID is absent. Other query failures raise
+    `OSError`, never prove termination. S03 item 4's
     PID-reuse guard: a *different* process now holding a reused pid never
     has the *same* creation time as the one this record was made for."""
     import ctypes
@@ -244,11 +245,20 @@ def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
             ("dwHighDateTime", ctypes.c_uint32),
         ]
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_uint32]
     kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessTimes.argtypes = [
+        ctypes.c_void_p,
+        *([ctypes.POINTER(_Filetime)] * 4),
+    ]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return None
+        error = ctypes.get_last_error()  # type: ignore[attr-defined]
+        if error == 87:  # ERROR_INVALID_PARAMETER: no process at this PID.
+            return None
+        raise OSError(error, f"OpenProcess failed for pid {pid}")
     try:
         creation, exit_time, kernel_time, user_time = (
             _Filetime(),
@@ -264,7 +274,10 @@ def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
             ctypes.byref(user_time),
         )
         if not ok:
-            return None
+            raise OSError(
+                ctypes.get_last_error(),  # type: ignore[attr-defined]
+                f"GetProcessTimes failed for pid {pid}",
+            )
         return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
     finally:
         kernel32.CloseHandle(handle)
@@ -336,7 +349,10 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
 
     if not assigned or not isinstance(root_pid, int):
         return False
-    current_creation = _windows_process_creation_time(root_pid)
+    try:
+        current_creation = _windows_process_creation_time(root_pid)
+    except OSError:
+        return False
     if current_creation is None:
         return True  # no live process at that pid at all
     return creation_time is not None and current_creation != creation_time

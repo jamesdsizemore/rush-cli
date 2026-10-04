@@ -4804,6 +4804,8 @@ def agent_connect_cmd(
     --project (a registered project); --disable-agent-hooks or `rush agent
     disconnect` removes that activation.
     """
+    from .integrations.agent_hooks import HOOK_AGENTS
+    from .integrations.agents import installed_plugin_roots
     from .tools.agent_connection import AgentConnectionTool
 
     if enable_hooks and disable_hooks:
@@ -4811,6 +4813,15 @@ def agent_connect_cmd(
             "--enable-agent-hooks and --disable-agent-hooks are mutually exclusive"
         )
     interactive = not as_json and os.isatty(0) and _is_terminal(sys.stdout)
+    hook_only_native = (
+        (enable_hooks or disable_hooks)
+        and agent_id in HOOK_AGENTS
+        and profile is None
+        and not install_guidance
+        and not consent
+        and not acknowledge
+        and bool(installed_plugin_roots(HOOK_AGENTS[agent_id]))
+    )
     result = AgentConnectionTool().run(
         agent_id,
         action="connect",
@@ -4819,7 +4830,9 @@ def agent_connect_cmd(
         consent=consent,
         acknowledge=acknowledge,
         install_guidance=install_guidance,
-        confirm_guidance=_confirm_guidance if interactive else None,
+        confirm_guidance=_confirm_guidance
+        if interactive and not hook_only_native
+        else None,
         project_root=project_path,
         profile=profile,
         confirm_profile=_profile_consent(assume_yes, interactive, as_json),

@@ -98,14 +98,51 @@ def test_grant_review_escapes_hostile_project_values(tmp_path: Path) -> None:
 
 
 def test_memory_panel_escapes_hostile_rows() -> None:
+    import base64
+
     state = TuiState(projects=[ProjectState(name="m", root=Path("/tmp/t28a-m"))])
     state.mode = "memory"
     state.memory_items = [
         {"id": HOSTILE, "trust_tier": HOSTILE, "source": HOSTILE, "stale": False}
     ]
-    state.memory_expanded = {"body": HOSTILE}
     state.memory_message = HOSTILE
     _assert_no_controls(_render(state))
+    content = HOSTILE + " [bold]literal[/bold]"
+    page = {
+        "offset": 0,
+        "next_offset": len(content.encode()),
+        "complete": True,
+        "content": content,
+    }
+    state.memory_expanded = {
+        "id": HOSTILE,
+        "version": 1,
+        **page,
+        "content_base64": base64.b64encode(content.encode()).decode(),
+        "content_bytes_base64": base64.b64encode(content.encode()).decode(),
+        "project_key": project_key(state.active_project),
+        "pages": [page],
+        "page_index": 0,
+        "scroll": 0,
+        "relationships": [
+            {
+                "id": HOSTILE,
+                "artifact_version": 1,
+                "kind": HOSTILE,
+                "direction": HOSTILE,
+            }
+        ],
+        "relationships_complete": True,
+        "receipts": [
+            {"id": HOSTILE, "artifact_version": 1, "kind": HOSTILE, "origin": HOSTILE}
+        ],
+        "receipts_bounded": False,
+    }
+    rendered = _render(state)
+    _assert_no_controls(rendered)
+    assert "[bold]literal[/bold]" in rendered
+    assert "Relationships:" in rendered
+    assert "Receipts:" in rendered
 
 
 def test_git_panel_escapes_hostile_rows() -> None:
@@ -190,6 +227,33 @@ def test_keymap_footer_visible(size: tuple[int, int]) -> None:
     assert "status line" in text
 
 
+def test_action_focus_remains_visible_when_navigation_clips(tmp_path: Path) -> None:
+    state = TuiState(
+        projects=[
+            ProjectState(name="alpha", root=tmp_path / "alpha"),
+            ProjectState(name="beta", root=tmp_path / "beta"),
+        ],
+        active_index=1,
+    )
+    for size in ((60, 20), (80, 24), (120, 40)):
+        state.focus = "list"
+        state.action_index = 0
+        _dispatch_key(state, "tab", _actions())
+        assert state.focus == "detail"
+        assert ">Refresh" not in _render(state, *size)
+        _dispatch_key(state, "tab", _actions())
+        assert state.focus == "actions"
+        assert ">Refresh" in _render(state, *size)
+        _dispatch_key(state, "down", _actions())
+        assert ">Check" in _render(state, *size)
+        _dispatch_key(state, "down", _actions())
+        assert ">Scan" in _render(state, *size)
+        state.action_index = 6
+        text = _render(state, *size)
+        assert ">Cancel run" in text
+        assert "f5:Refresh" in text
+
+
 # -- 4: section loads survive a scan start -----------------------------------
 
 
@@ -234,26 +298,58 @@ def test_invalidate_drops_inflight_load(tmp_path: Path) -> None:
     assert project.registration is None
 
 
-def test_f5_does_not_start_a_second_thread_while_loading(tmp_path: Path) -> None:
+def test_f5_replays_one_refresh_after_loading(tmp_path: Path) -> None:
     release = threading.Event()
-    started: list[int] = []
+    captured = threading.Event()
+    loaded: list[str] = []
+    root = tmp_path / "project"
+    root.mkdir()
 
     def slow_overview(root: Path, **kwargs: Any) -> dict[str, Any]:
-        started.append(1)
-        release.wait(5)
-        return {"registration": {"state": "none", "reason": "x"}}
+        result = load_overview(root, **kwargs)
+        loaded.append(result["status"]["config"]["state"])
+        if len(loaded) == 1:
+            captured.set()
+            release.wait(5)
+        return result
 
     actions = _actions(load_overview=slow_overview)
-    project = ProjectState(name="f5", root=tmp_path)
-    state = TuiState(projects=[project])
-    state.load_requests.add((project_key(project), "overview"))
+    project = ProjectState(name="f5", root=root)
+    state = TuiState(projects=[project], data_root=tmp_path / "data")
+    key = (project_key(project), "overview")
+    state.load_requests.add(key)
     _pump(state, actions)
-    for _ in range(5):
-        _dispatch_key(state, "f5", actions)
-        _pump(state, actions)
-    time.sleep(0.1)
-    release.set()
-    assert len(started) == 1
+    try:
+        assert captured.wait(5)
+        assert loaded == ["missing"]
+        (root / "rush.toml").write_text("[tools\n")
+        for _ in range(5):
+            _dispatch_key(state, "f5", actions)
+            _pump(state, actions)
+        assert loaded == ["missing"]  # one loader at a time
+        assert state.load_requests == {key}  # one refresh kept for its completion
+    finally:
+        release.set()
+
+    post = state.result_queue.get(timeout=5)
+    state.result_queue.put(post)
+    _pump(state, actions)
+    post = state.result_queue.get(timeout=5)
+    state.result_queue.put(post)
+    _pump(state, actions)
+    assert loaded == ["missing", "invalid"]
+    assert state.views[key].data["status"]["config"]["state"] == "invalid"
+    assert "rush.toml: invalid" in _render(state, 80, 24)
+
+    (root / "rush.toml").write_text("[tools]\n")
+    _dispatch_key(state, "f5", actions)
+    _pump(state, actions)
+    post = state.result_queue.get(timeout=5)
+    state.result_queue.put(post)
+    _pump(state, actions)
+    assert loaded == ["missing", "invalid", "valid"]
+    assert state.views[key].data["status"]["config"]["state"] == "valid"
+    assert "rush.toml: valid" in _render(state, 80, 24)
 
 
 # -- 5: reduced motion redraws after background results ----------------------

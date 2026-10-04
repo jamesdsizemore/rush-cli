@@ -115,6 +115,11 @@ def calculate_discount(age: int) -> float:
 
 `rush slop` analyzes comment-to-code ratios, identifies redundant AI boilerplate, and highlights empty function stubs before they clutter your repository. For Python files it prefers `aislop` when installed (falling back to `sloppylint` otherwise): aislop scans the target directory itself (a file target becomes its parent directory plus `--include`), and its findings report as `aislop/<engine>/<rule>` for every aislop engine that ran. The result is `error` only when aislop produces no JSON report at all; findings on their own are `warn` or `fail` depending on severity.
 
+An `External environment dependency audit` finding describes the Python
+environment used by Aislop, rather than confirming a scan of dependencies
+listed in your project's requirements. Rush keeps these vulnerabilities visible
+and leaves their project path empty; source-code findings retain their paths.
+
 ---
 
 ## 6. Finding Dead Code & Unused Exports (`rush dead`)

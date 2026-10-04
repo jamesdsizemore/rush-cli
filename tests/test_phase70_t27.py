@@ -252,6 +252,10 @@ def _stub_binaries_on_path(stack: Any, names: Any) -> None:
     stack.enter_context(
         mock.patch.dict(os.environ, {"PATH": f"{path}{os.pathsep}{bindir}"})
     )
+    if "ollama" in names:
+        stack.enter_context(
+            mock.patch("rush.tools.offline_runner._is_ollama_ready", return_value=True)
+        )
 
 
 def _process_stub(spec: dict[str, Any]) -> Any:

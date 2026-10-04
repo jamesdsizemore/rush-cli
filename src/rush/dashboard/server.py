@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, ClassVar, cast, get_args
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from rush.dashboard.auth import DashboardAuth
 from rush.dashboard.project_map import (
@@ -48,7 +48,6 @@ from rush.dashboard.static_assets import (
     load_dashboard_asset,
 )
 from rush.dashboard.theme import MOTION, THEME
-from rush.discovery.stack import detect_project_stacks
 from rush.memory.maintenance import MaintenanceTask
 from rush.memory.store import (
     MemorySubject,
@@ -61,14 +60,17 @@ from rush.memory.store import (
 )
 from rush.permissions import ExecutionPermissions
 from rush.runtime.filesystem import atomic_write_bytes
+from rush.setup import provision as provision_service
 from rush.setup.engine_packages import ENGINE_PACKAGES
-from rush.setup.provision import build_provision_plan
-from rush.token_economy.telemetry import TelemetryStore
+from rush.token_economy.telemetry import (
+    read_memory_event_totals_readonly,
+    read_summary_readonly,
+)
+from rush.tools import setup_wizard as setup_service
 from rush.tools.agent_connection import AgentConnectionTool
 from rush.tools.base import ToolResult
 from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.project import ProjectTool
-from rush.tools.setup_wizard import run_setup_wizard
 from rush.workflows import projects as wp
 from rush.workflows.project_run import (
     _MANIFEST_RELATIVE,
@@ -279,9 +281,9 @@ ALLOWED_ACTIONS = frozenset(
 _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "noop": frozenset(),
     "provision_plan": frozenset(
-        {"exclude", "targets", "severity", "concurrency", "timeout_seconds"}
+        {"exclude", "targets", "severity", "concurrency", "timeout_seconds", "resolve"}
     ),
-    "provision_apply": frozenset({"plan_id"}),
+    "provision_apply": frozenset({"plan_id", "review"}),
     "scan_start": frozenset({"plan_id"}),
     "scan_cancel": frozenset({"run_id", "operation_id"}),
     "scan_resume": frozenset({"run_id"}),
@@ -473,30 +475,18 @@ def _s04_effect_ids(
             "cursor_key_ensure": uuid.uuid4().hex,
             "toolchain_manifest": uuid.uuid4().hex,
         }
-        # S04 table: one `install:<engine_id>` key per validated plan entry.
-        # `run_setup_wizard`'s own return dict never exposes `ProvisionPlan`
-        # entries (only `plan_id`), so the plan is rebuilt directly here via
-        # `build_provision_plan`, mirroring `run_setup_wizard`'s internal
-        # stack-detection + `ENGINE_PACKAGES` filter exactly. This reservation
-        # runs before `_dispatch_provision_apply`'s own accept-time re-check
-        # of `arguments.plan_id`, so a stale/changed plan here just leaves an
-        # unused reserved key -- harmless dead data, same as the non-mutating
-        # case above -- never a wrong install.
-        if project_id is not None:
-            try:
-                root = Path(resolve_project(project_id)["root"])
-                stacks = detect_project_stacks(root)
-                suggested = {e for stack in stacks for e in stack.suggested_engines}
-                known_engine_ids = sorted(e for e in suggested if e in ENGINE_PACKAGES)
-                plan = build_provision_plan(root, known_engine_ids)
-            except Exception:  # noqa: BLE001, S110 -- reservation must never
-                # crash admission; fall back to the two operation-wide keys.
-                pass
-            else:
+        review = arguments.get("review")
+        if isinstance(review, dict):
+            provision = review.get("provision")
+            if isinstance(provision, dict) and isinstance(
+                provision.get("entries"), list
+            ):
                 keys.update(
                     {
-                        f"install:{entry.engine_id}": uuid.uuid4().hex
-                        for entry in plan.entries
+                        f"install:{entry['engine_id']}": uuid.uuid4().hex
+                        for entry in provision["entries"]
+                        if isinstance(entry, dict)
+                        and entry.get("engine_id") in ENGINE_PACKAGES
                     }
                 )
         return keys
@@ -1032,17 +1022,83 @@ def _scan_plan_kwargs(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _dispatch_provision_plan(
-    project_id: str, arguments: dict[str, Any]
+    ctx: DashboardContext,
+    project_id: str,
+    arguments: dict[str, Any],
+    grants: dict[str, Any],
 ) -> tuple[int, dict[str, Any]]:
-    """Read-only readiness/provision-plan review (plan Sec 3.1 Overview
-    "readiness" + Sec 3.6 Scans review-before-start): a fresh, immutable
-    `rush_scan.plan` (staged to disk by `plan_scan` itself) plus the
-    approved shared `run_setup_wizard(install=True, permissions=None)`
-    engine-provisioning preview -- never a browser-only planner."""
+    """Review setup offline, or resolve only the advertised identities."""
     root = Path(resolve_project(project_id)["root"])
-    readiness = run_setup_wizard(root, install=True, permissions=None)
+    resolve = arguments.get("resolve", False)
+    if not isinstance(resolve, bool):
+        raise _ActionDenied(400, "malformed_request", "resolve must be a boolean")
+    if resolve:
+        _require_grants(grants, "network", operation="provision_plan resolution")
+    review = setup_service.build_setup_review(
+        root,
+        ctx.data_root or wp.default_data_root(),
+        resolve=resolve,
+        permissions=_permissions_from_grants(grants),
+    )
+    readiness = {
+        "plan_id": review["provision"]["plan_id"],
+        "review": review,
+        "provision": {"plan_only": True},
+        "skipped": [entry["engine_id"] for entry in review["provision"]["entries"]],
+        "unsupported_engines": review["unsupported_engines"],
+    }
     plan = plan_scan(project_id, **_scan_plan_kwargs(arguments))
     return 200, {"readiness": readiness, "scan_plan": plan.to_dict()}
+
+
+def _validate_provision_review(
+    ctx: DashboardContext,
+    project_id: str,
+    arguments: dict[str, Any],
+    permissions: ExecutionPermissions,
+) -> dict[str, Any]:
+    """Bind the shared immutable review to this route before setup writes."""
+    review = arguments.get("review")
+    try:
+        if not isinstance(review, dict) or review.get("kind") != "setup_review":
+            raise ValueError(
+                "provision_apply requires arguments.review from provision_plan"
+            )
+        project = resolve_project(project_id)
+        root = Path(project["root"]).resolve()
+        data_root = (ctx.data_root or wp.default_data_root()).resolve()
+        plan = provision_service.plan_from_dict(review["provision"])
+        if (
+            Path(review["project_root"]).resolve() != root
+            or Path(plan.project_root).resolve() != root
+            or Path(review["data_root"]).resolve() != data_root
+            or Path(plan.data_root).resolve() != data_root
+            or review["registration"].get("project_id") != project["project_id"]
+        ):
+            raise ValueError("review belongs to a different project or data root")
+        problem = setup_service._review_problem(review)
+        rejection = provision_service._plan_rejection(
+            plan, arguments.get("plan_id", ""), provision_service.current_os_arch()
+        )
+        if problem is not None or rejection is not None:
+            raise ValueError(str(problem or rejection))
+        if any(
+            e.disposition == "applicable"
+            and e.identity_state not in ("resolved", "reuse_verified")
+            for e in plan.entries
+        ):
+            raise ValueError(
+                "resolve identities and review concrete versions before apply"
+            )
+        missing = setup_service._missing_grants(review, permissions)
+        if missing:
+            raise _ActionDenied(403, "permission_denied", f"missing grants: {missing}")
+        stale = setup_service._stale_precondition(review)
+        if stale is not None:
+            raise _ActionDenied(409, "conflict", f"setup changed since review: {stale}")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise _ActionDenied(400, "malformed_request", str(exc)) from exc
+    return review
 
 
 def _run_terminal_supervised(
@@ -1079,32 +1135,13 @@ def _dispatch_provision_apply(
     grants: dict[str, Any],
     operation_id: str,
 ) -> tuple[int, dict[str, Any]]:
-    """Install action: calls the exact approved `run_setup_wizard`/
-    `apply_provision_plan` shared plan -- no browser-specific package
-    manager logic. Refuses to apply a plan that changed since it was
-    reviewed (its content-hashed `plan_id` no longer matches). P69-02.2n:
-    returns 202 immediately with a run id and completes asynchronously,
-    matching `scan_start`'s existing long-action lifecycle -- the status
-    lookup polls the same `GET .../operations/{operation_id}` route."""
+    """Apply the full frozen setup review through the shared transaction."""
     _require_grants(
         grants, "cache_write", "artifact_write", operation="provision_apply"
     )
-    reviewed_plan_id = arguments.get("plan_id")
-    if not isinstance(reviewed_plan_id, str) or not reviewed_plan_id:
-        raise _ActionDenied(
-            400,
-            "malformed_request",
-            "provision_apply requires arguments.plan_id from a reviewed readiness plan",
-        )
-    root = Path(resolve_project(project_id)["root"])
-    fresh = run_setup_wizard(root, install=True, permissions=None)
-    if fresh.get("plan_id") != reviewed_plan_id:
-        raise _ActionDenied(
-            409,
-            "conflict",
-            "provision plan changed since review; re-review before applying",
-        )
     permissions = _permissions_from_grants(grants)
+    review = _validate_provision_review(ctx, project_id, arguments, permissions)
+    reviewed_plan_id = review["provision"]["plan_id"]
     # S16: provisioning allocates its own durable run/attempt job identity
     # before the effect, distinct from scan admission -- returned through
     # 202/status/receipts so a crash immediately after 202 recovers without
@@ -1119,24 +1156,35 @@ def _dispatch_provision_apply(
         # even launched; this is the independent, second check from inside
         # the worker, closing the gap during which the project's real
         # readiness/provision plan can change.
-        recheck = run_setup_wizard(root, install=True, permissions=None)
-        if recheck.get("plan_id") != reviewed_plan_id:
+        try:
+            _validate_provision_review(ctx, project_id, arguments, permissions)
+        except _ActionDenied as exc:
             return {
                 "status": "conflict",
                 "code": "stale_expected_identity",
-                "message": (
-                    "provision plan changed between accept and execution; "
-                    "re-review before applying"
-                ),
+                "message": str(exc),
+                "run_id": run_id,
+                "attempt_id": attempt_id,
             }
-        applied = run_setup_wizard(
-            root, install=True, permissions=permissions, project_id=project_id
+        applied = setup_service.apply_setup_review(review, permissions, None)
+        provision = applied.get("provision", {})
+        complete = applied.get("status") == "ok" and not any(
+            provision.get(key)
+            for key in (
+                "failed",
+                "permission_blocked",
+                "requires_input",
+                "recovery_required",
+            )
         )
         return {
-            "status": "success",
+            "status": "success"
+            if complete
+            else ("partial" if applied.get("status") in ("ok", "partial") else "error"),
             "run_id": run_id,
             "attempt_id": attempt_id,
-            "provision": applied.get("provision", {}),
+            "provision": provision,
+            "setup": applied,
         }
 
     ctx.start_terminal_supervised(operation_id, _body)
@@ -2778,7 +2826,7 @@ def _dispatch_scan_action(
 ) -> tuple[int, dict[str, Any]]:
     try:
         if operation == "provision_plan":
-            return _dispatch_provision_plan(project_id, arguments)
+            return _dispatch_provision_plan(ctx, project_id, arguments, grants)
         if operation == "provision_apply":
             return _dispatch_provision_apply(
                 ctx, project_id, arguments, grants, operation_id
@@ -3438,12 +3486,21 @@ def _build_overview_section(project_id: str, record: ProjectRecord) -> dict[str,
     }
 
 
-def _build_setup_section(project_id: str) -> dict[str, Any]:
+def _build_setup_section(ctx: DashboardContext, project_id: str) -> dict[str, Any]:
     """`section=setup` (P69-02.2n, row 6): the same provisioning readiness
     `provision_plan` already computes, never the full snapshot."""
     root = Path(resolve_project(project_id)["root"])
-    readiness = run_setup_wizard(root, install=True, permissions=None)
-    return {"project_id": project_id, "readiness": readiness}
+    review = setup_service.build_setup_review(
+        root, ctx.data_root or wp.default_data_root()
+    )
+    return {
+        "project_id": project_id,
+        "readiness": {
+            "review": review,
+            "plan_id": review["provision"]["plan_id"],
+            "provision": {"plan_only": True},
+        },
+    }
 
 
 def _build_scans_section(
@@ -3952,44 +4009,28 @@ def _build_tokens_section(
 ) -> dict[str, Any]:
     """`section=tokens` (plan Sec 3.1): actual usage kept separate from
     estimated/avoided payload, per project/run/agent/session, sharing the
-    exact same `TelemetryStore.get_summary()` computation the live gain TUI
-    panel reads (`token_economy/tui_gain.py::build_gain_panel`) -- never a
+    same shared savings computation the live gain TUI panel reads
+    (`token_economy/tui_gain.py::build_gain_panel`) -- never a
     second, possibly-drifting savings calculator. Rush's local telemetry
     ledger never observes a provider-billed usage report, so `provider_usage`
     stays explicitly `available: false` rather than fabricating a number."""
-    root = Path(resolve_project(project_id)["root"])
+    project = resolve_project(project_id)
+    root = Path(project["root"])
     # M10: one selection, parsed once, applied identically to token totals,
     # memory-event-by-kind totals, and handoff rows -- never filtering only
     # the handoff rows while leaving the displayed totals project-wide.
     run_filter = query.get("run_id", [None])[0]
     agent_filter = query.get("agent_id", [None])[0]
     session_filter = query.get("session_id", [None])[0]
-    # R20.G8: a GET never springs `.rush/telemetry/tokens.db` into existence;
-    # a project with no ledger yet reports the ledger's own all-zero totals.
-    if (root / ".rush" / "telemetry" / "tokens.db").exists():
-        telemetry = TelemetryStore(root)
-        summary = telemetry.get_summary(
-            run_id=run_filter, agent_id=agent_filter, session_id=session_filter
-        )
-        by_kind = {
-            kind: telemetry.get_memory_event_total(
-                kind,
-                run_id=run_filter,
-                agent_id=agent_filter,
-                session_id=session_filter,
-            )
-            for kind in _MEMORY_EVENT_KINDS
-        }
-    else:
-        summary = {
-            "events_count": 0,
-            "total_raw_tokens": 0,
-            "total_compressed_tokens": 0,
-            "net_tokens_saved": 0,
-            "compression_ratio": 0.0,
-            "dollar_savings_est": 0.0,
-        }
-        by_kind = dict.fromkeys(_MEMORY_EVENT_KINDS, 0)
+    # Read-only readers also exclude legacy rows without the selected identity.
+    filters = {
+        "project_id": project["project_id"],
+        "run_id": run_filter,
+        "agent_id": agent_filter,
+        "session_id": session_filter,
+    }
+    summary = read_summary_readonly(root, **filters)
+    by_kind = read_memory_event_totals_readonly(root, _MEMORY_EVENT_KINDS, **filters)
     # R20.G8: read-only view; never creates or migrates memory.db.
     store, _store_state = TypedArtifactStore.open_readonly_view(root)
     cache_fill_count = 0
@@ -4003,7 +4044,11 @@ def _build_tokens_section(
         finally:
             store.close()
 
-    handoffs = _list_project_handoffs(root)
+    handoffs = [
+        handoff
+        for handoff in _list_project_handoffs(root)
+        if handoff.get("project_id") == project["project_id"]
+    ]
     if run_filter:
         handoffs = [h for h in handoffs if h.get("run_id") == run_filter]
     if agent_filter:
@@ -4130,7 +4175,7 @@ def _build_artifacts_section(
     finding evidence or memory content)."""
     payload = list_project_artifacts(project_id)
     items: list[dict[str, Any]] = []
-    for bucket in ("scan_outputs", "handoffs", "memory"):
+    for bucket in ("scan_outputs", "captured", "handoffs", "memory"):
         items.extend(payload.get(bucket) or [])
 
     category_filter = set(_split_csv(query.get("category", [])))
@@ -4176,7 +4221,38 @@ def _build_artifacts_section(
         raw_excerpt = None
         if paths:
             root = Path(resolve_project(project_id)["root"])
-            raw_excerpt = _read_excerpt(root, paths[0], start=1, end=200)
+            if entry.get("kind") == "captured_artifact":
+                captured_page = _read_artifact_content_page(
+                    root,
+                    entry,
+                    paths[0],
+                    offset=0,
+                    limit=_MAX_EXCERPT_BYTES,
+                    project_id=project_id,
+                )
+                raw_excerpt = {"path": paths[0], "lines": []}
+                if captured_page.get("error"):
+                    raw_excerpt["error"] = captured_page["error"]
+                else:
+                    text = base64.b64decode(captured_page["content_base64"]).decode(
+                        "utf-8", errors="replace"
+                    )
+                    bounded = text.encode("utf-8")[:_MAX_EXCERPT_BYTES].decode(
+                        "utf-8", errors="ignore"
+                    )
+                    lines = bounded.splitlines()
+                    raw_excerpt.update(
+                        start=1,
+                        end=max(1, min(len(lines), _MAX_EXCERPT_LINES)),
+                        lines=lines[:_MAX_EXCERPT_LINES],
+                        truncated=(
+                            captured_page["next_offset"] is not None
+                            or bounded != text
+                            or len(lines) > _MAX_EXCERPT_LINES
+                        ),
+                    )
+            else:
+                raw_excerpt = _read_excerpt(root, paths[0], start=1, end=200)
         result["expand"] = {**expanded, "raw_excerpt": raw_excerpt}
     return result
 
@@ -4553,7 +4629,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 remainder = path[len("/api/projects/") :]
                 project_id, _sep, artifact_id = remainder.partition("/artifacts/")
                 if project_id and artifact_id:
-                    self._handle_artifact(project_id, artifact_id, request_id)
+                    self._handle_artifact(project_id, unquote(artifact_id), request_id)
                     return
 
             self._send_error(404, "not_found", "unknown route", request_id)
@@ -5108,7 +5184,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 data = _build_overview_section(project_id, record)
             elif section == "setup":
                 try:
-                    data = _build_setup_section(project_id)
+                    data = _build_setup_section(ctx, project_id)
                 except ProjectError as exc:
                     _send_project_error(self, exc, request_id, project_id)
                     return

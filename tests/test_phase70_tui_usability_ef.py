@@ -243,8 +243,8 @@ def _state(root: Path, project_id: str, data_root: Path) -> tui.TuiState:
     return state
 
 
-def _render(state: tui.TuiState) -> str:
-    console = Console(record=True, width=220, height=400, no_color=True)
+def _render(state: tui.TuiState, width: int = 220, height: int = 400) -> str:
+    console = Console(record=True, width=width, height=height, no_color=True)
     console.print(tui.render_app(state))
     return console.export_text()
 
@@ -464,7 +464,21 @@ def _git_journey(tmp_path: Path, data_root: Path) -> None:
     assert "big.txt" in text, f"changed files of the selected commit: {text}"
     assert "+line-00000" in text, f"diff of the selected commit: {text}"
     assert f"line-{bound + 40:05d}" not in text, "the diff must stay bounded"
-    assert "more" in text, f"a truncated diff must say more remains: {text}"
+    assert f"more: diff cut at {bound} lines" in text, (
+        f"a truncated diff must disclose its exact bound: {text}"
+    )
+    expanded_lines = [
+        line.plain for line in tui._git_expanded_lines(state.git_expanded)
+    ]
+    assert "Author: Test Author <test@example.com>" in expanded_lines
+    assert "Date:   Fri Jan 2 03:04:05 2026 +0000" in expanded_lines
+    assert "    second" in expanded_lines
+    for width, height in ((80, 24), (120, 40), (60, 20)):
+        state.terminal_size = (width, height)
+        text = _render(state, width, height)
+        for expected in ("big.txt", "+line-00000", f"more: diff cut at {bound} lines"):
+            assert expected in text, f"{width}x{height} hides selected diff: {text}"
+    state.terminal_size = (79, 60)
 
     # Next page, then expand the oldest commit's exact diff.
     _keys(state, actions, "]")
@@ -486,6 +500,25 @@ def _git_journey(tmp_path: Path, data_root: Path) -> None:
     _settle(state, actions, "git")
     text = _render(state)
     assert "+dirty change" in text and "-filler 5" in text, f"dirty diff: {text}"
+    for width, height in ((80, 24), (120, 40), (60, 20)):
+        state.terminal_size = (width, height)
+        text = _render(state, width, height)
+        for expected in ("f05.txt", "+dirty change", "-filler 5"):
+            assert expected in text, f"{width}x{height} hides dirty diff: {text}"
+    state.terminal_size = (79, 60)
+    _keys(state, actions, "-")
+    assert state.git_expanded is None
+    text = _render(state)
+    assert "History page 1" in text and "+dirty change" not in text, text
+    _keys(state, actions, "+")
+    _settle(state, actions, "git")
+    assert state.git_expanded is not None
+    for width, height in ((80, 24), (120, 40), (60, 20)):
+        state.terminal_size = (width, height)
+        text = _render(state, width, height)
+        for expected in ("big.txt", "+line-00000", f"more: diff cut at {bound} lines"):
+            assert expected in text, f"{width}x{height} hides expanded diff: {text}"
+    state.terminal_size = (79, 60)
 
     # No commit/reset/push action exists anywhere.
     for action in tui.ACTIONS:
@@ -806,6 +839,20 @@ def _f_matrix_state(
         project.run_id = "run-done"
     state = tui.TuiState(projects=[project], data_root=tmp_path / "rush-data")
     return state, project
+
+
+@pytest.mark.parametrize("section", tui.SECTIONS)
+@pytest.mark.parametrize("project_name", ["alpha", "a" * 80])
+def test_t28f_narrow_header_keeps_selected_section_visible(
+    tmp_path: Path, section: str, project_name: str
+) -> None:
+    state, project = _f_matrix_state(tmp_path, "idle")
+    state.terminal_size = (60, 20)
+    state.section = section
+    project.name = project_name
+    header = "\n".join(_render(state, 60, 20).splitlines()[:3])
+    assert tui.SECTION_LABELS[section] in header
+    assert "[1/1]" in header
 
 
 def _f_matrix_case(tmp_path: Path) -> None:

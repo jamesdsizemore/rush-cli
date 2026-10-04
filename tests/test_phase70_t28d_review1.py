@@ -794,6 +794,35 @@ def test_r2_promote_refuses_source_edited_after_preview(tmp_path: Path) -> None:
     assert "reviewed v1, now v2" in state.memory_message, state.memory_message
 
 
+def test_r2_edit_conflict_refreshes_id_outside_active_query(tmp_path: Path) -> None:
+    root = _root(tmp_path, "a")
+    project_id = _register(tmp_path, root)
+    _seed(root, "zq01", note="NATIVELONE", owner=OwnerScope("project", project_id))
+    state = _state(tmp_path, root, project_ids=(project_id,))
+    actions = _actions()
+    _enter_memory(state, actions)
+    _browse(state, actions, "NATIVELONE")
+    assert _ids(state) == ["zq01"]
+
+    _keys(state, actions, "e", *"NATIVEEDITED", "enter")
+    assert state.memory_pending_mutation is not None
+    _edit_outside_tui(root, "zq01", "NATIVEEXTERNAL", 1)
+    _keys(state, actions, "y")
+    assert state.memory_edit_conflict == {"id": "zq01", "expected_version": 1}
+    assert json.loads(_row(root, "zq01")["content"]) == {"note": "NATIVEEXTERNAL"}
+
+    _keys(state, actions, "r")
+    assert state.mode == "memory_edit", state.memory_message
+    assert "refreshed zq01 to v2" in state.memory_message
+    assert state.memory_items[state.memory_selected_index]["content"] == {
+        "note": "NATIVEEXTERNAL"
+    }
+    assert state.memory_edit_buffer == "NATIVEEDITED"
+    assert state.memory_query_buffer == "NATIVELONE"
+    assert state.memory_edit_conflict is None
+    assert _row(root, "zq01")["artifact_version"] == 2
+
+
 def test_r2_promote_refuses_source_archived_after_preview(tmp_path: Path) -> None:
     root = _root(tmp_path, "a")
     _seed(root, "zq01")

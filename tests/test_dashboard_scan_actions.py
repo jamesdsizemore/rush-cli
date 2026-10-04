@@ -935,6 +935,276 @@ def test_handoff_send_with_unchanged_input_produces_identical_packet_bytes(
         server.server_close()
 
 
+@pytest.mark.parametrize("manager_returncode", [0, 1])
+def test_provision_http_installs_frozen_review_without_latest_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, manager_returncode: int
+) -> None:
+    import subprocess
+    from types import SimpleNamespace
+
+    from rush.tools import setup_wizard as setup_module
+
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    monkeypatch.setattr(
+        setup_module,
+        "detect_project_stacks",
+        lambda _root: [SimpleNamespace(language="python", suggested_engines=["ruff"])],
+    )
+    calls: list[str] = []
+    manager_calls: list[list[str]] = []
+    latest = {"version": "0.6.9"}
+    real_resolve = setup_module.resolve_provision_identities
+    real_apply = setup_module.apply_provision_plan
+
+    def http_get(url: str) -> bytes:
+        calls.append(url)
+        return json.dumps(
+            {
+                "info": latest,
+                "releases": {
+                    latest["version"]: [
+                        {
+                            "packagetype": "bdist_wheel",
+                            "url": "https://files.pythonhosted.org/ruff.whl",
+                            "digests": {"sha256": "a" * 64},
+                        }
+                    ]
+                },
+            }
+        ).encode()
+
+    def runner(argv: list[str], env: dict[str, str] | None = None):
+        manager_calls.append(argv)
+        assert env is not None
+        executable = Path(env["UV_TOOL_BIN_DIR"]) / "ruff"
+        executable.write_bytes(b"reviewed ruff 0.6.9")
+        return subprocess.CompletedProcess(
+            argv, manager_returncode, stdout="", stderr=""
+        )
+
+    monkeypatch.setattr(
+        setup_module,
+        "resolve_provision_identities",
+        lambda plan, permissions, **_kwargs: real_resolve(
+            plan, permissions, http_get=http_get
+        ),
+    )
+    monkeypatch.setattr(
+        setup_module,
+        "apply_provision_plan",
+        lambda *args, **kwargs: real_apply(
+            *args,
+            **kwargs,
+            runner=runner,
+            which=lambda name: f"/fake/{name}",
+            prober=lambda argv: subprocess.CompletedProcess(
+                argv, 0, stdout="ruff 0.6.9", stderr=""
+            ),
+        ),
+    )
+    server, base_url, cookie, csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _action(
+            base_url, project_id, cookie, csrf, operation="provision_plan"
+        )
+        assert status == 200
+        review = body["data"]["readiness"]["review"]
+        assert calls == []
+        assert review["resolution"]["requests"]
+        status, _body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_apply",
+            arguments={"plan_id": review["provision"]["plan_id"], "review": review},
+            grants={
+                "network": True,
+                "download": True,
+                "build": True,
+                "cache_write": True,
+                "artifact_write": True,
+            },
+        )
+        assert status == 400
+        status, _body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_plan",
+            arguments={"resolve": True},
+        )
+        assert status == 403
+        assert calls == []
+        status, body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_plan",
+            arguments={"resolve": True},
+            grants={"network": True},
+        )
+        assert status == 200
+        review = body["data"]["readiness"]["review"]
+        assert calls == ["https://pypi.org/pypi/ruff/json"]
+        entry = review["provision"]["entries"][0]
+        assert entry["identity"]["version"] == "0.6.9"
+        assert entry["identity"]["digest_value"] == "a" * 64
+        assert entry["destination"]
+        status, _body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_apply",
+            arguments={"plan_id": review["provision"]["plan_id"], "review": review},
+            grants={
+                "network": True,
+                "build": True,
+                "cache_write": True,
+                "artifact_write": True,
+            },
+        )
+        assert status == 403
+        assert not (root / "rush.toml").exists()
+        assert manager_calls == []
+        assert not (tmp_path / "rush-data" / "cursor.key").exists()
+        latest["version"] = "0.7.0"
+        status, accepted = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_apply",
+            arguments={"plan_id": review["provision"]["plan_id"], "review": review},
+            grants={
+                "network": True,
+                "download": True,
+                "build": True,
+                "cache_write": True,
+                "artifact_write": True,
+            },
+        )
+        assert status == 202
+        operation_id = accepted["data"]["operation_id"]
+        _wait_until(
+            lambda: (
+                json.loads(
+                    _get(
+                        f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+                        headers={"Cookie": cookie},
+                    ).read()
+                )["data"]["status"]
+                == "terminal"
+            )
+        )
+        outcome = json.loads(
+            _get(
+                f"{base_url}/api/projects/{project_id}/operations/{operation_id}",
+                headers={"Cookie": cookie},
+            ).read()
+        )["data"]["payload"]
+        assert outcome["status"] == (
+            "success" if manager_returncode == 0 else "partial"
+        ), outcome
+        assert calls == ["https://pypi.org/pypi/ruff/json"]
+        assert manager_calls == [["uv", "tool", "install", "--force", "ruff==0.6.9"]]
+        assert outcome["provision"]["identity_source"] == "frozen_review"
+        if manager_returncode == 0:
+            manifest = outcome["provision"]["applied"]["ruff"]
+            assert manifest["version"] == "0.6.9"
+            assert manifest["plan_id"] == review["provision"]["plan_id"]
+            assert manifest["project_id"] == project_id
+            assert (
+                json.loads(
+                    (
+                        Path(entry["destination"]) / provision_module.MANIFEST_FILENAME
+                    ).read_text()
+                )
+                == manifest
+            )
+        else:
+            assert outcome["provision"]["applied"] == {}
+            assert (
+                outcome["provision"]["failed"]["ruff"]["code"]
+                == "SYSTEM_PREREQUISITE_REQUIRED"
+            )
+            assert not (
+                Path(entry["destination"]) / provision_module.MANIFEST_FILENAME
+            ).exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.parametrize(
+    "defect,expected_status",
+    [
+        ("tamper", 400),
+        ("wrong_root", 400),
+        ("wrong_data", 400),
+        ("wrong_platform", 400),
+        ("stale", 409),
+        ("missing_grant", 403),
+    ],
+)
+def test_provision_http_rejects_invalid_review_before_setup_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str, expected_status: int
+) -> None:
+    from rush.tools import setup_wizard as setup_module
+
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path)
+    server, base_url, cookie, csrf = _start_dashboard(project_id, root)
+    try:
+        status, body = _action(
+            base_url, project_id, cookie, csrf, operation="provision_plan"
+        )
+        assert status == 200
+        review = body["data"]["readiness"]["review"]
+        if defect == "tamper":
+            review["config"]["sha256"] = "tampered"
+        elif defect == "wrong_root":
+            review["project_root"] = str(tmp_path / "other-project")
+            review["review_id"] = setup_module._review_id(review)
+        elif defect == "wrong_data":
+            review["data_root"] = str(tmp_path / "other-data")
+            review["review_id"] = setup_module._review_id(review)
+        elif defect == "wrong_platform":
+            review["os"] = "unsupported-platform"
+            review["review_id"] = setup_module._review_id(review)
+        elif defect == "stale":
+            (root / "rush.toml").write_text("[rush]\nversion = 1\n")
+        tracked = [
+            root / "rush.toml",
+            root / ".rush" / "project.json",
+            tmp_path / "rush-data" / "projects.json",
+            tmp_path / "rush-data" / "cursor.key",
+        ]
+        before = {str(p): p.read_bytes() if p.exists() else None for p in tracked}
+        status, _body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_apply",
+            arguments={"plan_id": review["provision"]["plan_id"], "review": review},
+            grants={} if defect == "missing_grant" else _grant_all(),
+        )
+        assert status == expected_status
+        assert {
+            str(p): p.read_bytes() if p.exists() else None for p in tracked
+        } == before
+        assert not (tmp_path / "rush-data" / "toolchains").exists()
+        assert not (root / ".rush" / "setup.lock").exists()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_provision_apply_revalidation_succeeds_and_proceeds_when_nothing_changed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -960,7 +1230,10 @@ def test_provision_apply_revalidation_succeeds_and_proceeds_when_nothing_changed
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
         )
         assert status == 202
@@ -981,6 +1254,7 @@ def test_provision_apply_revalidation_succeeds_and_proceeds_when_nothing_changed
         outcome = json.loads(resp.read())["data"]["payload"]
         assert outcome["status"] == "success"
         assert outcome.get("code") != "stale_expected_identity"
+        assert outcome["provision"]["identity_source"] == "frozen_review"
         assert outcome["run_id"] == apply_body["data"]["run_id"]
         assert outcome["attempt_id"] == apply_body["data"]["attempt_id"]
     finally:
@@ -1579,7 +1853,10 @@ def test_provisioning_status_acceptance_and_receipts_match_its_allocated_job_tup
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
         )
         assert status == 202
@@ -1633,7 +1910,10 @@ def test_crash_immediately_after_202_recovers_without_reminting_or_substituting_
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
             request_id=shared_request_id,
         )
@@ -1649,7 +1929,10 @@ def test_crash_immediately_after_202_recovers_without_reminting_or_substituting_
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
             request_id=shared_request_id,
         )
@@ -2430,7 +2713,10 @@ def test_provisioning_202_response_includes_its_own_allocated_attempt_id(
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
         )
         assert status == 202
@@ -2482,21 +2768,25 @@ def test_provisioning_worker_returns_terminal_conflict_on_plan_mismatch_with_zer
 
         import rush.dashboard.server as server_module
 
-        real_run_setup_wizard = server_module.run_setup_wizard
+        real_stale_precondition = server_module.setup_service._stale_precondition
         calls = {"n": 0}
 
-        def _flaky_run_setup_wizard(*args: Any, **kwargs: Any) -> Any:
+        def _flaky_stale_precondition(*args: Any, **kwargs: Any) -> Any:
             calls["n"] += 1
-            result = real_run_setup_wizard(*args, **kwargs)
+            result = real_stale_precondition(*args, **kwargs)
             if calls["n"] == 1:
                 # The outer, synchronous accept-time check -- unchanged.
                 return result
             # The worker's own revalidation, immediately before the real
             # `install=True` effect: simulate a plan that changed underneath
             # the already-accepted request.
-            return {**result, "plan_id": "a-different-stale-plan-id"}
+            return ("config", "config changed after review")
 
-        monkeypatch.setattr(server_module, "run_setup_wizard", _flaky_run_setup_wizard)
+        monkeypatch.setattr(
+            server_module.setup_service,
+            "_stale_precondition",
+            _flaky_stale_precondition,
+        )
 
         status, apply_body = _action(
             base_url,
@@ -2504,7 +2794,10 @@ def test_provisioning_worker_returns_terminal_conflict_on_plan_mismatch_with_zer
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
             grants=_grant_all(),
         )
         assert status == 202
@@ -2917,6 +3210,31 @@ def test_provision_apply_reserves_install_effect_ids_per_plan_entry_in_ledger(
     # -- `_register`'s bare `app.py` alone triggers no stack detection at
     # all, so this is required for `readiness["skipped"]` to be non-empty.
     (root / "requirements.txt").write_text("flask==0.1\n", encoding="utf-8")
+    from rush.tools import setup_wizard as setup_module
+
+    real_resolve = setup_module.resolve_provision_identities
+    monkeypatch.setattr(
+        setup_module,
+        "resolve_provision_identities",
+        lambda plan, permissions, **_kwargs: real_resolve(
+            plan,
+            permissions,
+            http_get=lambda _url: json.dumps(
+                {
+                    "info": {"version": "0.6.9"},
+                    "releases": {
+                        "0.6.9": [
+                            {
+                                "packagetype": "bdist_wheel",
+                                "url": "https://files.pythonhosted.org/test.whl",
+                                "digests": {"sha256": "a" * 64},
+                            }
+                        ]
+                    },
+                }
+            ).encode(),
+        ),
+    )
     snapshot = {
         "schema_version": 1,
         "project_id": project_id,
@@ -2933,7 +3251,13 @@ def test_provision_apply_reserves_install_effect_ids_per_plan_entry_in_ledger(
     cookie, csrf = _bootstrap_session(base_url, token)
     try:
         status, plan_body = _action(
-            base_url, project_id, cookie, csrf, operation="provision_plan"
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="provision_plan",
+            arguments={"resolve": True},
+            grants={"network": True},
         )
         assert status == 200
         readiness = plan_body["data"]["readiness"]
@@ -2952,8 +3276,17 @@ def test_provision_apply_reserves_install_effect_ids_per_plan_entry_in_ledger(
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
-            grants=_grant_all(),
+            arguments={
+                "plan_id": plan_id,
+                "review": plan_body["data"]["readiness"]["review"],
+            },
+            grants={
+                "network": True,
+                "download": True,
+                "build": True,
+                "cache_write": True,
+                "artifact_write": True,
+            },
         )
         assert status == 202
         operation_id = apply_body["data"]["operation_id"]

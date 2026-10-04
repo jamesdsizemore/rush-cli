@@ -311,7 +311,13 @@ def _summary_payload(count: int, total_raw: int, total_comp: int) -> dict[str, A
 
 
 def read_memory_event_totals_readonly(
-    project_root: Path, kinds: tuple[str, ...]
+    project_root: Path,
+    kinds: tuple[str, ...],
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, int]:
     """T27: `TelemetryStore.get_memory_event_total(kind)` per kind without
     constructing a store; a missing DB or table counts zero and creates
@@ -319,17 +325,80 @@ def read_memory_event_totals_readonly(
     from rush.memory.store import read_sqlite_readonly, sqlite_has_table
 
     db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    filters = {
+        column: value
+        for column, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
 
     def read(conn: sqlite3.Connection) -> dict[str, int]:
         if not sqlite_has_table(conn, "memory_events"):
             return {}
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if not set(filters) <= columns:
+            return {}
+        where = " AND ".join(f"{column} = ?" for column in filters)
         rows = conn.execute(
-            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events GROUP BY kind"
+            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events"
+            + (f" WHERE {where}" if where else "")
+            + " GROUP BY kind",
+            list(filters.values()),
         ).fetchall()
         return {str(kind): int(total) for kind, total in rows}
 
     totals = read_sqlite_readonly(db_path, read) or {}
     return {kind: totals.get(kind, 0) for kind in kinds}
+
+
+def read_artifact_expansion_receipts_readonly(
+    project_root: Path, artifact_id: str, version: int, *, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Real expansion invocations for an exact artifact revision, without DB setup."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    prefix = f"{artifact_id}:{version}:"
+
+    def read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return []
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if (
+            not {
+                "invocation_id",
+                "event_id",
+                "kind",
+                "tokens",
+                "timestamp",
+                "request_id",
+            }
+            <= columns
+        ):
+            return []
+        rows = conn.execute(
+            "SELECT invocation_id, kind, tokens, timestamp FROM memory_events "
+            "WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ? "
+            "ORDER BY timestamp DESC, invocation_id LIMIT ?",
+            (prefix, prefix, max(1, min(limit, 32))),
+        ).fetchall()
+        return [
+            {
+                "id": row["invocation_id"],
+                "artifact_version": version,
+                "kind": row["kind"],
+                "origin": "telemetry",
+                "timestamp": row["timestamp"],
+                "tokens": row["tokens"],
+            }
+            for row in rows
+        ]
+
+    return read_sqlite_readonly(db, read) or []
 
 
 def read_summary_readonly(

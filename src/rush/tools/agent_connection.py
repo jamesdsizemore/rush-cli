@@ -49,6 +49,7 @@ from rush.integrations.agents import (
     connect_agent,
     disconnect_agent,
     discover_agents,
+    installed_plugin_roots,
     read_agent_memory_state,
     read_registration_entry,
 )
@@ -167,6 +168,43 @@ class AgentConnectionTool(ToolFn):
                 )
             except ValueError as exc:
                 return self._result(started, "error", f"agent {action}: {exc}")
+
+        if (
+            action == "connect"
+            and agent_hooks in ("enable", "disable")
+            and agent_id in HOOK_AGENTS
+            and profile is None
+            and not install_guidance
+            and confirm_guidance is None
+            and not consent
+            and not acknowledge
+            and not resources
+            and installed_plugin_roots(HOOK_AGENTS[agent_id], data_root)
+        ):
+            assert project_root is not None
+            if not session_id:
+                return self._result(
+                    started, "error", "agent connect: connect requires session_id"
+                )
+            try:
+                hooks = set_hook_activation(
+                    agent_id,
+                    project_root,
+                    enable=agent_hooks == "enable",
+                    recovery_cache_write=hook_result_cache,
+                    data_root=data_root,
+                )
+            except (AgentConnectionError, ValueError, OSError) as exc:
+                hooks = {"state": "error", "error": str(exc)}
+            return self._result(
+                started,
+                "warn" if hooks["state"] in ("conflict", "error") else "ok",
+                f"agent hooks: {hooks['state']}",
+                raw={
+                    "hooks": hooks,
+                    "readback": _host_readback(agent_id, home),
+                },
+            )
 
         try:
             raw = self._dispatch(

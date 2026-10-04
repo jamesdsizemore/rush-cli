@@ -976,6 +976,8 @@ def test_handoff_send_and_provisioning_return_202_with_run_id_not_200(
 def test_provision_apply_returns_202_with_run_id_not_200(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from rush.tools.setup_wizard import _needed_grants
+
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
@@ -985,18 +987,25 @@ def test_provision_apply_returns_202_with_run_id_not_200(
         )
         assert status == 200
         plan_id = plan_body["data"]["readiness"]["plan_id"]
+        review = plan_body["data"]["readiness"]["review"]
+        grants = {
+            grant: True
+            for stage_grants in _needed_grants(review).values()
+            for grant in stage_grants
+        }
         status, apply_body = _action(
             base_url,
             project_id,
             cookie,
             csrf,
             operation="provision_apply",
-            arguments={"plan_id": plan_id},
-            grants=_grant_all(),
+            arguments={"plan_id": plan_id, "review": review},
+            grants=grants,
         )
         assert status == 202
         assert "operation_id" in apply_body["data"]
         assert "run_id" in apply_body["data"]
+        assert apply_body["data"]["attempt_id"]
 
         def _terminal() -> bool:
             op_status, op_body = _get_operation(
@@ -1005,6 +1014,15 @@ def test_provision_apply_returns_202_with_run_id_not_200(
             return op_status == 200 and op_body["data"]["status"] == "terminal"
 
         _wait_until(_terminal, timeout=30.0)
+        op_status, op_body = _get_operation(
+            base_url, project_id, apply_body["data"]["operation_id"], cookie=cookie
+        )
+        assert op_status == 200
+        assert op_body["data"]["payload"]["status"] == "success"
+        assert op_body["data"]["payload"]["run_id"] == apply_body["data"]["run_id"]
+        assert (
+            op_body["data"]["payload"]["attempt_id"] == apply_body["data"]["attempt_id"]
+        )
     finally:
         server.shutdown()
         server.server_close()
