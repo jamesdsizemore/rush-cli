@@ -407,6 +407,42 @@ def test_ruff_format_parser_handles_current_diagnostics(tmp_path: Path):
 # --- TestTool ---------------------------------------------------------------
 
 
+def test_test_preserves_explicit_nested_python_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from subprocess import CompletedProcess
+
+    import rush.engines.pytest as pytest_engine
+
+    root = tmp_path / "repo"
+    target = root / ".scratch" / "fixture" / "project"
+    target.mkdir(parents=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "parent"\n')
+    (root / "test_unrelated.py").write_text("def test_unrelated(): assert False\n")
+    (target / "fixture.py").write_text('def greeting(): return "Rush G6 fixture"\n')
+    (target / "test_greeting.py").write_text(
+        'from fixture import greeting\ndef test_greeting(): assert greeting() == "Rush G6 fixture"\n'
+    )
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs.get("cwd")))
+        return CompletedProcess(argv, 0, "1 passed in 0.01s\n", "")
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda _binary: True)
+    monkeypatch.setattr(pytest_engine, "project_python", lambda _root: "/python")
+    monkeypatch.setattr(pytest_engine, "run_subprocess", fake_run)
+    monkeypatch.setattr(pytest_engine.PytestEngine, "version", lambda self: "fixture")
+
+    result = TestTool()(target, allow_build=True)
+
+    assert calls == [
+        (["/python", "-m", "pytest", str(target), "--tb=line", "-q"], root)
+    ]
+    assert result["status"] == "ok"
+    assert result["summary"] == "1 passed in 0.01s"
+
+
 def test_test_runs_pytest_on_python_repo(py_repo: Path):
     """A repo without tests → pytest collects nothing → ok (exit 5)."""
     tool = TestTool()

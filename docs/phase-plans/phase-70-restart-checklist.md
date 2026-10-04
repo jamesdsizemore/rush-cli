@@ -1,6 +1,18 @@
 # Phase 70 restart execution checklist
 
-Status: in progress, 2026-10-03. No phase acceptance or final handoff claimed.
+Status: in progress, 2026-10-04. No phase acceptance or final handoff claimed.
+
+Latest checkpoint: run `37231951857`, head `7e4028c`, passes all five
+retained backend gates and compiled rollback on Linux/Windows/macOS. Overall
+CI retains Phase 71 UI failures. Actual Claude loads installed Rush skill,
+seven core tools, denied-build result and fixture F401. Granted test revealed
+TestTool widening the explicit fixture path to its ancestor; minimal shared
+dispatch fix and mocked RED/GREEN regression are frozen-reviewed. Native
+rebuild and successful host/edit/hook/timeout acceptance remain required.
+Temporary user/project registrations, plugins, resources, guidance and hooks
+were removed without conflicts; original manual Rush entries and modes were
+CAS-restored. Current evidence report supplies exact receipts and supersedes
+older checkpoints below.
 
 Current checkpoint (2026-10-04): CI run `37226805311`, source `ae69282`,
 completed failure: six of eight jobs passed. Linux Quality reported 6470 passed,

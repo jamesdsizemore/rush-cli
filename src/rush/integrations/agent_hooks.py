@@ -564,7 +564,7 @@ def registered_project_id(project_root: Path, data_root: Path | None = None) -> 
     Raises ValueError when the registry is unusable or the root is not
     registered: an activation names a registered project."""
     root = str(Path(project_root).resolve())
-    register = f"rush project add {shlex.quote(root)} --allow-cache-write"
+    register = f"rush project add {shlex.quote(root)} --allow-cache-write --allow-artifact-write"
     roots = _registered_roots(data_root or default_data_root())
     if roots is None:
         raise ValueError(

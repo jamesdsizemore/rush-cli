@@ -1404,8 +1404,8 @@ preview only; no real-home install, hook activation or model call has run.
    Add `--acknowledge` only after actual host pickup has been observed.
    Normal connect requires the existing fixture directory, not registration.
    If the separate D3 hook opt-in is approved, first run candidate
-   `project add "$RUSH_G6_PROJECT" --allow-cache-write --json`, capture whether
-   it created a new entry plus exact ID/revision, then add
+   `project add "$RUSH_G6_PROJECT" --allow-cache-write --allow-artifact-write --json`,
+   record pre-add registration absence and returned ID/revision, then add
    `--enable-agent-hooks` to each contained connection. The verified project-add
    canonicalizer resolves this literal directory without ascending to the
    surrounding development Git worktree.
@@ -1684,3 +1684,77 @@ used an explicit scratch prefix/cache and `--ignore-scripts`, leaving Rush's
 dependencies unchanged. The 35-second idle config and JS fault remain
 preview-only until the native timeout stage, so baseline host lint is unaffected.
 No actual host/model/hook acceptance has yet been claimed.
+
+### Retained CI gates and actual G6 scope correction — 2026-10-04
+
+[Run 37231951857](https://github.com/jamesdsizemore/rush-cli/actions/runs/37231951857),
+head `7e4028caf2ca89eec680b4b1a833cbdb7d0c138c`, completed with six of eight
+jobs passing. Linux reported 6472 passed, three transferred Phase 71 UI failures
+and 26 deselected in 1197.74 seconds; Windows reported 59 passed and the same
+three UI failures in 170.63 seconds. Both compiled checksum/probe rollback
+cases passed both platforms. All five retained backend gates actually ran and
+passed: Windows ACL (one test, 2.45 seconds), mypy (474 source files), docs
+parity/links, pip-audit (no known vulnerabilities) and whitespace. macOS native
+and Linux/Windows installed-artifact jobs passed. Overall CI remains failed
+for the preserved Phase 71 UI assertions.
+
+The 26 Linux exclusions are accounted for by other actual jobs: eight engine
+selectors in the static acceptance job (95 passed), five real workloads in
+engine-contracts (five passed), and 13 Windows-only cases (11 passed, two
+transferred UI failures). Quality's explicit marker expression includes the
+slow memory traversal test; default `not slow` does not apply. No retained
+selector is silently omitted by this inventory reconciliation.
+
+Real Claude `2.1.289` and Codex `0.160.0` plugins installed successfully after
+approved selected-entry conversion. Both five-file plugin trees matched
+reviewed previews and ownership records. Fixture guidance and hook activation
+applied for both hosts. Project registration required both cache and artifact
+write grants: cache-only was denied; the subsequent granted call registered
+`e4008026-0d81-4931-9190-0be1d6b888d2`, revision 1. No `created` field exists
+in its response; prior hook rejection establishes absence from the readable
+registry. The recovery text now includes both required grants.
+
+Initial Claude invocations stopped at budget limits before Rush tool use.
+Actual native transcript analysis identified unrelated MCP schema inflation:
+287 initial tools and 244 deferred definitions were surfaced when ToolSearch
+was omitted. The corrected invocation used installed Rush plugin resources,
+`--strict-mcp-config` with their `.mcp.json`, `Read,Edit,Skill,ToolSearch`,
+per-invocation `claudeMdExcludes`, and a two-dollar reported-cost limit.
+Home settings were not rewritten. Native health check connected the plugin
+server; the corrected host loaded exactly seven core Rush MCP tools and invoked
+`rush:rush`. Reported corrected-run cost was $0.350283.
+
+Actual `rush_test(..., allow_build=false)` denied build without running pytest;
+actual `rush_lint(fixture.py)` returned F401 for unused `os`. Granted test
+execution exposed a real scope defect: TestTool replaced the explicit nested
+fixture path with its ancestor project root, starting repository pytest
+(one failed, 1241 passed, 15 deselected, 260.88 seconds before interruption).
+The owned pytest child and Claude client were interrupted; their processes
+were confirmed gone. Native Edit was rejected after interruption and explicitly
+did not write fixture bytes. No successful edit/hook-feedback acceptance is
+claimed. Codex read the installed versioned skill, but no Rush MCP call or
+successful edit occurred in that invocation.
+
+The minimal shared fix passes the resolved explicit target to PytestEngine,
+retaining the ancestor root for working directory/interpreter selection.
+`test_test_preserves_explicit_nested_python_target` exercises actual command
+construction with a mocked child: RED in 0.18 seconds, GREEN in 0.16 seconds.
+Ruff and independent frozen review passed. This proves dispatch, not rebuilt
+native behavior; a new CI-built macOS candidate and actual bounded host retry
+remain required. Python target semantics and build grants are documented in
+both CLI references and the cookbook. Node dispatch remains unchanged.
+
+Cleanup executed before rebuilding: fixture hooks disabled; each host's
+project and user-scoped disconnect returned `ok`, without conflicts or shared
+retention. Native plugins, owned resources and fixture guidance are absent;
+ownership data is empty. Selected manual Rush entries were restored through
+fresh whole-file CAS while preserving unrelated current metadata. Readback
+digests exactly match approved originals (`26d4d43b…508c127` Claude,
+`1b31316a…188862` Codex); original modes remain 0644 and 0600. The newly
+registered fixture was unregistered with revision 1; its descriptor is absent.
+Private receipts/backups remain outside tracked documentation.
+
+G6 successful native edits, received faulty-edit feedback, timeout and
+subsequent acceptance cleanup remain open. No Phase 70 completion or final
+handoff is claimed. This checkpoint supersedes earlier pending CI results and
+consent statements without closing unexecuted host acceptance.

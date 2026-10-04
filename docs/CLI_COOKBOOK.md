@@ -28,7 +28,7 @@ Run deterministic review, linters, non-mutating format checks, and unit tests:
 rush review .
 rush lint .
 rush format . --check
-rush test .
+rush test . --allow-build
 ```
 
 ### Review Changed Files Only (with Git Scope)

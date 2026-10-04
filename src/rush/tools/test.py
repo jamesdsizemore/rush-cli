@@ -70,8 +70,10 @@ class TestTool(ToolFn):
             # Python project
             r = run_engine(
                 ENGINES["pytest"],
-                project_root,
+                path.resolve(),
                 [],
+                cwd=project_root,
+                project_root=project_root,
                 tool_name="test",
                 permissions=permissions,
                 required_permissions=required,
