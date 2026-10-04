@@ -1929,3 +1929,38 @@ secrets are published. This supersedes the preceding active-resource statement.
 G6/T26/T29/G8 remain open until the native Codex route is exercised. Current
 backend CI, Claude acceptance and cleanup are concrete progress; they are not
 full Phase 70 completion or authorization to start Phase 71.
+
+### Installed-system correction — 2026-10-04
+
+The owner's live Codex session reported `rush_status` unavailable. Inspecting
+its actual registered transport found a different executable from Claude's
+accepted candidate: the restored manual entry pointed to the stable installed
+binary with `mcp serve`. Its SHA-256 was
+`823c13745a0d6599b631bce1840b27a785ae06fd1df98dd99c416804c2239fb2`.
+That server initialized in 13.671 seconds and advertised 79 tools, with no
+`rush_status`. Current source includes `rush_status` in both full and core
+profiles; the omission was an older executable, not a profile-only difference.
+The current candidate separately advertised all seven core tools in 12.879
+seconds. These observations correct the earlier inference that missing status
+established an empty current native Codex catalog. Isolated model-discovery
+receipts remain historical observations, not proof of a vendor defect.
+
+The owner authorized updating the local installation. Existing
+`InstallTool._install_binary` verified the CI archive checksum, atomically
+replaced the stable installed executable and passed its real startup/version
+probe. An independent private copy preserves the old executable for recovery.
+Installed mode is `0755`; SHA-256 now matches the accepted candidate:
+`fa0c308ed15ebbe975beea9e220dcfc06063f688b88c58d401e80b222e41a4ea`.
+No release/version change, download, local build or host configuration edit was
+performed. Fresh before/after host configuration digests match.
+
+The exact registered command now advertises **81 tools including `rush_status`**.
+An actual native MCP SDK `rush_status({})` call returned `isError: false`, tool
+`status`, status `warn` and the accurate unregistered-worktree summary; list and
+call completed in 13.099 seconds. An earlier check incorrectly passed the
+unregistered private fixture through injected `project`, which requires a
+registered ID/root; correcting call arguments resolved that verification error
+without a production change. This is installed executable/transport acceptance,
+not a Codex model-session verdict. Restarting the native session must refresh its
+catalog before actual Codex test/edit/hook acceptance closes G6/T26/T29/G8.
+Phase 70 remains open. Private installation/recovery receipt stays untracked.

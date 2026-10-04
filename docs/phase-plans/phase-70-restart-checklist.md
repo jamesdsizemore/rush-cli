@@ -473,8 +473,15 @@ closing unexecuted native acceptance or claiming Phase 70 completion.
 - [x] Verify current CI: Linux 6,476 passes, three Phase 71 UI failures and 26 designated exclusions; Windows 59 passes and three Phase 71 UI failures. All five backend gates passed.
 - [x] Exercise current checksum-bound macOS artifact with actual Claude status/test/edit/repair/timeout; cold hook feedback returned in 26.613 seconds. Public disable left native edits working with no Rush check output.
 - [x] Disconnect temporary native resources and restore original selected home entries through fresh CAS; retain private transcripts and cleanup receipts.
-- [ ] Obtain actual native Codex Rush MCP pickup and complete its test/edit/hook journey. Installed/enabled registration passed; actual isolated catalog is empty. This is the remaining native-host acceptance blocker.
+- [ ] Refresh native Codex session and complete actual MCP/test/edit/hook journey. Installed executable updated to verified `f8b2f6ee`: exact registered server advertises 81 tools including `rush_status`, and direct MCP status call succeeded. Native model-session acceptance remains open.
 - [ ] Close G6/T26/T29/G8 and Phase 70 only after Codex behavioral acceptance. Evidence reconciliation alone does not close these gates; transferred UI remains required in Phase 71.
 
 Runtime evidence binds source `f8b2f6eeffa5489cc39f8b3e93e898d6118551fc`.
 Later documentation-only reconciliation must preserve this artifact identity.
+
+Installed-system correction: restored manual registration pointed to an older
+binary whose actual 79-tool catalog omitted `rush_status`. Current native
+installation now matches the accepted artifact; both host configuration files
+remain byte-identical and prior executable recovery copy is retained. Current
+full and core profiles both include `rush_status`. Missing status in the old
+installation did not prove an empty native client catalog or a Codex defect.
