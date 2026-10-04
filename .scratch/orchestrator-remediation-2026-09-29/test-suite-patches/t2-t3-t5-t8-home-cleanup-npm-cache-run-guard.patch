@@ -1,0 +1,117 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index b380fe2..aee4065 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -88,8 +88,9 @@ include = [
+ pythonpath = ["src"]
+ testpaths = ["tests"]
+ addopts = "-ra --strict-markers -m \"not slow\""
+-# Delete the tmp_path dirs of passing tests at session end: a live-engine test
+-# with an isolated HOME can leave ~384 MB (aislop's npm cache) per test.
++# A passing test's tmp_path is removed before the next test starts. Directories made with
++# tmp_path_factory.mktemp are not removed, and an explicit --basetemp is not removed at
++# session end: the orchestrator gate deletes its own basetemp after a passing run.
+ tmp_path_retention_policy = "failed"
+ filterwarnings = [
+     "ignore::pydantic_settings.sources.utils.IncompleteFieldDefinitionWarning",
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 3788392..528214e 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -14,6 +14,7 @@ import platform
+ import shutil
+ import subprocess
+ import sys
++import tempfile
+ import threading
+ import time
+ import tomllib
+@@ -661,13 +662,23 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+         )
+ 
+ 
++_PREVIOUS_HOME: Path | None = None
++
++
+ @pytest.fixture(autouse=True)
+ def _isolated_home(
+     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+ ) -> None:
+     """F14: every test gets a temporary HOME and XDG/AppData dirs; a test
+-    that sets its own HOME later through `monkeypatch` wins."""
++    that sets its own HOME later through `monkeypatch` wins. The previous
++    test's home is deleted when the next one is created, so the basetemp does
++    not grow by one directory per test; a home path is still never reused
++    inside a session."""
++    global _PREVIOUS_HOME
+     home = tmp_path_factory.mktemp("home")
++    if _PREVIOUS_HOME is not None:
++        shutil.rmtree(_PREVIOUS_HOME, ignore_errors=True)
++    _PREVIOUS_HOME = home
+     monkeypatch.setenv("HOME", str(home))
+     monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+     monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+@@ -678,9 +689,38 @@ def _isolated_home(
+         monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+ 
+ 
++# A persistent npm cache outside the pytest basetemp and outside HOME (the real-HOME
++# guard watches HOME): the engine downloads (~370 MB) happen once per machine, not once
++# per session, and none of it is written into the basetemp.
++_ENGINE_CACHE = Path(
++    os.environ.get("RUSH_TEST_NPM_CACHE")
++    or Path(tempfile.gettempdir()) / "rush-tests-npm-cache"
++)
++
++
+ @pytest.fixture(scope="session")
+-def _session_download_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+-    return tmp_path_factory.mktemp("shared-cache", numbered=False)
++def _session_download_cache() -> Path:
++    _ENGINE_CACHE.mkdir(parents=True, exist_ok=True)
++    return _ENGINE_CACHE
++
++
++_FULL_RUN_ITEMS = 1500
++
++
++def pytest_collection_finish(session: pytest.Session) -> None:
++    """A full run goes through the orchestrator gate: more than 1,500 selected
++    tests exit 4 unless RUSH_GATE is set. CI sets CI=true and runs the full
++    suite itself (.github/workflows/ci.yml), so it is exempt."""
++    if (
++        len(session.items) > _FULL_RUN_ITEMS
++        and not os.environ.get("RUSH_GATE")
++        and not os.environ.get("CI")
++    ):
++        pytest.exit(
++            f"{len(session.items)} tests selected: a full run goes through gate.sh "
++            "(RUSH_GATE=1). Run the exact test ids from your packet.",
++            returncode=4,
++        )
+ 
+ 
+ @pytest.fixture(autouse=True)
+diff --git a/tests/test_phase70_onboarding.py b/tests/test_phase70_onboarding.py
+index 9ce04fa..8a104fb 100644
+--- a/tests/test_phase70_onboarding.py
++++ b/tests/test_phase70_onboarding.py
+@@ -1302,7 +1302,9 @@ def _t29_child_map(payload: dict[str, Any]) -> dict[str, str]:
+ 
+ 
+ @pytest.fixture(scope="module")
+-def t29_world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Any]]:
++def t29_world(
++    tmp_path_factory: pytest.TempPathFactory, _session_download_cache: Path
++) -> Iterator[dict[str, Any]]:
+     """One isolated HOME plus one registered, lint-clean, formatted project
+     (real `.git`, real `pyproject.toml`), shared by the whole module so the
+     real `aislop` child (an installed CLI, not stubbed) is exercised
+@@ -1327,6 +1329,7 @@ def t29_world(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, An
+ 
+     patch = pytest.MonkeyPatch()
+     patch.setenv("HOME", str(home))
++    patch.setenv("npm_config_cache", str(_session_download_cache))
+     patch.delenv("XDG_DATA_HOME", raising=False)
+     patch.setenv("CLAUDE_CONFIG_DIR", str(home / "claude-config"))
+     patch.setenv("CODEX_HOME", str(home / "codex-home"))

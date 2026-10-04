@@ -1,0 +1,7 @@
+- F3: scripts/monitor.py built (generalized from agent_monitor.py prototype), re-reads agents.active each pass, alerts BUDGET/ORIENTING/QUIET/DISK/LONG-SHELL/CI-RED/IDLE-TASK, dedups via alerts.seen. tests/test_monitor.py PASS.
+- F5: scripts/gate.sh built, runs gate.cmds in order with per-step exit codes (no pipe masking), writes gate-ok=HEAD on all-zero else removes it. tests/test_gate.sh PASS.
+- F1/F23: run-state.sh start preflight added (baseline required, disk >=15GiB, base-branch CI read+logged, F-item list printed); run-state.sh baseline subcommand added. tests/test_run_state.sh PASS (disk gate genuinely fires on this 10GiB-free host — exercised, not faked).
+- F12: scripts/decisions.sh built (add/applied/pending), wired into run-state.sh status unconditionally. tests/test_decisions.sh + wiring assertions in test_run_state.sh PASS.
+- F16: run-state.sh task add/start/merged + status prints unblocked-idle and running-with-unmerged-dep. Covered in test_run_state.sh PASS.
+- F11: scripts/test-acceptance.py built (AST assert/pytest.fail-gate check, bullet-map validation, real must-fail pytest run against base pyproject.toml). tests/test_test_acceptance.py PASS.
+- Runner: tests/run.sh runs all test_*.sh and test_*.py in one command, no network (gh stubbed per-test).

@@ -1,0 +1,1361 @@
+OpenAI Codex v0.159.0
+--------
+workdir: /Users/jamesdsizemore/Developer/rush-cli
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0ef70-564c-79c2-ba15-d9a4bf314812
+--------
+user
+# Adversarial review: orchestrator and Phase 70 remediation plan
+
+Review this plan document adversarially. Read-only: do not edit any file, do not run anything that writes outside a temp directory you create and delete. Do not implement anything.
+
+Document under review:
+`/Users/jamesdsizemore/Developer/rush-cli/docs/reports/orchestrator-and-phase-70-remediation-plan-2026-09-29.md`
+
+It is a plan. It proposes edits to a Claude Code skill (`~/.claude/skills/orchestrator/`), its seven agent definitions (`~/.claude/agents/orch-*.md`, plus repo-level copies in `/Users/jamesdsizemore/Developer/rush-cli/.claude/agents/`), the repo's test infrastructure, and a set of proposed hooks. Nothing in it has been applied. Section 0 quotes the user's original demand verbatim; sections 4.H, 4.I and 4.J are the behavior fixes; sections 4.A to 4.G and 4.T are the skill and cost fixes; section 5 lists decisions; section 8 holds exact edits.
+
+## What was already checked, so you do not repeat it
+
+The author already recomputed the document's file:line citations, counts, percentages and signatures from the transcripts and the repo. Do not spend your budget re-counting. Re-check a number only if a proposed fix depends on it and you have a specific reason to doubt it.
+
+## What to review (judgment-level, against the real current source)
+
+1. **Architecture fit.** For each proposed edit, does the anchor text exist exactly once in the real file, does the replacement match how the file actually works, and does it do what the plan says? Check `~/.claude/skills/orchestrator/SKILL.md`, `references/dispatch.md`, `scripts/*` (`dispatch-prompt.sh`, `run-state.sh`, `monitor.py`, `gate.sh`, `decisions.sh`, `test-acceptance.py`), the agent definitions, `~/.claude/hooks/orchestrator-model-guard.js`, `~/.claude/settings.json`, and in the phase-70 worktree `/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70` the files `tests/conftest.py`, `tests/test_real_home_guard.py`, `pyproject.toml`.
+2. **Breakage risk.** What existing caller, test, hook, script or persisted format breaks if an edit is applied? Examples to check: removing `--budget` from `dispatch-prompt.sh` (who else passes it or parses it: `SKILL.md`, `dispatch.md`, `monitor.py`, `run-state.sh`, `orchestrator-model-guard.js` rule 7 and its sha256 marker); the `monitor.py` changes (`DONE`, `_RAW_READ`, the removed edit detection) against every caller of `monitor.py`; the conftest changes against `tests/test_real_home_guard.py` and any other test that pins them; `pytest-xdist` with `--dist loadfile` against fixtures with session scope or shared temp state; each proposed hook against the existing hooks in `~/.claude/settings.json` (double firing, lockout, an unlock word that does not work in the case it is meant for).
+3. **Sequencing.** The edits in sections 4 and 8 touch the same files (`SKILL.md`, `dispatch-prompt.sh`, `monitor.py`, `run-state.sh`, `tests/conftest.py`, the agent definitions). Do they apply in a consistent order? List each pair of edits whose anchors overlap or whose replacements contradict, and say which must go first.
+4. **Scope soundness.** Compare against section 0 (the user's demand). Is any demanded item without a fix? Is any fix a prose rule with no mechanism? Does any entry contradict another entry or a source file? Does any proposed fix narrow, defer or drop something the user demanded? Any item marked deferred or out of scope must point to a real artifact.
+5. **Test depth.** Entries marked "Tested" or "Tested on a copy": re-run the small fixtures if the scripts exist under `/private/tmp/claude-501/-Users-jamesdsizemore-Developer-rush-cli/f0b0971c-824c-42ba-8db0-e34d0fa85631/scratchpad/x/` (`task-gate.sh`, `doc-done-check.sh`, `monitor-copy.py`, `test-acceptance-copy.py`, `stall-notify.sh` is not part of the plan). Does each test exercise the behavior it is cited for, or would it pass if the fix were wrong?
+6. **Behavior fixes (H, I, J).** For each entry: does the artifact named as the fix exist or is it specified precisely enough to build, is its trigger free of obvious false positives, and would it change the behavior it targets? Flag any fix that is a prose reminder to the assistant with no check.
+
+## Transcripts, if you need evidence
+
+The orchestrator session is `/Users/jamesdsizemore/.claude/projects/-Users-jamesdsizemore-Developer-rush-cli/90c5b55d-9e85-4452-9d9f-0ec5c270c759.jsonl`; its subagent transcripts are in the `subagents/` directory beside it. Do not read the Codex sessions. Do not print whole files or large outputs; extract only what you need.
+
+## Output format
+
+At most 40 findings, most severe first, each in this shape:
+
+```
+## Finding <n> [critical|major|minor]
+Section: <doc section id, e.g. 4.B7 or 8.X4>
+Defect: <one sentence>
+Failure scenario: <concrete input or state -> wrong result>
+Evidence: <file:line, or the command you ran and its decisive output>
+Suggested change: <exact change to the plan>
+```
+
+End with a line `Sections reviewed: <list with denominators, for example "read 81 of 81 entries in section 4">` and a line `Not reviewed: <anything you did not open, with the reason>`. Do not state a finding you have not backed with evidence you read or ran.
+
+warning: Under-development features enabled: chronicle. Under-development features are incomplete and may behave unpredictably. To suppress this warning, set `suppress_unstable_features_warning = true` in /Users/jamesdsizemore/.codex/config.toml.
+warning: Exceeded skills context budget. All skill descriptions were removed and 736 additional skills were not included in the model-visible skills list.
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: SessionStart Completed
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+hook: UserPromptSubmit Completed
+codex
+Review stays read-only. Checking proposed edits against live sources, callers, hook interactions, and available fixtures; skipping citation recounts already completed.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc 'rtk cat /Users/jamesdsizemore/.codex/skills/adversarial-plan-review/SKILL.md /Users/jamesdsizemore/.codex/RTK.md' in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 0ms:
+---
+name: adversarial-plan-review
+description: Review implementation plans against live repository truth with explicit coverage, claim-level evidence, post-correction re-derivation, and a frozen-state readiness verdict. Use before implementation or ratification, or when asked whether one or more plans are complete, coherent, executable, or implementation-ready; do not use for ordinary code review or roadmap critique.
+---
+
+# Adversarial Plan Review
+
+Determine whether an implementation plan can be executed without rediscovering requirements, correcting false repo assumptions, or inventing missing interfaces during implementation.
+
+## Contract
+
+- Treat each plan as a set of testable claims. Live repo artifacts win over plan prose, memory, summaries, and prior review output.
+- Review exact current bytes. Record plan hashes and repo revision before each verdict-bearing pass.
+- Default to read-only. Review authorization does not authorize plan edits, app-code edits, ratification, or implementation.
+- If remediation is explicitly requested, edit only named plan/review artifacts. Do not touch application code unless separately authorized.
+- Keep `exists`, `structurally valid`, `reviewed`, `implementation-ready`, `ratified`, `implemented`, and `shipped` distinct.
+- Never substitute sampling, counts, lint, agent self-report, or a clean-looking structure for complete coverage.
+
+For comprehensive review lanes, evidence rules, finding schema, and verdict requirements, read [references/review-contract.md](references/review-contract.md).
+
+## Workflow
+
+### 1. Establish subject and freeze it
+
+1. Identify every plan, source document, template, decision record, prior-phase handoff, and repo surface named or required by local convention.
+2. Read repo instructions and required templates before judging the plans.
+3. Inspect branch, revision, working-tree state, and current diffs. Treat existing changes as user-owned.
+4. Record hashes for all plans under review. A verdict applies only to those bytes.
+5. Build a coverage ledger containing every plan-level section and every task/work package. Add named screens, flows, functions, APIs, entities, schemas, components, assets, migrations, tests, and external dependencies as applicable.
+
+Do not begin with findings. Begin with coverage, so no surface disappears when early blockers are found.
+
+### 2. Establish live source truth
+
+- Use repo-native indexes and local conventions first. If `.codegraph/` exists, use it before text search for code structure, callers, flow, or blast radius.
+- Trace each plan claim to current files, symbols, schemas, migrations, routes, types, tests, build/runtime config, and generated artifacts.
+- Run narrow empirical probes when static inspection cannot prove runtime behavior: database query plans, migration dry runs, type checks, test commands, or small reproductions.
+- Use current primary external sources only when plan correctness depends on unstable external facts. Keep local corpus primary when user supplied one.
+- Record missing or conflicting truth surfaces as findings; do not fill gaps from general knowledge.
+
+### 3. Pass A: attack original plan claims
+
+Review every ledger item across all applicable lanes in the contract. Try to falsify:
+
+- paths, symbols, counts, versions, and existing-helper claims;
+- scope, file ownership, dependencies, sequencing, and cross-phase assumptions;
+- interfaces, data shapes, state transitions, permissions, persistence, and migrations;
+- failure, recovery, rollback, concurrency, idempotency, and partial-state behavior;
+- UI reachability, assets, accessibility, and user-visible recovery;
+- acceptance tests, commands, fixtures, and gates that claim to prove completion;
+- estimates, task boundaries, decision status, and readiness language.
+
+Finish all safe lanes. Do not stop at first critical finding or call a partial pass comprehensive.
+
+### 4. Remediate only when authorized
+
+For each accepted finding, correct root claim everywhere it appears: task steps, file map, interfaces, dependencies, estimates, verification, and cross-plan references. Preserve intentional scope and task identity. Mark deferred or rejected findings explicitly; never silently drop them.
+
+After any edit, previous review verdict is invalid. Freeze new hashes before further verdict-bearing work.
+
+### 5. Pass B: independently re-derive every task
+
+Re-read current plans and derive each task from repo evidence without trusting Pass A findings or fixes. Independence means fresh reasoning from frozen bytes; it does not require a subagent. Use subagents only when user or local instructions authorize them.
+
+Mark each ledger row `FULL`, `PARTIAL`, `UNVERIFIED`, or `BLOCKED`. File existence and plausible line numbers are not `FULL`. Recompute task counts, referenced-surface counts, scope totals, and estimates after material corrections.
+
+### 6. Pass C: attack corrections and integration
+
+Run a fresh adversarial pass against corrected current state. Specifically test whether a correction introduced:
+
+- interface or data-envelope mismatches;
+- new ordering, race, migration, rollback, or reachability failures;
+- stale estimates, file maps, task counts, or acceptance gates;
+- contradictions among plans, source docs, decision tables, and prior-phase contracts;
+- weakened or circular verification.
+
+Resolve authorized findings, freeze again, and repeat Pass B plus affected integration lanes. A correction is not evidence of correctness.
+
+### 7. Final frozen-state review
+
+Run a small final review only after full passes are closed. Confirm hashes unchanged, ledger complete, findings reconciled, commands and references current, cross-plan parity intact, and diff scope authorized. Make no edits during this pass. Any edit invalidates final verdict.
+
+## Verdict
+
+Use one:
+
+- `READY`: every required gate in review contract passes on recorded hashes.
+- `NOT_READY`: one or more concrete plan defects remain. List exact blockers and affected tasks.
+- `BLOCKED`: evidence needed for a truthful verdict is unavailable or contradictory. List completed coverage and missing evidence.
+
+Never use “mostly ready” to hide incomplete coverage. `READY` is not ratification or implementation approval.
+
+## Deliverable
+
+When repo documents are requested or are standing output convention, write durable review artifact there. Otherwise follow user-requested output form. Return concise status and artifact path; keep raw notes and command dumps out of chat.
+# RTK - Rust Token Killer (Codex CLI)
+
+**Usage**: Token-optimized CLI proxy for shell commands.
+
+## Rule
+
+Always prefix shell commands with `rtk`.
+
+Examples:
+
+```bash
+rtk git status
+rtk cargo test
+rtk npm run build
+rtk pytest -q
+```
+
+## Meta Commands
+
+```bash
+rtk gain            # Token savings analytics
+rtk gain --history  # Recent command savings history
+rtk proxy <cmd>     # Run raw command without filtering
+```
+
+## Verification
+
+```bash
+rtk --version
+rtk gain
+which rtk
+```
+
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+2026-09-29T23:12:04.389089Z ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: Document contract permits read-only shell commands. Use apply_patch for the authorized document. Production edits, installs, arbitrary interpreter programs and shell redirection are outside this report task.. Command: rtk rg -n 'orchestrator|phase-70|Phase 70' /Users/jamesdsizemore/.codex/memories/MEMORY.md
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Blocked
+hook: PreToolUse Completed
+codex
+Using `adversarial-plan-review` skill. Coverage includes every plan entry and exact-edit block; findings require live evidence.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc 'rtk cat /Users/jamesdsizemore/.codex/skills/adversarial-plan-review/references/review-contract.md' in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 0ms:
+# Review Contract
+
+Use this contract for unqualified comprehensive reviews and every implementation-readiness verdict. Omit only lanes proven inapplicable; record why.
+
+## Coverage Ledger
+
+Create ledger before findings. One row per plan-level section, task, and material named surface.
+
+| Field | Required content |
+|---|---|
+| ID | Stable plan/task/surface identifier |
+| Plan claim | Exact behavior or deliverable being promised |
+| Source surfaces | Files, symbols, schemas, routes, components, commands, or external sources that decide truth |
+| Evidence | Direct current evidence, including line/symbol or command result where useful |
+| Lanes | Applicable review lanes below |
+| Status | `FULL`, `PARTIAL`, `UNVERIFIED`, or `BLOCKED` |
+| Findings | Finding IDs or `none` |
+
+Coverage is complete only when every row has a truthful status and evidence. Explicitly list checked surfaces that produced no finding when omission would make completeness unverifiable.
+
+## Required Review Lanes
+
+1. **Identity and scope**
+   - Correct repo, branch/base, revision, plan version, phase, audience, and named source documents.
+   - Goals, non-goals, deliverables, boundaries, and completion semantics agree.
+
+2. **Repo truth and reuse**
+   - Every referenced path, symbol, helper, dependency, component, schema object, and command exists in current state.
+   - Plan reuses real shared paths and does not duplicate or bypass existing gates without justification.
+   - Callers and consumers of changed shared contracts are covered.
+
+3. **Task executability**
+   - Each task identifies concrete inputs, outputs, owned files, dependencies, ordered steps, and completion criteria.
+   - No step requires implementer to make an unstated product, architecture, schema, or UX decision.
+   - Task granularity supports safe implementation and verification.
+
+4. **Interfaces and state**
+   - API contracts, types, payload/envelope shapes, persistence, indexes, migrations, permissions, and state transitions match live implementation.
+   - Producers, consumers, read/write paths, historical data, and backward compatibility reconcile.
+
+5. **Runtime and failure behavior**
+   - Happy path, invalid input, partial failure, retries, concurrency, idempotency, recovery, rollback, and observability are addressed where material.
+   - Runtime claims receive empirical checks when static source cannot prove them.
+
+6. **UX, assets, and accessibility**
+   - Planned screens and flows are reachable and complete across loading, empty, error, permission, and recovery states.
+   - Named design tokens, components, fixtures, copy, and assets exist.
+   - Keyboard, focus, labels, contrast, reduced motion, and responsive behavior are covered where applicable.
+
+7. **Dependencies and sequencing**
+   - Intra-task, cross-task, cross-phase, migration, deploy, and rollback order is explicit and acyclic.
+   - Shared prerequisites land before consumers. Parallel work has non-overlapping ownership or an integration contract.
+
+8. **Verification quality**
+   - Each acceptance gate proves promised behavior, not merely file presence, syntax, counts, or mocks detached from runtime path.
+   - Commands exist and target correct environment. Required fixtures, data setup, cleanup, and expected observations are specified.
+   - Structural, type, unit, integration, migration, UI, accessibility, and manual checks are distinguished.
+
+9. **Cross-document reconciliation**
+   - Task IDs, counts, names, interfaces, decisions, dependencies, file maps, estimates, and acceptance gates agree across all named plans and source docs.
+   - Resolved, rejected, deferred, and still-open decisions remain distinct.
+
+10. **Readiness semantics**
+    - Evidence supports current exact bytes, not original drafts or pre-correction state.
+    - Estimates and rollups were recomputed after scope changes.
+    - Review, approval, ratification, implementation, merge, and shipment are not conflated.
+
+## Finding Schema
+
+Each finding contains:
+
+- ID and severity: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW`.
+- Plan location: file plus section/task/line.
+- Claim: what plan says or omits.
+- Evidence: current repo/source truth and how it was verified.
+- Impact: concrete implementation, runtime, data, security, UX, sequencing, or verification failure.
+- Required correction: smallest plan-level change that closes root cause.
+- Status: `OPEN`, `FIXED_UNVERIFIED`, `VERIFIED`, `DEFERRED`, or `REJECTED` with authority/evidence.
+
+Do not inflate severity. `CRITICAL` means likely data loss, security breach, irreversible migration failure, or plan-wide inability to execute. `HIGH` means implementation blocker or major incorrect behavior. `MEDIUM` means contained correctness or verification gap. `LOW` means bounded ambiguity or maintenance risk.
+
+## Correction Verification
+
+A finding becomes `VERIFIED` only when:
+
+1. correction exists on current frozen bytes;
+2. original repo evidence is re-opened;
+3. affected task and all mirrored/cross-plan locations agree;
+4. correction does not create a new contradiction or unsupported claim;
+5. relevant coverage rows return to `FULL`.
+
+## READY Gate
+
+`READY` requires all of these:
+
+- every required ledger row is `FULL`;
+- no open finding at any severity;
+- deferred/rejected items are explicit, authorized, and outside claimed implementation-ready scope;
+- repo claims, interfaces, state transitions, dependencies, sequencing, and file ownership are current and exact;
+- acceptance gates are executable and behavior-bearing;
+- cross-document values and decisions reconcile;
+- estimates and rollups reflect corrected scope;
+- a fresh adversarial regression pass reviewed current corrected bytes;
+- final review ran without byte drift;
+- review/remediation touched no unauthorized surfaces.
+
+If any item fails, verdict is `NOT_READY` or `BLOCKED`, never a qualified `READY`.
+
+## Review Artifact Shape
+
+1. Subject, scope, repo revision, branch, plan hashes, dirty-state note.
+2. Verdict and exact blockers.
+3. Coverage ledger with totals by status.
+4. Findings grouped by severity, then stable ID.
+5. Correction-verification table when remediation occurred.
+6. Cross-document reconciliation results.
+7. Commands/probes run and what each proved.
+8. Deferred, rejected, unresolved, and blocked items.
+9. Scope statement naming changed paths or confirming read-only review.
+
+Do not bury incomplete coverage in prose. Do not report raw agent transcripts as evidence.
+
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc "rtk proxy graft ask 'tests/conftest.py home isolation test_real_home_guard session fixtures' --source" in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 221ms:
+[graft] tokens saved ≈ 2,834 (62%) — this pack ≈ 1,772 tok vs reading the 5 source file(s) whole ≈ 4,606 tok. Estimate (baseline = those files read in full). At the end of your reply, tell the user the total graft tokens saved this turn — sum each such line across your graft calls — e.g. "🌱 graft saved ~N tokens this turn".
+
+graft ask — "tests/conftest.py home isolation test_real_home_guard session fixtures"  (lexical)
+
+1. test_conftest_reference.py · file  [symbol]
+   tests/test_conftest_reference.py
+
+2. test_conftest_runs_isolated_argv · function  [symbol]
+   tests/test_conftest_reference.py:L12-L36
+   def test_conftest_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None
+
+```
+def test_conftest_runs_isolated_argv(monkeypatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(conftest, "resolve_binary", lambda _binary: "C:/bin/conftest")
+    monkeypatch.setattr(conftest, "run_subprocess", fake_run)
+
+    raw = ConftestEngine().run(tmp_path, [], cwd=tmp_path)
+
+    assert raw["exit_code"] == 0
+    assert calls == [
+        [
+            "C:/bin/conftest",
+            "test",
+            "-o",
+            "json",
+            "--no-color",
+            str(tmp_path),
+        ]
+    ]
+```
+
+3. test_conftest_normalizes_clean_and_findings · function  [symbol]
+   tests/test_conftest_reference.py:L39-L65
+   def test_conftest_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None
+
+```
+def test_conftest_normalizes_clean_and_findings(monkeypatch, tmp_path: Path) -> None:
+    engine = ConftestEngine()
+    monkeypatch.setattr(ConftestEngine, "version", lambda _self: "0.55.0")
+
+    clean = engine.normalize({"exit_code": 0, "findings": []}, tmp_path, "iac")
+    assert clean["status"] == "ok"
+    assert clean["findings"] == []
+
+    failing = engine.normalize(
+        {
+            "exit_code": 1,
+            "findings": [
+                {
+                    "file": "deployment.yaml",
+                    "msg": "Containers must not run as root",
+                    "severity": "fail",
+                    "metadata": {"rule": "deny_root_user"},
+                }
+            ],
+        },
+        tmp_path,
+        "iac",
+    )
+    assert failing["status"] == "fail"
+    assert len(failing["findings"]) == 1
+    assert failing["findings"][0]["severity"] == "error"
+    assert failing["findings"][0]["rule"] == "deny_root_user"
+```
+
+4. test_cli_agent_list_never_touches_real_home · function  [symbol]
+   tests/test_install_memory_activation.py:L263-L283
+   def test_cli_agent_list_never_touches_real_home( tmp_path: Path, monkeypatch: pytest.MonkeyPatch ) -> None
+
+```
+def test_cli_agent_list_never_touches_real_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["agent", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    agent_ids = {agent["agent_id"] for agent in payload["raw"]["agents"]}
+    assert agent_ids == {
+        "claude-desktop",
+        "claude-code",
+        "cursor",
+        "windsurf",
+        "zed",
+        "codex",
+    }
+    assert all(agent["status"] == "not_detected" for agent in payload["raw"]["agents"])
+```
+
+5. ConftestEngine · class  [symbol]
+   src/rush/engines/conftest.py:L13-L108
+   class ConftestEngine(Engine)
+
+```
+class ConftestEngine(Engine):
+    name = "conftest"
+    binary = "conftest"
+    file_extensions = ("yaml", "yml", "json", "tf", "dockerfile", "toml")
+
+    def run(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+        *,
+        owner_instance_id: str | None = None,
+        run_id: str | None = None,
+    ) -> EngineResult:
+        binary_path = resolve_binary(self.binary) or self.binary
+        default_args = ["test", "-o", "json", "--no-color"]
+        argv = [binary_path, *default_args, *args, str(path)]
+
+        proc = run_subprocess(
+            argv,
+            cwd=cwd or path,
+            timeout=120,
+            **ownership_kwargs(owner_instance_id, run_id),
+        )
+
+        parsed = None
+        findings_raw: list[dict] = []
+        if proc.stdout.strip():
+            try:
+                parsed = json.loads(proc.stdout)
+                if isinstance(parsed, list):
+                    for file_res in parsed:
+                        for failure in file_res.get("failures", []):
+                            findings_raw.append(
+                                {
+                                    "file": file_res.get("filename"),
+                                    "severity": "fail",
+                                    **failure,
+                                }
+                            )
+                        for warning in file_res.get("warnings", []):
+                            findings_raw.append(
+                                {
+                                    "file": file_res.get("filename"),
+                                    "severity": "warn",
+                                    **warning,
+                                }
+                            )
+            except json.JSONDecodeError:
+                parsed = None
+
+        return EngineResult(
+            exit_code=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
+            parsed=parsed,
+            findings=findings_raw,
+            summary=f"conftest exit {proc.returncode}",
+            duration_ms=0,
+        )
+
+    def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
+        findings: list[Finding] = []
+        for item in raw.get("findings", []):
+            findings.append(
+                {
+                    "path": item.get("file", str(path)),
+                    "line": 0,
+                    "column": 0,
+                    "rule": item.get("metadata", {}).get("rule", "conftest-policy"),
+                    "severity": (
+                        "error"
+                        if item.get("severity") == "fail"
+                        else item.get("severity", "warn")
+                    ),
+                    "message": item.get("msg", "OPA Rego policy failure"),
+                }
+            )
+
+        exit_code = raw.get("exit_code", 0)
+… (+16 more lines; open src/rush/engines/conftest.py:L13-L108)
+```
+
+6. conftest.py · file  [symbol]
+   src/rush/engines/conftest.py
+
+7. conftest.py · file  [symbol]
+   tests/conftest.py
+
+8. test_tdd_guard_missing_tests · function  [symbol]
+   tests/test_tdd_guard.py:L22-L33
+   def test_tdd_guard_missing_tests(tmp_path: Path) -> None: # Empty dir without test files
+
+```
+def test_tdd_guard_missing_tests(tmp_path: Path) -> None:
+    # Empty dir without test files
+    empty_dir = tmp_path / "subpkg"
+    empty_dir.mkdir()
+    (empty_dir / "mod.py").write_text("def foo(): return 1\n", encoding="utf-8")
+
+    tool = TddGuardTool()
+    res = tool.run(empty_dir)
+    assert res["status"] == "fail"
+    assert len(res["findings"]) == 1
+    assert res["findings"][0]["rule"] == "tdd/missing-tests"
+    assert res["findings"][0]["severity"] == "error"
+```
+
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc 'rtk git status --short' in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 0ms:
+ M AGENTS.md
+?? .scratch/cli-mcp-command-audit-2026-09-26/
+?? .scratch/phase-71-plan-review/
+?? .scratch/remediation-plan-codex-review-2026-09-29/
+?? .scratch/session-behavior-review-2026-09-26/
+?? docs/phase-plans/phase-71-prototype-dashboard-integration-plan.md
+?? docs/reports/cli-mcp-command-audit-2026-09-26.md
+?? docs/reports/orchestrator-and-phase-70-remediation-plan-2026-09-29.md
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc 'rtk git rev-parse HEAD' in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 0ms:
+c78e445ba1e575ca373e35840142cd627b055d6a
+
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+exec
+/bin/zsh -lc 'rtk git diff --stat' in /Users/jamesdsizemore/Developer/rush-cli
+ succeeded in 0ms:
+AGENTS.md | 59 +++++++++++++++++++++++++++++++++++++++++++++++++++--------
+ 1 file changed, 51 insertions(+), 8 deletions(-)
+
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Initial conflicts found: budget removal still depends on existing dispatch guard, monitor edits reuse exit code 10, and behavior checks often inspect wording rather than completion. Next pass traces actual callers and fixtures before assigning severity.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute_file started
+mcp: context_mode/ctx_execute_file (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Confirmed dispatch blocker: X4 removes `budget`, but live generator still evaluates `handoff=$((budget * 9 / 10))`. Also checking gate isolation: proposed global `/tmp/rush-gate-bt` is protected only by a per-worktree lock.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+2026-09-29T23:15:19.492695Z ERROR codex_core::tools::router: error=apply_patch verification failed: invalid patch: multiple operations target /Users/jamesdsizemore/.codex/memories/memory_summary.md
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Read all 81 section-4 entries and 11 exact-edit sections. Live-source checks found scout write-permission conflict, missing CI environment/lockfile changes, and `parked` state absent from `run-state.sh`. Now exercising small fixtures in disposable directories.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (failed)
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Fixture results confirm substantive gaps: document checker accepts nonexistent fixes and missing input; task-stop hook blocks completed `end_turn` agents while allowing shell-suite stops; X8 hides a process-probe failure occurring after first teardown. Disposable fixtures removed.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Review now covers dispatch, task graph, hooks, test infrastructure, and overlapping edits. Remaining synthesis separates reproduced failures from static defects; final findings will include exact edit ordering and untested boundaries.
+
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+2026-09-29T23:22:41.512598Z ERROR codex_core::tools::router: error=Command blocked by PreToolUse hook: Document contract permits read-only shell commands. Use apply_patch for the authorized document. Production edits, installs, arbitrary interpreter programs and shell redirection are outside this report task.. Command: rtk git -C /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70 rev-parse HEAD
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Blocked
+hook: PreToolUse Completed
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+hook: PreToolUse Completed
+mcp: context_mode/ctx_execute started
+mcp: context_mode/ctx_execute (completed)
+hook: PostToolUse
+hook: PostToolUse
+hook: PostToolUse Completed
+hook: PostToolUse Completed
+codex
+Read-only worktree revision check was rejected by automatic tool review: `rtk git -C … rev-parse HEAD` was classified outside document contract. No alternate execution route used. Plan hash remains unchanged; source review and temporary fixtures completed.
+
+codex
+**NOT_READY.** Review stayed read-only; disposable fixtures deleted. Plan SHA256 unchanged: `539955cf9a183d05800771fbb9e40e885a300879ccde6cfbd5baab890f815a62`.
+
+Paths below: `plan` = document under review; `skill` = `~/.claude/skills/orchestrator`; `wt` = `/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70`; `x` = supplied scratchpad directory.
+
+## Finding 1 [critical]
+Section: 4.D2, 4.J21, 8.X9  
+Defect: Automatic disk cleanup deletes directories without establishing ownership or inactivity, including protected evidence.  
+Failure scenario: Running process keeps writing inside an old `tmp*/keep/` directory → cleanup deletes its files because parent-directory mtime remains old.  
+Evidence: `plan:1820-1824` checks only name, age and size. Disposable fixture containing recently updated `tmp-active/keep/evidence.txt` was deleted. No `keep/` exclusion exists.  
+Suggested change: Replace this cleanup specification with deletion of explicitly registered, completed run-owned directories only; require inactive ownership evidence, exclude `keep/` descendants, and add `-mindepth 1`. Acceptance must retain active directories and evidence, not merely fresh directories.
+
+## Finding 2 [critical]
+Section: 4.T5, 8.X11  
+Defect: Global pytest basetemp is protected by a worktree-local lock.  
+Failure scenario: Two worktrees run their gates → both acquire separate locks → second pytest deletes `/tmp/rush-gate-bt` while first suite uses it.  
+Evidence: `plan:1991` fixes basetemp globally; `plan:2005-2012` places lock under each run. Installed pytest `_pytest/tmpdir.py:149-153` removes an existing explicit basetemp before using it.  
+Suggested change: Specify one shared suite lock across participating worktrees and a unique gate-owned basetemp per invocation. Verify two different run directories cannot enter their suites concurrently.
+
+## Finding 3 [major]
+Section: 4.A4, 8.X4, 8.X10  
+Defect: Budget removal leaves executable references and callers behind.  
+Failure scenario: Updated generator without `--budget` → `budget: unbound variable`; existing documented commands → `unknown argument: --budget`.  
+Evidence: Live `skill/scripts/dispatch-prompt.sh:123` evaluates `handoff=$((budget * 9 / 10))`. Disposable patch reproduced both failures. Remaining callers include `SKILL.md:89`, `references/dispatch.md:15,26,38,69,80,94,168`, and `tests/test-dispatch-prompt.sh`.  
+Suggested change: Make budget removal one atomic patch covering arithmetic, all invocations, generated sections, tests and persisted `agents.active` schema. Replace removed-budget assertions with turn-limit assertions.
+
+## Finding 4 [major]
+Section: 4.B1, 4.H11, 8.X10  
+Defect: Retained dispatch instructions do not satisfy model-guard rule 7.  
+Failure scenario: Send generator output unchanged as instructed → guard rejects it because prompt does not reference a saved, signed prompt file.  
+Evidence: `skill/SKILL.md:91` requires unchanged output. `~/.claude/hooks/orchestrator-model-guard.js:85-99` searches referenced files and hashes their contents. Replay of generated scout output returned `permissionDecision: deny`.  
+Suggested change: Replace dispatch instructions with an exact save-and-reference procedure: save unchanged generator output under `$WT/.orchestrator/`, then reference that absolute file in Agent input. Add an integration fixture invoking actual rule 7.
+
+## Finding 5 [major]
+Section: 4.B4, 8.X10  
+Defect: Packet factory assigns file creation to a read-only scout.  
+Failure scenario: Scout receives instruction to write `.orchestrator/maps/...` → its definition forbids writes and lacks Write/Edit.  
+Evidence: `plan:1930-1933`; `~/.claude/agents/orch-scout.md:4,34`. X5 adds search tools but no writing capability. Generator also clears scout write targets at `dispatch-prompt.sh:118-120`.  
+Suggested change: Choose one explicit contract: scout returns map content for orchestrator to persist, or scout gains narrowly scoped map-writing permission. Update definition, generator and acceptance probe together. Exempt seed scout dispatches from any scout-produced-map prerequisite.
+
+## Finding 6 [major]
+Section: 4.F2, 8.X10  
+Defect: Tests-first dispatch still requires a RED log before tests exist.  
+Failure scenario: Dispatch implementer to author initial test matrix → generator requires `--red-log` produced by those unwritten tests.  
+Evidence: `skill/SKILL.md:242-244`; `skill/scripts/dispatch-prompt.sh:96-112`. Proposed edits retain unconditional RED-log requirement for implementers.  
+Suggested change: Define separate test-authoring mode with test-only write targets and no prior RED-log requirement. Implementation mode must require successful acceptance of that mode’s RED results.
+
+## Finding 7 [major]
+Section: 4.B4, 4.B6, 8.X4  
+Defect: Exact generator edits omit promised `scout:` and `done:` enforcement.  
+Failure scenario: Map lacks both fields → proposed generator still emits a dispatch without provenance or completion checklist.  
+Evidence: B4 requires rejection at `plan:725`; B6 requires parsing, rejection, checklist and receipt at `plan:741-743`. None appears in X4’s six edits or X11’s additional generator check.  
+Suggested change: Add exact parser, validation and rendering changes for both fields, plus missing-field fixtures. Define bootstrap exemptions explicitly rather than making scouts recursively require scouts.
+
+## Finding 8 [major]
+Section: 4.I1, 4.I3  
+Defect: Replacing multiple task-loop steps with committing `task-gate.sh` changes lifecycle ordering and makes repeated steps fail.  
+Failure scenario: Step 2 commits before review; step 3 invokes gate again → `no changes in the worktree`; later docs edits occur after initial commit.  
+Evidence: `plan:348` replaces steps 2, 3, 7 and 8. Script commits at `plan:383` and rejects clean trees at `367`. Existing review and docs occur at `skill/SKILL.md:256-266`.  
+Suggested change: Keep one committing invocation at final task-loop step 8, after review and docs. Earlier verification must not commit. Amend I3 to merge only after this final invocation.
+
+## Finding 9 [major]
+Section: 4.D2, 4.F2, 8.X9, 8.X11  
+Defect: Shared-environment proposal conflicts with commands requiring a worktree-local environment.  
+Failure scenario: `worktree-add.sh` creates no `.venv` → F2’s `$WT/.venv/bin/python` is missing; gate’s `uv run` can create the environment the proposal forbids.  
+Evidence: `plan:1834-1845`, `909-910`, `1991`; retained generator instruction at `skill/scripts/dispatch-prompt.sh:201`.  
+Suggested change: Resolve and record one absolute interpreter path at run start. Use that interpreter consistently for task tests, acceptance and gates, with imports explicitly targeting each worktree. Replace every `$WT/.venv` instruction.
+
+## Finding 10 [major]
+Section: 4.F1, 4.I3, 8.X11  
+Defect: Task completion requires remote CI for a commit the workflow forbids pushing.  
+Failure scenario: Local task commit or `--no-ff` merge produces new SHA → no remote CI exists → `task merged` refuses → dependent nodes remain blocked.  
+Evidence: `plan:405` says “Never push”; `plan:2121-2124` requires CI success for current HEAD.  
+Suggested change: Separate local integration state from remote CI state, or specify an explicitly authorized push route before the CI-dependent transition. Define which SHA and required workflow set each transition validates.
+
+## Finding 11 [major]
+Section: 4.T4, 4.T8, 8.X8, 8.X11  
+Defect: CI changes omit both locked dependency integration and authorization for large collections.  
+Failure scenario: CI uses frozen lock without xdist → `-n` unavailable; after installing xdist, large collection exits 4 because `RUSH_GATE` remains unset.  
+Evidence: `wt/uv.lock` contains no `pytest-xdist`; `.github/workflows/ci.yml:31` uses `uv sync --all-extras --frozen`; primary pytest step at `:91` has no `RUSH_GATE`. X8 introduces collection refusal.  
+Suggested change: Include `uv.lock` and exact CI changes in file map. Specify how CI obtains suite authorization independently of a local user-installed skill. Test frozen installation and CI collection together.
+
+## Finding 12 [major]
+Section: 4.C1, 4.D1, 8.X1, 8.X11  
+Defect: Proposed task graph cannot represent prescribed split and parked workflows consistently.  
+Failure scenario: Add `T28.a`/`T28.b` → startup’s row-count equality fails; retain parent T28 → dependents have no specified aggregate completion transition; park a grant → command unsupported.  
+Evidence: `plan:777,831,2106-2108`; live `skill/scripts/run-state.sh:103-125` supports only `add`, `start`, `merged`.  
+Suggested change: Define parent/child completion semantics and implement `parked` transition. Validate required parent IDs rather than total row count. Update readiness and monitor consumers to the same schema.
+
+## Finding 13 [major]
+Section: 4.H1, 4.C1, 8.X1, 8.X10  
+Defect: Loading the plan overwrites existing progress with `pending`.  
+Failure scenario: Resume existing Phase 70 run → loader truncates `tasks.tsv` and resets completed/running nodes → completed work is redispatched.  
+Evidence: `plan:1146-1148` opens output with `"w"` and assigns every node `pending`; X10 invokes loader at intake. Existing `wt/.orchestrator/run.json` remains present.  
+Suggested change: Separate initial graph creation from resume reconciliation. Preserve verified task states; reject destructive reloads of existing state. Specify migration of current Phase 70 state before restarting dispatch.
+
+## Finding 14 [major]
+Section: 4.H1, 4.C3, 8.X10  
+Defect: Mandatory parallel dispatch preserves a shared-file policy contradicting the actual Phase 70 plan.  
+Failure scenario: Two ready chain heads touch shared CLI/catalog files → skill permits concurrent writers in separate worktrees despite plan’s explicit prohibition.  
+Evidence: `skill/SKILL.md:230`: “Shared files are no reason to serialize across worktrees.” Phase 70 plan `:112` requires one writer for named shared files and forbids parallel shared-file edits.  
+Suggested change: Replace that sentence with the approved ownership constraint. Readiness must include file reservations, not dependency status alone; release reservations only after integration.
+
+## Finding 15 [major]
+Section: 4.A2, 5.D1, 8.X4, 8.X5, 8.X10  
+Defect: Model/effort policy has contradictory matrices and no binding between checked map and actual dispatch.  
+Failure scenario: D1 calls for Sonnet/medium scout; X5 installs Haiku without effort; design gate requests medium/80 turns but adversarial definition applies high/240.  
+Evidence: `plan:1013`, `1387-1394`, `1455-1462`, `1917-1923`. Model guard validates allowed models, not correspondence with `model-reason:`.  
+Suggested change: Select one canonical matrix after D1 resolution and derive every table/config from it. Specify separate design-gate configuration or supported per-dispatch overrides. Bind selected model and justification to actual Agent input.
+
+## Finding 16 [major]
+Section: 4.T2, 8.X8  
+Defect: Five-second throttle suppresses process-listing failures after first teardown.  
+Failure scenario: First test succeeds; process probe breaks during second test inside cooldown → suite reports success.  
+Evidence: Disposable execution using actual conftest: original produced `2 passed, 1 error`; X8 produced `2 passed`. Existing contract is pinned by `wt/tests/test_real_home_guard.py:723-794`.  
+Suggested change: Remove claim that behavior remains unchanged. Add the two-test regression before choosing an optimization; preserve explicit probe-failure reporting or obtain an explicit contract change.
+
+## Finding 17 [major]
+Section: 4.T5, 5.D7, 8.X11  
+Defect: Retention setting does not delete the explicitly configured gate basetemp.  
+Failure scenario: Passing gate with `--basetemp=... -o tmp_path_retention_count=0` → factory directories remain.  
+Evidence: Installed `_pytest/tmpdir.py:304-317` excludes explicit basetemps from passing-session cleanup. Fixture passed while `explicit/engine0/evidence` remained.  
+Suggested change: Add explicit cleanup of the uniquely owned gate basetemp after preserving required logs; implement D7’s chosen failure-retention policy there. Verify filesystem state after both pass and failure.
+
+## Finding 18 [major]
+Section: 4.T4  
+Defect: npm cache is incorrectly presented as caching all expensive session fixtures across workers.  
+Failure scenario: `loadfile` assigns archive consumers to different workers → each invokes its own PyInstaller build despite T3.  
+Evidence: `wt/tests/conftest.py:859` creates fresh `pyinstaller` and release directories. Consumers exist in `test_release_asset_contract.py`, `test_phase70_ts.py`, and `test_phase52_installed_artifacts.py`. T3 changes only npm cache.  
+Suggested change: Correct claim at `plan:960`; specify worker count consistently (`4` versus `auto`) and validate expensive fixture multiplicity. If sharing builds is required, define artifact production and ownership explicitly.
+
+## Finding 19 [major]
+Section: 4.A5, 4.H14, 8.X11  
+Defect: Agent probe can pass missing results and does not exercise installed agents under real controls.  
+Failure scenario: First agent emits no statuses; second emits three `ok` lines → parser credits both and writes `"ok": true`.  
+Evidence: Exact proposed parser reproduced that result. `plan:2287-2288` constructs replacement probe agents; `2300` disables hooks; effort, `maxTurns`, `omitClaudeMd` and real agent bodies are omitted.  
+Suggested change: Bound parsing to each agent’s record and fail on missing results. Probe actual installed definitions with effective hooks and settings; associate observed model/tool calls with each agent separately.
+
+## Finding 20 [major]
+Section: 4.D1, 8.X7  
+Defect: Ask guard still permits blocking questions and treats failed decision lookup as a miss.  
+Failure scenario: Question begins `decision-search: zzznomatch` → approved; missing `decisions.sh` also → approved.  
+Evidence: `plan:1662-1668` ignores subprocess status and approves empty output. Disposable missing-script fixture returned `{"decision":"approve"}`.  
+Suggested change: Enforce the stated rule directly: active-run questions require explicit user unlock. Treat lookup errors as errors, not absent decisions. Specify handoff handling for parked grants.
+
+## Finding 21 [major]
+Section: 8.X7, 8.X11  
+Defect: New hooks apply to unrelated sessions whenever global active-run marker exists.  
+Failure scenario: Phase 70 active elsewhere; unrelated session asks a legitimate question → hooks block it.  
+Evidence: `plan:1624-1627` reads global marker; hook bodies test only its existence, without matching session, cwd or valid run state.  
+Suggested change: Bind marker to run and session identity; validate `run.json` and scope before enforcing. Add unrelated-session and stale-marker fixtures.
+
+## Finding 22 [major]
+Section: 5.D4, 8.X7, 8.X11  
+Defect: Unlock reader mistakes hook feedback for the latest human message.  
+Failure scenario: User sends `ask`; another Stop hook emits feedback → proposed question hook no longer recognizes unlock.  
+Evidence: `plan:1628-1636` accepts ordinary `type:"user"` text except four XML prefixes. Replay of `ask` followed by `Stop hook feedback: ...` remained blocked.  
+Suggested change: Use one verified human-message classifier across hooks, excluding hook feedback and synthetic messages. Make exact-token versus “contains word” unlock semantics consistent throughout sections 4, 5 and 8.
+
+## Finding 23 [major]
+Section: 4.C4, 8.X7  
+Defect: Resume guard blocks ordinary communication to every agent type, not repeated implementer continuations.  
+Failure scenario: Reviewer receives clarification, then user corrects scope → second correction is denied.  
+Evidence: `plan:1691-1701` counts all `SendMessage` calls by recipient; no role, purpose or completion check. Reviewer-correction fixture was blocked.  
+Suggested change: Enforce continuation limit on completed implementers using recorded lifecycle state. Exempt required scope corrections and coordination messages; count completed sends rather than ambiguous transcript occurrences.
+
+## Finding 24 [major]
+Section: 4.C5, 4.H6, 4.E4, 8.X11  
+Defect: TaskStop hook disagrees with monitor’s completion definition and permits stopping running shell suites.  
+Failure scenario: Completed agent ends with `end_turn` → blocked; running suite has shell-task ID without agent transcript → approved.  
+Evidence: `plan:2202-2205`; both outcomes reproduced. E4 explicitly defines completion through `end_turn`, while hook requires `SubagentStop`.  
+Suggested change: Share one completion classifier between monitor and hook. Resolve shell-task lifecycle before allowing stops; missing agent transcript must not constitute proof that a test may be terminated.
+
+## Finding 25 [major]
+Section: 4.E4, 8.X6, 8.X11  
+Defect: Monitor remains one-shot on alerts, permanently suppresses recurring conditions, and allocates exit code 10 twice.  
+Failure scenario: First idle alert exits monitor; after restart, a later low-capacity or slow-suite event with same key is suppressed forever.  
+Evidence: `skill/scripts/monitor.py:291-293,343-345,367-372`; E4 assigns `DONE:10`, X6 assigns `READY-LOW:10`. Neither changes loop or recurrence semantics.  
+Suggested change: Define one alert registry, continuous monitoring lifecycle, and episode-based reset/rearming. Add a fixture covering trigger → recovery → second trigger, plus production-mode exit behavior.
+
+## Finding 26 [major]
+Section: 4.H3, 4.E1, 4.E4  
+Defect: Expanded raw-read detector flags the read/Edit workflow the plan mandates.  
+Failure scenario: Agent performs ten bounded `rtk read ... --max-lines 20` followed by Edit → TOOLSTACK warning despite compliance.  
+Evidence: Exact `monitor-copy.py` fixture returned `TOOLSTACK required: 10 raw reads vs 0 graft/ctx/repowise calls`. Proposed regex ignores read limits and following Edit.  
+Suggested change: Exclude bounded edit-preparation reads from raw-read violations. Test compliant read/Edit pairs separately from whole-file exploration.
+
+## Finding 27 [major]
+Section: 4.F2  
+Defect: Assertion-prefix classification neither verifies the stated RED reason nor accepts every legitimate assertion mechanism.  
+Failure scenario: `assert 1 == 2` unrelated to feature passes; missing expected exception under `pytest.raises(ValueError)` is rejected as an error.  
+Evidence: Replayed `test-acceptance-copy.py`: assertion-only case returned `ok`; missing-exception case returned `errored (not an assertion failure)`. Existing AST check accepts `pytest.raises` at `test-acceptance.py:42-44`.  
+Suggested change: Map each required RED result to its expected failure signature/location, including supported `pytest.raises` failures. Add wrong-reason assertions and missing-exception fixtures.
+
+## Finding 28 [major]
+Section: 4.E3, 4.H17, 8.X3  
+Defect: Status implementation does not deliver promised live, changed-only status.  
+Failure scenario: Finished agents remain registered → report labels them “running”; documented `status --report` invokes old status branch instead.  
+Evidence: X3 adds `report)` at `plan:1361`, counts lines at `1365`, and never reads agent transcripts. Live `run-state.sh:128-136` ignores `--report` and prints full state/log.  
+Suggested change: Standardize one command interface, distinguish registered/running/finished agents using live evidence, and implement the claimed changed-only behavior. Remove claims for fields the command does not produce.
+
+## Finding 29 [major]
+Section: 4.A6, 4.T6, 8.X2, 8.X11  
+Defect: Usage and performance reporting remain disconnected from execution.  
+Failure scenario: Commit completes → no usage report or COST alert; suite timing row lacks phase totals and ten heaviest items.  
+Evidence: X2 prints reports but never writes `usage.tsv`; X3/X11 do not change `log)` to invoke it. X11 records only five columns at `plan:2029`; monitor has no COST integration.  
+Suggested change: Add exact call sites and output schemas for commit-time usage, current-day threshold evaluation and suite details. Verify a real fixture commit appends expected records and triggers the threshold path.
+
+## Finding 30 [major]
+Section: 4.J2, 4.J5, 4.J7, 4.J9  
+Defect: Document checker treats backticks as proof of a concrete fix and passes nonexistent input.  
+Failure scenario: `**Fix.** Think about \`does-not-exist.sh\`.` → PASS; missing document → PASS.  
+Evidence: Replayed checker produced `DOC-DONE-CHECK PASS 1 entries` and `DOC-DONE-CHECK PASS  entries`. `x/doc-done-check.sh:13` checks only for a backtick; pipelines do not propagate read failure.  
+Suggested change: Require readable input and propagate command failures. Relabel existing checker as structural lint; add substantive artifact/verification review before allowing completion claims.
+
+## Finding 31 [major]
+Section: 4.J22  
+Defect: Coverage checker equates mentioning a filename with opening and reviewing it.  
+Failure scenario: Document names `monitor.py` without inspection → checker marks NAMED and procedure skips opening it.  
+Evidence: `x/skill-coverage.sh:12-13` performs basename substring matching; user-level and repo-level copies share basenames.  
+Suggested change: Replace NAMED/UNNAMED as review coverage with exact-path, source-hash and reviewed-span records. Keep filename inventory only as inventory.
+
+## Finding 32 [major]
+Section: 4.H5, 4.H13, 4.H16, 4.J1, 4.J6, 4.J14, 4.J15, 4.G2  
+Defect: Several behavior fixes remain reminders without the promised execution check.  
+Failure scenario: Assistant omits requirement row, writes unrequested memory, repeats analysis, or supplies unchecked estimate → proposed mechanisms do not reject action.  
+Evidence: These entries prescribe procedures; `skill-lint.py` at `plan:1872-1874` checks only whether a tagged path exists. A tag cannot establish that artifact enforces the associated rule.  
+Suggested change: Give each named entry an exact enforcement point, input/state contract and negative fixture. Where semantic review is required, specify it explicitly and stop claiming file-existence lint supplies enforcement.
+
+## Finding 33 [major]
+Section: 4.J4, 4.J8, 4.J10, 4.J12, 4.J16, 4.J18, 4.J19, 4.J22; 5.D4  
+Defect: Eight proposed behavior hooks lack an installation/activation path in decisions and exact edits.  
+Failure scenario: Apply all X7/X11 registrations → none of these J-series hooks runs.  
+Evidence: D4 lists four hooks; X11 registers only those four. J-series hooks are absent from current hook directory and have no registration additions. Five supporting behavior scripts exist only in supplied scratchpad.  
+Suggested change: Add explicit install destinations, registrations, approval status and acceptance fixtures for J-series mechanisms. Preserve these as proposed work; do not treat applying D4 as completing them.
+
+## Finding 34 [major]
+Section: 4.J4, 4.J10, 4.J12, 4.J22  
+Defect: Proposed keyword triggers confuse prohibitions, successful status and genuine unfinished work.  
+Failure scenario: “Do not remove anything” unlocks shrink guard; “remaining: 0” blocks completion; “I have not opened unrelated Codex sessions” blocks correct scope observance.  
+Evidence: Trigger/unlock specifications at `plan:451,499,515,595` contain no negation, target, quantity or scope handling.  
+Suggested change: Replace bare keyword unlocks with explicit action-and-target authorization. Base incomplete-work detection on unresolved ledger state; include these exact counterexamples in negative fixtures.
+
+## Finding 35 [major]
+Section: 4.B7  
+Defect: Reviewer replacement weakens caller review to changes that a call trace itself reveals.  
+Failure scenario: Function keeps same signature but changes return semantics → unchanged call edge provides no trigger to inspect affected callers.  
+Evidence: `plan:761` opens callers only when trace shows changed signature or contract; current `~/.claude/agents/orch-reviewer.md:27-28` requires reviewing callers for correctness.  
+Suggested change: Replace sentence with: “Trace every changed symbol; inspect affected caller spans whenever its behavior or contract changes, including unchanged signatures.” Preserve semantic caller review while bounding source reads.
+
+## Finding 36 [major]
+Section: 4.T7  
+Defect: Proposed remedy risks removing user-visible assertions instead of fixing path-dependent behavior.  
+Failure scenario: Recorded target remains absent from rendered outcome details, but test passes by checking stored target identity.  
+Evidence: `plan:979` proposes identity assertions instead of rendered text. `wt/tests/test_phase70_t28c_review2.py:207-215` explicitly verifies rendered details do not hide recorded targets.  
+Suggested change: Retain rendered-target acceptance. Add bounded root-cause investigation for short `/tmp` and long paths, then specify exact production/test patches preserving visible behavior. Current evidence does not justify replacing that contract.
+
+## Finding 37 [major]
+Section: 4.A4, 4.B4–B5, 4.E1, 4.I1–I3, 4.T2; 8.X3–X6, 8.X8, 8.X10–X11  
+Defect: Overlapping edits have no single canonical application order, and some are alternative implementations.  
+Failure scenario: Apply section 4 literally, then section 8 → anchors disappear, conflicting cleanup executes twice, or later whole-block replacement erases earlier additions.  
+Evidence: A4/X4 replace same budget block; B5/E1/X4 replace same Edits clause; B4 replaces `SKILL.md:75-94` while X10 replaces `76-80`; T2 teardown deletion conflicts with X8 delayed deletion; X3 replaces entire `stop)` that X11 augments.  
+Suggested change: Replace duplicates with references to one canonical patch per file. Required ordering: X3 stop replacement before X11 additions; I1 final lifecycle rewrite before I3 merge clause; X10 heading rename before insertion at renamed heading; X5 frontmatter plus B7 body edits before final probe. Reconcile T2/X8 and E4/X6 alternatives rather than applying both.
+
+## Finding 38 [minor]
+Section: 4.C6, 8.X3, 8.X11  
+Defect: Exact stop implementation omits promised worktree archival and merged-branch cleanup.  
+Failure scenario: Apply proposed `stop)` → state disappears, but merged branches/worktrees remain.  
+Evidence: `plan:817` promises deletion after archive; X3 stop body at `1342-1354` only compares hashes and removes state/marker; X11 adds monitor termination only.  
+Suggested change: Add explicit archival/cleanup operations before state removal, selecting branches from recorded run ownership and verified merge state. Include dirty-worktree preservation and cleanup-failure behavior.
+
+Automatic tool review rejected the read-only worktree `git -C … rev-parse HEAD` check as outside document contract; no alternate execution route used.
+
+Graft saved approximately 2,834 tokens this turn, 1 call.
+
+Sections reviewed: sections 0–8; 81/81 section-4 entries, including H 17/17, I 4/4, J 22/22; 11/11 exact-edit sections; 7/7 user-level and 7/7 repo-level agent definitions; all named live scripts/configuration surfaces; 4/4 requested available fixture scripts exercised, with checker scratch output relocated into disposable directory.
+
+Not reviewed: Codex sessions and `stall-notify.sh`, explicitly excluded; historical arithmetic, intentionally not recounted; full-suite performance, remote CI and headless model probes not rerun because this review exercised bounded local fixtures without production writes. Unimplemented J-series hooks received specification review, not runtime certification.
+
+
+hook: Stop
+hook: Stop
+hook: Stop
+hook: Stop
+hook: Stop
+hook: Stop Completed
+hook: Stop Completed
+hook: Stop Completed
+hook: Stop Completed
+hook: Stop Completed
+tokens used
+239,023
