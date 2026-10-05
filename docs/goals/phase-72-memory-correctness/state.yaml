@@ -1,0 +1,2123 @@
+# GoalBuddy v2 state.yaml
+# Board truth lives here. goal.md is the editable charter; notes/ holds long receipts only.
+
+version: 2
+
+goal:
+  title: "Phase 72: Memory correctness and user control"
+  slug: "phase-72-memory-correctness"
+  kind: existing_plan
+  tranche: "continuous execution: complete 73-T02/POLICY, 72-T01..72-T09 and 75-T02/EVALUATOR and 73-T09/CODEC (12 units) to full acceptance, each through design gate, RED tests, implementation, live lane where the plan requires one, and full-attack review"
+  status: active
+  oracle:
+    signal: "Named Phase 72 test files (incl. tests/test_phase72_portable_memory_policy.py) and each packet regression command pass on frozen worktree bytes; full suite, ruff check, ruff format --check and mypy src/rush show no failure beyond the T001 baseline and zero SKIPPED; docs/reports/phase-72-memory-acceptance.md maps the 9 plan §4 ledger rows and the plan §8 PAS cases to executed evidence incl. live CLI, stdio MCP, PTY and browser desktop/mobile walkthroughs."
+    cadence: "after each unit review task and at final audit"
+    final_proof: "T999 receipt mapping each plan §4 ledger row, each plan §8 required case and each unit to receipts, verification output and report sections, with every unavailable live lane named open with one exact blocker"
+  intake:
+    original_request: "/goal-prep Phase 72"
+    interpreted_outcome: "Phase 72 plan implemented to full acceptance on phase/72-memory-correctness-and-user-control (based on phase/70 tip 07775f1), including the 73-T02/POLICY and 75-T02/EVALUATOR producer checkpoints built here."
+    input_shape: existing_plan
+    audience: "Rush users and coding agents reading/correcting Rush memory"
+    authority: approved
+    proof_type: test
+    completion_proof: "Oracle signal satisfied and T999 records full_outcome_complete: true"
+    likely_misfire: "Helper-level tests go green while another read path (review citations, cache selection, compact query, hybrid, relations, import, TUI, dashboard) still serves archived/expired/foreign/tampered/revoked memory; or work lands against main-era helpers overwriting Phase 70 repairs; or lexical fallback labeled hybrid / unexecuted live lane reported as pass; or plan §8 PAS cases silently dropped."
+    blind_spots_considered:
+      - "authorization.py absent on 07775f1; 73-T02/POLICY built first on this board (owner decision 2)."
+      - "75-T02/EVALUATOR is not defined in the Phase 75 plan; scripts/benchmarks/run.py lacks --decision-mode/--decision-route/--task-manifest and tests/fixtures/phase75/task_manifest.json is absent; the EVALUATOR gate T012 defines the checkpoint (open decision D2)."
+      - "Plan reviewed at phase-70 66c6c799; base 07775f1 is 18 commits later and changes store.py (+62), tools/memory.py (+113), tui.py (+454) among 9 plan-touched files; T002 reconciles plan claims against 07775f1."
+      - "Gates run up front, before earlier units change shared files; each RED task re-checks its gate note's code map against current HEAD first."
+      - "Plan §8 PAS adds tests/test_phase72_portable_memory_policy.py, the apply_import_records seam and live import walkthroughs across T01/T06/T07/T09; real capsule route needs 73-T09's codec (src/rush/memory/capsule.py absent); owner chose (D3, 2026-10-05) a 73-T09/CODEC checkpoint unit on this board after 72-T06."
+      - "72-T08 plan output path .scratch/phase-72-memory-eval conflicts with owner never-write-.scratch rule; owner chose (D1, 2026-10-05) committed output under docs/reports/phase-72-memory-eval/{current,hybrid}/."
+      - "Venv: owner chose (D4, 2026-10-05) one new .venv in the phase-72 worktree created once in T001, the only venv agents use, deleted with the worktree after merge."
+      - "panels.js absent; plan says do not wait for it; T07 builds on the current dashboard. Phase 71 P02 Node command unavailable until Phase 71 P01-P02."
+      - "74-T01 symbols and 75-T01 usage receipts not produced here; displays show unavailable with reason per plan §3."
+      - "Shared store.py/tools/memory.py/cli.py need one writer at a time; max_write_workers 1."
+      - "Live lanes block only their own lane task, so local work in the same unit can close."
+    existing_plan_facts:
+      - "Binding plan: docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md (476 lines, 9 packets 72-T01..72-T09 plus §8 PAS extension to T01/T06/T07/T09)."
+      - "Binding instructions: AGENTS.md, docs/templates/task-block-template.md, docs/adr/0010-review-and-remediation-gates.md, memory-program-contract.md C01-C10."
+      - "DAG (plan §3): POLICY before 72-T01 final acceptance; T02 after T01; T03 after T01; T04 independent (promotion acceptance after T01); T05 after T01 + POLICY; T06 after T01-T05; T07 after T06; T08 after T01-T02 + 75-T02/EVALUATOR; T09 last."
+      - "Owner decision 1: branch from phase/70 tip 07775f1; Phase 70 stays unmerged."
+      - "Owner decision 2: 73-T02/POLICY and 75-T02/EVALUATOR checkpoints built on this board, keeping original identities."
+      - "Owner decision D3: 73-T09/CODEC checkpoint built on this board after 72-T06 and before 72-T07, keeping the 73-T09 identity; the rest of 73-T09 stays with Phase 73."
+      - "Owner decision D4: one new .venv in the phase-72 worktree, created once in T001."
+      - "Owner decision D1: 72-T08 raw paired-eval output committed under docs/reports/phase-72-memory-eval/{current,hybrid}/."
+      - "Plan estimates 82-128 hours; estimates authorize no reduced acceptance."
+      - "Plan commands use rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev; pyproject addopts default -m 'not slow', full suite uses -m ''."
+      - "No new storage engine, daemon, unprompted Git hook, automatic host capture, inferred approval, simulated metric, or product-wide readiness claim (plan §1)."
+
+rules:
+  pm_owns_state: true
+  one_active_task: true
+  max_write_workers: 1
+  no_implementation_without_worker_or_pm_task: true
+  no_completion_without_judge_or_pm_audit: true
+  planning_is_not_completion: true
+  queued_required_worker_blocks_completion: true
+  continuous_until_full_outcome: true
+  missing_input_or_credentials_do_not_stop_goal: true
+  exact_human_approval_can_terminal_wait: true
+  preserve_and_validate_existing_plan: true
+  intake_misfire_must_be_audited: true
+  goal_pressure_requires_oracle: true
+  no_completion_on_weak_proof: true
+  slice_policy:
+    max_consecutive_tiny_tasks: 2
+    prefer_vertical_slices: true
+    judge_picks_largest_safe_slice: true
+    worker_completes_whole_slice: true
+
+agents:
+  scout: installed
+  worker: installed
+  judge: installed
+
+visual_board:
+  selected: local
+  local:
+    status: live
+    url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
+    command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
+
+active_task: T003
+
+tasks:
+  - id: T001
+    type: pm
+    assignee: PM
+    status: done
+    reasoning_hint: high
+    objective: "Establish the execution environment and full baseline at 07775f1 in the phase-72 worktree, and commit the board files on the phase branch."
+    inputs:
+      - "goal.md"
+      - "state.yaml"
+      - "Decision D4: one new .venv in this worktree"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Create the single worktree .venv once (decision D4) via the first plan uv run command; record its path and size."
+      - "Start a run_in_background disk monitor on `rtk proxy df -g /Users` that exits with an alert below 8 GiB; restart it whenever it exits."
+      - "Do not edit product files. Commit only docs/goals/phase-72-memory-correctness/ (exact pathspec) on phase/72-memory-correctness-and-user-control."
+    expected_output:
+      - "notes/T001-baseline.md: exact command, exit code, pass/fail/skip counts and each failing test id for the full suite (-m ''), ruff check, ruff format --check, mypy src/rush, scripts/sync_docs.py --check, git diff --check"
+      - "Python 3.12 confirmed via the plan command"
+      - "Disk monitor running (task id)"
+      - "Board commit SHA"
+    receipt:
+      result: done
+      harness: claude-code
+      summary: "Venv .venv (388M, Python 3.12.12) created by the plan uv command. Baseline at 07775f1: full suite 2 failed / 6491 passed / 0 skipped / 14 platform-deselected (933s); ruff check, ruff format --check, mypy src/rush, git diff --check clean; sync_docs --check clean on base bytes, 6 missing-receipt errors only from new board docs, fixed by refreshing coverage receipts in the board commit (deviation from card pathspec, reason in note). Both failures reproduce alone. Disk monitor running."
+      note: notes/T001-baseline.md
+      evidence:
+        - "tests/test_phase70_t28f_review1.py:409"
+        - "tests/test_phase70_tui_usability_ef.py:755"
+        - "tests/conftest.py:86"
+        - "scripts/sync_docs.py:450"
+      commands:
+        - cmd: "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c 'import sys,rush'"
+          status: pass
+        - cmd: "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+          status: pass
+        - cmd: "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+          status: pass
+        - cmd: "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+          status: pass
+        - cmd: "rtk proxy git diff --check"
+          status: pass
+      facts:
+        - "Full suite baseline recorded: exactly 2 pre-existing failures (exit 1), listed in note; this is a baseline recording, not a task verify."
+        - "sync_docs base errors are board-doc receipts only."
+  - id: T002
+    type: scout
+    assignee: Scout
+    status: done
+    reasoning_hint: high
+    objective: "Run plan §2.2 baseline probe on 07775f1, and reconcile every plan §2 evidence claim and every §5/§8 named symbol and file against 07775f1 (plan reviewed at 66c6c799; 18 commits drift)."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T001 receipt"
+      - "rtk proxy git diff 66c6c799 07775f1 -- <plan-touched paths>"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only."
+      - "Use graft/codegraph first per repo instructions."
+      - "Each claim checked individually; report drift with file:line."
+      - "Confirm whether the §2.2 probe or TypedArtifactStore writes under the real user data root; if so run it with an isolated temp HOME and delete it."
+    expected_output:
+      - "notes/T002-baseline-reconciliation.md"
+      - "§2.2 probe output on 07775f1 (plan expects 4 false fields)"
+      - "Per named symbol/file: exists/moved/changed with file:line"
+      - "Plan claims invalidated by 66c6c799..07775f1 drift"
+    receipt:
+      result: done
+      harness: claude-code
+      summary: "Plan 2.2 probe on 07775f1 printed all four fields false and the assert raised (exit 1), matching the pre-fix baseline with no API drift; no real data-root writes. Drift since 66c6c799: promote gained same-owner candidate_refs corroboration (store.py:2553-2617, tools/memory.py:1637-1773); TUI expand/related/receipts/promote handlers exist (tui.py:3488, :3639); new write keys; read-only receipt readers; dashboard expectedSha256. PM re-checked 6 claims and corrected 2 scout errors (DEFAULT_MAX_* at retrieval.py:66-67; _MemoryRunSpy at tests/test_phase70_t28d.py:94); remaining rows rest on the scout report and are labelled unverified until gates confirm."
+      note: notes/T002-baseline-reconciliation.md
+      evidence:
+        - "src/rush/memory/store.py:2559"
+        - "src/rush/memory/retrieval.py:66"
+        - "src/rush/tui.py:4507"
+        - "src/rush/tools/memory.py:72"
+        - "tests/test_phase70_t28d.py:94"
+      contradictions:
+        - "Plan L23 TuiState.memory_subject fixed vs tui.py:4507-4512 cycles subjects"
+        - "Plan L19 cross-owner corroboration vs store.py:2553-2617 same-owner candidate_refs on public promote"
+      ambiguity_requiring_judge:
+        - "test_t02_receiver_digest_reconstruction absent: T005 treats it as a new T02 deliverable"
+        - "legacy candidate_sources promote path and maintenance _candidate_sources remain cross-owner: T007 closes them"
+  - id: T003
+    type: judge
+    assignee: Judge
+    status: active
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 73-T02/POLICY checkpoint (authorization.py) against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "docs/phase-plans/phase-73-agent-activation-and-continuity-plan.md 73-T02 (lines 103-140, 499)"
+      - "docs/phase-plans/memory-program-contract.md C01"
+      - "src/rush/memory/transactions.py:CASMapTransaction"
+      - "src/rush/io/atomic_file.py:AtomicFile"
+      - "src/rush/io/physical_paths.py:PhysicalRoot"
+      - "src/rush/setup/provision.py:default_data_root"
+      - "src/rush/dashboard/state.py:cross_process_project_lock"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md §5 72-T01 and 72-T05 (consumer needs: exact fixture call, personal-overlay grant)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Standalone load_policy_readonly, grant_memory_scope, revoke_memory_scope, resolve_memory_scope, register_memory_binding with CAS + cross_process_project_lock writers. Must also serve 72-T05's separately consented user-overlay grant. BOOTSTRAP checkpoint and the rest of 73-T02 stay with Phase 73; this checkpoint alone is not a 73-T02 PASS. Tests import authorization symbols inside test bodies so RED fails per test, not at collection."
+    expected_output:
+      - "notes/T003-design-gate-policy.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T004
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T01 Safe read, authority and symbol containment against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T01"
+      - "plan §2.1 interfaces"
+      - "plan §2.2 baseline probe"
+      - "plan §8 PAS (T01 share: imported claims never authorize)"
+      - "73-T02 plan C01 signatures (authorization.py is not implemented when this gate runs)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "review.py and memory_cache_gate.py only consume the shared defensive read adapter (plan §3). authorization.py is imported, never edited. Gate assigns which plan §8 required PAS cases belong to T01."
+    expected_output:
+      - "notes/T004-design-gate-72-t01.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T005
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T02 Honest pagination and exact UTF-8 recovery against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T02"
+      - "memory-program-contract C09 (transport coordination with 73-T05/T09)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "transport.py only receiver decode/verification for the new mode. Preserve base64 callers and token/byte caps."
+    expected_output:
+      - "notes/T005-design-gate-72-t02.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T006
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T03 Relations and derived-memory validity against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T03"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "expiry.py only where shared visibility needs its predicate. No new graph store. Existing relation/consolidation tests change only if the gate proves an existing assumption must change."
+    expected_output:
+      - "notes/T006-design-gate-72-t03.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T007
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T04 Maintenance import and owner-isolated corroboration against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T04"
+      - "plan §2.2 note: phase-70 maintenance import repair must be preserved"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "store.py only the shared owner predicate maintenance needs. No alternate maintenance runner."
+    expected_output:
+      - "notes/T007-design-gate-72-t04.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T008
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T05 Consented layered preferences and migration against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T05"
+      - "plan §2.1 authority policy order"
+      - "73-T02 plan C01 signatures and the T003 POLICY gate note (overlay grant)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Consume resolve_memory_scope; use setup/provision.py default_data_root unchanged. No automatic personal import from native host memory."
+    expected_output:
+      - "notes/T008-design-gate-72-t05.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T009
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T06 Canonical public query and administration against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T06"
+      - "plan §8 PAS atomic import seam (TypedArtifactStore.apply_import_records) and export policy"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "C01 grants from 73-T02 are consumed, never reinvented. Full stdio MCP and CLI parity: the gate decides whether cli.py is required here and amends allowed_files. apply_import_records runs on canonical record fixtures; the real capsule route is closed by the 73-T09/CODEC unit that follows this unit (decision D3)."
+    expected_output:
+      - "notes/T009-design-gate-72-t06.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T010
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 73-T09/CODEC checkpoint (Rush capsule and PAS schema-1 codec, read-only preview, import route) against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "docs/phase-plans/phase-73-agent-activation-and-continuity-plan.md 73-T09 (lines 441-480)"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md §8 atomic import seam and export policy"
+      - "T009 (72-T06) gate note: apply_import_records contract"
+      - "docs/reports/pas-agent-portable-memory-comparison-2026-09-25.md"
+      - "Verified at prep: src/rush/memory/capsule.py does not exist on 07775f1"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Owner decision D3. The gate pins the exact checkpoint boundary from 73-T09: strict Rush-capsule and PAS schema-1 codecs, loss manifest, read-only preview, export policy, and import that writes only through 72-T06's apply_import_records, exposed via one MemoryTool capsule operation, the rush memory capsule CLI command and MCP schema. authorization.py only for 73-T09's policy-mapping extension. The rest of 73-T09 (agent_hooks, agent_connection journey, T08 user views, real-host and offline-machine acceptance, docs/reports/memory-agent-adoption-acceptance.md) stays with Phase 73; this checkpoint alone is not a 73-T09 PASS."
+    expected_output:
+      - "notes/T010-design-gate-73-t09-codec.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T011
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T07 Search, correction and explanation in CLI, TUI and dashboard against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T07"
+      - "plan §7"
+      - "plan §8 PAS import-review projections"
+      - "plan §2 note: Phase 72 must not wait for panels.js"
+      - "docs/phase-plans/phase-70-agent-adoption-and-usability-plan.md T28-D"
+      - "docs/phase-plans/phase-71-prototype-dashboard-integration-plan.md P07 (lines 193-204)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Build on the CURRENT dashboard (application.js); panels.js does not exist and is created only if the existing renderer needs a memory component (plan §3, §2). tests/test_phase71_dashboard_integration.py is a new file. test_t28d_memory_workflows exists and passes at baseline; the extension must make it fail first. P07's Phase 71 shell-specific check (P02 Node command) is not available until Phase 71 P01-P02 and is named open in the T09 report."
+    expected_output:
+      - "notes/T011-design-gate-72-t07.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T012
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 75-T02/EVALUATOR checkpoint (live-decision route, task manifest and budget) against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "docs/phase-plans/phase-75-context-and-token-efficiency-plan.md 75-T02 (line 145 onward)"
+      - "plan §3 line 100 (72-T08 dependency)"
+      - "Verified at prep: scripts/benchmarks/run.py has --suite/--variant/--seeds/--allow-live-route but NOT --decision-mode, --decision-route or --task-manifest"
+      - "Verified at prep: tests/fixtures/phase75/task_manifest.json does not exist"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Checkpoint is undefined in the Phase 75 plan (open decision D2). The EVALUATOR gate (T012) defines its exact boundary, files, tests and commands; PM copies the gate's worker_package onto the EVALUATOR RED/implementation cards after owner review. The rest of 75-T02 stays with Phase 75."
+    expected_output:
+      - "notes/T012-design-gate-75-t02-evaluator.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T013
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T08 Evaluate optional hybrid retrieval against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T08"
+      - "T012 EVALUATOR gate note"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "Manifest additions must not remove or change other base families/variants. Decision D1: raw paired-eval output is committed under docs/reports/phase-72-memory-eval/{current,hybrid}/ (never .scratch/); record its size before committing; the acceptance report cites it."
+    expected_output:
+      - "notes/T013-design-gate-72-t08.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T014
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for 72-T09 Truthful docs and live acceptance against real 07775f1 source."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "plan §5 72-T09"
+      - "plan §3 docs list"
+      - "plan §8 PAS (T09 live import walkthrough)"
+      - "T001 receipt"
+      - "T002 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Resolve every ambiguity to full plan scope with no open decision; anything owner-level is flagged to the PM, never settled silently."
+      - "Return worker_package objects for this unit's RED and implementation tasks; the PM copies them onto the cards and they supersede the prep-time allowed_files/verify."
+      - "MC13.md and phase-63 plan only for truth labels. Historical receipts stay intact and revision labeled. Rerun T01-T08 affected commands on frozen bytes. A test defect in the acceptance test returns to the PM."
+    expected_output:
+      - "notes/T014-design-gate-72-t09.md"
+      - "Testable behavior list"
+      - "Complete code and caller map incl. files missing from the packet (graft callers --depth all)"
+      - "Exact design of the hard parts"
+      - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
+      - "Full test matrix (test name, fixture, assertion, expected RED failure)"
+      - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
+    receipt: null
+  - id: T015
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 73-T02/POLICY checkpoint (authorization.py) test matrix from the T003 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T003 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Standalone load_policy_readonly, grant_memory_scope, revoke_memory_scope, resolve_memory_scope, register_memory_binding with CAS + cross_process_project_lock writers. Must also serve 72-T05's separately consented user-overlay grant. BOOTSTRAP checkpoint and the rest of 73-T02 stay with Phase 73; this checkpoint alone is not a 73-T02 PASS. Tests import authorization symbols inside test bodies so RED fails per test, not at collection."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_memory_authorization.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_authorization.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T016
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 73-T02/POLICY checkpoint (authorization.py) until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T003 design-gate note"
+      - "T015 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Standalone load_policy_readonly, grant_memory_scope, revoke_memory_scope, resolve_memory_scope, register_memory_binding with CAS + cross_process_project_lock writers. Must also serve 72-T05's separately consented user-overlay grant. BOOTSTRAP checkpoint and the rest of 73-T02 stay with Phase 73; this checkpoint alone is not a 73-T02 PASS. Tests import authorization symbols inside test bodies so RED fails per test, not at collection."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/authorization.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_authorization.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T017
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 73-T02/POLICY checkpoint (authorization.py): spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T003 design-gate note"
+      - "T015 receipt"
+      - "T016 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T018
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T01 Safe read, authority and symbol containment test matrix from the T004 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T004 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "review.py and memory_cache_gate.py only consume the shared defensive read adapter (plan §3). authorization.py is imported, never edited. Gate assigns which plan §8 required PAS cases belong to T01."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_phase72_portable_memory_policy.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t01','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T019
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T01 Safe read, authority and symbol containment until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T004 design-gate note"
+      - "T018 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "review.py and memory_cache_gate.py only consume the shared defensive read adapter (plan §3). authorization.py is imported, never edited. Gate assigns which plan §8 required PAS cases belong to T01."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/store.py"
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/trust.py"
+      - "src/rush/tools/api_diff.py"
+      - "src/rush/tools/review.py"
+      - "src/rush/token_economy/memory_cache_gate.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t01 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_retrieval.py tests/test_phase61_trust.py tests/test_memory_versions.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T020
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T01 Safe read, authority and symbol containment: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T004 design-gate note"
+      - "T018 receipt"
+      - "T019 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T021
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T02 Honest pagination and exact UTF-8 recovery test matrix from the T005 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T005 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "transport.py only receiver decode/verification for the new mode. Preserve base64 callers and token/byte caps."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_memory_handoff.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t02','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_handoff.py','-k','test_t02_receiver_digest_reconstruction','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T022
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T02 Honest pagination and exact UTF-8 recovery until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T005 design-gate note"
+      - "T021 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "transport.py only receiver decode/verification for the new mode. Preserve base64 callers and token/byte caps."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/transport.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t02 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_handoff.py tests/test_memory_retrieval.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T023
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T02 Honest pagination and exact UTF-8 recovery: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T005 design-gate note"
+      - "T021 receipt"
+      - "T022 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T024
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T03 Relations and derived-memory validity test matrix from the T006 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T006 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "expiry.py only where shared visibility needs its predicate. No new graph store. Existing relation/consolidation tests change only if the gate proves an existing assumption must change."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_memory_relations.py"
+      - "tests/test_memory_consolidation.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t03','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T025
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T03 Relations and derived-memory validity until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T006 design-gate note"
+      - "T024 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "expiry.py only where shared visibility needs its predicate. No new graph store. Existing relation/consolidation tests change only if the gate proves an existing assumption must change."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/relations.py"
+      - "src/rush/memory/consolidation.py"
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/expiry.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t03 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_relations.py tests/test_memory_consolidation.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T026
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T03 Relations and derived-memory validity: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T006 design-gate note"
+      - "T024 receipt"
+      - "T025 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T027
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T04 Maintenance import and owner-isolated corroboration test matrix from the T007 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T007 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "store.py only the shared owner predicate maintenance needs. No alternate maintenance runner."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_phase62_maintenance.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t04','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T028
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T04 Maintenance import and owner-isolated corroboration until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T007 design-gate note"
+      - "T027 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "store.py only the shared owner predicate maintenance needs. No alternate maintenance runner."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/maintenance.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/store.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c 'from rush.memory.maintenance import run_maintenance_cycle; print(run_maintenance_cycle.__name__)'  # expect: run_maintenance_cycle"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t04 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase62_maintenance.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T029
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T04 Maintenance import and owner-isolated corroboration: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T007 design-gate note"
+      - "T027 receipt"
+      - "T028 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T030
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T05 Consented layered preferences and migration test matrix from the T008 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T008 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Consume resolve_memory_scope; use setup/provision.py default_data_root unchanged. No automatic personal import from native host memory."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_preferences.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_preferences.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T031
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T05 Consented layered preferences and migration until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T008 design-gate note"
+      - "T030 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Consume resolve_memory_scope; use setup/provision.py default_data_root unchanged. No automatic personal import from native host memory."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/preference_store.py"
+      - "src/rush/memory/migration.py"
+      - "src/rush/memory/store.py"
+      - "src/rush/tools/memory.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_preferences.py tests/test_memory_compatibility_regressions.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T032
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T05 Consented layered preferences and migration: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T008 design-gate note"
+      - "T030 receipt"
+      - "T031 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T033
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T06 Canonical public query and administration test matrix from the T009 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T009 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "C01 grants from 73-T02 are consumed, never reinvented. Full stdio MCP and CLI parity: the gate decides whether cli.py is required here and amends allowed_files. apply_import_records runs on canonical record fixtures; the real capsule route is closed by the 73-T09/CODEC unit that follows this unit (decision D3)."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_public.py"
+      - "tests/test_memory_public_contract.py"
+      - "tests/test_phase72_portable_memory_policy.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_public.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T034
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T06 Canonical public query and administration until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T009 design-gate note"
+      - "T033 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "C01 grants from 73-T02 are consumed, never reinvented. Full stdio MCP and CLI parity: the gate decides whether cli.py is required here and amends allowed_files. apply_import_records runs on canonical record fixtures; the real capsule route is closed by the 73-T09/CODEC unit that follows this unit (decision D3)."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/store.py"
+      - "src/rush/mcp_support/request_models.py"
+      - "src/rush/mcp_support/tool_registry.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_public.py tests/test_memory_public_contract.py tests/test_phase61_memory_tool.py tests/test_mcp.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -q  # T01+T06 assigned PAS cases"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T035
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T06 Canonical public query and administration: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T009 design-gate note"
+      - "T033 receipt"
+      - "T034 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T036
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 73-T09/CODEC checkpoint (Rush capsule and PAS schema-1 codec, read-only preview, import route) test matrix from the T010 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T010 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Owner decision D3. The gate pins the exact checkpoint boundary from 73-T09: strict Rush-capsule and PAS schema-1 codecs, loss manifest, read-only preview, export policy, and import that writes only through 72-T06's apply_import_records, exposed via one MemoryTool capsule operation, the rush memory capsule CLI command and MCP schema. authorization.py only for 73-T09's policy-mapping extension. The rest of 73-T09 (agent_hooks, agent_connection journey, T08 user views, real-host and offline-machine acceptance, docs/reports/memory-agent-adoption-acceptance.md) stays with Phase 73; this checkpoint alone is not a 73-T09 PASS."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_memory_capsule.py"
+      - "tests/test_memory_capsule_pas.py"
+      - "tests/test_memory_public_contract.py"
+      - "tests/test_mcp.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule_pas.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T037
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 73-T09/CODEC checkpoint (Rush capsule and PAS schema-1 codec, read-only preview, import route) until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T010 design-gate note"
+      - "T036 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Owner decision D3. The gate pins the exact checkpoint boundary from 73-T09: strict Rush-capsule and PAS schema-1 codecs, loss manifest, read-only preview, export policy, and import that writes only through 72-T06's apply_import_records, exposed via one MemoryTool capsule operation, the rush memory capsule CLI command and MCP schema. authorization.py only for 73-T09's policy-mapping extension. The rest of 73-T09 (agent_hooks, agent_connection journey, T08 user views, real-host and offline-machine acceptance, docs/reports/memory-agent-adoption-acceptance.md) stays with Phase 73; this checkpoint alone is not a 73-T09 PASS."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/capsule.py"
+      - "src/rush/memory/authorization.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/cli.py"
+      - "src/rush/mcp_support/tool_registry.py"
+      - "src/rush/mcp_support/request_models.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_capsule.py tests/test_memory_capsule_pas.py tests/test_memory_public_contract.py tests/test_mcp.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev rush memory capsule --help"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T038
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 73-T09/CODEC checkpoint (Rush capsule and PAS schema-1 codec, read-only preview, import route): spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T010 design-gate note"
+      - "T036 receipt"
+      - "T037 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T039
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T07 Search, correction and explanation in CLI, TUI and dashboard test matrix from the T011 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T011 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Build on the CURRENT dashboard (application.js); panels.js does not exist and is created only if the existing renderer needs a memory component (plan §3, §2). tests/test_phase71_dashboard_integration.py is a new file. test_t28d_memory_workflows exists and passes at baseline; the extension must make it fail first. P07's Phase 71 shell-specific check (P02 Node command) is not available until Phase 71 P01-P02 and is named open in the T09 report."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_ui.py"
+      - "tests/test_phase70_tui_usability.py"
+      - "tests/test_phase71_dashboard_integration.py"
+      - "tests/test_dashboard_memory_tokens.py"
+      - "tests/test_phase72_portable_memory_policy.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_ui.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase70_tui_usability.py','-k','t28d','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase71_dashboard_integration.py','-k','test_memory_panel_owner_version_lifecycle','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T040
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T07 Search, correction and explanation in CLI, TUI and dashboard until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T011 design-gate note"
+      - "T039 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit)."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Build on the CURRENT dashboard (application.js); panels.js does not exist and is created only if the existing renderer needs a memory component (plan §3, §2). tests/test_phase71_dashboard_integration.py is a new file. test_t28d_memory_workflows exists and passes at baseline; the extension must make it fail first. P07's Phase 71 shell-specific check (P02 Node command) is not available until Phase 71 P01-P02 and is named open in the T09 report."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/cli.py"
+      - "src/rush/cli_support/rendering.py"
+      - "src/rush/tui.py"
+      - "src/rush/dashboard/server.py"
+      - "src/rush/dashboard/application.js"
+      - "src/rush/dashboard/panels.js"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_ui.py tests/test_phase70_tui_usability.py -k 't07 or t28d' -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase71_dashboard_integration.py tests/test_dashboard_memory_tokens.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -k test_import_review_cli_tui_dashboard_same_state -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T041
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "72-T07 live lane: actual PTY keyboard walkthrough and browser desktop 1280x800 + mobile 390x844 walkthrough (browser-qa-agent) on the current app, two owners and seven subjects, every listed action; record identities, actions, states and observed results for the T09 report."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T011 design-gate note"
+      - "T040 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Live evidence only: no simulated output; an unavailable lane is a blocked receipt naming the exact blocker, never a pass."
+      - "Writes only to allowed_files: acceptance-report evidence sections and, for 72-T08, the raw eval output directory."
+    expected_output:
+      - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
+    allowed_files:
+      - "docs/reports/phase-72-memory-acceptance.md"
+    verify:
+      - "Dashboard/TUI processes started by this task: capture PIDs, stop them, and confirm with a process-list check before reporting."
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+      - "Lane needs credentials or a route not granted."
+    receipt: null
+  - id: T042
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T07 Search, correction and explanation in CLI, TUI and dashboard: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T011 design-gate note"
+      - "T039 receipt"
+      - "T040 receipt"
+      - "T041 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T043
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 75-T02/EVALUATOR checkpoint (live-decision route, task manifest and budget) test matrix from the T012 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T012 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Checkpoint is undefined in the Phase 75 plan (open decision D2). The EVALUATOR gate (T012) defines its exact boundary, files, tests and commands; PM copies the gate's worker_package onto the EVALUATOR RED/implementation cards after owner review. The rest of 75-T02 stays with Phase 75."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T044
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 75-T02/EVALUATOR checkpoint (live-decision route, task manifest and budget) until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T012 design-gate note"
+      - "T043 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Model per PM; not trust-boundary."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Checkpoint is undefined in the Phase 75 plan (open decision D2). The EVALUATOR gate (T012) defines its exact boundary, files, tests and commands; PM copies the gate's worker_package onto the EVALUATOR RED/implementation cards after owner review. The rest of 75-T02 stays with Phase 75."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files: []
+    verify: []
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T045
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 75-T02/EVALUATOR checkpoint (live-decision route, task manifest and budget): spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T012 design-gate note"
+      - "T043 receipt"
+      - "T044 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T046
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T08 Evaluate optional hybrid retrieval test matrix from the T013 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T013 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "Manifest additions must not remove or change other base families/variants. Decision D1: raw paired-eval output is committed under docs/reports/phase-72-memory-eval/{current,hybrid}/ (never .scratch/); record its size before committing; the acceptance report cites it."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_hybrid.py"
+      - "tests/fixtures/phase75/task_manifest.json"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_hybrid.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T047
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T08 Evaluate optional hybrid retrieval until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T013 design-gate note"
+      - "T046 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Model per PM; not trust-boundary."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "Manifest additions must not remove or change other base families/variants. Decision D1: raw paired-eval output is committed under docs/reports/phase-72-memory-eval/{current,hybrid}/ (never .scratch/); record its size before committing; the acceptance report cites it."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/memory/store.py"
+      - "scripts/benchmarks/memory.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_hybrid.py tests/test_memory_hybrid.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T048
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "72-T08 live lane: paired current-vs-hybrid evaluation on identical frozen corpus/model/grants/seeds via the EVALUATOR route; record route/executable, exact commands, manifest digest, evaluator, quality, cost and unknowns into docs/reports/phase-72-memory-acceptance.md. Unexecuted or unavailable route stays open, never a pass."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T013 design-gate note"
+      - "T047 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Live evidence only: no simulated output; an unavailable lane is a blocked receipt naming the exact blocker, never a pass."
+      - "Writes only to allowed_files: acceptance-report evidence sections and, for 72-T08, the raw eval output directory."
+    expected_output:
+      - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
+    allowed_files:
+      - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/reports/phase-72-memory-eval/"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --variant current --seeds 1,2,3 --output docs/reports/phase-72-memory-eval/current"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --variant hybrid --seeds 1,2,3 --output docs/reports/phase-72-memory-eval/hybrid"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+      - "Lane needs credentials or a route not granted."
+    receipt: null
+  - id: T049
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T08 Evaluate optional hybrid retrieval: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T013 design-gate note"
+      - "T046 receipt"
+      - "T047 receipt"
+      - "T048 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T050
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the full 72-T09 Truthful docs and live acceptance test matrix from the T014 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T014 design-gate note"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "First: re-check the gate note's code map against current HEAD; if an earlier unit changed a mapped symbol, stop and return to the PM for a gate delta."
+      - "Separate test author: do not edit production files."
+      - "Tests assert behavior from the gate matrix, not implementation details."
+      - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
+      - "MC13.md and phase-63 plan only for truth labels. Historical receipts stay intact and revision labeled. Rerun T01-T08 affected commands on frozen bytes. A test defect in the acceptance test returns to the PM."
+    expected_output:
+      - "Test files written"
+      - "RED proof output"
+      - "Matrix coverage table: gate matrix rows vs tests written"
+    allowed_files:
+      - "tests/test_phase72_memory_acceptance.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_acceptance.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T051
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement 72-T09 Truthful docs and live acceptance until its RED tests pass, with full-suite, ruff, format and mypy gates green."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T014 design-gate note"
+      - "T050 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Model per PM; not trust-boundary."
+      - "Do not weaken or edit the RED tests; a test defect returns to the PM."
+      - "Fix-round counter: max two fix rounds; after round 2 the PM finishes directly."
+      - "Run rush_check on changed files."
+      - "MC13.md and phase-63 plan only for truth labels. Historical receipts stay intact and revision labeled. Rerun T01-T08 affected commands on frozen bytes. A test defect in the acceptance test returns to the PM."
+    expected_output:
+      - "Changed files list"
+      - "GREEN output for unit verify commands"
+      - "Full suite / ruff / format / mypy output vs T001 baseline"
+      - "rush_check result"
+    allowed_files:
+      - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/user-guide/interactive-tui.md"
+      - "docs/reference/cli-reference.md"
+      - "docs/architecture/rush-epistemic-memory-and-agent-substrate.md"
+      - "docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md"
+      - "docs/phase-plans/MC13.md"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python --version  # must print 3.12"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_acceptance.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
+      - "rtk git diff --check"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+    receipt: null
+  - id: T052
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "72-T09 live lane: installed CLI, stdio MCP init/tools/call, PTY, browser desktop/mobile, two-agent A/B correction, personal-overlay and revoked-grant cases; PAS walkthrough imports one PAS session and one Rush capsule (through the 73-T09/CODEC unit's route, decision D3), rejects a forged verification claim, confirms only the intended constraint. Record each lane with exact blocker if unavailable."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T014 design-gate note"
+      - "T051 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Live evidence only: no simulated output; an unavailable lane is a blocked receipt naming the exact blocker, never a pass."
+      - "Writes only to allowed_files: acceptance-report evidence sections and, for 72-T08, the raw eval output directory."
+    expected_output:
+      - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
+    allowed_files:
+      - "docs/reports/phase-72-memory-acceptance.md"
+    verify:
+      - "Processes started by this task: capture PIDs, stop them, confirm with a process-list check before reporting."
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Behavior is ambiguous against the gate note."
+      - "Verification fails twice."
+      - "Lane needs credentials or a route not granted."
+    receipt: null
+  - id: T053
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of 72-T09 Truthful docs and live acceptance: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
+    inputs:
+      - "AGENTS.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md"
+      - "docs/phase-plans/memory-program-contract.md"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/templates/task-block-template.md"
+      - "docs/adr/0010-review-and-remediation-gates.md"
+      - "T014 design-gate note"
+      - "T050 receipt"
+      - "T051 receipt"
+      - "T052 receipt"
+      - "rtk proxy git diff for the unit"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "Owner rule overrides the GoalBuddy default of fewer Judges: one full-attack review per unit and per fix round."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec (never main, never push)."
+      - "On fail: exact fix list; the PM creates the fix Worker task with the next free T### id; counts as one fix round."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+      - "Fix round number"
+      - "Plan completion criterion met: yes/no with evidence"
+    receipt: null
+  - id: T999
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Final audit: does the branch satisfy the full Phase 72 oracle, every plan §4 requirement-ledger row and every plan §8 required case?"
+    inputs:
+      - "goal.md"
+      - "All done task receipts"
+      - "Last verification"
+      - "Current dirty diff"
+      - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md §4, §6, §7, §8"
+    constraints:
+      - "Do not implement."
+      - "Reject completion if any Worker task is queued or active."
+      - "Reject completion if any unit lacks gate, RED proof, GREEN proof and passing review."
+      - "Reject if any test is SKIPPED or any full-gate failure is new versus T001."
+      - "Reject stopping only because a lane needs credentials or owner input; such lanes must be named open with exact blocker."
+      - "Audit each likely_misfire item explicitly."
+    expected_output:
+      - "complete | not_complete"
+      - "full_outcome_complete: true | false"
+      - "Ledger row -> evidence map"
+      - "Missing evidence"
+      - "Next task if not complete"
+    receipt: null
+
+checks:
+  dirty_fingerprint: unknown
+  last_verification:
+    result: unknown
+    task: null
+    commands: []
