@@ -2015,3 +2015,53 @@ artifact does not contain the migration fix. Fresh-CAS cleanup must restore an
 absent selected entry, skip an already-original entry and reject divergent
 entries; rendering tests do not substitute for live cleanup. Phase 70 remains
 open; no blanket client failure or completed native journey is asserted.
+
+### Current artifact and owner-native Codex checkpoint — 2026-10-04
+
+This checkpoint supersedes the preceding pending-artifact statement and any
+claim that the earlier partially truncated app-server capture proved Rush
+hooks did not execute. Source is
+`26fec7dda03ebb44e1c7723f81e9f83784a9cf07`. Existing CI run `37243377594`
+completed; retained backend gates and artifact jobs passed. Whole CI is not
+green: Linux reported 6,479 passing tests, three Phase 71 UI failures and 26
+deselected tests; Windows reported 59 passing tests and the same three UI
+failures. Windows ACL acceptance passed separately. UI remains Phase 71.
+
+Current macOS artifact `11317344545` has ZIP SHA-256
+`bad870075ecda74da911c99305c27fbffd57a3bc71837aac55fd4d4485f2aa1c`.
+Installed stable executable
+`/Users/jamesdsizemore/Library/Application Support/Rush/bin/rush` matches its
+native member, SHA-256
+`464258a03cf618a854f064c12a207a5978c7e249b8cdc4587305bb511821a023`.
+This updated executable remains installed during temporary-integration cleanup.
+
+Owner's ordinary Codex CLI, using the packaged `rush:rush` skill, observed
+actual Rush PostToolUse feedback after both adding unused imports and removing
+them. Follow-up lint was clean. The coordinator independently read
+`fixture.py` and confirmed it contains only the original greeting function;
+neither unused `os` nor unused `sys` remains. These native observations close
+feedback delivery and repair acceptance. The earlier partial app-server trace
+does not establish their absence or a Codex defect.
+
+Owner then reported an actual fixture-scoped `rush_test` call with project
+`/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/.scratch/phase-70-g6-1364158/project`,
+path `.`, `allow_build=true`, and `no_cache=true`: status `ok`,
+`1 passed in 0.01s`, no findings. Runtime was Python 3.14 and pytest 9.1.1;
+output gave a count, not the test name. This is owner-observed native acceptance,
+not a coordinator-executed model call or Python 3.12 repository-suite receipt.
+Earlier permission-denied test output performed no tests and is superseded
+only by this explicit per-call build grant. Owner's overall check retained an
+external-environment `urllib3` finding; do not attribute it to this fixture or
+claim an overall clean check.
+
+Remaining Codex acceptance is native timeout followed by public disable and
+an edit that produces no Rush check. The previously approved private fault is
+restored as `eslint.config.mjs` (35-second initialization delay) and `stall.js`.
+Existing private ESLint is at
+`.scratch/phase-70-g6-1364158/eslint-prefix/bin/eslint`; native Codex must inherit
+that directory on PATH. No new installation or timeout harness is introduced.
+Timeout feedback must arrive within the host's 30-second budget, remain at
+most 8,192 UTF-8 bytes, report incomplete work without a clean claim, preserve
+the edit, and leave no owned engine process running. Preparation does not prove
+this behavior. Cleanup/restoration and final reconciliation/review remain
+open; temporary native plugin and fixture activation remain in place.
