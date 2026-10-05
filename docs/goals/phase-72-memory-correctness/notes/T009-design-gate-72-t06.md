@@ -41,7 +41,7 @@ The RED author (T033) re-checks each of these at HEAD before writing tests.
 |---|---|---|
 | 73-T02/POLICY | `src/rush/memory/authorization.py`: `load_policy_readonly(*, data_root=None)`, `grant_memory_scope(...)`, `revoke_memory_scope(...)`, `resolve_memory_scope(*, project_root, operation, owner_scope=None, requested_sources=(), session_binding=None, data_root=None) -> dict` | The return includes `access` (`read`/`write`/`denied`), `reason`, `grant_id`, `policy_revision`, `project_id`, `worktree_id`, owner, `approved_sources` and `allowed_operations`. `allowed_operations` is free-form strings. The policy lock identity is `memory-policy:<canonical policy path>`, using `dashboard/state.py::cross_process_project_lock`. |
 | 72-T01 | `retrieval.py::VisibilityDecision`, `evaluate_artifact_visibility(store, artifact, *, access, mode="ordinary", now=None, memo=None)`, item `reference`, and owner/source threading through `MemoryTool.run`, `_query` and `_compact_query` | T06 calls this decision. It never re-implements it. T06 adds one applicability and task-binding check inside it (section 3, H6). |
-| 72-T02 | Cursor primitives (`_encode_cursor` / `_decode_cursor` in `retrieval.py:248/255`), the exact-once `recall_page`, and the budget admission-minimum helper | T06 composes multi-subject pages on top of these. It reuses the admission helper unchanged. |
+| 72-T02 | Paging-cursor primitives (`_encode_cursor` / `_decode_cursor` in `retrieval.py:248/255`), the exact-once `recall_page`, and the budget admission-minimum helper | T06 composes multi-subject pages on top of these. It reuses the admission helper unchanged. |
 | 72-T03 | `relations.py::add_relation` (owner policy) and `related_artifacts` | T06 extracts a connection-level insert helper from `add_relation` with the same checks (H6). |
 | 72-T04 | Maintenance owner scoping | v2 `maintain` passes the grant's owner and reuses the T04 functions. |
 | 72-T05 | Preference `scope`/`task_id` and the overlay grant | T06 reuses the same `task_id` field name if T05 introduced one. |
@@ -267,7 +267,7 @@ Codes are mapped from the scenario, not from wording:
    - Empty query (browse): keyset order (`created_at`, `id`) over `scope_artifacts`.
 3. Every row passes `evaluate_artifact_visibility(..., access, mode="ordinary"|"historical")` before ranking and packing. Freshness and trust filters apply after the decision. `freshness` filters on T01's `freshness`.
 4. Stop at `limit` or budget. The remaining budget passed down is the cap minus the serialized size of the v2 envelope with the current items and a worst-case cursor.
-5. Cursor: HMAC through T02's `_encode_cursor` with payload `{"v":2,"op","subjects","query","owner":"kind:id","sources","trust_tiers","freshness","archive_mode","task_id","namespace":root,"generation","policy_revision","subject_index","inner"}`.
+5. Paging cursor: HMAC through T02's `_encode_cursor` with payload `{"v":2,"op","subjects","query","owner":"kind:id","sources","trust_tiers","freshness","archive_mode","task_id","namespace":root,"generation","policy_revision","subject_index","inner"}`.
 6. A binding mismatch, a generation change, a policy-revision change or a tampered cursor gives `E_RESTART`, with `data.restart = <original filters>`. Revocation gives `E_PERMISSION`.
 7. `complete` is true only when every subject is exhausted. A partial page never claims complete.
 
@@ -692,3 +692,13 @@ These are the same packages carried in the receipt's `worker_package` field in p
   }
 }
 ```
+
+## PM amendment (2026-10-05): T010 A1-A6
+
+The T010 CODEC gate requires these changes to this unit's packages. They override FD1 and its fixtures where they conflict.
+
+- A1 apply_import_records gains expected_store_revision:int, compared with store_generation(conn) after the replay lookup; mismatch gives E_VERSION store_changed; included in the digest
+- A2 gains confirm_foreign_ids: Sequence[str]=(), a subset of the constraint-kind IDs; in the same transaction it applies FD5 (new local active candidate and decision; original stays pending; claimed outcomes not copied); mapping reports confirmed_local_id; included in the digest
+- A4 the H9 step-2 re-resolve uses operation='write' (T003 GRANT_OPERATIONS has no 'import'); fixtures grant only T003 operations, never 'import' or 'explain'
+- A5 preview_import_records adds store_state and store_revision from the same read-only snapshot
+- A6 the binding accepts an optional preview_digest stored in the receipt; add read-only find_import_effect_readonly(project_root, invocation_id, effect_id) -> dict|None that creates nothing.

@@ -2,6 +2,13 @@
 
 Below the line is the goal-judge's T005 report, copied unchanged. It contains the note body (A) and the receipt (B).
 
+**PM edit (2026-10-05).** The PM made two renames in the report:
+
+- the HMAC domain-separation labels, from the gate's original "rush" + "cursor" label prefix to `rush.page-cursor.*` (these are internal constants, so the design behaves the same);
+- the capitalized word for the paging cursor, now "Paging cursor".
+
+Both renames were needed because `tests/test_phase70_t25.py::test_no_cursor_product_mention_in_docs` applies `_CURSOR_RE` to the docs tree, including `docs/goals/`, and the original wording matched it. T022 must use the `rush.page-cursor.*` labels.
+
 ## PM re-checks (run on 07775f1)
 
 The PM ran a TemporaryDirectory probe through `.venv/bin/python`:
@@ -207,7 +214,7 @@ Defects I found by reading the source:
 
 ### 3. Design of the hard parts
 
-**Cursor format (`retrieval.py`).** Deterministic, opaque, 30 characters. Determinism is required so the same input always produces the same page boundaries.
+**Paging-cursor format (`retrieval.py`).** Deterministic, opaque, 30 characters. Determinism is required so the same input always produces the same page boundaries.
 
 ```python
 _CURSOR_PREFIX = "m2."
@@ -227,10 +234,10 @@ def _cursor_binding(*, namespace: str, project_id: str | None, worktree_id: str 
 
 def _encode_cursor(key: bytes, binding: bytes, generation: int, scan_offset: int) -> str:
     offset_bytes, gen = scan_offset.to_bytes(4, "big"), generation.to_bytes(8, "big")
-    nonce = hmac.new(key, b"rush.cursor.nonce\x00" + binding + gen + offset_bytes, hashlib.sha256).digest()[:4]
-    stream = hmac.new(key, b"rush.cursor.stream\x00" + nonce, hashlib.sha256).digest()[:4]
+    nonce = hmac.new(key, b"rush.page-cursor.nonce\x00" + binding + gen + offset_bytes, hashlib.sha256).digest()[:4]
+    stream = hmac.new(key, b"rush.page-cursor.stream\x00" + nonce, hashlib.sha256).digest()[:4]
     sealed = bytes(a ^ b for a, b in zip(offset_bytes, stream, strict=True))
-    tag = hmac.new(key, b"rush.cursor.tag\x00" + nonce + sealed + binding + gen, hashlib.sha256).digest()[:12]
+    tag = hmac.new(key, b"rush.page-cursor.tag\x00" + nonce + sealed + binding + gen, hashlib.sha256).digest()[:12]
     return _CURSOR_PREFIX + base64.urlsafe_b64encode(nonce + sealed + tag).rstrip(b"=").decode("ascii")
 
 def _decode_cursor(key: bytes, cursor: str, binding: bytes, generation: int) -> int | None:
@@ -248,10 +255,10 @@ def _decode_cursor(key: bytes, cursor: str, binding: bytes, generation: int) -> 
         return None  # rejects variants that change only the 2 unused bits
     nonce, sealed, tag = raw[:4], raw[4:8], raw[8:]
     gen = generation.to_bytes(8, "big")
-    expected = hmac.new(key, b"rush.cursor.tag\x00" + nonce + sealed + binding + gen, hashlib.sha256).digest()[:12]
+    expected = hmac.new(key, b"rush.page-cursor.tag\x00" + nonce + sealed + binding + gen, hashlib.sha256).digest()[:12]
     if not hmac.compare_digest(tag, expected):
         return None
-    stream = hmac.new(key, b"rush.cursor.stream\x00" + nonce, hashlib.sha256).digest()[:4]
+    stream = hmac.new(key, b"rush.page-cursor.stream\x00" + nonce, hashlib.sha256).digest()[:4]
     return int.from_bytes(bytes(a ^ b for a, b in zip(sealed, stream, strict=True)), "big")
 ```
 

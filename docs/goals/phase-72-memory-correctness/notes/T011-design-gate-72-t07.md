@@ -82,7 +82,7 @@ T07 consumes contracts that do not exist yet at 07775f1. T039 must grep each ite
    - TUI: `]` past the last row fetches `next_cursor`, and `[` goes back through a cursor stack.
    - Dashboard: Next/Previous buttons.
    - CLI: prints the exact `--cursor` command.
-   - Cursor drift shows `restart`. A revoked grant blocks the next page.
+   - Paging-cursor drift shows `restart`. A revoked grant blocks the next page.
 6. **Inspect the exact version.** Expansion uses UTF-8 with byte offsets. The client joins the pages and checks SHA-256 against `payload_hash`. The TUI and dashboard show `sha256 verified` (label text; verified-by: plan L18 requires the representation to be 'digest verified'). On a mismatch they hold back the content and show the `digest_mismatch` state.
 7. **History and explanation.**
    - History lists immutable versions labelled `HISTORICAL — not current`, and an old version can be inspected in historical mode.

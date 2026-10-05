@@ -82,7 +82,7 @@ Worktree `/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72`. Source b
 
 | Doc | Coverage owner / authority now | T09 action |
 |---|---|---|
-| `docs/user-guide/working-with-ai-agents.md` | user-guides / current | Memory section: consent, the personal overlay, all-subject search, explain, correct/reject/supersede, denied/stale/recovery states, PAS/capsule review. Reconcile L85 and L105 ("reads need a non-empty `session_allowlist`") with v2 owner_scope/sources/grant. It must keep passing `test_phase70_t25::test_doc_reconciliation` (Cursor regex, citations) and `test_phase70_t1` (file exists). |
+| `docs/user-guide/working-with-ai-agents.md` | user-guides / current | Memory section: consent, the personal overlay, all-subject search, explain, correct/reject/supersede, denied/stale/recovery states, PAS/capsule review. Reconcile L85 and L105 ("reads need a non-empty `session_allowlist`") with v2 owner_scope/sources/grant. It must keep passing `test_phase70_t25::test_doc_reconciliation` (`_CURSOR_RE` product-name check, citations) and `test_phase70_t1` (file exists). |
 | `docs/user-guide/interactive-tui.md` | user-guides / current | Rewrite the §5 Memory key table to match T07's actual keys (history, explain, correct, import review). Keys only after they have been executed. |
 | `docs/reference/cli-reference.md` | reference / current | Document every `rush memory` leaf literally, plus v2/history/explain/capsule examples. It must keep `rush help`, `--help-all`, the category names and the everyday set (`test_help_docs_document_the_new_surface`). |
 | `docs/architecture/rush-epistemic-memory-and-agent-substrate.md` | fallback / planned | Rewrite only its L3 `Current status:` paragraph. Label §§1–5 (L9, L20, L39, L56–95, L107, L119) as proposed, or as implemented at the frozen commit with evidence. Remove the stale "Phase 63 implements the connected memory outcomes" and name Phase 72–75 and the memory-program contract. The body stays as it is. It is not a receipt, so no pin applies. |
@@ -243,7 +243,7 @@ Open-lane format: `status:"open"`, a one-line `blocker` that names the exact mis
 - **X2:** T041, T048 and T052 lack the coverage report in `allowed_files`, so `sync_docs --check` fails after their writes. T048's eval JSON under `docs/` also needs receipts.
 - **X3:** No earlier unit runs `sync_docs --check` (T037's verify, for example). CLI/MCP contract drift accumulates, and T051 absorbs it by regenerating `contracts`.
 - **X4:** The board notes under `docs/goals/phase-72-memory-correctness/` need receipts (legacy-evidence, untracked). T051 and T052 add receipts for every path present at their check, and the PM covers later notes.
-- **X5:** `test_phase70_t25` guards three T09 docs: the Cursor regex, citations, and the `rush help` / categories content.
+- **X5:** `test_phase70_t25` guards three T09 docs: the `_CURSOR_RE` product-name check, citations, and the `rush help` / categories content.
 - **X6:** If T06 changed the `rush_memory` description or SKILL.md, the guide's quotes at L85 and L105 must match. SKILL.md is not a T09 file.
 - **X7:** The T003–T013 gates run in parallel, so the T050 author re-verifies symbol names at HEAD.
 - **X8:** `tests/test_phase71_dashboard_integration.py` (plan L367) must exist from 72-T07. Otherwise that unit command fails, which is a stop_if.

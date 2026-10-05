@@ -80,7 +80,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
     command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
 
-active_task: T016
+active_task: T019
 
 tasks:
   - id: T001
@@ -758,7 +758,7 @@ tasks:
   - id: T016
     type: worker
     assignee: Worker
-    status: active
+    status: done
     reasoning_hint: high
     objective: "Implement 73-T02/POLICY checkpoint (authorization.py) until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -803,11 +803,36 @@ tasks:
       - "A full-suite, ruff or mypy failure outside the T001 baseline."
       - "Fix round 2 is exhausted (PM finishes directly; no third round)."
       - "Free disk below 8 GiB."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/authorization.py
+      commands:
+        - cmd: "pytest tests/test_memory_authorization.py -q -p no:cacheprovider (28 passed, 1 deselected)"
+          status: pass
+        - cmd: "pytest regression set (261 passed, 1 deselected)"
+          status: pass
+        - cmd: "import-isolation check (prints [])"
+          status: pass
+        - cmd: "PM full-suite baseline wrapper after PM reworded docs/goals notes (2 failed baseline, 6520 passed, 15 deselected; NEW FAILURES []; EXIT=0)"
+          status: pass
+        - cmd: "ruff check src tests scripts"
+          status: pass
+        - cmd: "ruff format --check src tests scripts"
+          status: pass
+        - cmd: "mypy src/rush"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      summary: "authorization.py implements T003 §3 with the T015 amendment. Worker's own full suite hit one new failure, test_phase70_t25 docs scan matching the editor-product-name regex (_CURSOR_RE) in the PM's design-gate notes (not product code). PM reworded the notes (Paging cursor; rush.page-cursor.* HMAC labels in T005) and re-ran the full suite: only the 2 baseline failures. rush_check unavailable in worker toolset."
+      facts:
+        - "Worker deviations 1-7 recorded in T017 and accepted by the reviewer"
+        - "PM full-suite log: scratchpad/T016-pm-fullsuite.log"
   - id: T017
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Full-attack review of 73-T02/POLICY checkpoint (authorization.py): spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
     inputs:
@@ -835,11 +860,223 @@ tasks:
       - "Findings with file:line and reproduction"
       - "Fix round number"
       - "Plan completion criterion met: yes/no with evidence"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      rationale: "Verify set green and most adversarial probes fail closed, but M1 (huge-int OverflowError escapes load_policy_readonly and writers; PM reproduced via grant expires_at=10**400) and M2 (loader and resolve accept overlay_read on a project grant; PM confirmed enforcement only at authorization.py:835-838) are spec violations. SHOULD-FIX S1 symlink-loop RuntimeError, S2 Cf label chars, S3 unpinned reasons. All 7 implementer deviations accepted. Fix round 1 -> T054, re-review T055."
+      summary: "FAIL: M1, M2 MUST-FIX; S1-S3 SHOULD-FIX (all routed to fix round 1, T054)."
+  - id: T054
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "Fix round 1 for 73-T02/POLICY: fix T017 findings M1 (OverflowError on huge ints), M2 (loader/resolve accept overlay_read on a project grant), S1 (writer RuntimeError on data-root symlink loop), S2 (labels accept Unicode Cf), S3 (pin exact reasons; add binding_stale, file_changed, E_PROJECT_NOT_REGISTERED, principal_unavailable, E_POLICY_REDACTION, E_GRANT_INACTIVE revoked/expired, E_LOCK tests)."
+    inputs:
+      - "notes/T003-design-gate-policy.md"
+      - "T017 receipt (findings M1, M2, S1-S3)"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit). Fix round 1 of max 2."
+      - "Never weaken or delete an existing assertion; add and strengthen only."
+    expected_output:
+      - "Changed files"
+      - "Finding -> code change -> pinning test table"
+      - "Full suite / ruff / format / mypy vs T001 baseline"
+    allowed_files:
+      - "src/rush/memory/authorization.py"
+      - "tests/test_memory_authorization.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_authorization.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_public_contract.py tests/test_memory_operation_metadata.py tests/test_agent_connection.py tests/test_mcp.py tests/test_project_registry.py tests/test_dashboard_http_contract.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import sys,rush.memory.authorization; bad=[m for m in sys.modules if m.startswith(('rush.tools','rush.dashboard','rush.workflows','rush.memory.store','rush.memory.retrieval'))]; print(bad); sys.exit(1 if bad else 0)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\"  # full suite within T001 baseline, zero skipped"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
+    stop_if:
+      - "A fix needs a file outside allowed_files."
+      - "A module-level forbidden import is needed."
+      - "A loader path would construct CASMapTransaction or create a file."
+      - "Free disk below 8 GiB."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/authorization.py
+        - tests/test_memory_authorization.py
+      commands:
+        - cmd: "pytest tests/test_memory_authorization.py -q -p no:cacheprovider (41 passed, 1 deselected)"
+          status: pass
+        - cmd: "pytest regression set (261 passed, 1 deselected)"
+          status: pass
+        - cmd: "import-isolation check (prints [])"
+          status: pass
+        - cmd: "PM full-suite baseline wrapper (2 failed baseline, 6533 passed, 15 deselected; NEW FAILURES []; EXIT=0; 14:31)"
+          status: pass
+        - cmd: "ruff check src tests scripts"
+          status: pass
+        - cmd: "ruff format --check src tests scripts (940 files already formatted)"
+          status: pass
+        - cmd: "mypy src/rush (no issues, 475 source files)"
+          status: pass
+        - cmd: "git diff --check"
+          status: pass
+      summary: "Fix round 1 of 2. M1: _is_number rejects bool and catches OverflowError. M2: strict loader rejects overlay_read on a non-overlay owner as record_invalid; resolve stage 13 checks the overlay owner. S1: _writer_root maps OSError/RuntimeError to E_POLICY_INVALID data_root_unavailable. S2: _require_label rejects Unicode categories Cc and Cf. S3: _expect pins the exact reason; added binding_stale, file_changed, E_PROJECT_NOT_REGISTERED, principal_unavailable, E_POLICY_REDACTION, E_GRANT_INACTIVE revoked/expired and E_LOCK tests. The implementer full-suite run failed only on the board docs scan (PM receipt wording); PM reworded it and reran the full gate green."
+      facts:
+        - "fix_round: 1"
+        - "Unit tests rose from 28 to 41"
+  - id: T055
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 73-T02/POLICY after fix round 1 (T054): confirm M1, M2, S1-S3 closed with pinning tests, re-run the T017 adversarial probes, and attack the changed code for regressions."
+    inputs:
+      - "notes/T003-design-gate-policy.md"
+      - "T017 receipt"
+      - "T054 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only; do not implement."
+      - "Rerun unit verify commands and the full gate yourself; do not trust the Worker receipt."
+      - "On pass the PM commits the unit on the phase branch with an exact pathspec. On fail this is fix round 2, the last one; the PM finishes any remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "pytest tests/test_memory_authorization.py (41 passed, 1 deselected)"
+          status: pass
+        - cmd: "pytest regression set (261 passed, 1 deselected)"
+          status: pass
+        - cmd: "ruff, format --check, mypy on authorization.py"
+          status: pass
+        - cmd: "Judge probe scripts and 7 in-process mutation runs"
+          status: fail
+        - cmd: "PM reproduction: load_policy_readonly(Path('/tmp/a\\x00b')) ValueError; grant_memory_scope NUL project_root ValueError; lone surrogate in approved_sources and owner id UnicodeEncodeError; overlay grant with data_root/user symlink loop RuntimeError; case-variant data root load gives invalid/record_invalid"
+          status: fail
+      summary: "FAIL. M1, M2, S1-S3 closed and pinned (bool half of M1 unpinned). New: F1 MUST-FIX ValueError/UnicodeEncodeError escape load and writers (NUL byte, lone surrogate); F2 SHOULD-FIX RuntimeError from writer overlay check on data_root/user symlink loop; F3 SHOULD-FIX loader overlay check depends on data-root spelling (move or case variant invalidates every grant, unrepairable via API); F4 SHOULD-FIX no test pins bool rejection in _is_number. PM reproduced F1-F3. Fix round 2 (last) -> T060, re-review T061."
+      facts:
+        - "PM decision on F3: loader check becomes structural (overlay_read requires owner kind user); exact overlay-id match stays in resolve stage 13 and the writer. T003 L147 constrains only the writer (E_INPUT), so this matches the spec."
+  - id: T060
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "Fix round 2 (last) for 73-T02/POLICY: fix T055 findings. F1: load_policy_readonly, grant_memory_scope, revoke_memory_scope and register_memory_binding raise only MemoryPolicyError; add ValueError to the handlers in _load, _writer_root and _canonical_project (NUL byte gives unavailable/data_root_unavailable, E_POLICY_INVALID/data_root_unavailable, E_INPUT/project_missing); reject strings not encodable as UTF-8 (category Cs) as E_INPUT in _require_label, _require_sources and the owner_scope id before _hex. F2: the writer overlay check (user_overlay_owner_scope resolve) maps RuntimeError/OSError/ValueError to E_POLICY_INVALID/data_root_unavailable. F3 (PM decision): the loader overlay check becomes structural (overlay_read requires owner kind user); keep the exact overlay-id match in resolve stage 13 and the writer, so a moved or case-variant data root denies the overlay grant with operation_not_granted instead of invalidating the file. F4: loader tests pin bool rejection (consented_at true, revoked_at true give record_invalid). Pin every new case with an exact-reason test."
+    inputs:
+      - "notes/T003-design-gate-policy.md"
+      - "T055 receipt (findings F1-F4)"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
+      - "Never write to .scratch/. Zero SKIPPED tests."
+      - "Dispatch on Opus (trust-boundary unit). Fix round 2 of max 2 (last; after this the PM finishes directly)."
+      - "Never weaken or delete an existing assertion; add and strengthen only."
+    expected_output:
+      - "Changed files"
+      - "Finding -> code change -> pinning test table"
+      - "Full suite / ruff / format / mypy vs T001 baseline"
+    allowed_files:
+      - "src/rush/memory/authorization.py"
+      - "tests/test_memory_authorization.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_authorization.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_public_contract.py tests/test_memory_operation_metadata.py tests/test_agent_connection.py tests/test_mcp.py tests/test_project_registry.py tests/test_dashboard_http_contract.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import sys,rush.memory.authorization; bad=[m for m in sys.modules if m.startswith(('rush.tools','rush.dashboard','rush.workflows','rush.memory.store','rush.memory.retrieval'))]; print(bad); sys.exit(1 if bad else 0)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\"  # full suite within T001 baseline, zero skipped"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
+    stop_if:
+      - "A fix needs a file outside allowed_files."
+      - "A module-level forbidden import is needed."
+      - "A loader path would construct CASMapTransaction or create a file."
+      - "Free disk below 8 GiB."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/authorization.py
+        - tests/test_memory_authorization.py
+      commands:
+        - cmd: "pytest tests/test_memory_authorization.py (PM re-run: 47 passed, 1 deselected)"
+          status: pass
+        - cmd: "pytest regression set (261 passed, 1 deselected)"
+          status: pass
+        - cmd: "import-isolation check (prints [])"
+          status: pass
+        - cmd: "PM full-suite baseline wrapper, T01 RED files deselected (2 failed baseline, 6539 passed, 30 deselected; NEW FAILURES []; EXIT=0; 24:45)"
+          status: pass
+        - cmd: "ruff check, ruff format --check, mypy src/rush (475 files)"
+          status: pass
+        - cmd: "Worker mutation run: 11 of 11 mutants killed"
+          status: pass
+      summary: "Fix round 2 of 2. F1: ValueError caught in _load, _writer_root and _canonical_project; Cs strings rejected as E_INPUT in labels, sources and owner id before any _hex or lock; policy_path and user_overlay_owner_scope route through _writer_root. F2: _overlay_owner_key maps loop errors to E_POLICY_INVALID/data_root_unavailable. F3: loader overlay check structural (owner kind user); exact match kept in stage 13 and writer; stage 12 owner-None also excludes user-kind overlay_read grants (accepted by T061 against spec L86/L252). F4: bool loader cases added. The full suite deselects the two T018 RED files, which fail by design until T019."
+      facts:
+        - "fix_round: 2 (cap reached)"
+        - "Unit tests 41 -> 47"
+  - id: T061
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 73-T02/POLICY after fix round 2 (T060): confirm F1-F4 closed with pinning tests (mutation-checked), re-run the T017 and T055 probes, and attack the changed code."
+    inputs:
+      - "notes/T003-design-gate-policy.md"
+      - "T055 receipt"
+      - "T060 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only; do not implement."
+      - "On pass the PM commits the unit. On fail there is no third fix round: the PM finishes the remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: pass_after_pm_fix
+      full_outcome_complete: true
+      changed_files:
+        - src/rush/memory/authorization.py
+        - tests/test_memory_authorization.py
+      commands:
+        - cmd: "Judge T061: F1-F4 closed; mutations M1-M12 killed except M4; resolve fuzz 6000 inputs 0 leaks; found N1 (MUST-FIX) and N2-N5"
+          status: fail
+        - cmd: "PM post-cap fix (no third round): N1 isinstance(kind, str) guard; N2 stage 3 catches ValueError and denies non-UTF-8 canonical roots; N3 hold_policy_lock uses _writer_root; N4 TypeError added to _load and _writer_root; N5 monkeypatched pinning test"
+          status: pass
+        - cmd: "PM mutation run: N1-N5 each KILLED by its pinning test; file restored"
+          status: pass
+        - cmd: "pytest tests/test_memory_authorization.py (52 passed, 1 deselected)"
+          status: pass
+        - cmd: "pytest regression set (261 passed, 1 deselected)"
+          status: pass
+        - cmd: "import-isolation check (prints [])"
+          status: pass
+        - cmd: "ruff check src tests scripts; ruff format --check (942 files); mypy src/rush (475 files)"
+          status: pass
+        - cmd: "PM full-suite baseline wrapper, T01 RED files deselected (2 failed baseline, 6544 passed, 31 deselected; NEW FAILURES []; EXIT=0; 23:50)"
+          status: pass
+      summary: "T061 rejected round-2 code with N1 (unhashable owner kind raised TypeError from load and writers), N2 (resolve stage 3 policy_invalid for NUL/surrogate project_root), N3 (hold_policy_lock raw errors), N4 (non-path data_root TypeError), N5 (unpinned surrogate check). Round cap reached, so the PM fixed all five directly, each pinned and mutation-checked; full gate green. T061 accepted all T060 deviations, including the stage-12 overlay exclusion. The judge fuzz created one lock file in the real data root; the PM deleted it (only new entry, 0 bytes). 73-T02/POLICY is complete."
+      facts:
+        - "Unit tests 47 -> 52"
+        - "POLICY unit closed after 2 fix rounds plus a PM post-cap fix"
   - id: T018
     type: worker
     assignee: Worker
-    status: queued
+    status: done
     reasoning_hint: high
     objective: "Write the full 72-T01 Safe read, authority and symbol containment test matrix from the T004 gate note; prove each new test FAILS by execution before any production change."
     inputs:
@@ -851,6 +1088,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T004 design-gate note"
     constraints:
+      - "Cross-gate requirements on 72-T01 (PM 2026-10-05): X1 (T008 4.1) evaluate_artifact_visibility accepts the overlay access (user_overlay_owner_scope, overlay_read) against a store rooted at data_root/user and does not require store.project_root == access.project_root for that owner. X2 (T005) nullable payload_hash on memory_artifacts and memory_artifact_versions, computed in _write_version, write, update_content, edit, archive and expiry/maintenance version writes, backfilled by upgrade, plus a (content, payload_hash) version reader; resolved access and optional now threaded through recall_page, expand_artifact, MemoryTool._compact_query and MemoryTool._expand. X3 (T006) a legacy-allowlist access form and a historical authorization input, both usable by evaluate_artifact_visibility; symbol_ref=None rows stay ordinary-usable. X4 (T009) T01 owns the PAS test name test_foreign_owner_and_verified_claim_do_not_authorize. X5 (T007) an access-free freshness helper."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -859,6 +1097,8 @@ tasks:
       - "Tests assert behavior from the gate matrix, not implementation details."
       - "Import not-yet-existing symbols inside test bodies so each test fails individually instead of a collection error."
       - "review.py and memory_cache_gate.py only consume the shared defensive read adapter (plan §3). authorization.py is imported, never edited. Gate assigns which plan §8 required PAS cases belong to T01."
+      - "OD-1 answered 2026-10-05 (usable, labelled): test 12 asserts usable_as_current True for the backfilled and the unbound row; reference.integrity is backfilled or unbound, never the top label; a STATED row is backfilled only when its signature matches."
+      - "OD-3 answered 2026-10-05 (Phase 72 T01): add RED test MC::test_t01_learned_advice_reads_use_shared_decision covering experience.py:359, :550 (get_version_content), :581, intent.py:341 and verification.py:207 (archived, expired, foreign-owner and tampered rows are never returned) and that recall_repair_episodes opens no writable store (no .rush, DB, -wal/-shm/-journal created on a missing store)."
     expected_output:
       - "Test files written"
       - "RED proof output"
@@ -872,11 +1112,28 @@ tasks:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+        - tests/test_phase72_portable_memory_policy.py
+      commands:
+        - cmd: "RED proof over both files (PM re-run: 16 failed, 0 passed/skipped/errors)"
+          status: pass
+        - cmd: "grep skip|xfail in both files (0 matches)"
+          status: pass
+        - cmd: "ruff check and ruff format --check on both files"
+          status: pass
+        - cmd: "git diff --check; git status shows only the two new test files (no product bytes)"
+          status: pass
+      summary: "16 RED tests: T004 matrix rows 1-14, X1 overlay (positive and negative), X5 artifact_freshness, with X2 (payload_hash on both tables, get_version_payload) folded into test 4 and X3 into test 2; PP test 13 keeps the X4 PAS name. Code map re-checked at HEAD plus uncommitted POLICY: no delta. sqlite 3.50.4 supports DROP COLUMN; diff_symbol returns unknown outside git. Gaps the author raised (X1 vs section 3 step 2, X5 helper name, X2 reader name, OD-3 access convention) were closed by the PM gate delta appended to the T004 note. Ran in parallel with read-only T055/T061 and the T060 Worker; write scopes disjoint (tests/test_phase72_*.py vs authorization.py and its test file)."
+      facts:
+        - "Test 2 is marked posix_only (deselected on Windows, never skipped)"
   - id: T019
     type: worker
     assignee: Worker
-    status: queued
+    status: active
     reasoning_hint: high
     objective: "Implement 72-T01 Safe read, authority and symbol containment until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -889,6 +1146,7 @@ tasks:
       - "T004 design-gate note"
       - "T018 receipt"
     constraints:
+      - "Cross-gate requirements on 72-T01 (PM 2026-10-05): X1 (T008 4.1) evaluate_artifact_visibility accepts the overlay access (user_overlay_owner_scope, overlay_read) against a store rooted at data_root/user and does not require store.project_root == access.project_root for that owner. X2 (T005) nullable payload_hash on memory_artifacts and memory_artifact_versions, computed in _write_version, write, update_content, edit, archive and expiry/maintenance version writes, backfilled by upgrade, plus a (content, payload_hash) version reader; resolved access and optional now threaded through recall_page, expand_artifact, MemoryTool._compact_query and MemoryTool._expand. X3 (T006) a legacy-allowlist access form and a historical authorization input, both usable by evaluate_artifact_visibility; symbol_ref=None rows stay ordinary-usable. X4 (T009) T01 owns the PAS test name test_foreign_owner_and_verified_claim_do_not_authorize. X5 (T007) an access-free freshness helper."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -910,6 +1168,14 @@ tasks:
       - "src/rush/tools/api_diff.py"
       - "src/rush/tools/review.py"
       - "src/rush/token_economy/memory_cache_gate.py"
+      - "src/rush/memory/experience.py"
+      - "src/rush/memory/intent.py"
+      - "src/rush/memory/verification.py"
+      - "tests/test_memory_efficiency.py"
+      - "tests/test_memory_core_regressions.py"
+      - "tests/test_phase62_cache_gate.py"
+      - "tests/test_phase70_t19.py"
+      - "tests/test_benchmark_memory.py"
     verify:
       - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t01 -q"
       - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_retrieval.py tests/test_phase61_trust.py tests/test_memory_versions.py -q"
@@ -969,6 +1235,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T005 design-gate note"
     constraints:
+      - "Gate package (notes/T005-design-gate-72-t02.md worker_package.red), copied by the PM 2026-10-05: Write the T005 matrix R1-R14 and amend A1-A3 exactly as in notes/T005-design-gate-72-t02.md sections 4 and 6. Prove every selected test FAILS at the 72-T01 commit before any production change."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -984,12 +1251,19 @@ tasks:
     allowed_files:
       - "tests/test_phase72_memory_correctness.py"
       - "tests/test_memory_handoff.py"
+      - "tests/test_memory_retrieval.py"
+      - "tests/test_phase70_ts.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t02','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_handoff.py','-k','test_t02_receiver_digest_reconstruction','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','tests/test_memory_handoff.py','-k','t02','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_retrieval.py::test_serialized_payload_obeys_both_caps','tests/test_memory_retrieval.py::test_unicode_expansion_reconstructs_exact_original','tests/test_phase70_ts.py::test_r5_recall_page_matches_the_old_loop_across_budgets','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py -k t02 --collect-only -q -p no:cacheprovider  # must list exactly 14 tests (R1-R14)"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "The 72-T01 commit lacks payload_hash persistence (columns on memory_artifacts and memory_artifact_versions, computed on writes, backfilled by upgrade) or a reader returning the persisted payload_hash for one version."
+      - "The 72-T01 commit lacks resolved-access threading through recall_page, expand_artifact, MemoryTool._compact_query and MemoryTool._expand, or 73-T02's grant/revoke/resolve differ from the plan L157 fixture beyond parameter spelling."
+      - "Any mapped symbol changed in a way not listed as an expected T01/73-T02 delta in note section 0."
+      - "At the T01 commit, one recall item plus the 30-character cursor cannot fit (400 bytes, 100 tokens) in amended A1 (item shape grew). Return for a gate delta; never loosen the caps."
+      - "Any selected test passes, skips, xfails or errors at collection, or the -k t02 count differs from 14."
+      - "A file outside allowed_files is needed, or behavior is ambiguous against the note."
       - "Verification fails twice."
     receipt: null
   - id: T022
@@ -1008,6 +1282,7 @@ tasks:
       - "T005 design-gate note"
       - "T021 receipt"
     constraints:
+      - "Gate package (notes/T005-design-gate-72-t02.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T02 exactly as in notes/T005-design-gate-72-t02.md sections 1 and 3 until R1-R14 and A1-A3 pass, with the full suite, ruff, format, mypy and git diff --check green. Dispatch on Opus (trust boundary)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1025,17 +1300,28 @@ tasks:
       - "src/rush/memory/retrieval.py"
       - "src/rush/tools/memory.py"
       - "src/rush/memory/transport.py"
+      - "src/rush/mcp_support/request_models.py"
+      - "scripts/benchmarks/memory.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t02 -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_handoff.py tests/test_memory_retrieval.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py -k t02 -q -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t02 -q"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_handoff.py tests/test_memory_retrieval.py -q"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_phase70_ts.py tests/test_memory_hybrid.py tests/test_phase70_t6.py tests/test_memory_public_contract.py tests/test_memory_efficiency.py tests/test_phase61_handoff.py tests/test_phase70_t28d.py tests/test_phase70_memory_visibility.py tests/test_phase70_t19.py tests/test_dashboard_memory_tokens.py tests/test_memory_acceptance.py tests/test_memory_relations.py tests/test_memory_versions.py tests/test_benchmark_memory.py tests/test_benchmark_memory_agents.py tests/test_benchmark_memory_datasets.py tests/test_mcp.py -q -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy sed -n 50,92p docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md | rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -  # plan \u00a72.2 probe: must print all four fields true and exit 0"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m '' -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy git diff --check"
+      - "rush_check on the changed files (MCP), status ok"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "A RED test looks wrong; return it to the PM and never edit tests."
+      - "store.py or any file outside allowed_files is needed (the payload_hash reader is T01's job)."
+      - "The base64 OK response key set or values would change, or the scripts/benchmarks/memory.py edit would go beyond the _probe_oversized_payload docstring."
+      - "An existing test other than A1-A3 fails because of intended T02 behavior; return for a gate delta."
+      - "The \u00a72.2 probe 'paging' field is false (T02 defect), or another field is false (report it as a T01 regression)."
+      - "_contains_special_token is no longer consulted on every _trial_page_bytes trial, or hybrid_page behavior changes."
+      - "More than two fix rounds; after round 2 the PM finishes directly."
     receipt: null
   - id: T023
     type: judge
@@ -1084,6 +1370,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T006 design-gate note"
     constraints:
+      - "Gate package (notes/T006-design-gate-72-t03.md worker_package.red), copied by the PM 2026-10-05: Write the T006 test matrix (19 functions, all names containing t03) in tests/test_phase72_memory_correctness.py. Apply exactly the two proven existing-test edits: test_memory_relations.py:83 E_INPUT->E_NOT_VISIBLE; test_memory_consolidation.py:83,:94 add access=<T01 legacy allowlist access for ['allowed']>. Bind T01-LEGACY, T01-HIST, T01-RESOLVE and the recall_page/expand_artifact signatures to committed T01/T02 code. Use only real 73-T02 grant/revoke writers. Use tmp_path for every temp path, including env HOME."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1101,10 +1388,14 @@ tasks:
       - "tests/test_memory_relations.py"
       - "tests/test_memory_consolidation.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t03','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t03','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy git diff -U0 -- tests/test_memory_relations.py tests/test_memory_consolidation.py  # expect only lines 83 (relations) and 83/94 (consolidation) changed"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "Committed T01 lacks evaluate_artifact_visibility, a legacy-allowlist access form, or historical authorization (return to PM; T03 cannot bind)."
+      - "73-T02 grants reject 'link'/'related'/'consolidate' in allowed_operations, or never resolve access=='write' for them."
+      - "T01 classifies symbol_ref=None rows as not usable_as_current (existing relations/consolidation fixtures would flip)."
+      - "payload_hash column absent from memory_artifact_versions after T02."
+      - "Need files outside allowed_files, or any selected t03 test passes, skips or errors at collection."
       - "Verification fails twice."
     receipt: null
   - id: T025
@@ -1123,6 +1414,7 @@ tasks:
       - "T006 design-gate note"
       - "T024 receipt"
     constraints:
+      - "Gate package (notes/T006-design-gate-72-t03.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T03 per notes/T006-design-gate-72-t03.md \u00a71 and \u00a73: access-aware add_relation (identical E_NOT_VISIBLE body, E_VERSION, self-supersedes E_INPUT, in-transaction T01 checks); related_artifacts (per-hop T01 decision, current-version edges, legacy same-owner-as-root, cap after visibility, historical mode); summary_invalid_reason/summary_is_current with required access and member_refs binding; owner-scoped consolidate_episodes; derived-summary adapter in evaluate_artifact_visibility; _item_relations access threading; MemoryTool link/related/consolidate owner_scope plus grant threading, policy lock through commit for link/consolidate, post-traversal re-resolution for related. Run on Opus (trust boundary)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1141,18 +1433,22 @@ tasks:
       - "src/rush/memory/consolidation.py"
       - "src/rush/memory/retrieval.py"
       - "src/rush/tools/memory.py"
-      - "src/rush/memory/expiry.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t03 -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_relations.py tests/test_memory_consolidation.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t03 -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_relations.py tests/test_memory_consolidation.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_retrieval.py tests/test_phase70_t19.py tests/test_memory_public_contract.py tests/test_memory_handoff.py tests/test_phase70_t28d.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m '' -p no:cacheprovider  # no failure beyond T001 baseline, zero SKIPPED"
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Need files outside allowed_files (expiry.py, store.py, request_models.py, authorization.py edits go to PM)."
+      - "A RED test appears wrong; do not edit tests, return to PM."
+      - "T01's decision cannot run on a read-only store, or opens a writer inside add_relation's transaction."
+      - "73-T02 exposes no policy-path or lock helper usable with identity memory-policy:<policy path>."
+      - "Any existing test beyond the three cited lines fails because of the T03 change."
+      - "Max two fix rounds; after round 2 the PM finishes directly."
     receipt: null
   - id: T026
     type: judge
@@ -1201,6 +1497,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T007 design-gate note"
     constraints:
+      - "Gate package (notes/T007-design-gate-72-t04.md worker_package.red), copied by the PM 2026-10-05: Append the 16 RED tests and 6 guards from the T007 matrix to tests/test_phase72_memory_correctness.py; import new symbols inside test bodies; prove every RED-selected test fails and every guard passes."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1215,13 +1512,17 @@ tasks:
       - "Matrix coverage table: gate matrix rows vs tests written"
     allowed_files:
       - "tests/test_phase72_memory_correctness.py"
-      - "tests/test_phase62_maintenance.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py','-k','t04','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_correctness.py::test_t04_fresh_import_and_scoped_promotion','tests/test_phase72_memory_correctness.py::test_t04_name_equality_never_corroborates','tests/test_phase72_memory_correctness.py::test_t04_ungrounded_or_stale_peer_adds_no_corroboration','tests/test_phase72_memory_correctness.py::test_t04_denied_source_adds_no_corroboration','tests/test_phase72_memory_correctness.py::test_t04_requested_source_outside_grant_refused_with_zero_effects','tests/test_phase72_memory_correctness.py::test_t04_missing_policy_refuses_apply_and_preview_without_files','tests/test_phase72_memory_correctness.py::test_t04_grant_without_write_refuses_apply','tests/test_phase72_memory_correctness.py::test_t04_legacy_owner_rows_isolated','tests/test_phase72_memory_correctness.py::test_t04_corrupt_row_isolated_and_not_corroborating','tests/test_phase72_memory_correctness.py::test_t04_lease_loss_commits_no_later_row_and_reports_unprocessed','tests/test_phase72_memory_correctness.py::test_t04_policy_lock_serializes_revoke_against_apply','tests/test_phase72_memory_correctness.py::test_t04_lock_order_policy_then_mesh','tests/test_phase72_memory_correctness.py::test_t04_preview_scoped_like_apply','tests/test_phase72_memory_correctness.py::test_t04_legacy_candidate_sources_cannot_promote_from_labels','tests/test_phase72_memory_correctness.py::test_t04_candidate_refs_shared_predicate','tests/test_phase72_memory_correctness.py::test_t04_skill_admission_scoped_corroboration','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py::test_t04_duplicate_source_copies_do_not_corroborate tests/test_phase72_memory_correctness.py::test_t04_two_independent_grounded_allowed_sources_promote_once tests/test_phase72_memory_correctness.py::test_t04_unanchored_two_approved_sources_promote tests/test_phase72_memory_correctness.py::test_t04_apply_expected_version_drift_changes_nothing tests/test_phase72_memory_correctness.py::test_t04_fresh_import_orders tests/test_phase72_memory_correctness.py::test_t04_preview_missing_db_stays_absent -q -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_phase72_memory_correctness.py"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_phase72_memory_correctness.py"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Re-checking the code map at current HEAD shows that an earlier unit changed maintenance.py, store.promote, _run_promote, _run_maintain or expiry candidate functions differently from this note"
+      - "src/rush/memory/authorization.py does not export a policy OS-lock helper (or policy path + lock identity) for mutators, or its operation vocabulary lacks write/list, or resolve_memory_scope does not return approved sources"
+      - "T01 did not ship an access-free freshness helper or a grant fixture helper"
+      - "Any RED test errors at collection, passes or skips; any guard fails"
+      - "A test needs a production edit to be writable"
     receipt: null
   - id: T028
     type: worker
@@ -1239,6 +1540,7 @@ tasks:
       - "T007 design-gate note"
       - "T027 receipt"
     constraints:
+      - "Gate package (notes/T007-design-gate-72-t04.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T04 per T007 D1-D4 on Opus (trust boundary) until all T04 RED tests and guards pass with full-suite, ruff, format and mypy green; adjust existing fixtures only by seeding real grants or grounded same-owner evidence."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1256,18 +1558,37 @@ tasks:
       - "src/rush/memory/maintenance.py"
       - "src/rush/tools/memory.py"
       - "src/rush/memory/store.py"
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_phase62_maintenance.py"
+      - "src/rush/memory/expiry.py"
+      - "tests/test_memory_core_regressions.py"
+      - "tests/test_phase61_memory_tool.py"
+      - "tests/test_phase70_t28d.py"
+      - "tests/test_phase70_t28d_backend.py"
+      - "tests/test_phase70_t28d_review1.py"
+      - "tests/test_windows_import_safety.py"
+      - "tests/test_dashboard_missing_routes.py"
+      - "tests/test_dashboard_memory_tokens.py"
+      - "tests/test_phase70_t27.py"
+      - "tests/fixtures/phase70/cli-outcomes.json"
+      - "scripts/benchmarks/memory.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c 'from rush.memory.maintenance import run_maintenance_cycle; print(run_maintenance_cycle.__name__)'  # expect: run_maintenance_cycle"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t04 -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase62_maintenance.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c 'from rush.memory.maintenance import run_maintenance_cycle; print(run_maintenance_cycle.__name__)'"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t04 -q -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase62_maintenance.py tests/test_phase62_expiry.py tests/test_phase61_trust.py tests/test_memory_versions.py tests/test_memory_core_regressions.py tests/test_phase61_memory_tool.py tests/test_phase70_t28d.py tests/test_phase70_t28d_backend.py tests/test_phase70_t28d_review1.py tests/test_windows_import_safety.py tests/test_dashboard_missing_routes.py tests/test_dashboard_memory_tokens.py tests/test_dashboard.py tests/test_phase70_t27.py tests/test_benchmark_memory.py tests/test_memory_authorization.py -q -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m '' -p no:cacheprovider"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy git diff --check"
+      - "rush_check on changed files"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "A store.py change beyond corroboration_peer_matches, corroborating_sources and routing store.promote's two corroboration branches through them"
+      - "Any top-level import of rush.memory.authorization or retrieval added to maintenance.py, or of retrieval to store.py"
+      - "Fixing a broken existing test would need a weakened assertion or changed expected status, rather than seeding a real grant or grounded evidence"
+      - "Editing authorization.py, tui.py, cli.py, dashboard/server.py or request_models.py would be needed"
+      - "Fix round 3 would be needed (hard cap of two rounds)"
+      - "Free disk below 8 GiB"
     receipt: null
   - id: T029
     type: judge
@@ -1316,6 +1637,8 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T008 design-gate note"
     constraints:
+      - "Gate package (notes/T008-design-gate-72-t05.md worker_package.red), copied by the PM 2026-10-05: Write tests/test_phase72_preferences.py with exactly the 24 tests in T008 note section 5. Import new symbols inside test bodies. Patch HOME/XDG_DATA_HOME/LOCALAPPDATA. Call register_project before every grant. Use tmp_path only. Prove that every test fails for the stated reason."
+      - "T008 owner answers (2026-10-05): OD-1 (a) plan-literal, MCP and CLI: explicit means STATED via promote_stored_artifact(user_stated=True) with corroboration_count 0; writes need user_stated true, apply true, the cache_write permission and a policy write grant for the destination owner; reachable over MCP and in-process. OD-2 (a): legacy un-promoted preferences are advice until a user-stated promotion; PreferenceStore.get/list_all unchanged. T05 keeps its 7-file scope. PM probe at T060 code: grant_memory_scope accepts ['overlay_read','write'] on user_overlay_owner_scope."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1331,11 +1654,16 @@ tasks:
     allowed_files:
       - "tests/test_phase72_preferences.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_preferences.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_preferences.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_phase72_preferences.py"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_phase72_preferences.py"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Any test passes, skips or errors at collection"
+      - "rush.memory.authorization or retrieval.evaluate_artifact_visibility is missing, or its signature or result keys differ from T003 section 3 / plan section 2.1 (report the drift)"
+      - "grant_memory_scope rejects operations ['overlay_read','write'] on user_overlay_owner_scope"
+      - "A test would need the real data root or a non-test file edit"
+      - "OD-1 or OD-2 is unanswered, or the answer is (b) and the PM has not amended the matrix"
+      - "Free disk below 8 GiB"
     receipt: null
   - id: T031
     type: worker
@@ -1353,6 +1681,8 @@ tasks:
       - "T008 design-gate note"
       - "T030 receipt"
     constraints:
+      - "Gate package (notes/T008-design-gate-72-t05.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T05 exactly as T008 note section 3 (H1-H7) specifies, until every T030 test passes. Add the MemoryTool 'preference' operation (actions resolve/record/correct/end_task) and its strict request model. Update the operation counts 22 to 23 in tests/test_phase70_t6.py (MEMORY_OPERATIONS sample entry and request-keys parametrize) and tests/test_phase70_t20.py (rename the count test to _is_23). Dispatch on Opus. Do not edit RED tests or authorization.py."
+      - "T008 owner answers (2026-10-05): OD-1 (a) plan-literal, MCP and CLI: explicit means STATED via promote_stored_artifact(user_stated=True) with corroboration_count 0; writes need user_stated true, apply true, the cache_write permission and a policy write grant for the destination owner; reachable over MCP and in-process. OD-2 (a): legacy un-promoted preferences are advice until a user-stated promotion; PreferenceStore.get/list_all unchanged. T05 keeps its 7-file scope. PM probe at T060 code: grant_memory_scope accepts ['overlay_read','write'] on user_overlay_owner_scope."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1371,16 +1701,26 @@ tasks:
       - "src/rush/memory/migration.py"
       - "src/rush/memory/store.py"
       - "src/rush/tools/memory.py"
+      - "src/rush/mcp_support/request_models.py"
+      - "tests/test_phase70_t6.py"
+      - "tests/test_phase70_t20.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_preferences.py tests/test_memory_compatibility_regressions.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_preferences.py tests/test_memory_compatibility_regressions.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase61_migration.py tests/test_phase58_map_transactions.py tests/test_phase58_persistence.py tests/test_phase53_state_writers.py tests/test_phase41_memory_ship.py tests/test_cli_runtime_bindings.py tests/test_phase70_t6.py tests/test_phase70_t20.py tests/test_memory_versions.py tests/test_memory_authorization.py tests/test_phase72_memory_correctness.py tests/test_memory_public_contract.py tests/test_memory_relations.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\""
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Any file outside allowed_files would need to change: retrieval.py, cli.py, theme.py, the governance manifest, authorization.py, or another test file enumerating operations"
+      - "store.py would need more than narrow owner/version helper exposure"
+      - "T01's evaluate_artifact_visibility rejects overlay access against the dr/user store root"
+      - "A RED test appears wrong (report it; do not edit it)"
+      - "The full suite shows a new failure or any skip"
+      - "A third fix round would be needed (cap is 2)"
+      - "A read path creates any file, or a test touches the real data root"
+      - "Free disk below 8 GiB"
     receipt: null
   - id: T032
     type: judge
@@ -1429,6 +1769,8 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T009 design-gate note"
     constraints:
+      - "Gate package (notes/T009-design-gate-72-t06.md worker_package.red), copied by the PM 2026-10-05: Write the T009 section 5 test matrix for 72-T06 against the current HEAD. First re-check the section 0 drift table (authorization.py signatures from 73-T02; evaluate_artifact_visibility from T01; the cursor and admission helpers from T02; add_relation from T03). Then prove by execution that every new test fails individually. Import not-yet-existing symbols inside test bodies."
+      - "T010 amendments A1-A6 (binding, PM 2026-10-05; A3 is unused): A1 apply_import_records gains expected_store_revision:int, compared with store_generation(conn) after the replay lookup; mismatch gives E_VERSION store_changed; included in the digest. A2 gains confirm_foreign_ids: Sequence[str]=(), a subset of the constraint-kind IDs; in the same transaction it applies FD5 (new local active candidate and decision; original stays pending; claimed outcomes not copied); mapping reports confirmed_local_id; included in the digest. A4 the H9 step-2 re-resolve uses operation='write' (T003 GRANT_OPERATIONS has no 'import'); fixtures grant only T003 operations, never 'import' or 'explain'. A5 preview_import_records adds store_state and store_revision from the same read-only snapshot. A6 the binding accepts an optional preview_digest stored in the receipt; add read-only find_import_effect_readonly(project_root, invocation_id, effect_id) -> dict|None that creates nothing."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1446,10 +1788,12 @@ tasks:
       - "tests/test_memory_public_contract.py"
       - "tests/test_phase72_portable_memory_policy.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_public.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_public.py','tests/test_memory_public_contract.py::test_t06_legacy_and_v2_list_coexist_same_ids','tests/test_memory_public_contract.py::test_t06_legacy_edit_then_v2_history_versions_agree','tests/test_memory_public_contract.py::test_t06_new_cli_leaves_in_public_manifest','tests/test_memory_public_contract.py::test_t06_cli_mcp_v2_payload_match_inprocess','tests/test_memory_public_contract.py::test_t06_mutation_receipts_columns_and_dashboard_ids','tests/test_phase72_portable_memory_policy.py::test_foreign_owner_and_verified_claim_do_not_authorize','tests/test_phase72_portable_memory_policy.py::test_imported_constraint_needs_local_applicability_review','tests/test_phase72_portable_memory_policy.py::test_preview_no_files_then_atomic_apply','tests/test_phase72_portable_memory_policy.py::test_changed_capsule_policy_and_artifact_version_conflict','tests/test_phase72_portable_memory_policy.py::test_replay_and_distinct_import_identity','tests/test_phase72_portable_memory_policy.py::test_t06_import_crash_before_commit_no_rows_or_receipt','tests/test_phase72_portable_memory_policy.py::test_t06_import_never_evicts_local_stated_same_symbol','tests/test_phase72_portable_memory_policy.py::test_t06_import_rejects_trojan_content_zero_writes','tests/test_phase72_portable_memory_policy.py::test_t06_import_record_schema_strict','tests/test_phase72_portable_memory_policy.py::test_t06_import_policy_lock_held_through_commit','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # if T01 already owns test_foreign_owner_and_verified_claim_do_not_authorize, substitute ...::test_foreign_owner_and_verified_claim_do_not_authorize_on_import"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "authorization.py is absent, or resolve_memory_scope/grant_memory_scope signatures differ from Phase 73 plan L123."
+      - "evaluate_artifact_visibility, or T02's cursor/admission helpers, are absent at HEAD."
+      - "A test cannot be made to fail for a T06-specific reason (it would pass at HEAD)."
+      - "Files outside allowed_files are needed."
       - "Verification fails twice."
     receipt: null
   - id: T034
@@ -1468,6 +1812,8 @@ tasks:
       - "T009 design-gate note"
       - "T033 receipt"
     constraints:
+      - "Gate package (notes/T009-design-gate-72-t06.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T06 exactly per T009 section 3 (H1-H11) until every T033 RED test passes. Also update the existing contract-count tests and regenerate governance/public-operations.toml with scripts/build_remediation_manifests.py --operations. Dispatch on Opus (trust boundary). Do not edit RED tests."
+      - "T010 amendments A1-A6 (binding, PM 2026-10-05; A3 is unused): A1 apply_import_records gains expected_store_revision:int, compared with store_generation(conn) after the replay lookup; mismatch gives E_VERSION store_changed; included in the digest. A2 gains confirm_foreign_ids: Sequence[str]=(), a subset of the constraint-kind IDs; in the same transaction it applies FD5 (new local active candidate and decision; original stays pending; claimed outcomes not copied); mapping reports confirmed_local_id; included in the digest. A4 the H9 step-2 re-resolve uses operation='write' (T003 GRANT_OPERATIONS has no 'import'); fixtures grant only T003 operations, never 'import' or 'explain'. A5 preview_import_records adds store_state and store_revision from the same read-only snapshot. A6 the binding accepts an optional preview_digest stored in the receipt; add read-only find_import_effect_readonly(project_root, invocation_id, effect_id) -> dict|None that creates nothing."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1484,19 +1830,34 @@ tasks:
     allowed_files:
       - "src/rush/tools/memory.py"
       - "src/rush/memory/store.py"
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/memory/relations.py"
       - "src/rush/mcp_support/request_models.py"
       - "src/rush/mcp_support/tool_registry.py"
+      - "src/rush/cli.py"
+      - "src/rush/governance/public_operations.py"
+      - "governance/public-operations.toml"
+      - "tests/fixtures/phase70/cli-outcomes.json"
+      - "tests/test_phase70_t6.py"
+      - "tests/test_phase70_t20.py"
+      - "tests/test_phase54_operation_adapters.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_public.py tests/test_memory_public_contract.py tests/test_phase61_memory_tool.py tests/test_mcp.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -q  # T01+T06 assigned PAS cases"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_public.py tests/test_memory_public_contract.py tests/test_phase61_memory_tool.py tests/test_mcp.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase70_t6.py tests/test_phase70_t20.py tests/test_phase54_operation_adapters.py tests/test_phase51_public_operations.py tests/test_phase70_t27.py tests/test_memory_handoff.py tests/test_memory_versions.py tests/test_memory_relations.py tests/test_memory_consolidation.py tests/test_phase60_characterization.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m '' -p no:cacheprovider  # no failure beyond the T001 baseline, zero SKIPPED"
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
+      - "rush_check on changed files"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "A needed file is outside allowed_files (the PM amends with gate-note justification)."
+      - "The 73-T02 operation vocabulary or denied-reason vocabulary cannot express history/explain/import or ambiguous/owner/source denial (section 4.1)."
+      - "T03's add_relation cannot be split into insert_relation_tx without weakening its checks."
+      - "A legacy route's output or authority would need to change to pass."
+      - "A RED test appears defective (return it to the PM; never edit it)."
+      - "After fix round 2 the PM finishes directly."
     receipt: null
   - id: T035
     type: judge
@@ -1545,6 +1906,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T010 design-gate note"
     constraints:
+      - "Gate package (notes/T010-design-gate-73-t09-codec.md worker_package.red), copied by the PM 2026-10-05: Write the full 73-T09/CODEC test matrix from notes/T010 section 6 and prove each new test FAILS by execution before any production change."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1560,15 +1922,25 @@ tasks:
     allowed_files:
       - "tests/test_memory_capsule.py"
       - "tests/test_memory_capsule_pas.py"
+      - "tests/fixtures/memory_capsule/pas_session_full.json"
+      - "tests/fixtures/memory_capsule/pas_session_serde_defaults.json"
+      - "tests/test_memory_authorization.py"
+      - "tests/test_phase72_portable_memory_policy.py"
       - "tests/test_memory_public_contract.py"
       - "tests/test_mcp.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule_pas.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule.py','tests/test_memory_capsule_pas.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_authorization.py','tests/test_phase72_portable_memory_policy.py','tests/test_memory_public_contract.py','tests/test_mcp.py','-k','capsule or personal_scope','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_authorization.py','tests/test_phase72_portable_memory_policy.py','tests/test_memory_public_contract.py','tests/test_mcp.py','-k','not (capsule or personal_scope)','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-3000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==0 and 'skipped' not in s and ' error' not in s else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff check tests && rtk proxy uv run --python 3.12 --extra dev ruff format --check tests && rtk git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "OD1, OD2 or OD3 is unanswered, or answered differently from the recommendation the matrix assumes: stop and return to the PM for a gate delta."
+      - "72-T06 is not merged with amendments A1-A6 (find_import_effect_readonly, expected_store_revision, confirm_foreign_ids, preview store_state/store_revision, preview_digest binding, operation='write'), or any section 1 earlier-unit symbol differs at HEAD."
+      - "tests/test_phase72_portable_memory_policy.py does not exist yet (T06 creates it)."
+      - "Any new test passes at RED, errors at collection, or needs a skip/xfail."
+      - "Any production file, tests/test_phase70_t6.py, tests/test_phase70_t20.py, tests/test_phase54_operation_adapters.py or tests/fixtures/phase70/cli-outcomes.json would need editing (those belong to T037)."
+      - "A PAS fixture field cannot be traced to the pinned 0c9515a session.rs shape recorded in notes/T010 section 4.3."
+      - "Free disk below 8 GiB; a temp dir is made without cleanup; a new venv would be built."
     receipt: null
   - id: T037
     type: worker
@@ -1586,6 +1958,7 @@ tasks:
       - "T010 design-gate note"
       - "T036 receipt"
     constraints:
+      - "Gate package (notes/T010-design-gate-73-t09-codec.md worker_package.implement), copied by the PM 2026-10-05: Implement the 73-T09/CODEC checkpoint exactly per notes/T010 sections 2-5: capsule.py codecs, preview, export policy, import through apply_import_records only, the authorization.py capsule mapping, MemoryTool 'capsule', the rush memory capsule CLI and the MCP schema, until every T036 test and existing contract passes."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1606,18 +1979,29 @@ tasks:
       - "src/rush/cli.py"
       - "src/rush/mcp_support/tool_registry.py"
       - "src/rush/mcp_support/request_models.py"
+      - "src/rush/governance/public_operations.py"
+      - "governance/public-operations.toml"
+      - "src/rush/theme.py"
+      - "tests/fixtures/phase70/cli-outcomes.json"
+      - "tests/test_phase70_t6.py"
+      - "tests/test_phase70_t20.py"
+      - "tests/test_phase54_operation_adapters.py"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
+      - "docs/user-guide/working-with-ai-agents.md"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_capsule.py tests/test_memory_capsule_pas.py tests/test_memory_public_contract.py tests/test_mcp.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev rush memory capsule --help"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
-      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_capsule.py','tests/test_memory_capsule_pas.py','tests/test_memory_authorization.py','tests/test_phase72_portable_memory_policy.py','tests/test_phase72_memory_public.py','tests/test_memory_public_contract.py','tests/test_memory_operation_metadata.py','tests/test_mcp.py','tests/test_phase61_handoff.py','tests/test_memory_handoff.py','tests/test_dashboard_memory_tokens.py','tests/test_phase70_t6.py','tests/test_phase70_t20.py','tests/test_phase54_operation_adapters.py','tests/test_phase51_public_operations.py','tests/test_phase70_t27.py','tests/test_phase70_t25.py','tests/test_sync_docs.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==0 and 'skipped' not in s and ' error' not in s else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev rush memory capsule --help"
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'scripts/sync_docs.py','--check'],capture_output=True,text=True); bad=[l for l in r.stderr.splitlines() if l.strip() and not (l.startswith('docs/goals/phase-72-memory-correctness/notes/') and l.endswith(': missing coverage receipt'))]; print(r.stdout); print('\\n'.join(bad)); sys.exit(0 if not bad else 1)\""
+      - "cd /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 && rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts && rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts && rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev mypy src/rush && rtk git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "OD1-OD3 are unanswered or changed, or T036 RED proof is absent."
+      - "Any write would bypass apply_import_records, or src/rush/memory/store.py, retrieval.py or relations.py (T01/T06-owned) would need an edit: stop for a gate delta."
+      - "72-T06 HEAD lacks amendments A1-A6, or T003 authorization symbols differ from notes/T010 section 1."
+      - "Any T036 test would be weakened, deleted or skipped."
+      - "A third fix round would be needed: the orchestrator finishes it."
+      - "A file outside allowed_files changes; agent_hooks, agent_connection, rendering, tui, dashboard or the acceptance report would be touched (D3)."
+      - "Free disk below 8 GiB; a temp dir is made without cleanup; a new venv would be built."
     receipt: null
   - id: T038
     type: judge
@@ -1651,6 +2035,110 @@ tasks:
       - "Fix round number"
       - "Plan completion criterion met: yes/no with evidence"
     receipt: null
+  - id: T056
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Design gate (read-only, adversarial) for a 73-T02/BOOTSTRAP checkpoint added by owner decision D-T07-1 (2026-10-05): the setup/connect consent command that calls grant_memory_scope(consent=True), so denied memory screens and maintain point to a real command. Runs after 73-T09/CODEC and before 72-T07."
+    inputs:
+      - "docs/phase-plans/phase-73-agent-activation-and-continuity-plan.md 73-T02 (L25, L103-145, L499)"
+      - "docs/phase-plans/memory-program-contract.md C01"
+      - "notes/T003-design-gate-policy.md (authorization API; §4 item 4 BOOTSTRAP obligations)"
+      - "notes/T004-design-gate-72-t01.md (_read_access, session_binding)"
+      - "notes/T007-design-gate-72-t04.md (maintain denied without a grant)"
+      - "notes/T011-design-gate-72-t07.md (D-T07-1)"
+    constraints:
+      - "Read-only; do not implement."
+      - "Pin the exact checkpoint boundary from 73-T02 text: what this checkpoint delivers (consent command surface, config-mutation permission check, grant/revoke/binding calls, the denied-state pointer) and what stays with Phase 73. List every judgment call in owner_decisions_needed."
+      - "Return worker_package objects for the RED (T057) and implementation (T058) tasks."
+    expected_output:
+      - "notes/T056-design-gate-73-t02-bootstrap.md"
+      - "Checkpoint boundary, testable behavior, code and caller map, design, cross-task conflicts, test matrix, worker packages"
+    receipt: null
+  - id: T057
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Write the 73-T02/BOOTSTRAP checkpoint test matrix from the T056 gate note; prove each new test FAILS by execution before any production change."
+    inputs:
+      - "notes/T056-design-gate-73-t02-bootstrap.md"
+    constraints:
+      - "Gate package (notes/T056-design-gate-73-t02-bootstrap.md worker_package.red), copied by the PM 2026-10-05: Write the T056 section 6 matrix in tests/test_memory_activation_lifecycle.py for OD-B1 option (a) as answered by James, after re-grepping every section 3.2 symbol at start HEAD. Prove every test FAILS by execution before any production change. In the receipt list every existing test that asserts exact equality on a policy-denial raw/summary or an agent disconnect raw."
+      - "Separate test author: do not edit production files."
+      - "First re-check the gate note's code map against current HEAD; on drift stop and return to the PM."
+      - "The T056 worker_package supersedes these prep-time fields."
+    allowed_files:
+      - "tests/test_memory_activation_lifecycle.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_activation_lifecycle.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+    stop_if:
+      - "Any OD-B1/B3/B4/B5 still unanswered."
+      - "Any section 3.2 symbol, signature, reason code or error code differs at start HEAD."
+      - "A test can only be written by editing a non-test file or another test file."
+      - "A test passes before implementation and cannot be made to assert new behavior."
+      - "Temp dirs not via tmp_path/TemporaryDirectory, a real data root touched, or any skip marker other than posix_only/windows_only needed."
+      - "Verification fails twice."
+    receipt: null
+  - id: T058
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "Implement the 73-T02/BOOTSTRAP checkpoint until its RED tests pass, with full-suite (T001 baseline), ruff, format and mypy gates green."
+    inputs:
+      - "notes/T056-design-gate-73-t02-bootstrap.md"
+      - "T057 receipt"
+    constraints:
+      - "Gate package (notes/T056-design-gate-73-t02-bootstrap.md worker_package.implement), copied by the PM 2026-10-05: Implement T056 section 4 (option a) until every T057 test passes: AgentConnectionTool memory_grant/memory_revoke actions and the connect binding step; rush memory grant/revoke leaves and the connect --memory-binding/--memory-grant-id/--approve-memory-binding/--expected-policy-revision options in cli.py; the disconnect raw.memory listing; additive authorization.py helpers project_identity, memory_grant_command and memory_next_action; tools/memory.py _attach_policy_next_action on every policy-denial path; governance rows plus regenerated toml; cli-outcomes cases; count update; user guide and doc-coverage receipt. Do not edit RED tests. Max two fix rounds."
+      - "Dispatch on Opus (trust boundary: consent, permissions)."
+      - "Do not weaken or edit the RED tests; max two fix rounds."
+      - "The T056 worker_package supersedes these prep-time fields."
+    allowed_files:
+      - "src/rush/tools/agent_connection.py"
+      - "src/rush/cli.py"
+      - "src/rush/memory/authorization.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/governance/public_operations.py"
+      - "governance/public-operations.toml"
+      - "tests/fixtures/phase70/cli-outcomes.json"
+      - "tests/test_phase54_operation_adapters.py"
+      - "docs/user-guide/working-with-ai-agents.md"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
+      - "existing test files enumerated in the T057 receipt (migration-only exact-assertion edits; PM amends with that list)"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_activation_lifecycle.py tests/test_memory_authorization.py tests/test_agent_connection.py tests/test_mcp.py tests/test_bootstrap_install.py tests/test_memory_public_contract.py tests/test_memory_operation_metadata.py tests/test_phase54_operation_adapters.py tests/test_phase51_public_operations.py tests/test_phase70_t27.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
+      - "rtk proxy git diff --check"
+    stop_if:
+      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Any change to authorization.py loader, writers or resolve, or a helper-name collision with CODEC's mapping functions."
+      - "Any path lets MCP, model text, --consent/--acknowledge/--yes/--install-guidance, install --memory, or a dashboard/TUI control create, revoke or bind a grant."
+      - "A policy write occurs on preview, on a declined or permission-skipped run, or while the ledger or a dashboard project lock is held."
+      - "Doc text would match tests/test_phase70_t25.py _CURSOR_RE."
+      - "Verification fails twice."
+    receipt: null
+  - id: T059
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack review of the 73-T02/BOOTSTRAP checkpoint: spec compliance vs the T056 note, consent bypass attempts, test quality, file scope."
+    inputs:
+      - "notes/T056-design-gate-73-t02-bootstrap.md"
+      - "T057 and T058 receipts"
+    constraints:
+      - "Read-only; rerun unit verify commands and the full gate yourself."
+      - "On pass the PM commits the unit; on fail exact fix list (counts as a fix round)."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt: null
   - id: T039
     type: worker
     assignee: Worker
@@ -1666,6 +2154,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T011 design-gate note"
     constraints:
+      - "Gate package (notes/T011-design-gate-72-t07.md worker_package.red), copied by the PM 2026-10-05: Write the full T011 test matrix (rows 1-42) and the listed migration-only edits to Phase 70 tests, keeping every assertion; prove each new test FAILS by execution before any production change."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1684,12 +2173,22 @@ tasks:
       - "tests/test_phase71_dashboard_integration.py"
       - "tests/test_dashboard_memory_tokens.py"
       - "tests/test_phase72_portable_memory_policy.py"
+      - "tests/test_phase70_t28d.py"
+      - "tests/test_phase70_t28d_review1.py"
+      - "tests/test_memory_versions.py"
+      - "tests/test_phase70_t28f_review1.py"
+      - "tests/test_phase70_t28a_fixes.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_ui.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase70_tui_usability.py','-k','t28d','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase71_dashboard_integration.py','-k','test_memory_panel_owner_version_lifecycle','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_ui.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase70_tui_usability.py','-k','t28d','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase71_dashboard_integration.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_dashboard_memory_tokens.py','-k','t07','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_portable_memory_policy.py','-k','test_import_review_cli_tui_dashboard_same_state','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "The note \u00a70 drift check finds a changed or missing consumed symbol at HEAD: the T06 v2 list/history/explain/correction shapes, the T02 utf8 fields, T01 revoked/expired reason codes, 73-T02 grant_memory_scope, or the 73-T09 capsule operation and preview fields."
+      - "Owner decision D-T07-1 is unresolved (needed for the denied/revoked action assertions)."
+      - "A migration edit would remove or weaken an existing assertion."
+      - "Need files outside allowed_files."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
     receipt: null
@@ -1709,6 +2208,7 @@ tasks:
       - "T011 design-gate note"
       - "T039 receipt"
     constraints:
+      - "Gate package (notes/T011-design-gate-72-t07.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T07 per T011 \u00a73 until every RED test and every migrated legacy test passes, with the full suite, ruff, format and mypy green. Dispatch on Opus (hostile content and trust boundary)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1728,18 +2228,25 @@ tasks:
       - "src/rush/tui.py"
       - "src/rush/dashboard/server.py"
       - "src/rush/dashboard/application.js"
-      - "src/rush/dashboard/panels.js"
+      - "src/rush/dashboard/static_assets.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_ui.py tests/test_phase70_tui_usability.py -k 't07 or t28d' -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase71_dashboard_integration.py tests/test_dashboard_memory_tokens.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -k test_import_review_cli_tui_dashboard_same_state -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_ui.py tests/test_phase70_tui_usability.py -k 't07 or t28d' -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase71_dashboard_integration.py tests/test_dashboard_memory_tokens.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py -k test_import_review_cli_tui_dashboard_same_state -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_dashboard_memory_tokens.py tests/test_memory_versions.py tests/test_phase70_memory_visibility.py tests/test_phase71_dashboard_integration.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase70_t28d.py tests/test_phase70_t28d_review1.py tests/test_phase70_t28a_fixes.py tests/test_phase70_t28f_review1.py tests/test_phase70_t20.py tests/test_tui.py tests/test_tui_terminal.py tests/test_dashboard_projects.py tests/test_dashboard_http_contract.py tests/test_dashboard_motion_contract.py tests/test_phase72_memory_public.py tests/test_memory_public_contract.py tests/test_mcp.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import rush.tui, rush.dashboard.server, rush.cli, pathlib, sys; sys.exit(int(pathlib.Path('src/rush/dashboard/panels.js').exists()))\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m '' -p no:cacheprovider"
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "A RED test looks wrong: return it to the PM; never edit it."
+      - "A legacy test fails through a documented migration mechanism (legacy list shape, base64 expand, or missing grant) but was not migrated: return to the PM for a T039 delta (not a fix round)."
+      - "A T06/T02/T01/CODEC contract field the note consumes is absent."
+      - "panels.js would be needed."
+      - "Need files outside allowed_files."
       - "Verification fails twice."
     receipt: null
   - id: T041
@@ -1758,6 +2265,7 @@ tasks:
       - "T011 design-gate note"
       - "T040 receipt"
     constraints:
+      - "Gate package (notes/T011-design-gate-72-t07.md worker_package.live), copied by the PM 2026-10-05: 72-T07 live lanes against the T040 build. CLI: two owners, seven subjects, every listed action. Stdio MCP: the rush_memory v2 list refs match CLI JSON. PTY keyboard at 120x40 and 80x24. Browser at 1280x800 and 390x844 (browser-qa-agent). The T07 share of the PAS import walkthrough. Record identities, actions, states and observed results in the report's '72-T07 live lanes' section."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1766,14 +2274,22 @@ tasks:
     expected_output:
       - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
     allowed_files:
+      - "docs/reports/phase-64-66-documentation-coverage.md"
       - "docs/reports/phase-72-memory-acceptance.md"
     verify:
-      - "Dashboard/TUI processes started by this task: capture PIDs, stop them, and confirm with a process-list check before reporting."
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev rush --version; rtk proxy git rev-parse HEAD; node --version"
+      - "Fixture script, run with `rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python - <<'PY' ... PY`: tempfile.TemporaryDirectory HOME; git project; `rush project add <p> --allow-cache-write`; the D-T07-1 grant route; seed 7 Alice + 7 Bob rows via MemoryTool write (owner_scope); then subprocess `rush memory list`, `list --subject preference --query needle --json`, `--cursor`, `expand --id --version`, `history --id`, `explain --id`, `related --id --version`, `edit --correction reject|correct|supersede` preview then `--apply --allow-cache-write`, `archive` / `archive --restore`, `delete --target`, no-grant denial, revoke then next page"
+      - "Stdio MCP: spawn `rush mcp serve` with JSON-RPC initialize and tools/call rush_memory list schema_version 2; compare refs with the CLI JSON"
+      - "PTY: pty.fork `rush ui <p>` at 120x40 and 80x24. Send F3 (\\x1bOR), 4, S x8, /needle\\r, ], x, v, E, c..., Tab and Shift-Tab (\\x1b[Z), Escape, y/n, then q. Capture output with ANSI stripped, and record exit code 0"
+      - "Browser: start `rush dashboard <p> --no-open --json --port 0` in the temp HOME (record its PID). browser-qa-agent opens the launch URL at 1280x800 and 390x844 and performs search, owner filter, archive toggle, paging, inspect (sha256 verified label, verified-by: plan L18), history, explain, correct, archive/restore, delete, promote, hostile row, keyboard-only Tab/Enter/Escape, and reduced motion. Do not use Kapture"
+      - "PAS: preview and import one capsule through the CLI, TUI `I` and dashboard review; reject a forged verified claim (verified-by: plan L471); confirm only the intended constraint"
+      - "Capture the PIDs of the dashboard and TUI processes, stop them, and confirm with `ps -p <pid>` that none remain. Delete the temp HOME before reporting"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "A lane cannot run its exact route. Record it as open with one exact blocker (for example browser-qa-agent unavailable, with the verbatim error, or the 73-T09 capsule operation absent at <sha>). Never simulate output."
+      - "A product assertion fails: return to the PM for a fix round. That is not an open lane."
+      - "Need credentials or a route not granted."
+      - "Need files outside allowed_files."
       - "Verification fails twice."
-      - "Lane needs credentials or a route not granted."
     receipt: null
   - id: T042
     type: judge
@@ -1823,6 +2339,8 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T012 design-gate note"
     constraints:
+      - "Write T012 section 6 matrix rows 1-28 plus the 5 extensions and the OD12 row; existing tests in the 3 extended files must keep passing (no edits to existing assertions). No test or verify command calls a real provider route."
+      - "D2 owner answers (2026-10-05), binding: OD1+OD2 approve section 1 items 1-9 and seed the manifest with the 5 cases that have real executors; the other 10 Phase 75 families are reported open. OD3+OD4 the live budget counts provider model tokens once per call (ingestion and tool tokens reported separately); effective case budget is min(--max-total-tokens, case max_total_tokens). OD5+OD6 live mode requires --task-manifest and runs only manifest cases; answer decisions run in an empty contained root/decision-cwd and any tool use fails the case; episodes use cwd=root. OD7+OD8 normalized_contains v1 scoring; strict Codex parsing (exactly one agent_message, unknown event fails, one optional fence stripped). OD9 decision_protocol lives in provider_routes.json (contracts.py and fixtures.py edited). OD10+OD11 --seeds are repetition labels only in live mode and the report says so; an EVALUATOR live smoke card (T062) runs after T044. OD12+OD13 an episode fixture_revision is sha256 over the files the builder writes (not the builder source), so editing _UPLOAD_BUGGY changes it; the runner rejects any patch path outside editable_paths. Added matrix row: tests/test_benchmark_memory_agents.py::test_fixture_revision_hashes_written_files (changing _UPLOAD_BUGGY changes fixture_revision; RED today because the revision hashes only the builder source)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1835,8 +2353,16 @@ tasks:
       - "Test files written"
       - "RED proof output"
       - "Matrix coverage table: gate matrix rows vs tests written"
-    allowed_files: []
-    verify: []
+    allowed_files:
+      - "tests/test_phase75_live_evaluation.py"
+      - "tests/test_benchmark_memory_datasets.py"
+      - "tests/test_benchmark_memory_agents.py"
+      - "tests/test_benchmark_providers.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase75_live_evaluation.py','tests/test_benchmark_memory_datasets.py::test_callback_tool_calls_count_toward_case_budget','tests/test_benchmark_memory_datasets.py::test_one_token_review_repro_is_budget_exhausted','tests/test_benchmark_memory_agents.py::test_episode_budget_exhaustion_from_decider_stays_in_denominator','tests/test_benchmark_memory_agents.py::test_episode_decision_error_fails_episode','tests/test_benchmark_providers.py::test_route_loader_accepts_decision_protocol_only_on_decision_routes','tests/test_benchmark_memory_agents.py::test_fixture_revision_hashes_written_files','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: every new/extended test fails; no pass/skip/collection error"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_phase75_live_evaluation.py tests/test_benchmark_memory_datasets.py tests/test_benchmark_memory_agents.py tests/test_benchmark_providers.py"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_phase75_live_evaluation.py tests/test_benchmark_memory_datasets.py tests/test_benchmark_memory_agents.py tests/test_benchmark_providers.py"
+      - "rtk proxy git diff --check"
     stop_if:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
@@ -1858,6 +2384,7 @@ tasks:
       - "T012 design-gate note"
       - "T043 receipt"
     constraints:
+      - "D2 owner answers (2026-10-05), binding: OD1+OD2 approve section 1 items 1-9 and seed the manifest with the 5 cases that have real executors; the other 10 Phase 75 families are reported open. OD3+OD4 the live budget counts provider model tokens once per call (ingestion and tool tokens reported separately); effective case budget is min(--max-total-tokens, case max_total_tokens). OD5+OD6 live mode requires --task-manifest and runs only manifest cases; answer decisions run in an empty contained root/decision-cwd and any tool use fails the case; episodes use cwd=root. OD7+OD8 normalized_contains v1 scoring; strict Codex parsing (exactly one agent_message, unknown event fails, one optional fence stripped). OD9 decision_protocol lives in provider_routes.json (contracts.py and fixtures.py edited). OD10+OD11 --seeds are repetition labels only in live mode and the report says so; an EVALUATOR live smoke card (T062) runs after T044. OD12+OD13 an episode fixture_revision is sha256 over the files the builder writes (not the builder source), so editing _UPLOAD_BUGGY changes it; the runner rejects any patch path outside editable_paths. Added matrix row: tests/test_benchmark_memory_agents.py::test_fixture_revision_hashes_written_files (changing _UPLOAD_BUGGY changes fixture_revision; RED today because the revision hashes only the builder source)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1871,12 +2398,57 @@ tasks:
       - "GREEN output for unit verify commands"
       - "Full suite / ruff / format / mypy output vs T001 baseline"
       - "rush_check result"
-    allowed_files: []
-    verify: []
+    allowed_files:
+      - "scripts/benchmarks/run.py"
+      - "scripts/benchmarks/memory.py"
+      - "scripts/benchmarks/memory_datasets.py"
+      - "scripts/benchmarks/providers.py"
+      - "scripts/benchmarks/contracts.py"
+      - "scripts/benchmarks/fixtures.py"
+      - "tests/fixtures/benchmarks/provider_routes.json"
+      - "tests/fixtures/phase75/task_manifest.json"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase75_live_evaluation.py tests/test_benchmark_memory_datasets.py tests/test_benchmark_memory_agents.py tests/test_benchmark_providers.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --help"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\"  # full suite within T001 baseline, zero skipped"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
     stop_if:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
+    receipt: null
+  - id: T062
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "EVALUATOR live smoke (D2 OD11, owner answer 'Add EVALUATOR live smoke'): run scripts.benchmarks.run in live decision mode once per decision route (openai-codex-oauth-cli-live and anthropic-claude-code-live) with --task-manifest tests/fixtures/phase75/task_manifest.json, one seed label, the smallest manifest answer case and the upload-repair episode case, under an exact --allow-live-route grant and a small --max-total-tokens. Confirm the real Codex exec JSONL event set and Claude result JSON match the T044 parsers (T012 B12/B13), or report the exact mismatch as a blocker."
+    inputs:
+      - "notes/T012-design-gate-75-t02-evaluator.md"
+      - "T044 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via TemporaryDirectory; delete any temp HOME before reporting. Never write to .scratch/."
+      - "Live provider calls are granted by the owner for this card only (D2 OD11). Spend: at most 2 cases x 2 routes x 1 seed. No user config files are written."
+      - "No product or test code edits. A parser mismatch is a blocker returned to the PM, never patched here."
+    expected_output:
+      - "Exact commands run and exit codes"
+      - "Per route and case: outcome, model_tokens_used, parsed event set"
+      - "Report files written"
+    allowed_files:
+      - "docs/reports/phase-72-memory-eval/evaluator-smoke/"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
+      - "rtk proxy git diff --check"
+    stop_if:
+      - "Either decision route's executable is missing or not logged in."
+      - "A parser mismatch with the live output (report it; do not patch)."
+      - "Spend would exceed the stated case count."
+      - "Free disk below 8 GiB."
     receipt: null
   - id: T045
     type: judge
@@ -1894,6 +2466,7 @@ tasks:
       - "T012 design-gate note"
       - "T043 receipt"
       - "T044 receipt"
+      - "T062 receipt"
       - "rtk proxy git diff for the unit"
     constraints:
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
@@ -1925,6 +2498,8 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T013 design-gate note"
     constraints:
+      - "Gate package (notes/T013-design-gate-72-t08.md worker_package.red), copied by the PM 2026-10-05: T046: write the full 72-T08 test matrix (T013 note \u00a75, 14 tests plus the 2 amended T044 tests), the frozen Phase 72 corpus (2 memory_datasets.json sections) and the 24 appended manifest cases with refrozen cases_sha256; prove each selected test FAILS before any production change."
+      - "T013 owner answers (2026-10-05), binding: OD-T08-1+5 'Fallback + v2 fields': with no network grant, retrieval=hybrid returns lexical results labeled embedding_fallback_code=network_not_granted (never labeled hybrid); the dashboard pre-call grant is unchanged; T08 ALSO adds optional retrieval and embedding fields to the T06 v2 list/query schema so hybrid is reachable on the canonical v2 route as well as legacy recall (this adds src/rush/mcp_support/request_models.py and the v2 path in src/rush/tools/memory.py to T047, and v2 hybrid rows to the T046 matrix). OD-T08-2 'nomic-embed-text': T048 runs `ollama pull nomic-embed-text` (about 274 MB, disk checked first) and uses http://127.0.0.1:11434; model_digest is the asserted `ollama list` ID. OD-T08-3 'Yes, both routes for T048': the paired eval runs on both openai-codex-oauth-cli-live and anthropic-claude-code-live. OD-T08-4 'Rule as drafted, default on benefit': precedence unsafe > unavailable > harm > benefit > no_benefit; if the outcome is benefit with no unsafe, unavailable or harm verdict, T047/T051 make hybrid the default retrieval when a local embedding engine is configured; otherwise it stays opt-in. This replaces gate B7/B14 'default stays lexical whatever T048 measures'. OD-T08-6 'Real policy revoke, temp HOME': the benchmark harness points HOME, XDG_DATA_HOME and LOCALAPPDATA at the suite TemporaryDirectory, makes real grants and revokes them with revoke_memory_scope; revoked_source negatives measure real policy revocation through MemoryTool; the real data root is never touched. OD-T08-7 'Add live metadata arm': a third live arm --variant metadata writes docs/reports/phase-72-memory-eval/metadata/ (extends D1), on both routes (about 522 decision calls)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1940,9 +2515,16 @@ tasks:
     allowed_files:
       - "tests/test_phase72_memory_hybrid.py"
       - "tests/fixtures/phase75/task_manifest.json"
+      - "tests/fixtures/benchmarks/memory_datasets.json"
+      - "tests/test_phase75_live_evaluation.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_hybrid.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_hybrid.py','tests/test_phase75_live_evaluation.py::test_shipped_task_manifest_is_frozen_and_exact','tests/test_phase75_live_evaluation.py::test_manifest_component_run_reports_every_case','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python -c \"import json,subprocess;old=json.loads(subprocess.run(['git','show','HEAD:tests/fixtures/phase75/task_manifest.json'],capture_output=True,text=True,check=True).stdout);new=json.load(open('tests/fixtures/phase75/task_manifest.json'));assert new['cases'][:len(old['cases'])]==old['cases'];assert new['families'][:len(old['families'])]==old['families'];assert new['variants']==old['variants'];assert {k:v for k,v in new.items() if k not in('cases','families','freeze')}=={k:v for k,v in old.items() if k not in('cases','families','freeze')};print('manifest append-only OK',len(old['cases']),'->',len(new['cases']))\""
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python -c \"import json,subprocess;old=json.loads(subprocess.run(['git','show','HEAD:tests/fixtures/benchmarks/memory_datasets.json'],capture_output=True,text=True,check=True).stdout);new=json.load(open('tests/fixtures/benchmarks/memory_datasets.json'));assert all(new[k]==old[k] for k in old);assert set(new)-set(old)=={'phase72_hybrid_corpus','phase72_hybrid_queries'};print('datasets append-only OK')\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_benchmark_memory_datasets.py tests/test_memory_hybrid.py -q -p no:cacheprovider  # keep-green: fixture additions break nothing"
     stop_if:
+      - "At task start, any symbol in T013 \u00a72 differs at HEAD (T01 MemoryAccess/evaluate_artifact_visibility, T02 utf8 expand fields, T03 related items shape, T044 TASK_KINDS/EVALUATORS/load_task_manifest/cases_digest/run_manifest_case): return to PM for a gate delta."
+      - "The legacy list operation cannot browse without a query, or MemoryTool write does not record content_hash for symbol_ref (stale_hash seeding)."
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
@@ -1963,6 +2545,8 @@ tasks:
       - "T013 design-gate note"
       - "T046 receipt"
     constraints:
+      - "Gate package (notes/T013-design-gate-72-t08.md worker_package.implement), copied by the PM 2026-10-05: T047: implement T013 \u00a73.2-3.3 (fallback codes, vector validation, timeout classification, honest completeness, embedding_cost, network_not_granted fallback, variant_retrieval with excerpt/linked/hybrid fixes, embedding runner flags, retrieval_answer kind, metrics, summary, compare_phase72_arms) until the T046 tests pass; full suite, ruff, format, mypy green against the T001 baseline."
+      - "T013 owner answers (2026-10-05), binding: OD-T08-1+5 'Fallback + v2 fields': with no network grant, retrieval=hybrid returns lexical results labeled embedding_fallback_code=network_not_granted (never labeled hybrid); the dashboard pre-call grant is unchanged; T08 ALSO adds optional retrieval and embedding fields to the T06 v2 list/query schema so hybrid is reachable on the canonical v2 route as well as legacy recall (this adds src/rush/mcp_support/request_models.py and the v2 path in src/rush/tools/memory.py to T047, and v2 hybrid rows to the T046 matrix). OD-T08-2 'nomic-embed-text': T048 runs `ollama pull nomic-embed-text` (about 274 MB, disk checked first) and uses http://127.0.0.1:11434; model_digest is the asserted `ollama list` ID. OD-T08-3 'Yes, both routes for T048': the paired eval runs on both openai-codex-oauth-cli-live and anthropic-claude-code-live. OD-T08-4 'Rule as drafted, default on benefit': precedence unsafe > unavailable > harm > benefit > no_benefit; if the outcome is benefit with no unsafe, unavailable or harm verdict, T047/T051 make hybrid the default retrieval when a local embedding engine is configured; otherwise it stays opt-in. This replaces gate B7/B14 'default stays lexical whatever T048 measures'. OD-T08-6 'Real policy revoke, temp HOME': the benchmark harness points HOME, XDG_DATA_HOME and LOCALAPPDATA at the suite TemporaryDirectory, makes real grants and revokes them with revoke_memory_scope; revoked_source negatives measure real policy revocation through MemoryTool; the real data root is never touched. OD-T08-7 'Add live metadata arm': a third live arm --variant metadata writes docs/reports/phase-72-memory-eval/metadata/ (extends D1), on both routes (about 522 decision calls)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1977,19 +2561,29 @@ tasks:
       - "Full suite / ruff / format / mypy output vs T001 baseline"
       - "rush_check result"
     allowed_files:
+      - "src/rush/mcp_support/request_models.py"
       - "src/rush/memory/retrieval.py"
-      - "src/rush/memory/store.py"
+      - "src/rush/memory/embeddings.py"
+      - "src/rush/tools/memory.py"
       - "scripts/benchmarks/memory.py"
+      - "scripts/benchmarks/run.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_hybrid.py tests/test_memory_hybrid.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_hybrid.py tests/test_memory_hybrid.py tests/test_phase75_live_evaluation.py tests/test_benchmark_memory_datasets.py tests/test_memory_retrieval.py tests/test_phase70_ts.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\""
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python -m scripts.benchmarks.run --help  # must list --embedding-endpoint --embedding-model --embedding-model-digest --embedding-chunking-version --allow-embedding-network"
+      - "rush_check on the 5 changed files"
     stop_if:
+      - "store.py or any file outside allowed_files is needed (gate F6: invalidation already version-keyed)."
+      - "Any existing test must be edited to pass (test defect returns to PM; do not weaken RED tests)."
+      - "A hybrid cursor/paging route appears necessary (out of plan; B4 labels incomplete instead)."
+      - "Earlier-unit symbols differ from T013 \u00a72."
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Verification fails twice (max two fix rounds; after round 2 the PM finishes directly)."
     receipt: null
   - id: T048
     type: worker
@@ -2007,6 +2601,8 @@ tasks:
       - "T013 design-gate note"
       - "T047 receipt"
     constraints:
+      - "Gate package (notes/T013-design-gate-72-t08.md worker_package.live), copied by the PM 2026-10-05: T048: run the paired current-vs-hybrid live evaluation on identical frozen manifest/corpus/route/embedding model/grants/seeds; commit raw output under docs/reports/phase-72-memory-eval/{current,hybrid}/ after recording its size; record route/executable/version, exact commands, manifest and corpus digests, evaluators, product_digest, per-arm summaries, compare_phase72_arms classification, cost, latency, fallbacks and unknowns into docs/reports/phase-72-memory-acceptance.md, and append the L-hybrid-eval lane record per T014 \u00a73.2. Unavailable or unexecuted lane = open with one exact blocker, never a pass."
+      - "T013 owner answers (2026-10-05), binding: OD-T08-1+5 'Fallback + v2 fields': with no network grant, retrieval=hybrid returns lexical results labeled embedding_fallback_code=network_not_granted (never labeled hybrid); the dashboard pre-call grant is unchanged; T08 ALSO adds optional retrieval and embedding fields to the T06 v2 list/query schema so hybrid is reachable on the canonical v2 route as well as legacy recall (this adds src/rush/mcp_support/request_models.py and the v2 path in src/rush/tools/memory.py to T047, and v2 hybrid rows to the T046 matrix). OD-T08-2 'nomic-embed-text': T048 runs `ollama pull nomic-embed-text` (about 274 MB, disk checked first) and uses http://127.0.0.1:11434; model_digest is the asserted `ollama list` ID. OD-T08-3 'Yes, both routes for T048': the paired eval runs on both openai-codex-oauth-cli-live and anthropic-claude-code-live. OD-T08-4 'Rule as drafted, default on benefit': precedence unsafe > unavailable > harm > benefit > no_benefit; if the outcome is benefit with no unsafe, unavailable or harm verdict, T047/T051 make hybrid the default retrieval when a local embedding engine is configured; otherwise it stays opt-in. This replaces gate B7/B14 'default stays lexical whatever T048 measures'. OD-T08-6 'Real policy revoke, temp HOME': the benchmark harness points HOME, XDG_DATA_HOME and LOCALAPPDATA at the suite TemporaryDirectory, makes real grants and revokes them with revoke_memory_scope; revoked_source negatives measure real policy revocation through MemoryTool; the real data root is never touched. OD-T08-7 'Add live metadata arm': a third live arm --variant metadata writes docs/reports/phase-72-memory-eval/metadata/ (extends D1), on both routes (about 522 decision calls)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -2015,16 +2611,28 @@ tasks:
     expected_output:
       - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
     allowed_files:
-      - "docs/reports/phase-72-memory-acceptance.md"
       - "docs/reports/phase-72-memory-eval/"
+      - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/reports/phase-72-memory-eval/current/memory-suite-report.json"
+      - "docs/reports/phase-72-memory-eval/hybrid/memory-suite-report.json"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --variant current --seeds 1,2,3 --output docs/reports/phase-72-memory-eval/current"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --variant hybrid --seeds 1,2,3 --output docs/reports/phase-72-memory-eval/hybrid"
+      - "rtk proxy df -g /Users  # >= 8 GiB free"
+      - "rtk proxy curl -s -m 5 http://127.0.0.1:11434/api/tags  # OD-T08-2 model listed, else stop with exact blocker"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --embedding-endpoint http://127.0.0.1:11434 --embedding-model <OD-T08-2 model> --embedding-model-digest <OD-T08-2 digest> --allow-embedding-network --variant current --seeds 1,2,3 --max-total-tokens 16000 --output docs/reports/phase-72-memory-eval/current"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m scripts.benchmarks.run --suite memory --decision-mode live --decision-route openai-codex-oauth-cli-live --allow-live-route openai-codex-oauth-cli-live --task-manifest tests/fixtures/phase75/task_manifest.json --embedding-endpoint http://127.0.0.1:11434 --embedding-model <OD-T08-2 model> --embedding-model-digest <OD-T08-2 digest> --allow-embedding-network --variant hybrid --seeds 1,2,3 --max-total-tokens 16000 --output docs/reports/phase-72-memory-eval/hybrid"
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python -c \"import json;from scripts.benchmarks.memory import compare_phase72_arms;c=json.load(open('docs/reports/phase-72-memory-eval/current/memory-suite-report.json'));h=json.load(open('docs/reports/phase-72-memory-eval/hybrid/memory-suite-report.json'));print(json.dumps(compare_phase72_arms(c,h),indent=2,sort_keys=True))\""
+      - "rtk proxy du -sk docs/reports/phase-72-memory-eval && rtk wc -c docs/reports/phase-72-memory-eval/current/memory-suite-report.json docs/reports/phase-72-memory-eval/hybrid/memory-suite-report.json"
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python -c \"import hashlib,subprocess;ps=sorted(p for p in subprocess.run(['git','ls-files','src','scripts','pyproject.toml','uv.lock'],capture_output=True,text=True,check=True).stdout.splitlines() if p);h=hashlib.sha256();[h.update((p+'\\0'+hashlib.sha256(open(p,'rb').read()).hexdigest()+'\\n').encode()) for p in ps];print(h.hexdigest())\""
+      - "rtk proxy env -u PYTHONPATH .venv/bin/python scripts/sync_docs.py --check"
     stop_if:
+      - "OD-T08-2 model or digest unfilled, model not installed and download not granted, or endpoint unreachable: lane open, exact blocker, do not start either arm."
+      - "Codex route not logged in or --allow-live-route not owner-granted (OD-T08-3)."
+      - "compare_phase72_arms raises not paired, or classification unsafe: stop, return to PM as defect."
+      - "T014 lane-record schema or the acceptance block is not on the board."
+      - "sync_docs --check reports errors outside this lane's files (board-note receipts are the PM's)."
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
-      - "Lane needs credentials or a route not granted."
     receipt: null
   - id: T049
     type: judge
@@ -2074,6 +2682,7 @@ tasks:
       - "docs/adr/0010-review-and-remediation-gates.md"
       - "T014 design-gate note"
     constraints:
+      - "Gate package (notes/T014-design-gate-72-t09.md worker_package.red), copied by the PM 2026-10-05: Write tests/test_phase72_memory_acceptance.py with the 13 T014 matrix tests (section 6), importing not-yet-existing symbols inside test bodies. Parse plan \u00a74/\u00a78 and plan commands live from the plan file; load test_phase70_t25 helpers via importlib; pin MC13/phase-63 body digests 8c2706455d197203a8f20a94989249591f1ee3c8fddb3ac8c7d5358cd6af5b1c / 7eab4b7525eb8c999445c30345907422060410acde0f77bf671b0f51b11b1263; prove every test fails."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -2089,10 +2698,14 @@ tasks:
     allowed_files:
       - "tests/test_phase72_memory_acceptance.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_acceptance.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_phase72_memory_acceptance.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_acceptance.py --collect-only -q -p no:cacheprovider  # expect 13 tests collected"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_phase72_memory_acceptance.py"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_phase72_memory_acceptance.py"
     stop_if:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "Behavior is ambiguous against the gate note, or a T01-T06/POLICY/CODEC public symbol or error code differs from plan \u00a72.1 at HEAD (return to PM for a gate delta)."
+      - "Any test passes at RED (each must carry a T051/T052-only assertion, X13)."
       - "Verification fails twice."
     receipt: null
   - id: T051
@@ -2111,6 +2724,8 @@ tasks:
       - "T014 design-gate note"
       - "T050 receipt"
     constraints:
+      - "Gate package (notes/T014-design-gate-72-t09.md worker_package.implement), copied by the PM 2026-10-05: Reconcile the plan \u00a73 docs with truth labels, create the report and its rush-phase72-acceptance-v1 block (freeze: record HEAD and the \u00a73.2 product digest with the product paths clean), execute every doc example and all T01-T08 plus \u00a78 commands on frozen bytes, refresh coverage receipts and runtime contracts, until the acceptance test and all gates are green. Merge existing T041/T048 records; never overwrite them."
+      - "T013 owner answers (2026-10-05), binding: OD-T08-1+5 'Fallback + v2 fields': with no network grant, retrieval=hybrid returns lexical results labeled embedding_fallback_code=network_not_granted (never labeled hybrid); the dashboard pre-call grant is unchanged; T08 ALSO adds optional retrieval and embedding fields to the T06 v2 list/query schema so hybrid is reachable on the canonical v2 route as well as legacy recall (this adds src/rush/mcp_support/request_models.py and the v2 path in src/rush/tools/memory.py to T047, and v2 hybrid rows to the T046 matrix). OD-T08-2 'nomic-embed-text': T048 runs `ollama pull nomic-embed-text` (about 274 MB, disk checked first) and uses http://127.0.0.1:11434; model_digest is the asserted `ollama list` ID. OD-T08-3 'Yes, both routes for T048': the paired eval runs on both openai-codex-oauth-cli-live and anthropic-claude-code-live. OD-T08-4 'Rule as drafted, default on benefit': precedence unsafe > unavailable > harm > benefit > no_benefit; if the outcome is benefit with no unsafe, unavailable or harm verdict, T047/T051 make hybrid the default retrieval when a local embedding engine is configured; otherwise it stays opt-in. This replaces gate B7/B14 'default stays lexical whatever T048 measures'. OD-T08-6 'Real policy revoke, temp HOME': the benchmark harness points HOME, XDG_DATA_HOME and LOCALAPPDATA at the suite TemporaryDirectory, makes real grants and revokes them with revoke_memory_scope; revoked_source negatives measure real policy revocation through MemoryTool; the real data root is never touched. OD-T08-7 'Add live metadata arm': a third live arm --variant metadata writes docs/reports/phase-72-memory-eval/metadata/ (extends D1), on both routes (about 522 decision calls)."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -2125,24 +2740,44 @@ tasks:
       - "Full suite / ruff / format / mypy output vs T001 baseline"
       - "rush_check result"
     allowed_files:
-      - "docs/reports/phase-72-memory-acceptance.md"
       - "docs/user-guide/working-with-ai-agents.md"
       - "docs/user-guide/interactive-tui.md"
       - "docs/reference/cli-reference.md"
       - "docs/architecture/rush-epistemic-memory-and-agent-substrate.md"
       - "docs/phase-plans/phase-63-memory-capabilities-vibecoder-plan.md"
       - "docs/phase-plans/MC13.md"
+      - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
     verify:
+      - "rtk proxy git status --porcelain -- src scripts pyproject.toml uv.lock  # must be empty (frozen product bytes)"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t01 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_retrieval.py tests/test_phase61_trust.py tests/test_memory_versions.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t02 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_handoff.py tests/test_memory_retrieval.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t03 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_relations.py tests/test_memory_consolidation.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -k t04 -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase62_maintenance.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_preferences.py tests/test_memory_compatibility_regressions.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_public.py tests/test_memory_public_contract.py tests/test_phase61_memory_tool.py tests/test_mcp.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_ui.py tests/test_phase70_tui_usability.py -k 't07 or t28d' -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase71_dashboard_integration.py tests/test_dashboard_memory_tokens.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_hybrid.py tests/test_memory_hybrid.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_portable_memory_policy.py tests/test_memory_public_contract.py -q"
       - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python --version  # must print 3.12"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_acceptance.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
-      - "rtk git diff --check"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_acceptance.py tests/test_phase70_t25.py tests/test_phase70_t1.py tests/test_sync_docs.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond the 2 T001 baseline failures, zero SKIPPED"
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
+      - "rtk git diff --check"
     stop_if:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Product paths (src/scripts/pyproject.toml/uv.lock) dirty or drifting during verification."
+      - "A T01-T08/\u00a78 unit command fails or its test file is absent (record the exact blocker and return to PM; do not substitute a narrower command)."
+      - "A defect in tests/test_phase72_memory_acceptance.py (return to PM; never edit or weaken it)."
+      - "A doc example cannot be executed (do not publish it)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
     receipt: null
@@ -2162,6 +2797,8 @@ tasks:
       - "T014 design-gate note"
       - "T051 receipt"
     constraints:
+      - "Gate package (notes/T014-design-gate-72-t09.md worker_package.live), copied by the PM 2026-10-05: Run every T014 \u00a74 lane on frozen bytes from one TemporaryDirectory-held driver with temp HOME: installed CLI, release artifact (OD1), stdio MCP, PTY at 80x24/120x40/60x20, browser 1280x800 and 390x844 (PM dispatches browser-qa-agent), two-agent A/B and E06/E25 (OD2), two-project overlay, revoked grant, PAS and Rush-capsule import walkthrough, hybrid-eval digest check, native Linux/Windows (OD3). Write lane records only; each unavailable lane is open with one exact blocker."
+      - "T014 owner answers (2026-10-05), binding: OD1 'PyInstaller into phase-72 .venv': install PyInstaller into the single phase-72 .venv for the L-installed-artifact lane (no new venv). OD2 'Yes, claude A + codex B': two-agent lanes (L-two-agent-ab, L-e06-e25-rejection-reversal) use `claude -p` as agent A and `codex exec` as agent B, Rush MCP injected per call only (--mcp-config/--strict-mcp-config, -c overrides, server HOME a temp dir); no user config files written. OD3 'At T052, draft PR': for L-native-linux and L-native-windows, push phase/72-memory-correctness-and-user-control to origin and open a DRAFT PR against main at T052 only; never merged without a separate owner go."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -2171,13 +2808,20 @@ tasks:
       - "Per lane: route/executable/version, exact actions or commands, observed result, or exact blocker"
     allowed_files:
       - "docs/reports/phase-72-memory-acceptance.md"
+      - "docs/reports/phase-64-66-documentation-coverage.md"
     verify:
-      - "Processes started by this task: capture PIDs, stop them, confirm with a process-list check before reporting."
+      - "rtk proxy git status --porcelain -- src scripts pyproject.toml uv.lock  # must be empty"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_acceptance.py -q"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python scripts/sync_docs.py --check"
+      - "rtk git diff --check"
+      - "rtk proxy ps -axo pid,command  # no lane-started rush ui/dashboard/mcp serve/claude/codex PIDs remain; temp HOME deleted"
     stop_if:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
+      - "Lane needs credentials, paid model usage, a push or a build route not granted (OD1-OD3): record the lane open with the exact blocker and continue the other lanes."
+      - "Unauthorized or cross-owner exposure, a hidden write, or changed product bytes observed (stop the acceptance claim and return to PM)."
+      - "Browser lane requires agent dispatch the worker cannot perform (return that lane to PM)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
-      - "Lane needs credentials or a route not granted."
     receipt: null
   - id: T053
     type: judge

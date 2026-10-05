@@ -379,3 +379,23 @@ These are recorded in the T004 receipt in `state.yaml`. They replace the prep-ti
 **Missing evidence:**
 - The full-suite impact comes from static analysis only. T019 runs the full suite.
 - Windows symlink creation in test 2 has not been checked on Windows CI.
+
+## PM gate delta (2026-10-05, after T018)
+
+The T018 RED author found four gaps against §3. The PM closes them here, and T019 implements them as written. They come from the cross-gate requirements X1-X5 recorded on the T018 and T019 cards.
+
+1. **Overlay exemption in §3 step 2 (X1, from T008 §4.1).** The `access.project_root != store.project_root` denial does not apply when both of these hold:
+   - `access.owner_scope == authorization.user_overlay_owner_scope(data_root=...)`;
+   - the access operation is `overlay_read`.
+
+   Instead, `store.project_root` must resolve to `<data_root>/user`, otherwise the result is `NOT`. Every other access keeps the equality check.
+2. **Access-free freshness helper (X5, from T007).** A public `retrieval.artifact_freshness(store, artifact, *, now=None, memo=None) -> tuple[str, tuple[str, ...]]` returns `(freshness, reasons)`:
+   - `freshness` is one of `current`, `stale`, `unknown` or `not_applicable`; an unanchored row gives `not_applicable`;
+   - it takes no access value and never writes;
+   - `evaluate_artifact_visibility` gets its freshness and freshness reasons from this helper, so the two always agree.
+3. **Version payload reader (X2, from T005).** `TypedArtifactStore.get_version_payload(artifact_id: str, version: int) -> tuple[str, str | None] | None` returns `(content, payload_hash)` for an exact version, or None when the version is absent. `get_version_content` is unchanged.
+4. **OD-3 access convention.** The OD-3 functions `recall_repair_episodes`, `intent_evidence`, `compare_last_success` and `plan_checks` get access the same way `MemoryTool` does:
+   - with a non-empty `session_allowlist`, they take the legacy access form, which has no owner filter;
+   - otherwise they resolve policy at `default_data_root()` or the given `data_root`.
+
+   Functions without an allowlist parameter use only the policy route. T018 test 14 encodes this.

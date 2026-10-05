@@ -17,7 +17,18 @@ So the T03 fixtures grant `["write","ask","expand","list","bootstrap"]`. In `tes
 
 The gate's stop_if ("73-T02 grants reject 'link'/'related'/'consolidate'") is answered by this mapping. It is not a blocker.
 
-**Owner decision pending:** trust-tier ordering, from the receipt's owner_decisions_needed.
+**Owner decision on trust tiers (2026-10-05):** the owner chose "Define full tier order (Recommended)" and then "Provenance order (Recommended)". T03 pins `TRUST_TIER_ORDER = ("IMPORTED", "EXTERNAL_WRITE", "DERIVED", "STATED")`, weakest to strongest. This ranks STATED > DERIVED > EXTERNAL_WRITE > IMPORTED.
+
+- **Source:** the order comes from `trust.py:62-68` `default_entry_tier` and plan §8 ("imported claims never authorize").
+- **Summary rule:**
+  - `consolidate_episodes` sets the summary tier to the minimum of its members' tiers under this order;
+  - a STATED minimum is lowered to DERIVED, so a summary is never STATED.
+- **Tests:** T024 adds one matrix row asserting the tier for mixed members:
+  - IMPORTED with DERIVED gives IMPORTED;
+  - EXTERNAL_WRITE with DERIVED gives EXTERNAL_WRITE;
+  - all DERIVED gives DERIVED;
+  - all STATED gives DERIVED.
+- **Expiry:** the expiry TTL comment (`expiry.py:39-44`) is a separate retention rule and is not changed.
 
 **Not re-run by the PM:** the rest of the report. The T024 RED author re-checks the code map at HEAD (stop_if).
 

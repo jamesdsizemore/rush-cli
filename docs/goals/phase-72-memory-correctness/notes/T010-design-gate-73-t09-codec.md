@@ -414,7 +414,7 @@ All tests use `tmp_path` HOME/XDG; `data_root=default_data_root()`; `register_pr
 - **FD4:** Optional evidence is relations depth 1; there are no redacted derivatives.
 - **FD5:** `capsule_id` = invocation UUID; `created_at` = the snapshot's change time.
 - **FD6:** New codes `E_CAPSULE_INVALID`, `E_EXPORT_BLOCKED`, `E_RECOVERY_REQUIRED`.
-- **FD7:** `docs/user-guide/working-with-ai-agents.md` documents only the shipped capsule CLI/MCP route, written last after the route passes. It carries no host or journey claims and does not mention Cursor (T25 check).
+- **FD7:** `docs/user-guide/working-with-ai-agents.md` documents only the shipped capsule CLI/MCP route, written last after the route passes. It carries no host or journey claims and does not name the excluded editor product (T25 `_CURSOR_RE` check).
 
 ## 8. Worker packages
 
