@@ -1,6 +1,18 @@
 # Phase 70 restart execution checklist
 
-Status: in progress, 2026-10-04. No phase acceptance or final handoff claimed.
+Status: retained Phase 70 scope accepted, 2026-10-04. Transferred UI remains
+unaccepted Phase 71 work; merge/publication remains separate.
+
+Current retained-runtime state: Claude Code/Codex native acceptance and
+approved cleanup passed. Codex timeout was 16.299 seconds with independently
+recovered 803-byte incomplete feedback; public disable left native edits
+working without Rush checks. Current artifact is source `26fec7d`, macOS
+artifact `11317344545`, installed SHA `464258a0…1a023`. Current documentation
+CI `37248692518` passes retained backend/companion gates; whole CI retains
+three Phase 71 failures per OS. Documentation parity, whitespace, preserved
+historical-prefix checks and three frozen review lanes passed after correction.
+The dated checkpoints below are historical; the closure ledger at the end
+supersedes their pending-state claims without calling transferred UI passed.
 
 Latest checkpoint: run `37231951857`, head `7e4028c`, passes all five
 retained backend gates and compiled rollback on Linux/Windows/macOS. Overall
@@ -493,5 +505,16 @@ installation did not prove an empty native client catalog or a Codex defect.
 - [x] Correct shared TOML removal and nested-entry restoration: selected Rush parent/descendants removed, saved approval dictionaries rendered as valid TOML, unrelated bytes and failed-install rollback preserved. Realistic regressions, all 43 T2 tests, Ruff and frozen reviews passed.
 - [x] Rebuild reviewed source `26fec7dda03ebb44e1c7723f81e9f83784a9cf07` through existing CI run `37243377594`; verify installed macOS artifact. Retained backend gates pass; three existing Phase 71 UI failures remain outside Phase 70 acceptance.
 - [x] Owner's ordinary Codex CLI received actual Rush PostToolUse feedback after fault and repair patches. Independently verify clean `fixture.py`; owner reports actual `rush_test` with `allow_build=true`, `no_cache=true`: `ok`, one test passed in 0.01s, no findings, Python 3.14/pytest 9.1.1. This fixture runtime does not replace Python 3.12 repository verification.
-- [ ] Finish native Codex timeout and public disable acceptance. Prepared previously approved 35-second ESLint fault; native host must return bounded incomplete feedback within 30 seconds, preserve edit, then permit edits without Rush checks after disable.
-- [ ] Complete fresh-CAS cleanup/restoration, evidence reconciliation and final frozen review before closing Phase 70 or merging. Existing successful backend/Claude observations remain valid; UI stays Phase 71.
+- [x] Finish native Codex timeout and public disable acceptance: 16.299-second actual hook, 803 UTF-8 bytes, visible `hook_deadline` incomplete work, preserved edit, no owned ESLint process; public disable and subsequent native edit without Rush feedback.
+- [x] Complete fresh-CAS cleanup/restoration: original nested Codex/Claude entries, modes and unrelated fresh metadata preserved; temporary plugin/guidance/activation/registration/fault files removed; two original primary Claude ledger rows and updated installed binary retained.
+- [x] Finish final documentation verification and integrated frozen review: parity/whitespace passed, preserved-prefix receipt corrected and independently rechecked, three frozen review lanes passed. Authorized commit/push delivers the final checkpoint; UI stays Phase 71 and no merge/publication is implied.
+
+### Final retained-gate reconciliation — 2026-10-04
+
+| Gate / earlier unchecked rows | Exact retained closure evidence | State |
+|---|---|---|
+| T29 production attribution and repaired backend packets (§1/§3) | Frozen target/ambient dependency regressions and independent source reviews; current retained CI preserves external findings and actual target vulnerabilities. | Runtime complete |
+| G0–G5/G7 source, tests, packages and platform recovery (§2–§4) | Source `26fec7d` artifact/native SHA; CI `37243377594` and docs-only `37248692518`; full Linux selection plus 95 static cases, five workloads and native Windows companion selection cover 26 deselections; ten ownership cases/owner mutex/ACL passed. Compiled checksum/probe rollback receipts remain valid. Whole CI retains UI failures. | Runtime complete |
+| Installed CLI and retained G8 (§4) | Recorded real failing pytest→repair→rescan→resolved comparison, isolated install/probe and compiled recovery receipts; current artifact/native host steps complete agent portion. Terminal/browser/UI rows transfer intact to Phase 71. | Retained runtime complete; UI unaccepted |
+| G6/T26/T29 native adoption (§4 and later checkpoints) | Recorded Claude skill/core tools/denied-granted test/fault/repair/26.613-second timeout/disable; current Codex status/core tools/denied-granted test/fault/repair/16.299-second 803-byte timeout/disable; independent fresh-CAS cleanup readback. | Runtime complete |
+| Final documents and integration boundary (§3/§5) | Final evidence, handoff and prerequisite status records reconciled; coverage refreshed, parity/whitespace and actual prefix-preservation assertions passed. Three frozen lanes reviewed the corrected subject; final closing bytes remain checked before authorized commit/push. Primary user work preserved; merge/publication separate. | Accepted; delivery through final commit |

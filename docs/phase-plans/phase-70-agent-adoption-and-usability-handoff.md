@@ -1,5 +1,43 @@
 # Phase 70 handoff: agent adoption and usability
 
+## Current handoff checkpoint — 2026-10-04
+
+Retained Phase 70 acceptance is complete under the owner's recorded Phase 71
+UI transfer. Documentation verification and three frozen review lanes passed
+after correction. This checkpoint supersedes the historical
+2026-09-28 blocked-work sequence below; it does not waive transferred UI or
+authorize merge/publication.
+
+- Runtime: source `26fec7dda03ebb44e1c7723f81e9f83784a9cf07`, macOS artifact
+  `11317344545`, installed executable SHA-256
+  `464258a03cf618a854f064c12a207a5978c7e249b8cdc4587305bb511821a023`.
+- CI: `37243377594` for runtime source and `37248692518` for documentation
+  checkpoint `c2ef900`; retained backend and companion gates pass. Whole CI
+  retains three Phase 71 UI failures per OS. The 26 Linux deselections are
+  covered by existing engine/workload/Windows jobs, not omitted acceptance.
+- Native hosts: recorded Claude `f8b2f6ee` acceptance remains explicitly bound;
+  current Codex status/test/fault/repair passed, timeout delivered incomplete
+  feedback in 16.299 seconds/803 UTF-8 bytes, and public disable left native
+  edits working without Rush checks. Fixture Python 3.14/pytest 9.1.1 does not
+  replace Python 3.12 repository verification.
+- Cleanup: temporary integration resources/fixture registration/fault files
+  removed; original nested Codex and Claude manual entries restored/preserved
+  through fresh CAS. Primary Claude ownership rows, unrelated current metadata,
+  private recovery evidence and updated installed binary remain intact.
+- Delivery: existing branch/worktree and PR #2 retain the implementation.
+  Primary checkout is not merged or cleaned. Evidence and exact closure ledger
+  are `../reports/phase-70-implementation-evidence.md` and
+  `phase-70-restart-checklist.md`.
+
+Final verification caught and corrected one preservation-receipt defect:
+the new evidence-report header shifted its recorded historical prefix. Only
+that insertion was removed; appended current evidence remains, and the original
+27,355-byte prefix matches its recorded SHA-256 exactly. Documentation parity,
+whitespace and the corrected integrated/native/CI frozen reviews passed.
+Final closing bytes are checked/reviewed before the authorized delivery commit.
+
+## Historical 2026-09-28 handoff (superseded)
+
 Status on 2026-09-28: **not complete.** The code for T1–T29 is on the phase branch, but CI is red. Three plan items remain: the evidence re-run, the phase-end adversarial review and the final handoff. The owner paused the run after the last push, so nothing listed under "Next steps" has started.
 
 ## Where everything is

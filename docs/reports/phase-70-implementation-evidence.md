@@ -2065,3 +2065,96 @@ most 8,192 UTF-8 bytes, report incomplete work without a clean claim, preserve
 the edit, and leave no owned engine process running. Preparation does not prove
 this behavior. Cleanup/restoration and final reconciliation/review remain
 open; temporary native plugin and fixture activation remain in place.
+
+### Final native timeout, disable and cleanup checkpoint — 2026-10-04
+
+The native Codex thread `01a1097b-1486-7690-ac79-64a80caec74e` supplied actual
+PostToolUse feedback after the fault patch in **16.299 seconds**. The
+coordinator independently recovered the native additional-context message
+from the exact thread's rollout: invocation
+`2ae7be9c6af148899c3c4ad83b020cfd`, **803 UTF-8 bytes**, SHA-256
+`67e5faf2bba9fb9acce0e07bc99862fa6e960c1ec3477df3b785e3584d272772`.
+Overall status was `warn`, with five of six steps incomplete: format `ok`,
+lint cancelled with `hook_deadline`, and typecheck/dead/slop/test skipped with
+`hook_deadline`. This is visible incomplete work, not a clean result. The
+fault edit survived; no manual Rush check substituted for the hook.
+
+The same native thread records the public disable command returning `ok`,
+`agent hooks: removed`, and readback `registered: false`. The subsequent
+native patch removed the timeout comment without Rush PostToolUse feedback.
+Independent readback confirmed the original 18-byte `stall.js` SHA-256
+`4b674c33ca4a4346b0e3ea699669250b2347ef283e9dc279aac23b64df5cf3a6`,
+absent activation, and no process belonging to the private ESLint prefix.
+This closes timeout budget/output, edit preservation, cancellation and public
+disable acceptance. No engine was installed for this attempt.
+
+Approved cleanup then used the existing public disconnect implementations:
+Codex fixture scope, Codex user scope, and Claude Code user scope. All returned
+`ok` without conflicts. Temporary guidance, native plugin/cache, both
+materialized resource roots and activation are absent. The new fixture
+registration `4e011970-87e9-4bcf-8345-b3d6510fe8f1` was unregistered at its
+captured revision 1; its unchanged descriptor was removed. The two fault
+files and private pytest configuration were deleted only after their exact
+captured SHA-256 values matched. Other fixture content and private evidence
+remain; no broad cleanup or primary-checkout mutation was performed.
+
+Original Codex nested manual Rush entry was restored against the **fresh**
+configuration SHA, preserving unrelated current bytes and native metadata.
+Readback selected-entry SHA-256 is
+`4bb2334cd72f166d321e4f79d8d9ca9cf4eeec76770db0669d9858759c6d0381`,
+including the owner's saved `rush_status` approval; mode is 0600. Whole-file
+SHA-256 after restoration is
+`cfcdae5e35232ec805e3fe55256c7d84a58f6307f2486cab2630a705c565c917`.
+Claude's original manual-entry SHA-256 remains
+`26d4d43b3b17d04dc2fc907238d674a6defa49b532d104b4c3f23dbab508c127`,
+mode 0644. The ledger contains exactly the two pre-existing primary-project
+Claude rows, unchanged at canonical hashes
+`986642ac0d5f6e2e19863d81815f9ed11ba510d800317797a060db3fafab9401`
+and `65656352ee6811286dd90f91261d7d6024544ff3a2bc5c4b4de5f1644f0c893f`.
+An independent cleanup reviewer confirmed these hashes, absent temporary
+resources, no owned ESLint process, and the retained installed executable SHA
+`464258a03cf618a854f064c12a207a5978c7e249b8cdc4587305bb511821a023`.
+Native `codex mcp list` exits 0 and resolves Rush to that stable executable
+with restored args `["mcp", "serve"]`. No whole-home baseline overwrite occurred.
+
+Documentation checkpoint `c2ef90044fdf83a97914202552792d0ee34cd1b0` also has
+completed CI run
+[`37248692518`](https://github.com/jamesdsizemore/rush-cli/actions/runs/37248692518):
+six of eight jobs passed. Linux reported 6,479 passes, three Phase 71 failures
+and 26 deselections; Windows reported 59 passes and the same three UI failures.
+All five retained backend gates passed. The 26 Linux deselections are covered
+by existing companion jobs: eight engine cases, five real workloads and 13
+Windows-specific cases. Static acceptance passed 95 cases; executed workloads
+passed five. Windows selected all ten native ownership cases, including the
+original nine and added identity-query denial; all passed, as did owner-mutex
+and ACL acceptance. The two terminal UI cases remain failed Phase 71 work.
+Overall CI is still failed; no UI assertion is waived, deleted or called passed.
+Quality job `111571669242` steps 7/8/14–17 passed Ruff check/format, mypy,
+documentation parity, dependency audit and whitespace. Its full-test predicate
+includes slow tests. Quality and static receipts report zero pytest warnings
+under the repository's existing warning filters; the existing
+`IncompleteFieldDefinitionWarning` suppression means these receipts do not
+prove an unfiltered absence of every warning. No warning filter was added for
+this acceptance or used to hide the repaired process/fork warnings.
+The accepted installed runtime remains source `26fec7d`/artifact `11317344545`;
+documentation-only commits do not silently rebind the earlier Claude `f8b2f6ee`
+receipt or replace the accepted executable.
+
+Retained G0–G8 reconciliation uses the preceding frozen engine/regression,
+platform/artifact/recovery, installed CLI setup→scan→repair→rescan, native host,
+and permission/identity/memory receipts. UI portions of T28/T29/G8 remain
+Phase 71. No additional retained runtime gap was established by the final
+coverage reconciliation. Documentation parity/runtime contracts and whitespace
+passed. Integrated frozen review found one real preservation-receipt defect:
+the newly inserted top report checkpoint shifted the recorded historical
+prefix. Only that insertion was removed. Executed byte-level verification
+confirmed the original 27,355-byte prefix still has SHA-256
+`f8b03e5d07490198bfbb03b959503406aa3dd23c139f506d4e3ffb33774027e0`,
+and coverage row/current report/restart receipt hashes agree. Three read-only
+review lanes passed the corrected freeze (report SHA
+`ad449ba312f8e51cea2ec890d57ed452724216d7edd7c896375827c978d55752`,
+coverage SHA `94d2d7c5af851696d59765b4c54eb4cef567b93710c3a62632e633dee31245ad`).
+This final closing amendment records that observed result; its bytes are
+checked/reviewed before the authorized commit/push. Retained Phase 70 acceptance
+is complete under the owner scope amendment; transferred UI is unaccepted
+Phase 71 work. Merge/publication remains separate.

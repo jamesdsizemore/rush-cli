@@ -1,5 +1,15 @@
 # Phase 70: App usability, first-use setup, functional CLI/TUI, and agent adoption
 
+**Retained-runtime acceptance checkpoint (2026-10-04):** The owner-amended
+non-UI requirements now have implementation, current CI/artifact, real native
+Claude Code/Codex and cleanup/restoration receipts. Runtime source `26fec7d`
+and macOS artifact `11317344545` remain explicitly bound; transferred UI remains
+unaccepted Phase 71 work. Documentation verification and frozen review passed
+after correction; the retained Phase 70 scope is accepted. The original
+planning status below is historical. Current evidence:
+`phase-70-restart-checklist.md` and
+`../reports/phase-70-implementation-evidence.md`.
+
 **Owner CI approval (2026-10-04):** The owner approved extending the existing artifact-probes CI job with native macOS build and downloadable checksum-bound candidate. This supersedes §7's earlier "No `ci.yml` edit" and local-macOS-build restriction for G5/G6 artifact production. Use the `macos-15` arm64 runner, exact PR-head checkout, existing release build/probe helpers, and checksum plus source-commit metadata. No release publication or version change. Native G6 host adoption still requires its separate preview/consent packet; uploaded artifacts and CI probes do not establish host acceptance. Transferred UI acceptance remains Phase 71.
 
 **Owner scope correction (2026-10-04):** The owner's current instruction assigns all UI implementation and acceptance to Phase 71. This supersedes the earlier Phase 70 TUI allocation: dashboard/TUI presentation, controls, motion, responsive behavior, installed terminal/browser journeys, and UI portions of T28/T29/G8 transfer intact to Phase 71. Existing code, requirements, tests and evidence are preserved; transferred checks are not waived or accepted. Phase 70 retains shared engines, permissions, identity, memory operations/receipts, setup, CLI/MCP, real Claude Code/Codex integration and their non-UI acceptance. Its completion gate covers those retained requirements; Phase 71 executes transferred UI gates after those prerequisites. No further UI work runs under Phase 70.

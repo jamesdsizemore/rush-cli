@@ -1,5 +1,14 @@
 # Phase 71: Full prototype dashboard integration
 
+**Phase 70 prerequisite checkpoint (2026-10-04):** Retained non-UI runtime
+acceptance now has current CI/artifact, native Claude Code/Codex timeout/disable
+and independent cleanup/restoration receipts. Final Phase 70 documentation
+verification and frozen review passed after correction, completing the retained
+Phase 70 prerequisite. No Phase 71 UI implementation or acceptance is claimed. Its complete
+transferred contracts and existing failures remain required. See
+`phase-70-restart-checklist.md` and
+`../reports/phase-70-implementation-evidence.md`.
+
 **Owner scope correction (2026-10-04):** The owner's current instruction assigns all UI implementation and acceptance to Phase 71. This supersedes the TUI non-goal and earlier all-Phase-70 prerequisite wording below. Preserve P01–P14 and every dashboard requirement; additionally carry the full T28-A–F terminal action/state contracts, T29 UI/cross-interface journeys and G8 terminal/browser matrix, including native macOS/Linux/Windows at 60×20, 80×24 and 120×40, into P13 acceptance. Existing Phase 70 UI code, tests and evidence are integration inputs, not completed acceptance. The start gate requires completed Phase 70 non-UI engines, permissions, identity, memory, setup, CLI/MCP and host integration; transferred UI checks execute within Phase 71, avoiding a circular prerequisite. No requirement is removed, weakened or claimed complete. For P13 and §8.1, the literal source/test file maps of transferred Phase 70 T28-A–F and UI portions of T29 are additional owned write allowlists; this includes `src/rush/tui.py`, `tests/test_phase70_tui_usability.py`, `tests/test_tui.py`, `tests/test_tui_terminal.py` and `tests/test_windows_import_safety.py`. The earlier unchanged-Phase-70-tests restriction remains for non-UI tests only. Shared engine/permission/identity/memory semantics remain Phase 70 prerequisites; transferred changes affect their UI callers and presentation. P14 and §8.2 additionally own `docs/user-guide/interactive-tui.md` and the transferred UI documentation named in those original file maps.
 
 Status: implementation specification; implementation not started. Planning decisions are closed. Execution requires the Phase 70 completion gate below. Plan-review evidence: `.scratch/phase-71-plan-review/review.md`.
