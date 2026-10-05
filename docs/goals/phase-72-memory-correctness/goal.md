@@ -94,6 +94,44 @@ Live lanes are separate Worker tasks so an unavailable route (credentials, brows
 - **D3 — 73-T09 portable-capsule codec.** Plan §8 closes the real PAS/Rush-capsule import route only through 73-T09's codec and public operation. `src/rush/memory/capsule.py` does not exist on `07775f1`. T01 and T06 can build their parts on canonical record fixtures, but the live import walkthroughs (T041 and T052) need the codec. 73-T09 imports through 72-T06's `apply_import_records`, so the two phases depend on each other. **Decided 2026-10-05 (owner answer "1"):** a 73-T09/CODEC checkpoint unit on this board (gate T010, RED T036, implement T037, review T038), between 72-T06 and 72-T07. Its gate pins the boundary: Rush-capsule and PAS schema-1 codecs, loss manifest, read-only preview, export policy, import only through `apply_import_records`, and the `rush memory capsule` CLI/MCP route. The rest of 73-T09 stays with Phase 73: agent hooks, the agent-connection journey, its user views, real-host and offline-machine acceptance, and its adoption report.
 - **D4 — which venv.** The owner rule says reuse an existing venv and never build one per worktree. The worktree has none, and the plan's `uv run` commands would create `phase-72/.venv` (the Phase 70 worktree's venv is 409 MB). Pointing `UV_PROJECT_ENVIRONMENT` at another worktree's venv would make `uv` re-sync that venv's editable install to Phase 72 sources. **Decided 2026-10-05 (owner answer "1"):** one new `.venv` in the Phase 72 worktree, created once in T001, the only venv agents use, and deleted with the worktree after merge.
 
+### Decisions raised by the design gates (2026-10-05)
+
+Each item names the task it gates. A task does not start while its decision is open, and the PM checks this before every activation. The full text of each decision is in the cited gate note.
+
+**Decided:**
+- **T004 OD-1:** rows with no write-time integrity binding stay usable in ordinary recall. They are labelled `backfilled` or `unbound`.
+- **T004 OD-3:** the five raw read sites in `experience.py`, `intent.py` and `verification.py` are fixed in 72-T01, in T019.
+- **T003 relink row:** amended by the PM after T015. This was an internal spec correction, not an owner decision.
+
+**Open:**
+
+| Decision | Topic | Gates | Gate note |
+|---|---|---|---|
+| T004 OD-2 | API-diff baseline: `main` or the repo's default branch | Not blocking. Defaults to `main` | T004 |
+| T006 | Trust-tier ordering for derived summaries | T024 | T006 |
+| T008 OD-1 | What counts as user confirmation of a preference | T030 | T008 |
+| T008 OD-2 | Authority of legacy un-promoted preferences | T030 | T008 |
+| T011 D-T07-1 | Consent path for "denied" screens. It also affects 72-T04 maintain usability (T007) | T039 | T011 |
+| T010 OD1-OD3 | CODEC decisions | T036 | T010 |
+| T012 D2 (OD1-OD13) | EVALUATOR boundary | T043, and through it T046 | T012 |
+| T013 OD-T08-1 to OD-T08-7 | Hybrid evaluation | T046 | T013 |
+| T014 OD1-OD3 | Release artifact, live models, push | T052 lanes only | T014 |
+
+**Open, outside the units:** the operator decides whether to file each of these as an issue or a board task.
+- The baseline failure `tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts`, a Phase 70 artifacts view.
+- The `PluginTrustStore` repo-local ledger risk (T007).
+
+**PM amendments due before the RED task of the named unit:**
+- **T010 A1-A6 to the 72-T06 packages,** before T033.
+- **T007 and T008 required board updates to T06 and T07,** before T033 and T039:
+  - operation counts move 22→23→25;
+  - content-level applicability;
+  - corroboration independence for imports;
+  - the TUI shared predicate.
+- **T006/T003 grant-op mapping:** `link` and `consolidate` map to `write`, and `related` maps to `ask`. Applies to T024.
+
+**Shared-file order.** `store.py`, `tools/memory.py`, `retrieval.py`, `request_models.py`, `cli.py` and the operation-count tests are edited by several units. Edits happen only in unit order (POLICY, T01, T02, T03, T04, T05, T06, CODEC, T07, EVALUATOR, T08, T09), with one writer at a time (`max_write_workers: 1`). Every RED task first re-checks its gate's code map against HEAD.
+
 ## Stop Rule
 
 Stop only when a final audit proves the full original outcome is complete.

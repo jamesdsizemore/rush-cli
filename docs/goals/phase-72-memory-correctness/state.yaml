@@ -80,7 +80,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
     command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
 
-active_task: T003
+active_task: T016
 
 tasks:
   - id: T001
@@ -177,7 +177,7 @@ tasks:
   - id: T003
     type: judge
     assignee: Judge
-    status: active
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 73-T02/POLICY checkpoint (authorization.py) against real 07775f1 source."
     inputs:
@@ -213,11 +213,24 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "POLICY is a bounded single-module trust-boundary slice. Every reused primitive checked at 07775f1. Four defects the plan did not foresee are resolved in the design: the CAS writer's redactor corrupts path values (PM re-ran: redaction_count=2), dashboard.state/workflows.projects imports pull rush.tools/store/retrieval (PM re-ran), the CAS constructor runs mkdir (transactions.py:75,85), and CAS read ignores duplicate keys. Persisted paths are hex-encoded; lazy imports; registry-UUID plus inode identity; exported hold_policy_lock."
+      note: notes/T003-design-gate-policy.md
+      summary: "POLICY gate approved: one new module src/rush/memory/authorization.py; 16-row test matrix (13 parametrized invalid-file cases); RED T015 (test file only), implement T016 (module only, Opus). Worker packages copied onto T015/T016. No owner decisions open; PM flagged the hex-encoding choice in the note."
+      evidence:
+        - "src/rush/memory/transactions.py:75"
+        - "src/rush/safety/redactor.py:52"
+        - "src/rush/dashboard/state.py:64"
+        - "src/rush/workflows/projects.py:293"
+        - "src/rush/setup/provision.py:124"
   - id: T004
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T01 Safe read, authority and symbol containment against real 07775f1 source."
     inputs:
@@ -250,11 +263,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T01 gate approved: MemoryAccess/VisibilityDecision/evaluate_artifact_visibility shared by every read route; payload_hash columns, containment, honest unknown freshness, update_content demotion, read-only reads, policy recheck. 13 RED tests. Owner answered OD-1 (usable, labelled) and OD-3 (fix the 5 raw read sites in T01). OD-2 (API-diff baseline) open, non-blocking."
+      summary: "T01 gate approved: MemoryAccess/VisibilityDecision/evaluate_artifact_visibility shared by every read route; payload_hash columns, containment, honest unknown freshness, update_content demotion, read-only reads, policy recheck. 13 RED tests. Owner answered OD-1 (usable, labelled) and OD-3 (fix the 5 raw read sites in T01). OD-2 (API-diff baseline) open, non-blocking."
+      note: notes/T004-design-gate-72-t01.md
   - id: T005
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T02 Honest pagination and exact UTF-8 recovery against real 07775f1 source."
     inputs:
@@ -284,11 +304,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T02 gate approved: sealed cursor, peek-to-prove completeness, UTF-8 scalar slicing, receiver reassembly. No owner decisions. PM reproduced the ASCII-escape and non-ASCII search finding (routed to T06/T07)."
+      summary: "T02 gate approved: sealed cursor, peek-to-prove completeness, UTF-8 scalar slicing, receiver reassembly. No owner decisions. PM reproduced the ASCII-escape and non-ASCII search finding (routed to T06/T07)."
+      note: notes/T005-design-gate-72-t02.md
   - id: T006
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T03 Relations and derived-memory validity against real 07775f1 source."
     inputs:
@@ -317,11 +344,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T03 gate approved: relations/summary/consolidation through T01's decision; identical E_NOT_VISIBLE bodies; 19 RED tests. PM reproduced self-supersedes/cross-owner OK and summary_is_current({}) True. PM reconciled grant ops with T003 (link/consolidate->write, related->ask). Owner decision on trust-tier ordering open."
+      summary: "T03 gate approved: relations/summary/consolidation through T01's decision; identical E_NOT_VISIBLE bodies; 19 RED tests. PM reproduced self-supersedes/cross-owner OK and summary_is_current({}) True. PM reconciled grant ops with T003 (link/consolidate->write, related->ask). Owner decision on trust-tier ordering open."
+      note: notes/T006-design-gate-72-t03.md
   - id: T007
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T04 Maintenance import and owner-isolated corroboration against real 07775f1 source."
     inputs:
@@ -351,11 +385,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T04 gate approved: one shared corroboration predicate across maintenance and both promote paths; policy-lock -> mesh -> SQLite; per-row lease check. 16 RED tests + 6 guards. PM reproduced cross-owner promotion (a1 STATED from bob's row)."
+      summary: "T04 gate approved: one shared corroboration predicate across maintenance and both promote paths; policy-lock -> mesh -> SQLite; per-row lease check. 16 RED tests + 6 guards. PM reproduced cross-owner promotion (a1 STATED from bob's row)."
+      note: notes/T007-design-gate-72-t04.md
   - id: T008
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T05 Consented layered preferences and migration against real 07775f1 source."
     inputs:
@@ -386,11 +427,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T05 gate approved: layered preferences, separate overlay grant, replay-safe migration, MemoryTool 'preference' op. 24 RED tests. PM reproduced constructor creating .rush. Owner decisions OD-1 (confirmation channel) and OD-2 (legacy authority) gate T030."
+      summary: "T05 gate approved: layered preferences, separate overlay grant, replay-safe migration, MemoryTool 'preference' op. 24 RED tests. PM reproduced constructor creating .rush. Owner decisions OD-1 (confirmation channel) and OD-2 (legacy authority) gate T030."
+      note: notes/T008-design-gate-72-t05.md
   - id: T009
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T06 Canonical public query and administration against real 07775f1 source."
     inputs:
@@ -420,11 +468,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T06 gate approved: v2 requests, history/explain, correction kinds, apply_import_records; 13 implementation files incl. cli.py. PM verified the 22-operation count asserts and MCP request rejection."
+      summary: "T06 gate approved: v2 requests, history/explain, correction kinds, apply_import_records; 13 implementation files incl. cli.py. PM verified the 22-operation count asserts and MCP request rejection."
+      note: notes/T009-design-gate-72-t06.md
   - id: T010
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 73-T09/CODEC checkpoint (Rush capsule and PAS schema-1 codec, read-only preview, import route) against real 07775f1 source."
     inputs:
@@ -457,11 +512,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "CODEC gate approved: rush_v1 and PAS schema-1 codecs, loss manifest, previews, export policy, import via apply_import_records, capsule op/CLI/MCP. Requires PM amendments A1-A6 to the T06 packages before T033; owner decisions OD1-OD3 open."
+      summary: "CODEC gate approved: rush_v1 and PAS schema-1 codecs, loss manifest, previews, export policy, import via apply_import_records, capsule op/CLI/MCP. Requires PM amendments A1-A6 to the T06 packages before T033; owner decisions OD1-OD3 open."
+      note: notes/T010-design-gate-73-t09-codec.md
   - id: T011
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T07 Search, correction and explanation in CLI, TUI and dashboard against real 07775f1 source."
     inputs:
@@ -495,11 +557,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T07 gate approved: one strict list route for CLI/TUI/dashboard, panel via static_assets.py (CSP style-src 'self' verified), no panels.js. Owner decision D-T07-1 (consent path for denied screens) gates T039."
+      summary: "T07 gate approved: one strict list route for CLI/TUI/dashboard, panel via static_assets.py (CSP style-src 'self' verified), no panels.js. Owner decision D-T07-1 (consent path for denied screens) gates T039."
+      note: notes/T011-design-gate-72-t07.md
   - id: T012
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 75-T02/EVALUATOR checkpoint (live-decision route, task manifest and budget) against real 07775f1 source."
     inputs:
@@ -531,11 +600,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "EVALUATOR checkpoint boundary drafted from 75-T02 text; 28 new tests + 5 extensions. PM reproduced script-form --help ImportError and missing flags. Owner review D2 (OD1-OD13) gates T043."
+      summary: "EVALUATOR checkpoint boundary drafted from 75-T02 text; 28 new tests + 5 extensions. PM reproduced script-form --help ImportError and missing flags. Owner review D2 (OD1-OD13) gates T043."
+      note: notes/T012-design-gate-75-t02-evaluator.md
   - id: T013
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T08 Evaluate optional hybrid retrieval against real 07775f1 source."
     inputs:
@@ -565,11 +641,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T08 gate approved: paired current/hybrid evaluation. PM reproduced empty hypotheses (run.py:222 reads 'content'), hybrid requiring network, and the related-key bug. Owner decisions OD-T08-1..7 plus D2 open."
+      summary: "T08 gate approved: paired current/hybrid evaluation. PM reproduced empty hypotheses (run.py:222 reads 'content'), hybrid requiring network, and the related-key bug. Owner decisions OD-T08-1..7 plus D2 open."
+      note: notes/T013-design-gate-72-t08.md
   - id: T014
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Design gate (read-only, adversarial) for 72-T09 Truthful docs and live acceptance against real 07775f1 source."
     inputs:
@@ -600,11 +683,18 @@ tasks:
       - "Cross-task conflicts with other units and with Phase 70/71/73/75 work"
       - "Full test matrix (test name, fixture, assertion, expected RED failure)"
       - "worker_package for RED task and implementation task (allowed_files, verify, stop_if)"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: approved
+      full_outcome_complete: false
+      rationale: "T09 gate approved: acceptance report schema, 13 tests, live lanes. PM verified pinned digests and 20 of 22 memory CLI leaves missing from cli-reference. Owner decisions OD1-OD3 (release artifact, live models, push) open."
+      summary: "T09 gate approved: acceptance report schema, 13 tests, live lanes. PM verified pinned digests and 20 of 22 memory CLI leaves missing from cli-reference. Owner decisions OD1-OD3 (release artifact, live models, push) open."
+      note: notes/T014-design-gate-72-t09.md
   - id: T015
     type: worker
     assignee: Worker
-    status: queued
+    status: done
     reasoning_hint: high
     objective: "Write the full 73-T02/POLICY checkpoint (authorization.py) test matrix from the T003 gate note; prove each new test FAILS by execution before any production change."
     inputs:
@@ -631,16 +721,44 @@ tasks:
     allowed_files:
       - "tests/test_memory_authorization.py"
     verify:
+      - "rtk proxy df -g /Users"
       - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','tests/test_memory_authorization.py','-q','-p','no:cacheprovider'],capture_output=True,text=True); print(r.stdout[-4000:]); s=(r.stdout.strip().splitlines() or [''])[-1]; sys.exit(0 if r.returncode==1 and ' failed' in s and not any(w in s for w in (' passed',' skipped',' error',' xfail',' xpass')) else 1)\"  # RED proof: exit 0 only if every selected test fails (no pass/skip/collection error)"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_memory_authorization.py"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_memory_authorization.py"
+      - "rtk proxy git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
+      - "Any selected test passes, is skipped, xfails, or errors at collection."
+      - "A conftest or fixture file outside tests/test_memory_authorization.py seems necessary."
+      - "A test needs behavior or a field the T003 note does not specify."
+      - "Any test would touch the real HOME or default data root, or leave a temp dir outside tmp_path/TemporaryDirectory."
+      - "Free disk below 8 GiB."
+      - "src/ differs from 07775f1, or a reused symbol in the T003 code map moved or changed signature."
       - "Verification fails twice."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_memory_authorization.py
+      commands:
+        - cmd: "rtk proxy df -g /Users"
+          status: pass
+        - cmd: "RED proof: pytest tests/test_memory_authorization.py -q -p no:cacheprovider gate (28 failed, 1 deselected; PM re-ran: exit 0)"
+          status: pass
+        - cmd: "rtk proxy uv run --python 3.12 --extra dev ruff check tests/test_memory_authorization.py"
+          status: pass
+        - cmd: "rtk proxy uv run --python 3.12 --extra dev ruff format --check tests/test_memory_authorization.py"
+          status: pass
+        - cmd: "rtk proxy git diff --check"
+          status: pass
+      summary: "RED file covers every T003 §5 row and all 13 parametrized invalid-file cases; relink row per the PM amendment (option a: absent old path -> project_missing; never-relinked project C recreated -> worktree_mismatch). 28 failed (27 ModuleNotFoundError, 1 child-return AssertionError), 1 windows_only deselected, 0 passed/skipped/errored. PM re-ran RED proof, ruff and format: same result. authorization.py absent; product bytes unchanged."
+      facts:
+        - "Concurrency/lock tests fail RED with ModuleNotFoundError (in-process setup grant) instead of the predicted child AssertionError"
+        - "Signature check covers all 8 §3 functions"
+        - "register_project returns the same project_id for a recreated directory"
   - id: T016
     type: worker
     assignee: Worker
-    status: queued
+    status: active
     reasoning_hint: high
     objective: "Implement 73-T02/POLICY checkpoint (authorization.py) until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -669,15 +787,22 @@ tasks:
     allowed_files:
       - "src/rush/memory/authorization.py"
     verify:
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_authorization.py -q"
-      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ''  # expect: no failure beyond T001 baseline, zero SKIPPED"
+      - "rtk proxy df -g /Users"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_authorization.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_public_contract.py tests/test_memory_operation_metadata.py tests/test_agent_connection.py tests/test_mcp.py tests/test_project_registry.py tests/test_dashboard_http_contract.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import sys,rush.memory.authorization; bad=[m for m in sys.modules if m.startswith(('rush.tools','rush.dashboard','rush.workflows','rush.memory.store','rush.memory.retrieval'))]; print(bad); sys.exit(1 if bad else 0)\""
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -c \"import subprocess,sys,re; r=subprocess.run([sys.executable,'-m','pytest','tests/','-q','-m','','-p','no:cacheprovider'],capture_output=True,text=True); out=r.stdout; print(out[-3000:]); fails=set(re.findall(r'^(?:FAILED|ERROR) (\\S+)',out,re.M)); base={'tests/test_phase70_t28f_review1.py::test_plus_minus_expand_and_collapse_detail_in_git_and_memory','tests/test_phase70_tui_usability_ef.py::test_t28e_tokens_git_artifacts'}; last=(out.strip().splitlines() or [''])[-1]; print('NEW FAILURES:',sorted(fails-base)); sys.exit(0 if fails<=base and 'skipped' not in last and ' error' not in last else 1)\"  # full suite: pass only if failures stay within the T001 baseline pair and zero skipped"
       - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
       - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "rtk proxy git diff --check"
     stop_if:
-      - "Need files outside allowed_files (PM amends only with gate-note justification)."
-      - "Behavior is ambiguous against the gate note."
-      - "Verification fails twice."
+      - "Any file other than src/rush/memory/authorization.py needs a change, including the test file."
+      - "A reused primitive (CASMapTransaction, AtomicFile, PhysicalRoot, default_data_root, cross_process_project_lock, read_registry_strict, OwnerScope, sanitize_value) behaves differently from the T003 code map."
+      - "A test asserts behavior contradicting the T003 note."
+      - "A full-suite, ruff or mypy failure outside the T001 baseline."
+      - "Fix round 2 is exhausted (PM finishes directly; no third round)."
+      - "Free disk below 8 GiB."
     receipt: null
   - id: T017
     type: judge
