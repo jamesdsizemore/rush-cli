@@ -80,7 +80,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
     command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
 
-active_task: T021
+active_task: T024
 
 tasks:
   - id: T001
@@ -626,6 +626,9 @@ tasks:
       - "T001 receipt"
       - "T002 receipt"
     constraints:
+      - "From T074 (72-T02 final review), hybrid sizing and completeness inputs: (a) at the lexical minimum caps with the embedder unreachable, the tool fallback returns E_EMBEDDING_UNAVAILABLE with no items, cursor or required and reports the lexical size while the delivered page is larger (hybrid_page adds retrieval, embedding_status and hybrid_unavailable_reason after measuring), and the underlying E_BUDGET is overwritten so the caller has no recovery path; (b) hybrid_page with a working embedder reports sizes that omit retrieval and candidates_truncated (73/20 caps: OK, zero items, complete true while 3 rows match); (c) a fallback next_cursor continues only on retrieval lexical; (d) the no-store hybrid empty page reports bytes and tokens 0. 72-T08 must measure every hybrid key, give hybrid its exact admission minimum, and make hybrid complete true honest."
+      - "From T071 (72-T02 re-review): MemoryTool runs the lexical recall_admission minimum for hybrid compact too, but that minimum is only a lower bound for hybrid: the hybrid_page envelope adds retrieval and candidates_truncated, and hybrid_page has no internal admission before hybrid_candidates or an embedding call. The 72-T08 gate must enforce the exact hybrid minimum."
+      - "From T023 (72-T02 review): hybrid_page is unchanged, and its lexical fallback passes through recall_page's honest complete false plus a page token, which the hybrid route now refuses with E_INPUT. The 72-T08 gate must label that token or route it as part of hybrid completeness."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
       - "Never write to .scratch/. Zero SKIPPED tests."
@@ -1553,7 +1556,7 @@ tasks:
   - id: T021
     type: worker
     assignee: Worker
-    status: active
+    status: done
     reasoning_hint: high
     objective: "Write the full 72-T02 Honest pagination and exact UTF-8 recovery test matrix from the T005 gate note; prove each new test FAILS by execution before any production change."
     inputs:
@@ -1595,11 +1598,29 @@ tasks:
       - "Any selected test passes, skips, xfails or errors at collection, or the -k t02 count differs from 14."
       - "A file outside allowed_files is needed, or behavior is ambiguous against the note."
       - "Verification fails twice."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+        - tests/test_memory_handoff.py
+        - tests/test_memory_retrieval.py
+        - tests/test_phase70_ts.py
+      commands:
+        - cmd: "Worker: R1-R14 written, A1-A3 amended; card verify 1 (14 failed) and verify 2 (3 failed) exit 0; ruff check and format clean; diff --check clean"
+          status: pass
+        - cmd: "PM re-run at ef24aeb: the 4 T02 test files -> 17 failed (R1-R14, A1-A3), 99 passed, 0 skipped; -k t02 --collect-only -> 14/78"
+          status: pass
+        - cmd: "Worker: section 0 assumptions bound to real names at ef24aeb (authorization grant/revoke/resolve, MemoryAccess, evaluate_artifact_visibility, payload_hash, get_version_payload); no stop_if triggered"
+          status: pass
+      summary: "72-T02 RED: 14 new tests (13 in test_phase72_memory_correctness.py, R14 in test_memory_handoff.py) and 3 amended tests fail at ef24aeb for their predicted reasons; the 44 T01 tests still pass. R8 also stamps p3 expires_at because T01 expiry ignores a bare elapsed TTL; the PM accepted it as a gate delta in the T005 note."
+      facts:
+        - "14 t02 tests"
+        - "A1 fit: 275 bytes / 80 tokens under 400/100"
   - id: T022
     type: worker
     assignee: Worker
-    status: queued
+    status: done
     reasoning_hint: high
     objective: "Implement 72-T02 Honest pagination and exact UTF-8 recovery until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -1652,11 +1673,34 @@ tasks:
       - "The \u00a72.2 probe 'paging' field is false (T02 defect), or another field is false (report it as a T01 regression)."
       - "_contains_special_token is no longer consulted on every _trial_page_bytes trial, or hybrid_page behavior changes."
       - "More than two fix rounds; after round 2 the PM finishes directly."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/retrieval.py
+        - src/rush/tools/memory.py
+        - src/rush/memory/transport.py
+        - src/rush/mcp_support/request_models.py
+        - scripts/benchmarks/memory.py
+      commands:
+        - cmd: "PM re-run: the 4 T02 test files -> 116 passed, 0 skipped"
+          status: pass
+        - cmd: "PM re-run: the 20-file related memory set -> 558 passed, 1 deselected (default marker), 0 skipped"
+          status: pass
+        - cmd: "PM re-run: plan section 2.2 probe -> archive_hidden, expansion_denied, outside_denied, paging all true; exit 0"
+          status: pass
+        - cmd: "PM re-run: ruff check src tests scripts clean; ruff format --check 942 files; mypy src/rush 475 files clean; diff --check clean"
+          status: pass
+        - cmd: "PM full suite after all edits: 2 failed (the 2 baseline tests), 6603 passed, 15 deselected; NEW FAILURES []; EXIT=0; 25:31"
+          status: pass
+      summary: "72-T02 implemented per the T005 gate: HMAC-bound m2 page cursor, honest exact-once recall paging with cursor reserve and E_BUDGET required, E_INPUT admission and E_MIGRATION on a missing key, scalar-aligned utf8 expansion with payload_hash and total_bytes and E_OFFSET, transport.reassemble_utf8_expansion receiver check, and the representation, E_OFFSET and hybrid-cursor routes. Worker deviations (utf8 historical digest mismatch returns E_NOT_VISIBLE; base64 E_BUDGET required only when the envelope fits; bytes-before-tokens fit check) go to the T023 judge. rush_check did not pass and is not counted as a gate: rush_check src/rush/memory/retrieval.py (allow_build): status fail from typecheck import-not-found only; cause is rush typecheck resolving the analysis venv at the target file's parent (src/rush/tools/typecheck.py:508 root = path.parent, passed to select_analysis_environment at :515), not the worktree .venv; ruff lint and format ok; vulture and aislop warnings are 60%-confidence public-API and complexity notes. Rush product defect, outside 72-T02 scope; raised with the owner for tracking."
+      facts:
+        - "17 RED tests green"
+        - "full suite 6603 passed, 2 baseline failures"
   - id: T023
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Full-attack review of 72-T02 Honest pagination and exact UTF-8 recovery: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
     inputs:
@@ -1684,11 +1728,339 @@ tasks:
       - "Findings with file:line and reproduction"
       - "Fix round number"
       - "Plan completion criterion met: yes/no with evidence"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge unit gate: 4 T02 files 116 passed; plan 2.2 probe all four true; ruff, format, mypy and diff --check clean; PM full suite log 2 failed baseline, 6603 passed, NEW FAILURES []"
+          status: pass
+        - cmd: "Judge F1 probe, PM re-run (scratchpad probe_f1.py): p1 expires before the page token between pages; limit=1 seen p1,p3 and limit=2 seen p1,p2, both last pages complete true"
+          status: fail
+        - cmd: "Judge F2 probe: historical utf8 expand at max_bytes=288 returns OK bytes=288 with a 324-byte real payload (PM: retrieval.py:1719-1720 add keys after measuring)"
+          status: fail
+        - cmd: "Judge F3 probe: fresh project with cache_write, compact and utf8 expand at max_bytes=1 return E_INPUT and create .rush/telemetry/tokens.db (PM: tools/memory.py:1185 and :1353 build TelemetryStore, whose constructor creates the DB, before admission)"
+          status: fail
+        - cmd: "Judge mutations in temp copies: 27 killed; real gaps M7, M33, M38, M35, M29 survive; M3, M15, M36, M37, M18 equivalent"
+          status: fail
+        - cmd: "Judge attacks A-E: 1701 single-character page-token substitutions all E_RESTART; 750-run exact-once fuzz on a static store 0 failures; utf8 sweep max_bytes 1..399 every offset 0 problems; receiver rejected 11 tamper cases; base64 OK path and hybrid_page identical to HEAD"
+          status: pass
+      summary: "FAIL, fix round 1 next. F1 High: recall_page's now= SQL expiry prefilter shifts OFFSET when a row before the page token expires with no generation change, so a visible row is skipped under complete true (breaks the plan criterion that every eligible match is recovered once). F2 Medium: historical utf8 pages exceed their caps. F3 Medium: admission refusals create tokens.db. F4 Low: mutants M7, M33, M38, M35, M29 survive. Worker deviations 1-5 judged acceptable. Fix round 1 cards: T069 RED, T070 fix (Opus), T071 re-review. 72-T08 gate input added to T013."
+      facts:
+        - "fix_round: 1 next"
+        - "plan completion criterion met: no"
+  - id: T069
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T02 fix round 1, RED: write regression tests for T023 F1-F4 (names contain t02_fix1) and prove each FAILS on the current code for its finding before any fix; F4 mutant tests are proven by applying the named mutation in a TemporaryDirectory copy of src and showing the test fails there while passing on the worktree."
+    inputs:
+      - "T023 receipt"
+      - "notes/T005-design-gate-72-t02.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T023 findings (PM reproduced F1 with scratchpad probe_f1.py: limit=1 seen p1,p3 and limit=2 seen p1,p2, both ending complete true; PM confirmed F2 and F3 in code). F1 High: recall_page passes now=moment to store.search_candidates (retrieval.py:1229), whose SQL expires_at filter (store.py:1401-1403) shrinks the OFFSET set when a row ranked before the page token expires between pages with no generation change, so a visible row is skipped under complete true. Fix: no now= in that call; per-row expiry stays with evaluate_artifact_visibility(now=moment) and an expired row counts as consumed. F2 Medium: historical utf8 pages add historical and reason_codes after _expand_utf8_slice measured the page (retrieval.py:1719-1720), so bytes and tokens under-report and the page can exceed max_bytes (288 cap gave a 324-byte payload). Fix: measure those keys inside the utf8 slice fit, the E_BUDGET required and the reported size; base64 keeps its legacy shape. F3 Medium: MemoryTool builds TelemetryStore (constructor creates .rush/telemetry/tokens.db) before recall/expand admission (tools/memory.py:1185 compact, :1353 expand), so an E_INPUT refusal writes a file, against contract C05. Fix: run recall admission (limit < 1, unknown encoding, caps below _recall_required) and expand admission (invalid representation, offset < 0, caps below the expand minimum) in MemoryTool before access resolution, the read-only view and TelemetryStore, reusing retrieval helpers. F4 Low, surviving mutants: M7 generation recheck before emit (a write during the scan gives E_RESTART, no items); M33 access recheck before emit (revoke or policy revision change during the scan gives E_PERMISSION or E_RESTART, no items, no telemetry); M38 receiver len(data) != total_bytes (total_bytes+1 on every page gives E_OFFSET); M35 the :utf8 telemetry request_id suffix (base64 then utf8 expand of the same id, version and offset with cache_write records 2 expansion events); M29 the last_fit page-token fallback at the token-cap edge."
+      - "F1 tests: the row that expires ranks before the page token, for limit 1 and limit 2; assert exact-once delivery of every row still visible and complete true only on the last page. F2 test: a historical utf8 page within its caps whose bytes and tokens equal an independent measurement of every key except code, tokens and bytes. F3 tests: fresh project with cache_write, compact max_bytes=1 and utf8 expand max_bytes=1 give E_INPUT and no .rush/telemetry/tokens.db (extend coverage, never edit existing assertions)."
+      - "Separate test author: no production edits; add tests only, never edit existing assertions."
+    expected_output:
+      - "Tests added, one or more per finding and per surviving mutant"
+      - "RED proof: F1-F3 tests fail on current code; each F4 test fails under its mutation in a temp copy"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_memory_handoff.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py -q -p no:cacheprovider -k t02_fix1  # F1-F3 tests fail; F4 tests pass on the worktree"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py tests/test_memory_retrieval.py tests/test_phase70_ts.py -q -p no:cacheprovider -k \"not t02_fix1\"  # 116 existing tests still pass"
+    stop_if:
+      - "A finding cannot be reproduced as a failing test."
+      - "A file outside allowed_files is needed."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+        - tests/test_memory_handoff.py
+      commands:
+        - cmd: "PM re-run: pytest both files -k t02_fix1 -> 4 failed (F1, F2, F3 compact, F3 utf8 expand), 5 passed (F4 m7, m33, m38, m35, m29)"
+          status: pass
+        - cmd: "PM re-run: the 4 T02 files -k 'not t02_fix1' -> 116 passed, 9 deselected"
+          status: pass
+        - cmd: "PM re-run: scratchpad mutants.py, each mutation in a TemporaryDirectory copy with rush imported from the copy -> M7, M33, M38, M35, M29 each 1 failed"
+          status: pass
+        - cmd: "Worker: ruff check and ruff format --check on the two test files clean; no production file changed"
+          status: pass
+      summary: "10 t02_fix1 tests pin T023 F1-F4. F1 (limit 1 loses p2, limit 2 loses p3), F2 (historical utf8 reports 288/109, real 324/118) and both F3 routes (E_INPUT creates tokens.db) fail on current code; the five F4 tests pass on the worktree and fail under their mutations. M35 also asserts stored request_ids u1:1:0 and u1:1:0:utf8 (T005 line 466) because telemetry dedupes on invocation_id, so an event count alone cannot catch it."
+      facts:
+        - "fix_round: 1"
+        - "10 t02_fix1 tests"
+  - id: T070
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T02 fix round 1 of max 2: fix T023 F1-F3 until the T069 tests and every T022 verify command pass. Dispatch on Opus (trust boundary)."
+    inputs:
+      - "T023 receipt"
+      - "T069 receipt"
+      - "notes/T005-design-gate-72-t02.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T023 findings (PM reproduced F1 with scratchpad probe_f1.py: limit=1 seen p1,p3 and limit=2 seen p1,p2, both ending complete true; PM confirmed F2 and F3 in code). F1 High: recall_page passes now=moment to store.search_candidates (retrieval.py:1229), whose SQL expires_at filter (store.py:1401-1403) shrinks the OFFSET set when a row ranked before the page token expires between pages with no generation change, so a visible row is skipped under complete true. Fix: no now= in that call; per-row expiry stays with evaluate_artifact_visibility(now=moment) and an expired row counts as consumed. F2 Medium: historical utf8 pages add historical and reason_codes after _expand_utf8_slice measured the page (retrieval.py:1719-1720), so bytes and tokens under-report and the page can exceed max_bytes (288 cap gave a 324-byte payload). Fix: measure those keys inside the utf8 slice fit, the E_BUDGET required and the reported size; base64 keeps its legacy shape. F3 Medium: MemoryTool builds TelemetryStore (constructor creates .rush/telemetry/tokens.db) before recall/expand admission (tools/memory.py:1185 compact, :1353 expand), so an E_INPUT refusal writes a file, against contract C05. Fix: run recall admission (limit < 1, unknown encoding, caps below _recall_required) and expand admission (invalid representation, offset < 0, caps below the expand minimum) in MemoryTool before access resolution, the read-only view and TelemetryStore, reusing retrieval helpers. F4 Low, surviving mutants: M7 generation recheck before emit (a write during the scan gives E_RESTART, no items); M33 access recheck before emit (revoke or policy revision change during the scan gives E_PERMISSION or E_RESTART, no items, no telemetry); M38 receiver len(data) != total_bytes (total_bytes+1 on every page gives E_OFFSET); M35 the :utf8 telemetry request_id suffix (base64 then utf8 expand of the same id, version and offset with cache_write records 2 expansion events); M29 the last_fit page-token fallback at the token-cap edge."
+      - "Never edit the RED tests; never weaken an assertion. Fix round 1 of max 2."
+    expected_output:
+      - "Finding -> code change -> test table"
+      - "Unit gate, ruff, format, mypy, probe"
+    allowed_files:
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/transport.py"
+      - "src/rush/mcp_support/request_models.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py tests/test_memory_retrieval.py tests/test_phase70_ts.py -q -p no:cacheprovider"
+      - "the T022 20-file related memory set, plan section 2.2 probe (all four true), PM scratchpad probe_f1.py (p1,p2,p3 at both limits)"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts; ruff format --check src tests scripts; mypy src/rush; rtk proxy git diff --check"
+      - "PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "Removing the now= prefilter changes a T01 visibility result or breaks an existing T01 test."
+      - "Moving admission into MemoryTool changes an existing E_INPUT or E_NOT_VISIBLE envelope that an existing test pins."
+      - "A file outside allowed_files is needed."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/retrieval.py
+        - src/rush/tools/memory.py
+      commands:
+        - cmd: "PM re-run: the 4 T02 test files -> 125 passed (incl. 10 t02_fix1)"
+          status: pass
+        - cmd: "PM re-run: 20-file related memory set -> 567 passed, 1 deselected"
+          status: pass
+        - cmd: "PM re-run: scratchpad probe_f1.py -> limit=1 and limit=2 both see p1,p2,p3, last page complete true"
+          status: pass
+        - cmd: "PM re-run: scratchpad mutants.py -> M7, M33, M38, M35, M29 each 1 failed in a temp copy"
+          status: pass
+        - cmd: "PM re-run: plan 2.2 probe all four true; ruff check clean; ruff format --check 942; mypy src/rush 475 clean; diff --check clean"
+          status: pass
+        - cmd: "PM full suite after the fix: 2 failed (baseline pair), 6612 passed, 15 deselected; NEW FAILURES []; EXIT=0; 24:46"
+          status: pass
+      summary: "Fix round 1 of 2 for 72-T02. F1: recall_page no longer passes now= to search_candidates; expiry is decided per row by evaluate_artifact_visibility and expired rows count as consumed. F2: _expand_utf8_slice takes extra= so historical utf8 fit, E_BUDGET required and reported size include historical and reason_codes; base64 unchanged. F3: new recall_admission and expand_admission hold the admission rules once; MemoryTool runs them before access resolution, the read-only view and TelemetryStore. Worker deviations for T071 to judge: with an empty session allowlist compact bad input returns E_INPUT instead of E_PERMISSION and a negative expand offset returns E_OFFSET instead of E_NOT_VISIBLE; MemoryTool admission covers lexical compact only, so a hybrid refusal can still create tokens.db."
+      facts:
+        - "fix_round: 1"
+        - "125 T02 tests pass"
+  - id: T071
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 72-T02 after fix round 1 (T069/T070): confirm F1-F4 closed with mutation-checked tests, re-run the T023 probes, attack the changed code."
+    inputs:
+      - "T023 receipt"
+      - "T070 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only. Probes keep every data_root inside a TemporaryDirectory."
+      - "On pass the PM commits 72-T02. On fail this is fix round 2, the last; the PM finishes any remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge: 4 T02 files 125 passed; probe_f1.py limit 1 and 2 see p1,p2,p3; new expiry counterexamples (700 expired rows before the token; 530 rows expiring mid-paging at limit 3 and 100; E_BUDGET retry then expiry) exact-once with honest complete"
+          status: pass
+        - cmd: "Judge: historical utf8 sweep of 13600 calls, every OK page measured exactly and within caps; lexical compact and base64/utf8 expand refusals create no files; deviation (a) secret and missing refusals identical"
+          status: pass
+        - cmd: "Judge F5, PM re-run (scratchpad test_t071_attack.py -k hybrid): hybrid compact limit 0, max_bytes 1, max_tokens 1, encoding nope -> E_EMBEDDING_UNAVAILABLE with tokens.db created when a DB exists; OK on a fresh project"
+          status: fail
+        - cmd: "Judge mutants (t071_mutants.py): N1-N8, N11, N2b killed; N10 (cursor type check) and N12 (representation check) survive"
+          status: fail
+        - cmd: "PM full suite log T070-pm-fullsuite.log: 2 failed baseline, 6612 passed, NEW FAILURES [], EXIT=0"
+          status: pass
+      summary: "FAIL, fix round 2 (last) next. F1-F4 closed and mutation-checked. F5 Medium: MemoryTool skips recall_admission for hybrid compact (tools/memory.py:1086), so hybrid refusals create tokens.db or return a false OK, against C05; owned by 72-T02 because the 72-T08 gate defers it here. F6 Low: N10 and N12 survive. Deviation (a) accepted, deviation (b) rejected as F5. Fix round 2 cards: T072 RED, T073 fix (Opus), T074 final review. 72-T08 gate input added to T013 (exact hybrid minimum). docs/reports/phase-64-66-documentation-coverage.md is the sync_docs regeneration the board check requires."
+      facts:
+        - "fix_round: 2 next (last)"
+        - "plan completion criterion met: no"
+  - id: T072
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T02 fix round 2, RED (PM-authored, separate from the T073 fixer): add t02_fix2 tests for T071 F5 (hybrid compact x limit 0, max_bytes 1, max_tokens 1, encoding nope x fresh project and existing DB gives E_INPUT and no tokens.db) and F6 (recall_page cursor=123 gives E_INPUT with no store reads; expand_artifact representation x gives E_INPUT); prove F5 fails on current code and F6 fails under N10 and N12."
+    inputs:
+      - "T071 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T071 findings (PM reproduced F5 with scratchpad test_t071_attack.py -k hybrid: hybrid compact limit 0, max_bytes 1, max_tokens 1 or encoding nope returns E_EMBEDDING_UNAVAILABLE and creates .rush/telemetry/tokens.db when memory.db exists, and returns OK on a fresh project). F5 Medium: MemoryTool runs recall_admission only when retrieval != hybrid (tools/memory.py:1086), so hybrid compact has no C05 admission before access resolution, the store view, TelemetryStore or an embedding call; the 72-T08 gate defers this to T02. Fix: run recall_admission for both retrieval modes. F6 Low: mutants N10 (drop the non-string cursor check in recall_admission) and N12 (drop the representation check in expand_admission) survive because MemoryTool pre-checks hide them; add direct-API tests."
+      - "Tests only; never edit an existing assertion."
+    expected_output:
+      - "RED proof for F5; mutation proof for F6"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -q -p no:cacheprovider -k t02_fix2  # F5 cases fail, F6 pass"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python <scratchpad>/t071_mutants.py N10_drop_cursor_type_check N12_drop_representation_check  # both killed"
+    stop_if:
+      - "A finding cannot be reproduced as a failing test."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+      commands:
+        - cmd: "PM: pytest -k t02_fix2 -> 8 failed (hybrid x limit 0, max_bytes 1, max_tokens 1, encoding nope x fresh and existing DB: code OK or E_EMBEDDING_UNAVAILABLE instead of E_INPUT), 2 passed (F6)"
+          status: pass
+        - cmd: "PM: scratchpad t072_mutants.py (t071 runner selecting -k 't02_fix2 and not hybrid') -> N10 fails test_t02_fix2_recall_page_rejects_non_string_cursor_before_store_reads; N12 fails test_t02_fix2_expand_rejects_unknown_representation"
+          status: pass
+        - cmd: "PM: 4 T02 files -k 'not t02_fix2' -> 125 passed; ruff check and format --check clean on the test file"
+          status: pass
+      summary: "PM-authored RED for 72-T02 fix round 2 (separate from the T073 fixer): 10 t02_fix2 test cases. The 8 hybrid F5 cases fail on current code for the finding; the 2 F6 direct-API tests pass on the worktree and each fails under its mutant. Note: the unfiltered t071 runner reported the hybrid RED test, not the F6 tests, so the PM reran with a filtered selection for a valid proof."
+      facts:
+        - "fix_round: 2"
+        - "10 t02_fix2 cases"
+  - id: T073
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T02 fix round 2 of max 2 (last): fix T071 F5 so the T072 tests and every T022 verify command pass. Dispatch on Opus (trust boundary)."
+    inputs:
+      - "T071 receipt"
+      - "T072 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T071 findings (PM reproduced F5 with scratchpad test_t071_attack.py -k hybrid: hybrid compact limit 0, max_bytes 1, max_tokens 1 or encoding nope returns E_EMBEDDING_UNAVAILABLE and creates .rush/telemetry/tokens.db when memory.db exists, and returns OK on a fresh project). F5 Medium: MemoryTool runs recall_admission only when retrieval != hybrid (tools/memory.py:1086), so hybrid compact has no C05 admission before access resolution, the store view, TelemetryStore or an embedding call; the 72-T08 gate defers this to T02. Fix: run recall_admission for both retrieval modes. F6 Low: mutants N10 (drop the non-string cursor check in recall_admission) and N12 (drop the representation check in expand_admission) survive because MemoryTool pre-checks hide them; add direct-API tests."
+      - "Never edit the RED tests; never weaken an assertion. Fix round 2 of max 2; after this the PM finishes any remainder directly."
+    expected_output:
+      - "Finding -> code change -> test table"
+    allowed_files:
+      - "src/rush/tools/memory.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py tests/test_memory_retrieval.py tests/test_phase70_ts.py tests/test_memory_hybrid.py -q -p no:cacheprovider"
+      - "the T022 20-file related memory set; plan section 2.2 probe; scratchpad probe_f1.py, mutants.py and t071_mutants.py"
+      - "ruff check, ruff format --check, mypy src/rush, git diff --check"
+      - "PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "An existing hybrid test depends on a hybrid admission refusal returning E_EMBEDDING_UNAVAILABLE or OK."
+      - "A file outside allowed_files is needed."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/tools/memory.py
+      commands:
+        - cmd: "PM re-run: 4 T02 files plus test_memory_hybrid.py -> 143 passed"
+          status: pass
+        - cmd: "PM re-run: scratchpad test_t071_attack.py -k hybrid -> all 10 hybrid cases E_INPUT, tokens.db False"
+          status: pass
+        - cmd: "PM re-run: probe_f1.py both limits p1,p2,p3; mutants.py M7,M33,M38,M35,M29 killed; t071_mutants.py N1,N2,N2b killed; t073_mutants.py (N3/N5 anchors rebased on the new code) N3-N8 and N11 killed; t072_mutants.py N10,N12 killed"
+          status: pass
+        - cmd: "PM re-run: 20-file related set 577 passed, 1 deselected; plan 2.2 probe all four true; ruff check clean; ruff format --check 942; mypy src/rush 475 clean; diff --check clean"
+          status: pass
+        - cmd: "PM full suite after the fix: 2 failed (baseline pair), 6622 passed, 15 deselected; NEW FAILURES []; EXIT=0; 25:59"
+          status: pass
+      summary: "Fix round 2 of 2 for 72-T02: removed the retrieval != hybrid guard in MemoryTool so recall_admission runs for both retrieval modes before _read_access, the read-only view, TelemetryStore and any embedding call (C05). Hybrid page-token E_INPUT check and lexical envelopes unchanged; hybrid_page and retrieval.py untouched. The 8 F5 tests pass; N10 and N12 stay killed."
+      facts:
+        - "fix_round: 2 (last)"
+        - "143 unit tests pass"
+  - id: T074
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack final review of 72-T02 after fix round 2 (T072/T073): confirm F5 and F6 closed, re-run the T023 and T071 probes and mutants, attack the changed code."
+    inputs:
+      - "T071 receipt"
+      - "T073 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only. Probes keep every data_root inside a TemporaryDirectory."
+      - "On pass the PM commits 72-T02. On fail there is no third fix round: the PM finishes the remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge: F5 and F6 closed; 228 MemoryTool refusal cases (compact ask/recall/list x lexical/hybrid, expand base64/utf8, three store states, two allowlists) give the expected code with no access, view or telemetry call and an unchanged tree; CLI expand 8/8 refusals write nothing"
+          status: pass
+        - cmd: "Judge: no existence leak (compact identical with 5 hidden rows or none; expand secret vs absent differ only in the utf8 required derived from the id string); exact-once paging probes, sweep between pages gives E_RESTART 8/8; utf8 and base64 tool round-trips byte-exact; base64 OK 252/252 and hybrid_page 240/240 byte-identical to HEAD; plan 2.2 probe all true"
+          status: pass
+        - cmd: "Judge F7, PM re-run (MODE=suite t074/mut3.py): before the new test, admission-order mutants H2, H3, H4, H6, H7 matched CONTROL and survived; earlier apparent kills came from the copy-only r7 manifest failure"
+          status: fail
+        - cmd: "Judge F8, PM re-run: lexical compact OK page with no store reported bytes and tokens (0, 0) against a measured (72, 20)"
+          status: fail
+        - cmd: "PM full suite log T073-pm-fullsuite.log: 2 failed baseline, 6622 passed, NEW FAILURES [], EXIT=0"
+          status: pass
+      summary: "FAIL with the plan completion criterion met. Product behavior correct on every seam attacked; not closable until F7 (five admission-order mutants survive) and F8 (no-store lexical compact page reports 0/0) are fixed. No third fix round: PM fixes directly as T075. 72-T08 hybrid inputs (a)-(d) appended to T013. The reviewer's TTL-elapsed but unswept row returned by ordinary recall is the recorded T01 gate decision (notes/T004-design-gate-72-t01.md line 220: an elapsed TTL alone is not expiry; that stays the sweep's job), not a new gap."
+      facts:
+        - "plan completion criterion met: yes"
+        - "PM post-cap fix: T075"
+  - id: T075
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T02 PM post-cap fix (no third round): T074 F7 add test_t02_fix3_admission_precedes_access_view_and_telemetry (228 cases: compact ask/recall/list x lexical/hybrid x 5 bad inputs, expand base64/utf8 x 4 bad inputs, x fresh/db/rushdir x two allowlists; expected code, no access/view/telemetry call, unchanged tree) so admission-order mutants H1-H8 die; T074 F8 the lexical compact OK page for a project with no store reports its measured size via _measure_page, pinned by test_t02_fix3_missing_store_compact_page_reports_measured_size."
+    inputs:
+      - "T074 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "PM direct after fix round 2 (owner rule: never a third fix round). Tests first: F8 proven failing and F7 proven to kill H2-H7 before the fix."
+    expected_output:
+      - "RED proof, fix, mutant proof, unit gate, full suite"
+    allowed_files:
+      - "src/rush/tools/memory.py"
+      - "tests/test_phase72_memory_correctness.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_memory_handoff.py tests/test_memory_retrieval.py tests/test_phase70_ts.py tests/test_memory_hybrid.py -q -p no:cacheprovider"
+      - "MODE=suite scratchpad t074/mut3.py CONTROL H1-H8: every H run fails phase-72 tests beyond CONTROL"
+      - "ruff check, ruff format --check, mypy src/rush, git diff --check; PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "A file outside allowed_files is needed."
+    receipt:
+      result: done
+      harness: claude-code
+      decision: pass_after_pm_fix
+      full_outcome_complete: true
+      changed_files:
+        - src/rush/tools/memory.py
+        - tests/test_phase72_memory_correctness.py
+      commands:
+        - cmd: "PM RED: pytest -k t02_fix3 before the fix -> 2 failed (F8: assert (0, 0) == (72, 20)), 228 passed (F7 on correct code)"
+          status: pass
+        - cmd: "PM mutants before the fix (MODE=suite t074/mut3.py): CONTROL 2 failed (the F8 RED tests) plus the copy-only env error; H1-H8 98-191 failed each"
+          status: pass
+        - cmd: "PM fix: tools/memory.py no-store lexical compact page sizes come from _measure_page; ruff --fix import order and ruff format on the two edited files"
+          status: pass
+        - cmd: "PM after the fix: 4 T02 files plus test_memory_hybrid.py 373 passed; 20-file related set 807 passed, 1 deselected; plan 2.2 probe all four true; probe_f1.py p1,p2,p3 at both limits; mypy src/rush 475 clean; ruff check clean; ruff format --check 942; diff --check clean"
+          status: pass
+        - cmd: "PM mutants after the fix (MODE=suite t074/mut3.py): CONTROL 371 passed with only the copy-only env error; H1 98, H2-H4 180, H5 189, H6-H7 48, H8 49 failed"
+          status: pass
+        - cmd: "PM full suite after the fix: 2 failed (baseline pair), 6852 passed, 15 deselected; NEW FAILURES []; EXIT=0; 24:01"
+          status: pass
+      summary: "72-T02 closed after 2 fix rounds plus a PM post-cap fix for T074 F7 and F8. F7: test_t02_fix3_admission_precedes_access_view_and_telemetry (228 cases) pins admission before access, the view and telemetry, killing H1-H8. F8: the no-store lexical compact OK page reports its measured size. Plan completion criterion met (T074). Hybrid sizing inputs (a)-(d) are on the 72-T08 card T013. The docs coverage-report line is the board receipt refresh sync_docs --check requires."
+      facts:
+        - "fix rounds: 2 plus PM post-cap"
+        - "full suite 6852 passed, 2 baseline failures"
   - id: T024
     type: worker
     assignee: Worker
-    status: queued
+    status: active
     reasoning_hint: high
     objective: "Write the full 72-T03 Relations and derived-memory validity test matrix from the T006 gate note; prove each new test FAILS by execution before any production change."
     inputs:

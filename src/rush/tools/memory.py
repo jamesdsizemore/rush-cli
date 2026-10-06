@@ -34,10 +34,13 @@ from ..memory.retrieval import (
     DEFAULT_MAX_TOKENS,
     MemoryAccess,
     SourceValidationMemo,
+    _measure_page,
     artifact_freshness,
+    expand_admission,
     expand_artifact,
     hybrid_page,
     read_access,
+    recall_admission,
     recall_page,
 )
 from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
@@ -161,6 +164,8 @@ _CODE_STATUS: dict[str, str] = {
     "E_STORE_CORRUPT": "error",
     "E_SCHEMA_UNSUPPORTED": "error",
     "E_STORE_BUSY": "error",
+    # 72-T02: an expand offset that is negative, past the end or inside a scalar.
+    "E_OFFSET": "error",
 }
 _COMPACT_REQUEST_KEYS = {
     "view",
@@ -183,6 +188,7 @@ _EXPAND_REQUEST_KEYS = {
     "max_tokens",
     "max_bytes",
     "encoding",
+    "representation",
 }
 _LINK_REQUEST_KEYS = {
     "source_id",
@@ -1046,6 +1052,9 @@ class MemoryTool(ToolFn):
             or isinstance(max_bytes, bool)
             or not isinstance(encoding, str)
             or (cursor is not None and not isinstance(cursor, str))
+            # 72-T02: hybrid has no continuation; a cursor sent to it would silently
+            # restart from the first page.
+            or (retrieval == "hybrid" and cursor is not None)
             or (
                 embedding_endpoint is not None
                 and not isinstance(embedding_endpoint, str)
@@ -1075,6 +1084,19 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
+        # 72-T02 (C05): admission before access, the store view, telemetry or any
+        # embedding call, for both retrieval modes. The lexical minimum is only a lower
+        # bound for hybrid's larger envelope; its exact minimum is 72-T08's job.
+        refused = recall_admission(
+            limit=limit,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding=encoding,
+            cursor=cursor,
+        )
+        if refused is not None:
+            code = refused.pop("code")
+            return self._envelope_result(started, operation, code, refused)
         access = self._read_access(root, operation, session_allowlist, owner)
         if access is None:
             return self._envelope_result(
@@ -1121,6 +1143,12 @@ class MemoryTool(ToolFn):
             }
             if retrieval == "hybrid":
                 empty.update(retrieval="hybrid", candidates_truncated=False)
+            else:
+                # 72-T02 (T074 F8): report the real serialized size, the same as an
+                # empty page from an existing store. Hybrid sizing is 72-T08's job.
+                empty["bytes"], empty["tokens"] = _measure_page(
+                    [], None, True, encoding
+                )
             return self._envelope_result(started, operation, "OK", empty)
         try:
             return self._compact_page(
@@ -1287,6 +1315,7 @@ class MemoryTool(ToolFn):
         max_tokens = request.get("max_tokens", DEFAULT_MAX_TOKENS)
         max_bytes = request.get("max_bytes", DEFAULT_MAX_BYTES)
         encoding = request.get("encoding", DEFAULT_ENCODING)
+        representation = request.get("representation", "base64")
         if (
             not isinstance(offset, int)
             or isinstance(offset, bool)
@@ -1295,6 +1324,7 @@ class MemoryTool(ToolFn):
             or not isinstance(max_bytes, int)
             or isinstance(max_bytes, bool)
             or not isinstance(encoding, str)
+            or representation not in ("base64", "utf8")
         ):
             return self._envelope_result(
                 started,
@@ -1311,6 +1341,19 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
+        # 72-T02 (C05): admission before access, the store view or telemetry.
+        refused = expand_admission(
+            artifact_id=artifact_id,
+            version=version,
+            offset=offset,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding=encoding,
+            representation=representation,
+        )
+        if refused is not None:
+            code = refused.pop("code")
+            return self._envelope_result(started, "expand", code, refused)
         access = self._read_access(root, "expand", session_allowlist, owner)
         not_visible = _expand_body(
             "E_NOT_VISIBLE",
@@ -1318,6 +1361,7 @@ class MemoryTool(ToolFn):
             version=None,
             offset=offset,
             encoding=encoding,
+            representation=representation,
         )
         if access is None:
             not_visible.pop("code")
@@ -1352,6 +1396,7 @@ class MemoryTool(ToolFn):
                 max_tokens=max_tokens,
                 max_bytes=max_bytes,
                 encoding=encoding,
+                representation=representation,
                 telemetry=telemetry,
                 cache_write=granted.cache_write,
                 invocation_id=invocation_id,
@@ -1377,6 +1422,7 @@ class MemoryTool(ToolFn):
         max_tokens: int,
         max_bytes: int,
         encoding: str,
+        representation: Literal["base64", "utf8"] = "base64",
         telemetry: TelemetryStore | None,
         cache_write: bool,
         invocation_id: str | None,
@@ -1385,6 +1431,8 @@ class MemoryTool(ToolFn):
         agent_id: str | None,
         session_id: str | None,
     ) -> dict[str, Any]:
+        # 72-T02: base64 telemetry ids are unchanged; utf8 pages get their own.
+        suffix = ":utf8" if representation == "utf8" else ""
         return expand_artifact(
             store,
             artifact_id=artifact_id,
@@ -1394,8 +1442,9 @@ class MemoryTool(ToolFn):
             max_tokens=max_tokens,
             max_bytes=max_bytes,
             encoding=encoding,
+            representation=representation,
             telemetry=telemetry,
-            request_id=f"{artifact_id}:{version}:{offset}",
+            request_id=f"{artifact_id}:{version}:{offset}{suffix}",
             event_id="expansion",
             invocation_id=invocation_id,
             project_id=project_id,

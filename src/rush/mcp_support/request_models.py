@@ -398,7 +398,12 @@ def _action_union(
 _REQUEST_MODELS: dict[str, Any] = {
     "expand": _model(
         "MemoryExpandRequest",
-        {**_ARTIFACT_VERSION, "offset": (StrictInt, _OPTIONAL), **_BUDGET},
+        {
+            **_ARTIFACT_VERSION,
+            "offset": (StrictInt, _OPTIONAL),
+            "representation": (Literal["base64", "utf8"], _OPTIONAL),
+            **_BUDGET,
+        },
     ),
     "link": _model(
         "MemoryLinkRequest",

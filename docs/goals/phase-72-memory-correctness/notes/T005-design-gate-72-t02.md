@@ -22,6 +22,14 @@ verified-by: the probe above, which printed the raw content row and `0 1`.
 
 Not re-run by the PM: the rest of the report. The T021 RED author re-checks the code map at HEAD before writing tests (stop_if).
 
+## PM gate delta (after T021)
+
+**R8 fixture.** The R8 row's fixture (`created_at = now0 - 14d + 60` alone) cannot meet its own precondition at the 72-T01 commit. T01 treats a row as expired only when `expired_at` is set or a stamped `expires_at <= now` (`retrieval.py` `_lifecycle_reasons`; T004 note: an elapsed TTL alone is the sweep's job), and `write()` stamps no `expires_at`. T021 therefore also sets p3's `expires_at = created_at + 14d` (= now0+60) with raw SQL; that write leaves the store generation unchanged. The PM accepts this: the row still tests that page 2 rechecks expiry against its own `now`, and "not `E_RESTART`" still holds. T022 must not change T01's expiry rule.
+
+**R13 status mapping.** An unknown code already maps to status `error` in `_envelope_result`. T022 still adds `E_OFFSET` to `_CODE_STATUS` explicitly.
+
+verified-by: PM re-run at ef24aeb of the 4 T02 test files (17 failed, the R1-R14 and A1-A3 node ids; 99 passed; 0 skipped) and `-k t02 --collect-only` (14/78 collected).
+
 ---
 
 # T005 design gate for 72-T02: approved, nothing written

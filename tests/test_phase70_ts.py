@@ -495,21 +495,17 @@ _BUDGETS = [
 ]
 
 
-def test_r5_recall_page_matches_the_old_loop_across_budgets(tmp_path: Path) -> None:
+def test_r5_recall_page_matches_the_old_loop_across_budgets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """72-T02 (A3): the reference is the same page computed with every trial page fully
+    tokenized (`_contains_special_token` forced true), since honest paging reserves room
+    for the page token and so can no longer match the old cursor-free loop."""
     store = TypedArtifactStore(tmp_path)
     _seed_varied(store, 40)
-    full = recall_page(
-        store,
-        subject="domain_knowledge",
-        query="needle",
-        session_allowlist=["allowed"],
-        limit=10_000,
-        max_tokens=1_000_000,
-        max_bytes=1_000_000,
-    )
-    assert len(full["items"]) == 40
-    for max_bytes, max_tokens in _BUDGETS:
-        page = recall_page(
+
+    def _recall(max_bytes: int, max_tokens: int) -> dict[str, Any]:
+        return recall_page(
             store,
             subject="domain_knowledge",
             query="needle",
@@ -518,15 +514,30 @@ def test_r5_recall_page_matches_the_old_loop_across_budgets(tmp_path: Path) -> N
             max_tokens=max_tokens,
             max_bytes=max_bytes,
         )
+
+    full = _recall(1_000_000, 1_000_000)
+    assert len(full["items"]) == 40
+    for max_bytes, max_tokens in _BUDGETS:
+        page = _recall(max_bytes, max_tokens)
+        with monkeypatch.context() as forced:
+            forced.setattr(
+                retrieval, "_contains_special_token", lambda text, encoding: True
+            )
+            reference = _recall(max_bytes, max_tokens)
+        assert page == reference, (max_bytes, max_tokens)
         if page["code"] == "E_BUDGET":
+            assert page["items"] == []
+            assert page["next_cursor"] is None
+            assert page["complete"] is False
             continue
-        expected = _old_budget_loop(
-            full["items"], max_bytes=max_bytes, max_tokens=max_tokens, limit=10_000
-        )
-        assert page["items"] == expected, (max_bytes, max_tokens)
+        items = page["items"]
+        assert items == full["items"][: len(items)], (max_bytes, max_tokens)
+        assert page["complete"] == (len(items) == 40), (max_bytes, max_tokens)
         assert (page["bytes"], page["tokens"]) == retrieval._measure_page(
-            expected, page["next_cursor"], page["complete"], "cl100k_base"
+            items, page["next_cursor"], page["complete"], "cl100k_base"
         )
+        assert page["bytes"] <= max_bytes
+        assert page["tokens"] <= max_tokens
 
 
 def _any_vector(_config: Any, chunks: Any) -> list[list[float]]:

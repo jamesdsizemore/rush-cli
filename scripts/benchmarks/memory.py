@@ -134,9 +134,9 @@ def _probe_oversized_payload(
 ) -> dict[str, int | bool]:
     """M06: one compact `ask` with a `max_bytes` budget too tight for the full record
     count, measuring real (not hardcoded) truncation by comparing the page's returned
-    item count against `total_records`. `recall_page`'s own `complete` flag can't be used
-    here: it only ever reflects the internal 512-row scan cap, never `max_bytes`/`max_tokens`
-    truncation (correct, tested behavior in `recall_page`, not a bug)."""
+    item count against `total_records`. 72-T02: `recall_page`'s `complete` flag is honest
+    here too (`False` with a `next_cursor` whenever `limit`, `max_bytes`, `max_tokens` or
+    the 512-row scan cap stops the page early); the item count is the measured signal."""
     compact = tool.run(
         root,
         operation="ask",

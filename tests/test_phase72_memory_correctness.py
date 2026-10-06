@@ -7,13 +7,17 @@ module-level imports below are existing code only.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import dataclasses
 import hashlib
+import hmac
 import json
 import os
+import re
 import shutil
 import sqlite3
+import string
 import subprocess
 import threading
 import time
@@ -21,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import tiktoken
 
 from rush.memory.store import (
     MemoryArtifact,
@@ -2862,3 +2867,1560 @@ def test_t01_fix2_second_source_scope_never_visible(
     assert {k: v for k, v in denied.items() if k != "id"} == {
         k: v for k, v in missing.items() if k != "id"
     }
+
+
+# === 72-T02: honest pagination and exact UTF-8 recovery (T005 gate, §6) =====
+#
+# R1-R13 below; R14 lives in tests/test_memory_handoff.py. New 72-T02 symbols
+# (the `representation` keyword, `required`, `E_OFFSET`, the sealed page token)
+# are only reached inside test bodies, so each test fails on its own until T02.
+
+T02_TEXT = "needle \U0001f642é\U00010348 é \U0001f642é\U00010348 é"
+T02_BIG = 1_000_000
+T02_SAME = {"text": "needle same words"}
+T02_B64_KEYS = {
+    "code",
+    "id",
+    "version",
+    "offset",
+    "next_offset",
+    "complete",
+    "content_base64",
+    "tokens",
+    "bytes",
+    "encoding",
+}
+T02_UTF8_KEYS = {
+    "code",
+    "id",
+    "version",
+    "representation",
+    "offset",
+    "next_offset",
+    "complete",
+    "content_utf8",
+    "payload_hash",
+    "total_bytes",
+    "tokens",
+    "bytes",
+    "encoding",
+}
+T02_TOKEN_RE = re.compile(r"^m2\.[A-Za-z0-9_-]{27}$")
+T02_B64URL = string.ascii_uppercase + string.ascii_lowercase + string.digits + "-_"
+T02_MIXED = [
+    "plain ascii needle words",
+    "needle naïve café résumé ünïcödé",
+    "needle 漢字かな交じり文 with CJK",
+    "needle 中文 混合 テキスト 한국어",
+    "needle " + "long " * 60,
+    'needle quotes " and \\ backslashes',
+]
+
+
+def _t02_literal_utf8(root: Path) -> tuple[TypedArtifactStore, bytes]:
+    """`u1` (DERIVED, source-a) whose persisted JSON is literal UTF-8 -- the bytes
+    `_backfill_legacy_row` keeps from pre-MC01 rows -- with a matching
+    `payload_hash` on both the current row and the version row."""
+    root.mkdir(parents=True, exist_ok=True)
+    store = TypedArtifactStore(root.resolve())
+    value = {"text": T02_TEXT}
+    _row(store, "u1", None, "", content=value)
+    text = json.dumps(value, ensure_ascii=False)
+    digest = _sha_text(text)
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ? WHERE id = 'u1'",
+            (text, digest),
+        )
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+            "WHERE artifact_id = 'u1' AND artifact_version = 1",
+            (text, digest),
+        )
+        conn.commit()
+    stored = store.get_version_content("u1", 1)
+    assert stored is not None
+    data = stored.encode("utf-8")
+    assert b"\xf0\x9f\x99\x82" in data and b"\xcc\x81" in data
+    return store, data
+
+
+def _t02_boundary(data: bytes, offset: int) -> bool:
+    return offset == len(data) or (data[offset] & 0xC0) != 0x80
+
+
+def _t02_payload_text(page: dict[str, Any]) -> str:
+    payload = {k: v for k, v in page.items() if k not in ("code", "tokens", "bytes")}
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _t02_bytes(page: dict[str, Any]) -> int:
+    """Independent byte size of a response's measured payload (every key except
+    `code`, `tokens` and `bytes`); key order does not change a byte count."""
+    return len(_t02_payload_text(page).encode("utf-8"))
+
+
+def _t02_size(page: dict[str, Any]) -> tuple[int, int]:
+    """Independent json.dumps + tiktoken measurement of a recall page's payload."""
+    text = _t02_payload_text(page)
+    tokens = len(tiktoken.get_encoding("cl100k_base").encode(text))
+    return len(text.encode("utf-8")), tokens
+
+
+def _t02_assert_page(page: dict[str, Any], max_bytes: int, max_tokens: int) -> None:
+    assert (page["bytes"], page["tokens"]) == _t02_size(page), page
+    assert page["bytes"] <= max_bytes, page
+    assert page["tokens"] <= max_tokens, page
+
+
+def _t02_recall(store: TypedArtifactStore, **kwargs: Any) -> dict[str, Any]:
+    from rush.memory.retrieval import recall_page
+
+    args: dict[str, Any] = {
+        "subject": SUBJECT,
+        "query": "needle",
+        "session_allowlist": ["source-a"],
+    }
+    args.update(kwargs)
+    return recall_page(store, **args)
+
+
+def _t02_expand(store: TypedArtifactStore, **kwargs: Any) -> dict[str, Any]:
+    from rush.memory.retrieval import expand_artifact
+
+    args: dict[str, Any] = {
+        "artifact_id": "u1",
+        "version": 1,
+        "session_allowlist": ["source-a"],
+    }
+    args.update(kwargs)
+    return expand_artifact(store, **args)
+
+
+def _t02_follow(
+    store: TypedArtifactStore,
+    *,
+    limit: int,
+    max_bytes: int,
+    max_tokens: int,
+    **kwargs: Any,
+) -> list[dict[str, Any]]:
+    """Follow page tokens to `complete`. An `E_BUDGET` page is retried once with its
+    `required` caps, then paging returns to the original caps. Returns the OK pages."""
+    pages: list[dict[str, Any]] = []
+    token: str | None = None
+    for _ in range(1000):
+        caps = (max_bytes, max_tokens)
+        page = _t02_recall(
+            store,
+            limit=limit,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            cursor=token,
+            **kwargs,
+        )
+        if page["code"] == "E_BUDGET":
+            assert page["items"] == []
+            assert page["next_cursor"] is None
+            assert page["complete"] is False
+            _t02_assert_page(page, max_bytes, max_tokens)
+            caps = (page["required"]["max_bytes"], page["required"]["max_tokens"])
+            page = _t02_recall(
+                store,
+                limit=limit,
+                max_bytes=caps[0],
+                max_tokens=caps[1],
+                cursor=token,
+                **kwargs,
+            )
+            assert page["code"] == "OK", page
+            assert page["items"], page
+        assert page["code"] == "OK", page
+        _t02_assert_page(page, *caps)
+        assert len(page["items"]) <= limit
+        if not page["items"]:
+            assert page["next_cursor"] != token
+        pages.append(page)
+        if page["complete"]:
+            assert page["next_cursor"] is None
+            return pages
+        assert page["next_cursor"] is not None, page
+        token = page["next_cursor"]
+    raise AssertionError("paging never reached complete")
+
+
+def _t02_page_ids(pages: list[dict[str, Any]]) -> list[str]:
+    return [artifact_id for page in pages for artifact_id in _ids(page)]
+
+
+def _t02_refuse(calls: list[str], name: str) -> Any:
+    def method(*_args: Any, **_kwargs: Any) -> Any:
+        calls.append(name)
+        raise AssertionError(f"store read before admission: {name}")
+
+    return method
+
+
+def _t02_events(root: Path, kind: str) -> int:
+    from rush.token_economy.telemetry import TelemetryStore
+
+    db = TelemetryStore(root).db_path
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM memory_events WHERE kind = ?", (kind,)
+        ).fetchone()
+    return int(row[0])
+
+
+def _t02_restarted(page: dict[str, Any], label: str) -> None:
+    assert page["code"] == "E_RESTART", (label, page)
+    assert page["items"] == [], label
+    assert page["next_cursor"] is None, label
+    assert page["complete"] is False, label
+
+
+# --- R1 ---------------------------------------------------------------------
+
+
+def test_t02_exact_once_paging_and_utf8_recovery(tmp_path: Path) -> None:
+    (tmp_path / "paging").mkdir()
+    store = TypedArtifactStore(tmp_path / "paging")
+    for artifact_id in ("p1", "p2", "p3"):
+        _row(store, artifact_id, None, "", content=T02_SAME)
+
+    first = _t02_recall(store, limit=2)
+    assert first["code"] == "OK"
+    assert _ids(first) == ["p1", "p2"]
+    assert first["complete"] is False
+    assert first["next_cursor"] is not None
+    _t02_assert_page(first, 8192, 2048)
+    second = _t02_recall(store, limit=2, cursor=first["next_cursor"])
+    assert second["code"] == "OK"
+    assert _ids(second) == ["p3"]
+    assert second["complete"] is True
+    assert second["next_cursor"] is None
+    _t02_assert_page(second, 8192, 2048)
+
+    u_store, data = _t02_literal_utf8(tmp_path / "utf8")
+    total = len(data)
+    digest = hashlib.sha256(data).hexdigest()
+    for offset in range(total + 1):
+        page = _t02_expand(
+            u_store,
+            representation="utf8",
+            offset=offset,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        if not _t02_boundary(data, offset):
+            assert page["code"] == "E_OFFSET", offset
+            assert page["content_utf8"] is None
+            continue
+        assert page["code"] == "OK", (offset, page)
+        assert set(page) == T02_UTF8_KEYS
+        assert page["representation"] == "utf8"
+        assert page["content_utf8"].encode("utf-8") == data[offset:]
+        assert page["complete"] is True
+        assert page["next_offset"] is None
+        assert page["payload_hash"] == digest
+        assert page["total_bytes"] == total
+        assert page["bytes"] == _t02_bytes(page)
+
+    empty_ok = _t02_expand(
+        u_store,
+        representation="utf8",
+        offset=total,
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+    )
+    assert empty_ok["code"] == "OK"
+    assert empty_ok["content_utf8"] == ""
+    small = empty_ok["bytes"] + 8
+    for start in [o for o in range(total + 1) if _t02_boundary(data, o)]:
+        joined = b""
+        offset = start
+        for _ in range(total + 2):
+            page = _t02_expand(
+                u_store,
+                representation="utf8",
+                offset=offset,
+                max_bytes=small,
+                max_tokens=T02_BIG,
+            )
+            assert page["code"] == "OK", (start, offset, page)
+            assert page["offset"] == offset
+            assert page["bytes"] == _t02_bytes(page) <= small
+            assert page["payload_hash"] == digest
+            joined += page["content_utf8"].encode("utf-8")
+            if page["complete"]:
+                assert page["next_offset"] is None
+                break
+            assert page["next_offset"] > offset
+            assert _t02_boundary(data, page["next_offset"])
+            offset = page["next_offset"]
+        else:
+            raise AssertionError(f"utf8 paging from {start} never completed")
+        assert joined == data[start:], start
+    assert hashlib.sha256(data).hexdigest() == digest
+
+    omitted = _t02_expand(u_store, max_bytes=T02_BIG, max_tokens=T02_BIG)
+    explicit = _t02_expand(
+        u_store, representation="base64", max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert omitted["code"] == "OK"
+    assert set(omitted) == T02_B64_KEYS
+    assert omitted == explicit
+    assert base64.b64decode(omitted["content_base64"]) == data
+
+
+# --- R2 ---------------------------------------------------------------------
+
+
+def test_t02_scan_cap_and_limit_pages_recover_513_once_with_corrupt_rows(
+    tmp_path: Path,
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    valid = [f"c{i:04d}" for i in range(513)]
+    for artifact_id in valid:
+        _row(
+            store, artifact_id, None, "", content={"text": f"scanme cap {artifact_id}"}
+        )
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.executemany(
+            "INSERT INTO memory_artifacts (id, family, subject, trust_tier, content, "
+            "source, created_at, artifact_version) "
+            "VALUES (?, 'memory', ?, 'DERIVED', ?, 'source-a', ?, 1)",
+            [
+                (f"bad{i}", SUBJECT, f"scanme not json bad{i}", time.time())
+                for i in range(2)
+            ],
+        )
+        conn.commit()
+
+    run_a = _t02_follow(
+        store, query="scanme", limit=10_000, max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert len(run_a) == 2
+    assert run_a[0]["complete"] is False
+    run_b = _t02_follow(
+        store, query="scanme", limit=100, max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert len(run_b) == 6
+    ids_a, ids_b = _t02_page_ids(run_a), _t02_page_ids(run_b)
+    assert len(ids_a) == len(set(ids_a)) == 513
+    assert set(ids_a) == set(valid)
+    assert ids_b == ids_a
+
+
+# --- R3 ---------------------------------------------------------------------
+
+
+def test_t02_budget_and_limit_pages_are_bounded_and_exact_once(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    for i in range(40):
+        _row(
+            store,
+            f"m{i:03d}",
+            None,
+            "",
+            content={"text": f"{T02_MIXED[i % len(T02_MIXED)]} #{i}"},
+        )
+    oracle = _t02_recall(store, limit=100, max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert oracle["code"] == "OK"
+    assert oracle["complete"] is True
+    assert len(oracle["items"]) == 40
+
+    for limit, max_bytes, max_tokens in (
+        (3, 8192, 2048),
+        (100, 900, 400),
+        (100, 2000, 150),
+        (7, 400, 150),
+    ):
+        pages = _t02_follow(
+            store, limit=limit, max_bytes=max_bytes, max_tokens=max_tokens
+        )
+        assert _t02_page_ids(pages) == _ids(oracle), (limit, max_bytes, max_tokens)
+        assert [p["complete"] for p in pages] == [False] * (len(pages) - 1) + [True]
+
+
+# --- R4 ---------------------------------------------------------------------
+
+
+def test_t02_oversized_record_no_progress_budget_then_recovery(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    _row(store, "p1", None, "", content={"text": "needle short one"})
+    _row(store, "p2", None, "", content={"text": "needle " + "\U0001f642" * 200})
+    _row(store, "p3", None, "", content={"text": "needle short three"})
+    oracle = _ids(_t02_recall(store, limit=100, max_bytes=T02_BIG, max_tokens=T02_BIG))
+    assert sorted(oracle) == ["p1", "p2", "p3"]
+
+    ids: list[str] = []
+    token: str | None = None
+    budget_pages = 0
+    for _ in range(20):
+        page = _t02_recall(store, max_bytes=700, cursor=token)
+        if page["code"] == "E_BUDGET":
+            budget_pages += 1
+            assert page["items"] == []
+            assert page["next_cursor"] is None
+            assert page["complete"] is False
+            assert page["required"]["max_bytes"] > 700
+            _t02_assert_page(page, 700, 2048)
+            assert _t02_recall(store, max_bytes=700, cursor=token) == page
+            need = page["required"]
+            page = _t02_recall(
+                store,
+                max_bytes=need["max_bytes"],
+                max_tokens=need["max_tokens"],
+                cursor=token,
+            )
+            assert page["code"] == "OK", page
+            assert _ids(page) == ["p2"]
+            _t02_assert_page(page, need["max_bytes"], need["max_tokens"])
+        else:
+            assert page["code"] == "OK", page
+            _t02_assert_page(page, 700, 2048)
+        ids.extend(_ids(page))
+        if page["complete"]:
+            break
+        assert page["next_cursor"] is not None, page
+        token = page["next_cursor"]
+    else:
+        raise AssertionError("paging never reached complete")
+    assert budget_pages == 1
+    assert ids == oracle
+
+
+# --- R5 ---------------------------------------------------------------------
+
+
+def test_t02_recall_admission_rejects_caps_below_minimum_before_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _pm_project(tmp_path, monkeypatch)
+    store = TypedArtifactStore(root)
+    for i in range(3):
+        _row(store, f"p{i}", None, f"mk{i}")
+    minimum = json.dumps(
+        {
+            "items": [],
+            "next_cursor": None,
+            "complete": False,
+            "encoding": "cl100k_base",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    b_min = len(minimum.encode("utf-8"))
+    t_min = len(tiktoken.get_encoding("cl100k_base").encode(minimum))
+    required = {"max_bytes": b_min, "max_tokens": t_min}
+
+    calls: list[str] = []
+    with monkeypatch.context() as patched:
+        for name in ("search_candidates", "current_generation", "cursor_key"):
+            patched.setattr(TypedArtifactStore, name, _t02_refuse(calls, name))
+        for caps in (
+            {"max_bytes": 1},
+            {"max_tokens": 1},
+            {"max_bytes": b_min - 1},
+            {"max_tokens": t_min - 1},
+        ):
+            page = _t02_recall(store, **caps)
+            assert page["code"] == "E_INPUT", (caps, page)
+            assert page["items"] == []
+            assert page["required"] == required, caps
+            assert page["tokens"] == page["bytes"] == 0
+        for bad in ({"limit": 0}, {"encoding": "nope"}):
+            page = _t02_recall(store, **bad)
+            assert page["code"] == "E_INPUT", (bad, page)
+            assert page["items"] == []
+            assert page["tokens"] == page["bytes"] == 0
+    assert calls == []
+
+    at_min = _t02_recall(store, max_bytes=b_min, max_tokens=t_min)
+    assert at_min["code"] == "E_BUDGET"
+    assert at_min["items"] == []
+    assert at_min["next_cursor"] is None
+    assert at_min["complete"] is False
+    assert "required" not in at_min
+    assert (at_min["bytes"], at_min["tokens"]) == (b_min, t_min)
+
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+
+    def compact(**request: Any) -> Any:
+        return tool.run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=["source-a"],
+            request={"view": "compact", **request},
+            permissions=perms,
+        )
+
+    refused = compact(max_bytes=1)
+    assert _raw(refused)["code"] == "E_INPUT"
+    assert _raw(refused)["data"]["required"] == required
+    assert _raw(compact(max_bytes=b_min, max_tokens=t_min))["code"] == "E_BUDGET"
+    assert _t02_events(root, "retrieval") == 0
+    assert _raw(compact())["code"] == "OK"
+    assert _t02_events(root, "retrieval") == 1
+
+
+# --- R6 ---------------------------------------------------------------------
+
+
+def test_t02_cursor_binding_rejects_drift_and_forgery(tmp_path: Path) -> None:
+    from rush.memory import retrieval
+    from rush.memory.expiry import sweep_expired
+
+    def seed(root: Path) -> TypedArtifactStore:
+        root.mkdir()
+        target = TypedArtifactStore(root.resolve())
+        for artifact_id in ("p1", "p2", "p3"):
+            _row(target, artifact_id, None, "", content=T02_SAME)
+        _row(
+            target,
+            "old1",
+            None,
+            "",
+            content={"text": "stale relic"},
+            created_at=time.time() - 15 * DAY,
+        )
+        return target
+
+    def first_token(target: TypedArtifactStore) -> str:
+        page = _t02_recall(target, limit=1)
+        assert page["code"] == "OK", page
+        assert page["complete"] is False
+        token = page["next_cursor"]
+        assert isinstance(token, str) and T02_TOKEN_RE.match(token), token
+        return token
+
+    store = seed(tmp_path / "a")
+    foreign = seed(tmp_path / "b")
+    token = first_token(store)
+
+    def resume(value: Any, **kwargs: Any) -> dict[str, Any]:
+        return _t02_recall(store, limit=1, cursor=value, **kwargs)
+
+    _t02_restarted(resume(token, session_allowlist=["source-a", "source-b"]), "sources")
+    _t02_restarted(resume(token, query="needle same"), "query")
+    _t02_restarted(resume(token, subject="architectural_decision"), "subject")
+
+    key = store.cursor_key()
+    v1_body = json.dumps(
+        {
+            "subject": SUBJECT,
+            "query": "needle",
+            "sources": ["source-a"],
+            "namespace": str(store.project_root),
+            "ranking_version": retrieval._RANKING_VERSION,
+            "generation": store.current_generation(),
+            "scan_offset": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    v1_token = (
+        base64.urlsafe_b64encode(v1_body).rstrip(b"=").decode("ascii")
+        + "."
+        + hmac.new(key, v1_body, hashlib.sha256).hexdigest()
+    )
+    unused_bit = token[:-1] + T02_B64URL[T02_B64URL.index(token[-1]) ^ 1]
+    forged = {
+        "empty": "",
+        "prefix only": "m2.",
+        "garbage": "garbage",
+        "truncated": token[:-1],
+        "extended": token + "A",
+        "unused bit": unused_bit,
+        "v1 format": v1_token,
+        "foreign store": first_token(foreign),
+    }
+    for label, value in forged.items():
+        _t02_restarted(resume(value), label)
+    assert resume(token)["code"] == "OK"
+
+    _row(store, "p4", None, "", content={"text": "needle fresh words"})
+    _t02_restarted(resume(token), "new write")
+
+    token = first_token(store)
+    store.archive("p3", expected_version=1, scope=SUBJECT, apply=True)
+    _t02_restarted(resume(token), "archive")
+
+    token = first_token(store)
+    assert sweep_expired(store.project_root, candidate_ids=["old1"]) == 1
+    _t02_restarted(resume(token), "expiry sweep")
+
+
+# --- R7 ---------------------------------------------------------------------
+
+
+def test_t02_grant_revision_and_revocation_refuse_continuation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = tmp_path / "user-data"
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    seeded = ("g1", "g2", "g3")
+    for artifact_id in seeded:
+        _row(store, artifact_id, ALICE, "", content={"text": "needle granted words"})
+    grant = _grant(auth, root, ALICE, data_root, ops=("ask",))
+
+    def resolved() -> Any:
+        held = MemoryAccess.resolve(
+            root, operation="ask", owner_scope=ALICE, data_root=data_root
+        )
+        assert held is not None
+        return held
+
+    first = _t02_recall(store, session_allowlist=None, access=resolved(), limit=1)
+    assert first["code"] == "OK"
+    assert _ids(first) == ["g1"]
+    assert first["complete"] is False
+    token = first["next_cursor"]
+    assert token is not None
+
+    _grant(auth, root, BOB, data_root, ops=("ask",))
+    held = resolved()
+    moved = _t02_recall(
+        store, session_allowlist=None, access=held, limit=1, cursor=token
+    )
+    _t02_restarted(moved, "policy revision")
+
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    revoked = _t02_recall(
+        store, session_allowlist=None, access=held, limit=1, cursor=token
+    )
+    assert revoked["code"] == "E_PERMISSION"
+    assert revoked["items"] == []
+    assert revoked["next_cursor"] is None
+    serialized = _dump(revoked)
+    for artifact_id in seeded:
+        assert artifact_id not in serialized
+
+
+# --- R8 ---------------------------------------------------------------------
+
+
+def test_t02_expiry_rechecked_each_page(tmp_path: Path) -> None:
+    from rush.memory.retrieval import MemoryAccess, evaluate_artifact_visibility
+
+    store = TypedArtifactStore(tmp_path)
+    now0 = time.time()
+    _row(store, "p1", None, "", content=T02_SAME, created_at=now0)
+    _row(store, "p2", None, "", content=T02_SAME, created_at=now0)
+    p3_created = now0 - 14 * DAY + 60
+    _row(store, "p3", None, "", content=T02_SAME, created_at=p3_created)
+    # p3's 14-day DERIVED deadline (now0 + 60), stamped without a sweep: the T01
+    # decision honours a stamped `expires_at` but leaves a bare elapsed TTL to the
+    # sweep, and a sweep would change the store generation this test must keep.
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'p3'",
+            (p3_created + 14 * DAY,),
+        )
+        conn.commit()
+    later = now0 + 120
+    decision = evaluate_artifact_visibility(
+        store,
+        store.get_current_row("p3"),
+        access=MemoryAccess.legacy(store.project_root, ["source-a"]),
+        now=later,
+    )
+    assert decision.visible is False
+
+    first = _t02_recall(store, limit=2, now=now0)
+    assert first["code"] == "OK"
+    assert _ids(first) == ["p1", "p2"]
+    assert first["complete"] is False
+    assert first["next_cursor"] is not None
+    second = _t02_recall(store, limit=2, now=later, cursor=first["next_cursor"])
+    assert second["code"] == "OK", second
+    assert second["items"] == []
+    assert second["complete"] is True
+    assert second["next_cursor"] is None
+
+
+# --- R9 ---------------------------------------------------------------------
+
+
+def test_t02_readonly_view_paging_creates_no_key_or_files(tmp_path: Path) -> None:
+    root = tmp_path.resolve()
+    store = TypedArtifactStore(root)
+    for artifact_id in ("p1", "p2", "p3"):
+        _row(store, artifact_id, None, "", content=T02_SAME)
+    db = store.db_path
+    store.close()
+
+    def snapshot() -> list[tuple[str, int, int]]:
+        return sorted(
+            (str(p.relative_to(root)), p.stat().st_size, p.stat().st_mtime_ns)
+            for p in (root / ".rush").rglob("*")
+        )
+
+    def view_page(token: str | None) -> dict[str, Any]:
+        view, state = TypedArtifactStore.open_readonly_view(root)
+        assert state is None and view is not None
+        try:
+            return _t02_recall(view, limit=2, cursor=token)
+        finally:
+            view.close()
+
+    before = snapshot()
+    pages: list[dict[str, Any]] = []
+    token: str | None = None
+    for _ in range(5):
+        page = view_page(token)
+        assert page["code"] == "OK", page
+        pages.append(page)
+        if page["complete"]:
+            break
+        assert page["next_cursor"] is not None
+        token = page["next_cursor"]
+    assert len(pages) == 2
+    assert _t02_page_ids(pages) == ["p1", "p2", "p3"]
+    assert snapshot() == before
+
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute("DELETE FROM memory_cursor_key")
+        conn.commit()
+    assert _paging_key_rows(db) == 0
+    before = snapshot()
+    missing = view_page(None)
+    assert missing["code"] == "E_MIGRATION", missing
+    assert missing["items"] == []
+    assert missing["next_cursor"] is None
+    assert _paging_key_rows(db) == 0
+    assert snapshot() == before
+
+
+# --- R10 --------------------------------------------------------------------
+
+
+def test_t02_utf8_expansion_admission_budget_and_offsets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fix1_data_root(monkeypatch, tmp_path)
+    store, data = _t02_literal_utf8(tmp_path / "project")
+    root = store.project_root
+    total = len(data)
+    digest = hashlib.sha256(data).hexdigest()
+    null_payload = {
+        "id": "u1",
+        "version": 1,
+        "representation": "utf8",
+        "offset": 0,
+        "next_offset": None,
+        "complete": False,
+        "content_utf8": None,
+        "payload_hash": None,
+        "total_bytes": None,
+        "encoding": "cl100k_base",
+    }
+
+    calls: list[str] = []
+    with monkeypatch.context() as patched:
+        for name in (
+            "get_current",
+            "get_current_row",
+            "get_version_content",
+            "get_version_payload",
+        ):
+            patched.setattr(TypedArtifactStore, name, _t02_refuse(calls, name))
+        refused = _t02_expand(store, representation="utf8", max_bytes=1)
+        assert refused["code"] == "E_INPUT", refused
+        assert refused["content_utf8"] is None
+        assert refused["tokens"] == refused["bytes"] == 0
+        required = refused["required"]
+        assert required["max_bytes"] == _t02_bytes(null_payload)
+        for caps in (
+            {"max_tokens": 1},
+            {"max_bytes": required["max_bytes"] - 1},
+            {"max_tokens": required["max_tokens"] - 1},
+        ):
+            page = _t02_expand(store, representation="utf8", **caps)
+            assert page["code"] == "E_INPUT", (caps, page)
+            assert page["content_utf8"] is None
+            assert page["required"] == required, caps
+        b64_refused = _t02_expand(store, max_bytes=1)
+        assert b64_refused["code"] == "E_INPUT"
+        assert b64_refused["content_base64"] is None
+        assert b64_refused["required"]["max_bytes"] > 1
+    assert calls == []
+
+    at_min = _t02_expand(
+        store,
+        representation="utf8",
+        max_bytes=required["max_bytes"],
+        max_tokens=required["max_tokens"],
+    )
+    assert at_min["code"] == "E_BUDGET", at_min
+    assert at_min["content_utf8"] is None
+    assert at_min["next_offset"] is None
+    assert at_min["complete"] is False
+    assert at_min["bytes"] == _t02_bytes(at_min) <= required["max_bytes"]
+    assert at_min["tokens"] <= required["max_tokens"]
+
+    smile = data.index(b"\xf0\x9f\x99\x82")
+    one_scalar = {
+        "id": "u1",
+        "version": 1,
+        "representation": "utf8",
+        "offset": smile,
+        "next_offset": smile + 4,
+        "complete": False,
+        "content_utf8": "\U0001f642",
+        "payload_hash": digest,
+        "total_bytes": total,
+        "encoding": "cl100k_base",
+    }
+    one_bytes = _t02_bytes(one_scalar)
+    short = _t02_expand(
+        store,
+        representation="utf8",
+        offset=smile,
+        max_bytes=one_bytes - 1,
+        max_tokens=T02_BIG,
+    )
+    assert short["code"] == "E_BUDGET", short
+    assert short["content_utf8"] is None
+    assert short["next_offset"] is None
+    assert short["complete"] is False
+    assert short["bytes"] == _t02_bytes(short) <= one_bytes - 1
+    need = short["required"]
+    assert need["max_bytes"] == one_bytes
+    exact = _t02_expand(
+        store,
+        representation="utf8",
+        offset=smile,
+        max_bytes=need["max_bytes"],
+        max_tokens=need["max_tokens"],
+    )
+    assert exact["code"] == "OK", exact
+    assert exact["content_utf8"] == "\U0001f642"
+    assert exact["next_offset"] == smile + 4
+    token_short = _t02_expand(
+        store,
+        representation="utf8",
+        offset=smile,
+        max_bytes=need["max_bytes"],
+        max_tokens=need["max_tokens"] - 1,
+    )
+    assert token_short["code"] == "E_BUDGET", token_short
+    assert token_short["required"] == need
+
+    for bad in (-1, total + 1, smile + 1, smile + 2, smile + 3):
+        page = _t02_expand(
+            store,
+            representation="utf8",
+            offset=bad,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        assert page["code"] == "E_OFFSET", (bad, page)
+        assert page["content_utf8"] is None
+    end = _t02_expand(
+        store,
+        representation="utf8",
+        offset=total,
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+    )
+    assert end["code"] == "OK"
+    assert end["content_utf8"] == ""
+    assert end["complete"] is True
+    assert end["next_offset"] is None
+    for bad in (-1, total + 1):
+        page = _t02_expand(store, offset=bad, max_bytes=T02_BIG, max_tokens=T02_BIG)
+        assert page["code"] == "E_OFFSET", (bad, page)
+        assert page["content_base64"] is None
+    inner = _t02_expand(store, offset=smile + 1, max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert inner["code"] == "OK"
+    assert base64.b64decode(inner["content_base64"]) == data[smile + 1 :]
+
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+
+    def expand(**request: Any) -> Any:
+        return tool.run(
+            root,
+            operation="expand",
+            session_allowlist=["source-a"],
+            request={"id": "u1", "version": 1, "representation": "utf8", **request},
+            permissions=perms,
+        )
+
+    assert _raw(expand(max_bytes=1))["code"] == "E_INPUT"
+    budget = expand(max_bytes=required["max_bytes"], max_tokens=required["max_tokens"])
+    assert _raw(budget)["code"] == "E_BUDGET"
+    assert _t02_events(root, "expansion") == 0
+    assert _raw(expand())["code"] == "OK"
+    assert _t02_events(root, "expansion") == 1
+
+
+# --- R11 --------------------------------------------------------------------
+
+
+def test_t02_utf8_integrity_migration_and_version_refusals(tmp_path: Path) -> None:
+    tampered, data = _t02_literal_utf8(tmp_path / "tampered")
+    altered = data.decode("utf-8").replace("needle", "needlf", 1)
+    with contextlib.closing(sqlite3.connect(tampered.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ? "
+            "WHERE artifact_id = 'u1' AND artifact_version = 1",
+            (altered,),
+        )
+        conn.commit()
+    for representation in ("utf8", "base64"):
+        page = _t02_expand(
+            tampered,
+            representation=representation,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        missing = _t02_expand(
+            tampered,
+            artifact_id="zz-missing",
+            representation=representation,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        assert page["code"] == missing["code"] == "E_NOT_VISIBLE", representation
+        assert {k: v for k, v in page.items() if k != "id"} == {
+            k: v for k, v in missing.items() if k != "id"
+        }
+        assert not page.get("content_utf8")
+        assert not page.get("content_base64")
+
+    unbound, _ = _t02_literal_utf8(tmp_path / "unbound")
+    with contextlib.closing(sqlite3.connect(unbound.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifact_versions SET payload_hash = NULL "
+            "WHERE artifact_id = 'u1' AND artifact_version = 1"
+        )
+        conn.commit()
+    page = _t02_expand(
+        unbound, representation="utf8", max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert page["code"] == "E_MIGRATION", page
+    assert page["content_utf8"] is None
+
+    moved, _ = _t02_literal_utf8(tmp_path / "moved")
+    moved.update_content("u1", {"text": "needle second"}, expected_version=1)
+    page = _t02_expand(
+        moved, representation="utf8", version=1, max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert page["code"] == "E_VERSION", page
+    assert page["version"] == 2
+    assert page["content_utf8"] is None
+
+
+# --- R12 --------------------------------------------------------------------
+
+
+def test_t02_public_routes_accept_representation_and_preserve_base64(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_support.request_models import (
+        memory_request_model_keys,
+        validate_and_normalize,
+    )
+    from rush.tools import memory as memory_module
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    store, data = _t02_literal_utf8(tmp_path / "project")
+    root = store.project_root
+    tool = MemoryTool()
+
+    def expand(**extra: Any) -> Any:
+        return tool.run(
+            root,
+            operation="expand",
+            session_allowlist=["source-a"],
+            request={"id": "u1", "version": 1, **extra},
+        )
+
+    utf8 = _raw(expand(representation="utf8"))
+    assert utf8["code"] == "OK", utf8
+    assert set(utf8["data"]) == T02_UTF8_KEYS - {"code"}
+    assert utf8["data"]["content_utf8"].encode("utf-8") == data
+    explicit = _raw(expand(representation="base64"))
+    omitted = _raw(expand())
+    assert explicit["code"] == omitted["code"] == "OK"
+    assert explicit["data"] == omitted["data"]
+    assert set(omitted["data"]) == T02_B64_KEYS - {"code"}
+    hexed = expand(representation="hex")
+    assert _raw(hexed)["code"] == "E_INPUT"
+    assert hexed["status"] == "error"
+
+    def mcp(value: str) -> Any:
+        return validate_and_normalize(
+            "rush_memory",
+            {
+                "path": str(root),
+                "operation": "expand",
+                "request": {"id": "u1", "version": 1, "representation": value},
+            },
+        )
+
+    assert not mcp("utf8").rejected
+    assert mcp("hex").rejected
+    assert "representation" in memory_request_model_keys("expand")
+    assert "representation" in memory_module._EXPAND_REQUEST_KEYS
+
+
+# --- R13 --------------------------------------------------------------------
+
+
+def test_t02_compact_query_rejects_hybrid_cursor_and_maps_offset_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fix1_data_root(monkeypatch, tmp_path)
+    store, data = _t02_literal_utf8(tmp_path / "project")
+    root = store.project_root
+    tool = MemoryTool()
+
+    def compact(**request: Any) -> Any:
+        return tool.run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=["source-a"],
+            request={"view": "compact", **request},
+        )
+
+    hybrid = compact(retrieval="hybrid", cursor="m2.x")
+    assert _raw(hybrid)["code"] == "E_INPUT", _raw(hybrid)
+    assert hybrid["status"] == "error"
+
+    expanded = tool.run(
+        root,
+        operation="expand",
+        session_allowlist=["source-a"],
+        request={"id": "u1", "version": 1, "offset": len(data) + 1},
+    )
+    assert _raw(expanded)["code"] == "E_OFFSET", _raw(expanded)
+    assert expanded["status"] == "error"
+
+    zero = compact(limit=0)
+    assert _raw(zero)["code"] == "E_INPUT"
+    assert zero["status"] == "error"
+    tiny = compact(max_bytes=1)
+    assert _raw(tiny)["code"] == "E_INPUT"
+    assert tiny["status"] == "error"
+    assert "required" in _raw(tiny)["data"]
+
+
+# === 72-T02 fix round 1 (T069): F1-F3 findings and F4 surviving mutants ======
+
+
+def _t02_fix1_pages(
+    store: TypedArtifactStore, *, limit: int, first_now: float, later: float
+) -> list[dict[str, Any]]:
+    """Page 1 at `first_now`, every follow-up page at `later`, until `complete`."""
+    pages = [_t02_recall(store, limit=limit, now=first_now)]
+    for _ in range(10):
+        page = pages[-1]
+        assert page["code"] == "OK", page
+        if page["complete"]:
+            return pages
+        assert page["next_cursor"] is not None, page
+        pages.append(
+            _t02_recall(store, limit=limit, now=later, cursor=page["next_cursor"])
+        )
+    raise AssertionError("paging never reached complete")
+
+
+def test_t02_fix1_f1_expiry_before_token_never_skips_a_row(tmp_path: Path) -> None:
+    seen: dict[int, tuple[list[str], list[bool]]] = {}
+    expected: dict[int, tuple[list[str], list[bool]]] = {}
+    for limit in (1, 2):
+        root = tmp_path / f"limit{limit}"
+        root.mkdir()
+        store = TypedArtifactStore(root)
+        now0 = time.time()
+        for artifact_id in ("p1", "p2", "p3"):
+            _row(store, artifact_id, None, "", content=T02_SAME, created_at=now0)
+        # p1 (ranked before every page token) expires between pages; no sweep, so
+        # the store generation is unchanged.
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'p1'",
+                (now0 + 60,),
+            )
+            conn.commit()
+        generation = store.current_generation()
+        pages = _t02_fix1_pages(store, limit=limit, first_now=now0, later=now0 + 120)
+        assert store.current_generation() == generation
+        assert _ids(pages[0])[0] == "p1", (limit, pages[0])
+        flags = [page["complete"] for page in pages]
+        seen[limit] = (sorted(_t02_page_ids(pages)), flags)
+        expected[limit] = (["p1", "p2", "p3"], [False] * (len(pages) - 1) + [True])
+    assert seen == expected
+
+
+def test_t02_fix1_f2_historical_utf8_page_reports_and_fits_real_size(
+    tmp_path: Path,
+) -> None:
+    store, _data = _t02_literal_utf8(tmp_path)
+    ordinary = _t02_expand(
+        store, representation="utf8", max_bytes=T02_BIG, max_tokens=T02_BIG
+    )
+    assert ordinary["code"] == "OK", ordinary
+    assert (ordinary["bytes"], ordinary["tokens"]) == _t02_size(ordinary)
+    cap_bytes, cap_tokens = ordinary["bytes"], ordinary["tokens"]
+
+    historical = _t02_expand(
+        store,
+        representation="utf8",
+        mode="historical",
+        max_bytes=cap_bytes,
+        max_tokens=cap_tokens,
+    )
+    assert historical["code"] == "OK", historical
+    assert historical["historical"] is True
+    real = _t02_size(historical)
+    assert (historical["bytes"], historical["tokens"]) == real, (historical, real)
+    assert real[0] <= cap_bytes, real
+    assert real[1] <= cap_tokens, real
+
+
+def _t02_fix1_telemetry_db(root: Path) -> Path:
+    return root / ".rush" / "telemetry" / "tokens.db"
+
+
+def test_t02_fix1_f3_compact_admission_refusal_creates_no_telemetry_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _pm_project(tmp_path, monkeypatch)
+    store = TypedArtifactStore(root)
+    for i in range(3):
+        _row(store, f"p{i}", None, f"mk{i}")
+    db = _t02_fix1_telemetry_db(root)
+    assert not db.exists()
+    refused = MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-a"],
+        request={"view": "compact", "max_bytes": 1},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert _raw(refused)["code"] == "E_INPUT"
+    assert not db.exists(), "compact admission refusal created tokens.db"
+
+
+def test_t02_fix1_f3_utf8_expand_admission_refusal_creates_no_telemetry_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fix1_data_root(monkeypatch, tmp_path)
+    store, _data = _t02_literal_utf8(tmp_path / "project")
+    root = store.project_root
+    db = _t02_fix1_telemetry_db(root)
+    assert not db.exists()
+    refused = MemoryTool().run(
+        root,
+        operation="expand",
+        session_allowlist=["source-a"],
+        request={"id": "u1", "version": 1, "representation": "utf8", "max_bytes": 1},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert _raw(refused)["code"] == "E_INPUT"
+    assert not db.exists(), "utf8 expand admission refusal created tokens.db"
+
+
+def _t02_fix1_hook_scan(
+    monkeypatch: pytest.MonkeyPatch, store: TypedArtifactStore, effect: Any
+) -> list[int]:
+    """Run `effect()` once, right after the scan's first `search_candidates` batch."""
+    original = store.search_candidates
+    fired: list[int] = []
+
+    def hooked(*args: Any, **kwargs: Any) -> Any:
+        rows = original(*args, **kwargs)
+        if not fired:
+            fired.append(1)
+            effect()
+        return rows
+
+    monkeypatch.setattr(store, "search_candidates", hooked)
+    return fired
+
+
+def test_t02_fix1_m7_store_write_during_scan_restarts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = TypedArtifactStore(tmp_path)
+    for artifact_id in ("p1", "p2", "p3"):
+        _row(store, artifact_id, None, "", content=T02_SAME)
+    generation = store.current_generation()
+    fired = _t02_fix1_hook_scan(
+        monkeypatch,
+        store,
+        lambda: _row(store, "w1", None, "", content={"text": "unrelated words"}),
+    )
+    page = _t02_recall(store, limit=10)
+    assert fired == [1]
+    assert store.current_generation() != generation
+    _t02_restarted(page, "store write during scan")
+
+
+def test_t02_fix1_m33_policy_change_during_scan_refuses_before_emit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess
+    from rush.token_economy.telemetry import TelemetryStore
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = tmp_path / "user-data"
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    seeded = ("g1", "g2", "g3")
+    for artifact_id in seeded:
+        _row(store, artifact_id, ALICE, "", content={"text": "needle granted words"})
+    grant = _grant(auth, root, ALICE, data_root, ops=("ask",))
+    telemetry = TelemetryStore(root)
+
+    def resolved() -> Any:
+        held = MemoryAccess.resolve(
+            root, operation="ask", owner_scope=ALICE, data_root=data_root
+        )
+        assert held is not None
+        return held
+
+    def recall(access: Any, request_id: str) -> dict[str, Any]:
+        return _t02_recall(
+            store,
+            session_allowlist=None,
+            access=access,
+            limit=10,
+            telemetry=telemetry,
+            request_id=request_id,
+            event_id="retrieval",
+            cache_write=True,
+        )
+
+    baseline = recall(resolved(), "baseline")
+    assert baseline["code"] == "OK", baseline
+    assert sorted(_ids(baseline)) == list(seeded)
+    assert _t02_events(root, "retrieval") == 1
+    generation = store.current_generation()
+
+    with monkeypatch.context() as patched:
+        fired = _t02_fix1_hook_scan(
+            patched,
+            store,
+            lambda: _grant(auth, root, BOB, data_root, ops=("ask",)),
+        )
+        moved = recall(resolved(), "revision")
+    assert fired == [1]
+    assert store.current_generation() == generation
+    _t02_restarted(moved, "policy revision during scan")
+    assert _t02_events(root, "retrieval") == 1
+
+    with monkeypatch.context() as patched:
+        fired = _t02_fix1_hook_scan(
+            patched,
+            store,
+            lambda: auth.revoke_memory_scope(
+                grant_id=grant["grant_id"],
+                expected_policy_revision=_revision(auth, data_root),
+                consent=True,
+                data_root=data_root,
+            ),
+        )
+        revoked = recall(resolved(), "revoked")
+    assert fired == [1]
+    assert store.current_generation() == generation
+    assert revoked["code"] == "E_PERMISSION", revoked
+    assert revoked["items"] == []
+    assert revoked["next_cursor"] is None
+    serialized = _dump(revoked)
+    for artifact_id in seeded:
+        assert artifact_id not in serialized
+    assert _t02_events(root, "retrieval") == 1
+
+
+def test_t02_fix1_m35_utf8_expand_telemetry_has_its_own_request_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.token_economy.telemetry import TelemetryStore
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    store, _data = _t02_literal_utf8(tmp_path / "project")
+    root = store.project_root
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+    for extra in ({}, {"representation": "utf8"}):
+        result = tool.run(
+            root,
+            operation="expand",
+            session_allowlist=["source-a"],
+            request={"id": "u1", "version": 1, "offset": 0, **extra},
+            permissions=perms,
+        )
+        assert _raw(result)["code"] == "OK", _raw(result)
+    assert _t02_events(root, "expansion") == 2
+    with contextlib.closing(sqlite3.connect(TelemetryStore(root).db_path)) as conn:
+        request_ids = sorted(
+            row[0]
+            for row in conn.execute(
+                "SELECT request_id FROM memory_events WHERE kind = 'expansion'"
+            )
+        )
+    assert request_ids == ["u1:1:0", "u1:1:0:utf8"]
+
+
+def test_t02_fix1_m29_page_token_falls_back_to_last_fit_at_token_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import retrieval
+
+    store = TypedArtifactStore(tmp_path)
+    for artifact_id in ("p1", "p2", "p3"):
+        _row(store, artifact_id, None, "", content=T02_SAME)
+    # p2 is consumed as ineligible, so with limit=1 the resume position (after p2)
+    # differs from the last accepted trial position (after p1).
+    _fix1_compact_tamper(store.db_path, "p2", T02_SAME)
+    original = retrieval._encode_cursor
+    low = "m2." + "A" * 27
+    high = "m2." + "".join(T02_B64URL[(i * 37) % 64] for i in range(27))
+    assert len(low) == len(high)
+    forged = {1: low, 2: high}
+
+    def encode(key: bytes, binding: bytes, generation: int, scan_offset: int) -> str:
+        if scan_offset in forged:
+            return forged[scan_offset]
+        return original(key, binding, generation, scan_offset)
+
+    monkeypatch.setattr(retrieval, "_encode_cursor", encode)
+
+    wide = _t02_recall(store, limit=1, max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert wide["code"] == "OK", wide
+    assert _ids(wide) == ["p1"]
+    assert wide["next_cursor"] == high, "resume position is not after p2"
+    fallback = {**wide, "next_cursor": low}
+    low_tokens = _t02_size(fallback)[1]
+    assert low_tokens < _t02_size(wide)[1]
+
+    edge = _t02_recall(store, limit=1, max_bytes=T02_BIG, max_tokens=low_tokens)
+    assert edge["code"] == "OK", edge
+    assert _ids(edge) == ["p1"]
+    assert edge["next_cursor"] == low
+    assert edge["complete"] is False
+    _t02_assert_page(edge, T02_BIG, low_tokens)
+
+
+# --- 72-T02 fix round 2 (T071 F5, F6) ----------------------------------------
+
+
+@pytest.mark.parametrize("with_db", [False, True])
+@pytest.mark.parametrize(
+    "bad",
+    [{"limit": 0}, {"max_bytes": 1}, {"max_tokens": 1}, {"encoding": "nope"}],
+)
+def test_t02_fix2_hybrid_compact_admission_refuses_before_effects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bad: dict[str, Any],
+    with_db: bool,
+) -> None:
+    """F5 (contract C05): hybrid compact gets the recall admission before access
+    resolution, the store view, telemetry or any embedding call."""
+    root = _pm_project(tmp_path, monkeypatch)
+    if with_db:
+        _row(TypedArtifactStore(root), "p1", None, "mk1")
+    db = _t02_fix1_telemetry_db(root)
+    assert not db.exists()
+    refused = MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-a"],
+        request={"view": "compact", "retrieval": "hybrid", **bad},
+        permissions=ExecutionPermissions(cache_write=True, network=True),
+    )
+    assert _raw(refused)["code"] == "E_INPUT", (bad, _raw(refused))
+    assert not db.exists(), f"hybrid admission refusal created tokens.db: {bad}"
+
+
+def test_t02_fix2_recall_page_rejects_non_string_cursor_before_store_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F6 (mutant N10): the direct API refuses a non-string page token as E_INPUT
+    before any store read."""
+    store = TypedArtifactStore(tmp_path)
+    _row(store, "p1", None, "mk1")
+    calls: list[str] = []
+    with monkeypatch.context() as patched:
+        for name in ("search_candidates", "current_generation", "cursor_key"):
+            patched.setattr(TypedArtifactStore, name, _t02_refuse(calls, name))
+        page = _t02_recall(store, cursor=123)
+    assert page["code"] == "E_INPUT", page
+    assert page["items"] == []
+    assert page["tokens"] == page["bytes"] == 0
+    assert calls == []
+
+
+def test_t02_fix2_expand_rejects_unknown_representation(tmp_path: Path) -> None:
+    """F6 (mutant N12): the direct API refuses an unknown representation as E_INPUT."""
+    store, _data = _t02_literal_utf8(tmp_path)
+    page = _t02_expand(store, representation="x")
+    assert page["code"] == "E_INPUT", page
+    assert page.get("content_utf8") is None
+
+
+# --- 72-T02 PM post-cap fix (T074 F7, F8) ------------------------------------
+
+
+_T02_FIX3_ROUTES = [
+    *[
+        ("compact", op, mode, bad)
+        for op in ("ask", "recall", "list")
+        for mode in ("lexical", "hybrid")
+        for bad in (
+            {"limit": 0},
+            {"limit": -5},
+            {"max_bytes": 1},
+            {"max_tokens": 1},
+            {"encoding": "nope"},
+        )
+    ],
+    *[
+        ("expand", "expand", rep, bad)
+        for rep in ("base64", "utf8")
+        for bad in (
+            {"offset": -1},
+            {"max_bytes": 1},
+            {"max_tokens": 1},
+            {"encoding": "nope"},
+        )
+    ],
+]
+
+
+def _t02_fix3_tree(base: Path) -> dict[str, int]:
+    return {str(p.relative_to(base)): p.stat().st_mtime_ns for p in base.rglob("*")}
+
+
+@pytest.mark.parametrize("allow", [["source-a"], []])
+@pytest.mark.parametrize("state", ["fresh", "db", "rushdir"])
+@pytest.mark.parametrize("route", _T02_FIX3_ROUTES)
+def test_t02_fix3_admission_precedes_access_view_and_telemetry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    route: tuple[str, str, str, dict[str, Any]],
+    state: str,
+    allow: list[str],
+) -> None:
+    """F7 (contract C05): every compact and expand admission refusal happens before
+    access resolution, the read-only store view and telemetry, and touches no file."""
+    from rush.tools import memory as memory_module
+
+    kind, operation, mode, bad = route
+    root = _pm_project(tmp_path, monkeypatch)
+    if state == "db":
+        _row(TypedArtifactStore(root), "u1", None, "a")
+    elif state == "rushdir":
+        (root / ".rush").mkdir()
+    calls: list[str] = []
+    real_view = memory_module.TypedArtifactStore.open_readonly_view
+
+    def view(cls: Any, project_root: Path) -> Any:
+        calls.append("view")
+        return real_view(project_root)
+
+    real_telemetry = memory_module.TelemetryStore
+
+    def telemetry(*args: Any, **kwargs: Any) -> Any:
+        calls.append("telemetry")
+        return real_telemetry(*args, **kwargs)
+
+    real_access = memory_module.MemoryTool._read_access
+
+    def access(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append("access")
+        return real_access(self, *args, **kwargs)
+
+    monkeypatch.setattr(
+        memory_module.TypedArtifactStore, "open_readonly_view", classmethod(view)
+    )
+    monkeypatch.setattr(memory_module, "TelemetryStore", telemetry)
+    monkeypatch.setattr(memory_module.MemoryTool, "_read_access", access)
+    before = _t02_fix3_tree(tmp_path)
+    if kind == "compact":
+        result = MemoryTool().run(
+            root,
+            operation=operation,
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=allow,
+            request={"view": "compact", "retrieval": mode, **bad},
+            permissions=ExecutionPermissions(cache_write=True, network=True),
+        )
+    else:
+        result = MemoryTool().run(
+            root,
+            operation="expand",
+            session_allowlist=allow,
+            request={"id": "u1", "version": 1, "representation": mode, **bad},
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+    expected = "E_OFFSET" if bad.get("offset") == -1 else "E_INPUT"
+    assert _raw(result)["code"] == expected, (route, _raw(result))
+    assert calls == [], (route, calls)
+    assert _t02_fix3_tree(tmp_path) == before, route
+
+
+@pytest.mark.parametrize("caps", [{}, {"max_bytes": 73, "max_tokens": 20}])
+def test_t02_fix3_missing_store_compact_page_reports_measured_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caps: dict[str, int]
+) -> None:
+    """F8: the lexical compact OK page for a project with no store reports its real
+    measured size, the same as an empty page from an existing store, and writes
+    nothing."""
+    root = _pm_project(tmp_path, monkeypatch)
+
+    def compact(project: Path) -> dict[str, Any]:
+        result = MemoryTool().run(
+            project,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=["source-a"],
+            request={"view": "compact", **caps},
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+        raw = _raw(result)
+        assert raw["code"] == "OK", raw
+        return dict(raw["data"])
+
+    page = compact(root)
+    assert not (root / ".rush").exists()
+    assert page["items"] == [] and page["complete"] is True
+    assert (page["bytes"], page["tokens"]) == _t02_size(page), page
+
+    other = tmp_path / "other"
+    other.mkdir()
+    _row(
+        TypedArtifactStore(other.resolve()), "z1", None, "unrelated", source="source-z"
+    )
+    empty = compact(other.resolve())
+    assert empty["items"] == []
+    assert (page["bytes"], page["tokens"]) == (empty["bytes"], empty["tokens"])

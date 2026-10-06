@@ -183,8 +183,13 @@ def test_serialized_payload_obeys_both_caps(tmp_path: Path) -> None:
     assert page["tokens"] == expected_tokens
     assert page["bytes"] <= 400
     assert page["tokens"] <= 100
+    # 72-T02 (A1): a budget-stopped page is honest about what it left behind.
+    assert page["complete"] is False
+    assert page["next_cursor"] is not None
+    assert len(page["items"]) >= 1
 
-    # Too-small envelope budget: not even an empty page fits -> E_BUDGET, no content.
+    # 72-T02 (A1): a cap below the smallest error envelope is refused at admission
+    # (E_INPUT), never answered with an E_BUDGET envelope larger than the cap itself.
     budget_page = recall_page(
         store,
         subject="domain_knowledge",
@@ -192,8 +197,9 @@ def test_serialized_payload_obeys_both_caps(tmp_path: Path) -> None:
         session_allowlist=["allowed"],
         max_bytes=1,
     )
-    assert budget_page["code"] == "E_BUDGET"
+    assert budget_page["code"] == "E_INPUT"
     assert budget_page["items"] == []
+    assert budget_page["required"]["max_bytes"] > 1
 
 
 def test_unicode_expansion_reconstructs_exact_original(tmp_path: Path) -> None:
@@ -235,11 +241,12 @@ def test_unicode_expansion_reconstructs_exact_original(tmp_path: Path) -> None:
     assert pages > 1
     assert b"".join(chunks) == stored_bytes
 
-    # Too-small envelope budget: E_BUDGET, no content leaked.
+    # 72-T02 (A2): a cap below the smallest expand envelope is refused at admission
+    # (E_INPUT), with no content leaked.
     tiny_budget = expand_artifact(
         store, artifact_id="u1", version=1, session_allowlist=["allowed"], max_bytes=1
     )
-    assert tiny_budget["code"] == "E_BUDGET"
+    assert tiny_budget["code"] == "E_INPUT"
     assert tiny_budget["content_base64"] is None
 
 
