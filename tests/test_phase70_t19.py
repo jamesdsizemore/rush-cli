@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -368,6 +369,29 @@ def _case_review_nested_file_uses_logical_root(tmp_path: Path) -> None:
 # ==========================================================================
 
 
+def _git_baseline(root: Path, *files: str) -> None:
+    """72-T01: a `main` commit holding `files`, so `ApiDiffer` has a baseline. Without
+    one the API diff is `"unknown"`, which the shared decision never treats as current."""
+    for args in (
+        ["init", "--initial-branch=main"],
+        ["add", *files],
+        ["commit", "-m", "baseline"],
+    ):
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                *args,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+
+
 def _write_ctx_source(root: Path, name: str = "ctx.py") -> str:
     """A real source file plus the exact sha256 `check_memory_before_pack`'s
     defended-recall staleness check compares against (`SourceValidationMemo.source_hash`,
@@ -383,6 +407,7 @@ def _write_ctx_source(root: Path, name: str = "ctx.py") -> str:
 
 def _case_pack_gate_hit_exact_receipt(tmp_path: Path) -> None:
     content_hash = _write_ctx_source(tmp_path)
+    _git_baseline(tmp_path, "ctx.py")
     write_cache_fill(
         tmp_path,
         "ctx.py",
@@ -671,6 +696,7 @@ def _case_result_cache_single_observation_on_miss_then_hit(tmp_path: Path) -> No
 
 def _case_typed_gate_hit_vs_result_cache_hit_differ(tmp_path: Path) -> None:
     content_hash = _write_ctx_source(tmp_path)
+    _git_baseline(tmp_path, "ctx.py")
     write_cache_fill(
         tmp_path,
         "ctx.py",

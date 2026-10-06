@@ -3,6 +3,7 @@
 import dataclasses
 import json
 import sqlite3
+import subprocess
 import time
 
 import pytest
@@ -30,9 +31,33 @@ from rush.workflows.projects import register_project
 GRANTED = ExecutionPermissions(cache_write=True)
 
 
+def _git_baseline(root, *files):
+    """72-T01: a `main` commit holding `files`, so `ApiDiffer` has a baseline. Without
+    one the API diff is `"unknown"`, which the shared decision never treats as current."""
+    for args in (
+        ["init", "--initial-branch=main"],
+        ["add", *files],
+        ["commit", "-m", "baseline"],
+    ):
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                *args,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
+
+
 def test_legacy_cache_without_hash_misses_and_refills(tmp_path):
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 2\n")
+    _git_baseline(tmp_path, "module.py")
     store = TypedArtifactStore(tmp_path)
     store.write(
         dataclasses.replace(
@@ -109,6 +134,7 @@ def test_pack_context_and_retrieve_context_persist_caller_attribution_not_a_path
 def test_cache_hash_covers_same_read_as_packed_payload(tmp_path, monkeypatch):
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n")
+    _git_baseline(tmp_path, "module.py")
     original_pack = ContextPacker.pack
 
     def edit_after_pack(self, *args, **kwargs):
@@ -202,6 +228,7 @@ def test_maintenance_uses_requested_root(tmp_path, monkeypatch, task):
 def test_real_pack_cache_tracks_whole_file(tmp_path, symbol, change):
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n")
+    _git_baseline(tmp_path, "module.py")
     result = pack_context(
         time.monotonic(), tmp_path, "module.py", symbol, 10000, GRANTED
     )
@@ -218,7 +245,18 @@ def test_real_pack_cache_tracks_whole_file(tmp_path, symbol, change):
     recalled = TypedArtifactStore(tmp_path).recall(
         "domain_knowledge", f'"module.py:{symbol}"', ["context_pack"]
     )
-    assert recalled[0].stale is (change != "untouched")
+    # 72-T01 (§3 step 7): `stale` marks only a `stale` freshness; a missing or
+    # unreadable source is `unknown` freshness, never current.
+    assert recalled[0].stale is (change == "body")
+    assert (
+        recalled[0].freshness
+        == {
+            "body": "stale",
+            "delete": "unknown",
+            "unreadable": "unknown",
+            "untouched": "current",
+        }[change]
+    )
     if change == "body" and symbol:
         fresh = pack_context(
             time.monotonic(), tmp_path, "module.py", symbol, 10000, GRANTED
@@ -253,7 +291,7 @@ def test_public_promotion_persists_signed_sanitized_record(tmp_path, user_stated
         session_allowlist=["allowed"],
     )
     assert recalled["status"] == "ok"
-    assert recalled["raw"] == [record]
+    assert recalled["raw"] == [{**record, "freshness": "not_applicable"}]
 
 
 def test_promotion_update_is_transactional(tmp_path):

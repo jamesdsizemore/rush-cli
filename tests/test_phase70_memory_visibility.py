@@ -439,16 +439,14 @@ def _case_dashboard_memory_section(fx: dict[str, Any]) -> None:
     assert everything["total"] == 12
     assert {i["id"] for i in everything["items"]} == fx["all_live_ids"]
 
-    # Text query mode also honors the default exclusion.
+    # Text query mode also honors the default exclusion. 72-T01 (PM gate delta 2 B5):
+    # `store.recall` never returns the expired row in query mode either.
     queried = _memory_section(pid, query="note")
-    assert queried["total"] == 6
-    assert {i["id"] for i in queried["items"]} == USEFUL_LIVE_IDS | {EXPIRED_ID}
+    assert queried["total"] == 5
+    assert {i["id"] for i in queried["items"]} == USEFUL_LIVE_IDS
     queried_diag = _memory_section(pid, query="note", include_internal="true")
-    assert queried_diag["total"] == 7
-    assert {i["id"] for i in queried_diag["items"]} == USEFUL_LIVE_IDS | {
-        EXPIRED_ID,
-        ALICE_ID,
-    }
+    assert queried_diag["total"] == 6
+    assert {i["id"] for i in queried_diag["items"]} == USEFUL_LIVE_IDS | {ALICE_ID}
 
 
 def _case_dashboard_expand_internal_by_id(fx: dict[str, Any]) -> None:

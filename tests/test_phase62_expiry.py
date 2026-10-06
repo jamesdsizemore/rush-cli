@@ -196,5 +196,17 @@ def test_expiry_and_staleness_are_independent(tmp_path: Path) -> None:
 
     assert by_id[stale_not_expired.id].stale is True
     assert by_id[stale_not_expired.id].expired is False
-    assert by_id[expired_not_stale.id].stale is False
-    assert by_id[expired_not_stale.id].expired is True
+    # 72-T01 (PM gate delta 2 B4): an expired row never reaches legacy recall; the
+    # explicit historical read still shows it expired and not stale.
+    assert expired_not_stale.id not in by_id
+    historical = {
+        a.id: a
+        for a in store.recall(
+            "domain_knowledge",
+            "default",
+            session_allowlist=["test"],
+            include_archived=True,
+        )
+    }
+    assert historical[expired_not_stale.id].stale is False
+    assert historical[expired_not_stale.id].expired is True

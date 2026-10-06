@@ -19,6 +19,7 @@ from pathlib import Path
 from rush.memory.store import (
     OwnerScope,
     TypedArtifactStore,
+    _content_or_none,
     _write_version,
     legacy_owner_scope,
     note_committed_write,
@@ -196,7 +197,7 @@ def sweep_reviewed_expired(
                 new_version = _write_version(
                     conn,
                     row["id"],
-                    content=json.loads(row["content"]),
+                    content=_content_or_none(row["content"]),
                     source=row["source"],
                     trust_tier=row["trust_tier"],
                     expected_version=None,

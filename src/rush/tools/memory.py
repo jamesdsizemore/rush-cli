@@ -32,11 +32,16 @@ from ..memory.retrieval import (
     DEFAULT_ENCODING,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
+    MemoryAccess,
+    SourceValidationMemo,
+    artifact_freshness,
     expand_artifact,
     hybrid_page,
+    read_access,
     recall_page,
 )
 from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
+from ..memory.retrieval import _expand as _expand_body
 from ..memory.store import (
     MemoryArtifact,
     MemoryFamily,
@@ -317,6 +322,14 @@ def _family_for_subject(subject: MemorySubject) -> MemoryFamily:
     return _SUBJECT_FAMILY.get(subject, "memory")
 
 
+# 72-T01: `open_readonly_view()` states -> compact/expand envelope codes.
+_READ_STATE_CODES = {
+    "migration_required": "E_MIGRATION",
+    "corrupt": "E_STORE_CORRUPT",
+    "busy": "E_STORE_BUSY",
+}
+
+
 class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
@@ -480,10 +493,17 @@ class MemoryTool(ToolFn):
                     run_id=run_id,
                     agent_id=agent_id,
                     session_id=session_id,
+                    owner_scope=owner_scope,
                 )
                 if request is not None
                 else self._query(
-                    started, root, subject, query, session_allowlist, "ask"
+                    started,
+                    root,
+                    subject,
+                    query,
+                    session_allowlist,
+                    "ask",
+                    owner_scope=owner_scope,
                 )
             ),
             "recall": lambda: (
@@ -501,10 +521,17 @@ class MemoryTool(ToolFn):
                     run_id=run_id,
                     agent_id=agent_id,
                     session_id=session_id,
+                    owner_scope=owner_scope,
                 )
                 if request is not None
                 else self._query(
-                    started, root, subject, query, session_allowlist, "recall"
+                    started,
+                    root,
+                    subject,
+                    query,
+                    session_allowlist,
+                    "recall",
+                    owner_scope=owner_scope,
                 )
             ),
             "list": lambda: (
@@ -522,6 +549,7 @@ class MemoryTool(ToolFn):
                     run_id=run_id,
                     agent_id=agent_id,
                     session_id=session_id,
+                    owner_scope=owner_scope,
                 )
                 if request is not None
                 else self._list_filtered(
@@ -548,6 +576,7 @@ class MemoryTool(ToolFn):
                     session_allowlist,
                     "list",
                     include_archived=include_archived,
+                    owner_scope=owner_scope,
                 )
             ),
             "expand": lambda: self._expand(
@@ -561,6 +590,7 @@ class MemoryTool(ToolFn):
                 run_id=run_id,
                 agent_id=agent_id,
                 session_id=session_id,
+                owner_scope=owner_scope,
             ),
             "write": lambda: self._run_write(
                 started,
@@ -781,12 +811,22 @@ class MemoryTool(ToolFn):
                     operation="list",
                 )
             artifacts.append(artifact)
+        # 72-T01 F3: the same additive `freshness` key as the queried list.
+        memo = SourceValidationMemo()
         return self._result(
             started,
             "ok",
             f"Found {len(artifacts)} memory artifact(s).",
             operation="list",
-            raw=[self._artifact_dict(a) for a in artifacts],
+            raw=[
+                self._artifact_dict(
+                    dataclasses.replace(
+                        a, freshness=artifact_freshness(view, a, memo=memo)[0]
+                    ),
+                    with_freshness=True,
+                )
+                for a in artifacts
+            ],
         )
 
     @staticmethod
@@ -851,7 +891,12 @@ class MemoryTool(ToolFn):
         operation: str,
         *,
         include_archived: bool = False,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
+        """Legacy (`request=None`) `ask`/`recall`/queried `list`. 72-T01: reads through
+        `open_readonly_view()` (a missing store is an empty result and creates nothing)
+        and the shared decision: `ask`/`recall` return only rows usable as current,
+        `list` every visible row (historical with `include_archived`)."""
         if not subject or not query:
             return self._result(
                 started,
@@ -859,7 +904,17 @@ class MemoryTool(ToolFn):
                 f"memory {operation} requires subject and query.",
                 operation=operation,
             )
-        if not session_allowlist:
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started, "error", f"invalid owner_scope: {exc}", operation=operation
+            )
+        historical = operation == "list" and include_archived
+        access = self._read_access(
+            root, "historical" if historical else operation, session_allowlist, owner
+        )
+        if access is None:
             return self._result(
                 started,
                 "skipped",
@@ -867,19 +922,49 @@ class MemoryTool(ToolFn):
                 "(fail-closed, no default cross-session access).",
                 operation=operation,
             )
-        store = TypedArtifactStore(root)
-        try:
-            artifacts = store.recall(
-                subject, query, session_allowlist, include_archived=include_archived
+        view, state = TypedArtifactStore.open_readonly_view(root)
+        if state is not None:
+            return self._result(
+                started, "error", readonly_view_reason(state), operation=operation
             )
+        if view is None:
+            return self._result(
+                started,
+                "ok",
+                f"Found 0 memory artifact(s) for '{query}'.",
+                operation=operation,
+                raw=[],
+            )
+        mode: Literal["ordinary", "inspect", "historical"] = (
+            "ordinary"
+            if operation in ("ask", "recall")
+            else ("historical" if historical else "inspect")
+        )
+        try:
+            artifacts = view.recall(subject, query, access=access, mode=mode)
         except (SignatureMismatchError, TrojanSourceFoundError) as exc:
             return self._result(started, "error", str(exc), operation=operation)
+        finally:
+            view.close()
+        # 72-T01 F2: recheck immediately before emit. A revoked policy fails closed
+        # (`E_PERMISSION`); a changed one asks the caller to restart (`E_RESTART`).
+        recheck = access.recheck()
+        if recheck != "ok":
+            code = "E_PERMISSION" if recheck == "denied" else "E_RESTART"
+            message = f"memory {operation}: the memory policy changed during the read."
+            return self._result(
+                started,
+                "fail" if recheck == "denied" else "warn",
+                f"{message} ({code})",
+                operation=operation,
+                raw={"code": code, "message": message},
+            )
         return self._result(
             started,
             "ok",
             f"Found {len(artifacts)} memory artifact(s) for '{query}'.",
             operation=operation,
-            raw=[self._artifact_dict(a) for a in artifacts],
+            raw=[self._artifact_dict(a, with_freshness=True) for a in artifacts],
         )
 
     def _compact_query(
@@ -898,6 +983,7 @@ class MemoryTool(ToolFn):
         run_id: str | None = None,
         agent_id: str | None = None,
         session_id: str | None = None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC02 §9.0 bounded `view=compact` mode for `ask`/`recall`/`list`. Only reachable
         when a caller passes `request` — legacy calls (`request=None`) always take `_query()`
@@ -980,7 +1066,17 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        if not session_allowlist:
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        access = self._read_access(root, operation, session_allowlist, owner)
+        if access is None:
             return self._envelope_result(
                 started,
                 operation,
@@ -990,18 +1086,98 @@ class MemoryTool(ToolFn):
                     "(fail-closed, no default cross-session access)."
                 },
             )
-        store = TypedArtifactStore(root)
-        telemetry = TelemetryStore(root) if granted.cache_write else None
-        if retrieval == "hybrid":
-            if not granted.network:
+        if retrieval == "hybrid" and not granted.network:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_PERMISSION",
+                {"message": f"memory {operation} retrieval=hybrid requires network."},
+            )
+        # 72-T01: reads use `open_readonly_view()`; only a hybrid read allowed to
+        # persist embeddings opens a writable store, and only on an existing DB.
+        if (
+            retrieval == "hybrid"
+            and granted.cache_write
+            and (root / ".rush" / "memory.db").exists()
+        ):
+            store: TypedArtifactStore | None = TypedArtifactStore(root)
+        else:
+            store, state = TypedArtifactStore.open_readonly_view(root)
+            if state is not None:
                 return self._envelope_result(
                     started,
                     operation,
-                    "E_PERMISSION",
-                    {
-                        "message": f"memory {operation} retrieval=hybrid requires network."
-                    },
+                    _READ_STATE_CODES[state],
+                    {"message": readonly_view_reason(state)},
                 )
+        if store is None:
+            empty: dict[str, Any] = {
+                "items": [],
+                "next_cursor": None,
+                "complete": True,
+                "tokens": 0,
+                "bytes": 0,
+                "encoding": encoding,
+            }
+            if retrieval == "hybrid":
+                empty.update(retrieval="hybrid", candidates_truncated=False)
+            return self._envelope_result(started, operation, "OK", empty)
+        try:
+            return self._compact_page(
+                started,
+                store,
+                access,
+                subject,
+                query,
+                operation,
+                retrieval,
+                request,
+                granted,
+                limit=limit,
+                max_tokens=max_tokens,
+                max_bytes=max_bytes,
+                encoding=encoding,
+                cursor=cursor,
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+        finally:
+            store.close()
+
+    def _compact_page(
+        self,
+        started: float,
+        store: TypedArtifactStore,
+        access: MemoryAccess,
+        subject: MemorySubject,
+        query: str,
+        operation: str,
+        retrieval: str,
+        request: dict[str, Any],
+        granted: ExecutionPermissions,
+        *,
+        limit: int,
+        max_tokens: int,
+        max_bytes: int,
+        encoding: str,
+        cursor: str | None,
+        invocation_id: str | None,
+        project_id: str | None,
+        run_id: str | None,
+        agent_id: str | None,
+        session_id: str | None,
+    ) -> ToolResult:
+        """`_compact_query()`'s page over an opened store and a resolved access."""
+        root = store.project_root
+        embedding_endpoint = request.get("embedding_endpoint")
+        embedding_model = request.get("embedding_model")
+        embedding_model_digest = request.get("embedding_model_digest")
+        embedding_chunking_version = request.get("embedding_chunking_version")
+        telemetry = TelemetryStore(root) if granted.cache_write else None
+        if retrieval == "hybrid":
             embed_config = None
             if embedding_endpoint and embedding_model and embedding_model_digest:
                 embed_config = EmbeddingConfig(
@@ -1014,7 +1190,7 @@ class MemoryTool(ToolFn):
                 store,
                 subject=subject,
                 query=query or "",
-                session_allowlist=session_allowlist,
+                access=access,
                 embed_config=embed_config,
                 limit=limit,
                 max_tokens=max_tokens,
@@ -1036,7 +1212,7 @@ class MemoryTool(ToolFn):
                 store,
                 subject=subject,
                 query=query or "",
-                session_allowlist=session_allowlist,
+                access=access,
                 limit=limit,
                 max_tokens=max_tokens,
                 max_bytes=max_bytes,
@@ -1069,6 +1245,7 @@ class MemoryTool(ToolFn):
         run_id: str | None = None,
         agent_id: str | None = None,
         session_id: str | None = None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC02 §9.0 `expand` operation: exact-byte expansion of one artifact version.
 
@@ -1125,17 +1302,94 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = (
-            self._readonly_store
-            if self._readonly_store is not None
-            else TypedArtifactStore(root)
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "expand",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        access = self._read_access(root, "expand", session_allowlist, owner)
+        not_visible = _expand_body(
+            "E_NOT_VISIBLE",
+            artifact_id=artifact_id,
+            version=None,
+            offset=offset,
+            encoding=encoding,
         )
+        if access is None:
+            not_visible.pop("code")
+            return self._envelope_result(
+                started, "expand", "E_NOT_VISIBLE", not_visible
+            )
+        # 72-T01: a read-only view; a missing store creates nothing and expands nothing.
+        store = self._readonly_store
+        own_view = store is None
+        if store is None:
+            store, state = TypedArtifactStore.open_readonly_view(root)
+            if state is not None:
+                return self._envelope_result(
+                    started,
+                    "expand",
+                    _READ_STATE_CODES[state],
+                    {"message": readonly_view_reason(state)},
+                )
+        if store is None:
+            not_visible.pop("code")
+            return self._envelope_result(
+                started, "expand", "E_NOT_VISIBLE", not_visible
+            )
         telemetry = TelemetryStore(root) if granted.cache_write else None
-        result = expand_artifact(
+        try:
+            result = self._expand_read(
+                store,
+                access,
+                artifact_id,
+                version,
+                offset=offset,
+                max_tokens=max_tokens,
+                max_bytes=max_bytes,
+                encoding=encoding,
+                telemetry=telemetry,
+                cache_write=granted.cache_write,
+                invocation_id=invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
+            )
+        finally:
+            if own_view:
+                store.close()
+        code = result.pop("code")
+        return self._envelope_result(started, "expand", code, result)
+
+    @staticmethod
+    def _expand_read(
+        store: TypedArtifactStore,
+        access: MemoryAccess,
+        artifact_id: str,
+        version: int,
+        *,
+        offset: int,
+        max_tokens: int,
+        max_bytes: int,
+        encoding: str,
+        telemetry: TelemetryStore | None,
+        cache_write: bool,
+        invocation_id: str | None,
+        project_id: str | None,
+        run_id: str | None,
+        agent_id: str | None,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        return expand_artifact(
             store,
             artifact_id=artifact_id,
             version=version,
-            session_allowlist=session_allowlist,
+            access=access,
             offset=offset,
             max_tokens=max_tokens,
             max_bytes=max_bytes,
@@ -1149,10 +1403,8 @@ class MemoryTool(ToolFn):
             agent_id=agent_id,
             session_id=session_id,
             opt_in=False,
-            cache_write=granted.cache_write,
+            cache_write=cache_write,
         )
-        code = result.pop("code")
-        return self._envelope_result(started, "expand", code, result)
 
     def _link(
         self,
@@ -1426,6 +1678,18 @@ class MemoryTool(ToolFn):
             },
             metadata={"operation": operation},
         )
+
+    @staticmethod
+    def _read_access(
+        root: Path,
+        operation: str,
+        session_allowlist: list[str] | None,
+        owner: OwnerScope | None,
+    ) -> MemoryAccess | None:
+        """72-T01 read access: a non-empty `session_allowlist` is the legacy explicit
+        form (no owner filter unless `owner` is declared); otherwise the policy at the
+        default data root. `None` keeps each route's fail-closed output."""
+        return read_access(root, operation, session_allowlist, owner_scope=owner)
 
     @staticmethod
     def _parse_owner_scope(
@@ -3107,8 +3371,15 @@ class MemoryTool(ToolFn):
         )
 
     @staticmethod
-    def _artifact_dict(artifact: MemoryArtifact) -> dict[str, Any]:
-        return dataclasses.asdict(artifact)
+    def _artifact_dict(
+        artifact: MemoryArtifact, *, with_freshness: bool = False
+    ) -> dict[str, Any]:
+        # 72-T01: legacy `list`/`recall`/`ask` rows carry the additive decision
+        # `freshness` (F3); write/promote records keep their pre-T01 shape.
+        data = dataclasses.asdict(artifact)
+        if not with_freshness:
+            data.pop("freshness", None)
+        return data
 
     def _result(
         self,

@@ -19,12 +19,15 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
 from rush.safety.redactor import sanitize_value
 from rush.sqlite_util import ClosingConnection
+
+if TYPE_CHECKING:
+    from rush.memory.retrieval import MemoryAccess
 
 MemoryFamily = Literal["handoff", "experience", "memory", "skill"]
 MemorySubject = Literal[
@@ -350,6 +353,10 @@ class MemoryArtifact:
     # T28-D: the stored archive timestamp (None = live), read-only on listed rows so a
     # caller can tell archived rows from live ones. Never written from this field.
     archived_at: float | None = None
+    # 72-T01: the shared decision's freshness (`current`, `stale`, `unknown` or
+    # `not_applicable`) on rows a read route returned; `None` when no decision ran.
+    # Never written from this field.
+    freshness: str | None = None
 
 
 _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
@@ -362,6 +369,8 @@ _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
         trust_tier TEXT NOT NULL,
         created_at REAL NOT NULL,
         deleted INTEGER NOT NULL DEFAULT 0,
+        payload_hash TEXT,
+        payload_hash_origin TEXT,
         PRIMARY KEY (artifact_id, artifact_version)
     )
     """,
@@ -583,7 +592,9 @@ CREATE TABLE IF NOT EXISTS memory_artifacts (
     archived_at REAL,
     owner_scope_kind TEXT,
     owner_scope_id TEXT,
-    orphaned_at REAL
+    orphaned_at REAL,
+    payload_hash TEXT,
+    payload_hash_origin TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_memory_trust ON memory_artifacts(trust_tier);
@@ -616,9 +627,28 @@ INSERT INTO memory_artifacts (
     id, family, subject, trust_tier, content, source, created_at,
     symbol_ref, content_hash, corroboration_count, promoted_at, stale,
     signature, origin_kind, origin_id, artifact_version,
-    owner_scope_kind, owner_scope_id
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    owner_scope_kind, owner_scope_id, payload_hash, payload_hash_origin
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 """
+
+# 72-T01 (plan §2.1 item 2): `payload_hash` is the SHA-256 of the exact persisted
+# `content` text; `payload_hash_origin` says how it was bound: `write` (an authorized
+# write), `backfill` (the additive migration) or NULL (unbound, e.g. a row inserted
+# outside `write()`).
+PAYLOAD_HASH_COLUMNS = ("payload_hash", "payload_hash_origin")
+
+
+def payload_digest(text: str) -> str:
+    """SHA-256 of one persisted `content` text (`memory_artifact_versions.content`)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def payload_mismatched(text: Any, digest: Any) -> bool:
+    """True when a payload binding exists and no longer matches the persisted text
+    (`integrity_payload_mismatch`); an unbound row (`digest` None) is not a mismatch."""
+    return digest is not None and (
+        not isinstance(text, str) or payload_digest(text) != digest
+    )
 
 
 def compute_content_signature(content: dict[str, Any]) -> str:
@@ -627,11 +657,119 @@ def compute_content_signature(content: dict[str, Any]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _backfill_bindable(text: Any, trust_tier: Any, signature: Any) -> bool:
+    """OD-1: a STATED row is backfilled only when its signature still matches; every
+    other row binds its persisted bytes as found."""
+    if not isinstance(text, str):
+        return False
+    if trust_tier != "STATED":
+        return True
+    try:
+        content = json.loads(text)
+    except ValueError:
+        return False
+    return (
+        isinstance(content, dict)
+        and bool(signature)
+        and compute_content_signature(content) == signature
+    )
+
+
+def _migrate_payload_hash_columns(conn: sqlite3.Connection) -> None:
+    """72-T01 additive migration: adds `payload_hash`/`payload_hash_origin` to
+    `memory_artifacts` and `memory_artifact_versions` wherever a table lacks them, and
+    backfills (`origin='backfill'`) only in the step that adds them. Write-authorized
+    callers only (`_init_db`, `upgrade`); a read never migrates."""
+    for table in ("memory_artifacts", "memory_artifact_versions"):
+        if not sqlite_has_table(conn, table):
+            continue
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        missing = [column for column in PAYLOAD_HASH_COLUMNS if column not in columns]
+        if not missing:
+            continue
+        for column in missing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+        artifact_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        if not {"content", "trust_tier", "signature"} <= artifact_columns:
+            continue  # a partial legacy table: leave its rows unbound
+        if table == "memory_artifacts":
+            rows = conn.execute(
+                "SELECT rowid, content, trust_tier, signature FROM memory_artifacts"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT v.rowid, v.content, v.trust_tier, a.signature "
+                "FROM memory_artifact_versions v "
+                "LEFT JOIN memory_artifacts a ON a.id = v.artifact_id"
+            ).fetchall()
+        for rowid, text, trust_tier, signature in rows:
+            if _backfill_bindable(text, trust_tier, signature):
+                conn.execute(
+                    f"UPDATE {table} SET payload_hash = ?, "
+                    "payload_hash_origin = 'backfill' WHERE rowid = ?",
+                    (payload_digest(text), rowid),
+                )
+
+
+def decode_content(stored: Any) -> Any:
+    """`json.loads` that reports content nested too deeply to parse as `ValueError`,
+    so every caller's corrupt-content handling covers it (72-T01 J6)."""
+    try:
+        return json.loads(stored)
+    except RecursionError:
+        raise ValueError("memory content is nested too deeply to parse") from None
+
+
+def _content_or_none(stored: Any) -> dict[str, Any] | None:
+    try:
+        content = decode_content(stored)
+    except (TypeError, ValueError):
+        return None
+    return content if isinstance(content, dict) else None
+
+
+def _stored_text(stored: Any) -> str | None:
+    if isinstance(stored, (bytes, bytearray)):
+        try:
+            return bytes(stored).decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return stored if isinstance(stored, str) else None
+
+
+def _content_unchanged(stored: Any, content: dict[str, Any] | None) -> bool:
+    """Whether `content` is the same value the `stored` column holds. Type-strict
+    (sorted canonical dumps): `True` vs `1` or `1` vs `1.0` is new content. `None`
+    means the caller carries the stored bytes over unparsed (corrupt content)."""
+    if content is None:
+        return True
+    text = _stored_text(stored)
+    if text is None:
+        return False
+    try:
+        return json.dumps(decode_content(text), sort_keys=True) == json.dumps(
+            content, sort_keys=True
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _persisted_text(stored: Any, content: dict[str, Any]) -> str:
+    """72-T01 fix round 2 (J1): the bytes a write of `content` persists. Content that
+    is unchanged keeps the stored text verbatim (never canonicalized, so its binding
+    stays valid); new content is serialized with `json.dumps`."""
+    if isinstance(stored, str) and _content_unchanged(stored, content):
+        return stored
+    return json.dumps(content)
+
+
 def _write_version(
     conn: sqlite3.Connection,
     artifact_id: str,
     *,
-    content: dict[str, Any],
+    content: dict[str, Any] | None,
     source: str,
     trust_tier: str,
     expected_version: int | None,
@@ -653,7 +791,9 @@ def _write_version(
     care (every pre-P65-07 call site) simply omit it and get `NULL`, unchanged behavior.
     """
     row = conn.execute(
-        "SELECT artifact_version FROM memory_artifacts WHERE id = ?", (artifact_id,)
+        "SELECT artifact_version, content, payload_hash, payload_hash_origin "
+        "FROM memory_artifacts WHERE id = ?",
+        (artifact_id,),
     ).fetchone()
     if row is None:
         raise KeyError(artifact_id)
@@ -665,19 +805,43 @@ def _write_version(
         )
     new_version = current_version + 1
     now = time.time()
+    # 72-T01 payload binding. New bytes are bound by this authorized write. Content that
+    # parses equal to the stored row (archive, expiry, promotion, maintenance) keeps the
+    # stored text verbatim and its binding unchanged -- never re-hashed, never
+    # canonicalized -- so an honest non-canonical row stays matched and a tampered or
+    # unbound row never becomes `write`-bound (plan §2.1 item 2; fix rounds 1-2, F1/J1).
+    # Callers that rewrite `memory_artifacts.content` persist `_persisted_text` too, so
+    # the live row and its latest version row hold the same bytes and binding.
+    # BLOB-typed or corrupt stored content (`content=None`) is carried over as
+    # stored and keeps its binding; it is never canonicalized into a `write`-bound
+    # row (T068 J5/J6).
+    if _content_unchanged(row[1], content):
+        text: Any = _stored_text(row[1]) if content is not None else row[1]
+        digest, origin = row[2], row[3]
+    else:
+        assert content is not None
+        text = json.dumps(content)
+        digest, origin = payload_digest(text), "write"
     conn.execute(
         "INSERT INTO memory_artifact_versions "
-        "(artifact_id, artifact_version, content, source, trust_tier, created_at, deleted) "
-        "VALUES (?,?,?,?,?,?,?)",
+        "(artifact_id, artifact_version, content, source, trust_tier, created_at, "
+        "deleted, payload_hash, payload_hash_origin) VALUES (?,?,?,?,?,?,?,?,?)",
         (
             artifact_id,
             new_version,
-            json.dumps(content),
+            text,
             source,
             trust_tier,
             now,
             int(tombstone),
+            digest,
+            origin,
         ),
+    )
+    conn.execute(
+        "UPDATE memory_artifacts SET payload_hash = ?, payload_hash_origin = ? "
+        "WHERE id = ?",
+        (digest, origin, artifact_id),
     )
     conn.execute(
         "INSERT INTO memory_changes (artifact_id, artifact_version, tombstone, created_at, subject) "
@@ -734,7 +898,7 @@ def _row_to_artifact(
         family=row["family"],
         subject=row["subject"],
         trust_tier=row["trust_tier"],
-        content=json.loads(row["content"]),
+        content=decode_content(row["content"]),
         source=row["source"],
         created_at=row["created_at"],
         symbol_ref=row["symbol_ref"],
@@ -979,6 +1143,14 @@ class TypedArtifactStore:
                 ).fetchone()
                 is not None
             )
+            # 72-T01: existing tables are migrated *before* `_SCHEMA_SQL` creates any
+            # missing FTS table, so the backfill's UPDATE fires only triggers whose
+            # index already holds these rows (see `_migrate_owner_scope_columns`). The
+            # write lock makes the column check and ALTER one step for concurrent
+            # openers; a fresh store gets the columns from `_SCHEMA_SQL` itself.
+            conn.execute("BEGIN IMMEDIATE")
+            _migrate_payload_hash_columns(conn)
+            conn.commit()
             conn.executescript(_SCHEMA_SQL)
             self._migrate_expiry_columns(conn)
             self._migrate_version_column(conn)
@@ -1182,6 +1354,9 @@ class TypedArtifactStore:
         include_expired: bool = False,
         scan_offset: int = 0,
         scan_limit: int = 64,
+        include_archived: bool = False,
+        owner_scope: OwnerScope | None = None,
+        now: float | None = None,
     ) -> list[sqlite3.Row]:
         """MC02 §9.0 scoped candidate query, filtered before rank/LIMIT: subject, source
         allowlist, trust eligibility and expiry. "Repository namespace" scoping (§6.2) is the
@@ -1215,6 +1390,17 @@ class TypedArtifactStore:
             params.extend(tiers)
         if not include_expired:
             clauses.append("ma.expired_at IS NULL")
+        # 72-T01 SQL prefilters; `retrieval.evaluate_artifact_visibility` stays the
+        # authoritative decision on every returned row.
+        if not include_archived:
+            clauses.append("ma.archived_at IS NULL")
+        owner_clause, owner_params = self._owner_prefilter("ma.", owner_scope)
+        if owner_clause:
+            clauses.append(owner_clause)
+            params.extend(owner_params)
+        if now is not None and not include_expired:
+            clauses.append("(ma.expires_at IS NULL OR ma.expires_at > ?)")
+            params.append(now)
         params.extend([scan_limit, scan_offset])
         sql = (
             "SELECT ma.* FROM memory_artifacts ma "
@@ -1237,6 +1423,8 @@ class TypedArtifactStore:
         include_archived: bool = False,
         scan_offset: int = 0,
         scan_limit: int = 512,
+        owner_scope: OwnerScope | None = None,
+        now: float | None = None,
     ) -> list[sqlite3.Row]:
         """MC12 §6.7 hybrid-retrieval candidate scope: the same subject/source/trust/expiry
         filters `search_candidates()` applies, without requiring an FTS text match -- vector
@@ -1262,6 +1450,13 @@ class TypedArtifactStore:
             clauses.append("expired_at IS NULL")
         if not include_archived:
             clauses.append("archived_at IS NULL")
+        owner_clause, owner_params = self._owner_prefilter("", owner_scope)
+        if owner_clause:
+            clauses.append(owner_clause)
+            params.extend(owner_params)
+        if now is not None and not include_expired:
+            clauses.append("(expires_at IS NULL OR expires_at > ?)")
+            params.append(now)
         params.extend([scan_limit, scan_offset])
         sql = (
             "SELECT * FROM memory_artifacts "
@@ -1271,6 +1466,46 @@ class TypedArtifactStore:
         with self._connect() as conn:
             cur = conn.execute(sql, params)
             return cur.fetchmany(scan_limit)
+
+    def _owner_prefilter(
+        self, prefix: str, owner_scope: OwnerScope | None
+    ) -> tuple[str, list[Any]]:
+        """72-T01 SQL owner prefilter matching `owner_scope_for_row()`: a row with no
+        stored owner belongs to this store's legacy owner."""
+        if owner_scope is None:
+            return "", []
+        clause = f"({prefix}owner_scope_kind = ? AND {prefix}owner_scope_id = ?)"
+        if owner_scope == self._owner_scope_default:
+            clause = (
+                f"({clause} OR {prefix}owner_scope_kind IS NULL "
+                f"OR {prefix}owner_scope_kind = '' OR {prefix}owner_scope_id IS NULL "
+                f"OR {prefix}owner_scope_id = '')"
+            )
+        return clause, [owner_scope.kind, owner_scope.id]
+
+    def get_current_row(self, artifact_id: str) -> sqlite3.Row | None:
+        """72-T01: the raw current row for one ID (what `evaluate_artifact_visibility`
+        decides on), or `None`."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+            ).fetchone()
+        return cast("sqlite3.Row | None", row)
+
+    def get_version_payload(
+        self, artifact_id: str, version: int
+    ) -> tuple[str, str | None] | None:
+        """72-T01 (X2): `(content, payload_hash)` for one exact version, or `None` when
+        that version does not exist. `get_version_content()` is unchanged."""
+        if not sqlite_integer_in_range(version):
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT content, payload_hash FROM memory_artifact_versions "
+                "WHERE artifact_id = ? AND artifact_version = ?",
+                (artifact_id, version),
+            ).fetchone()
+        return (row[0], row[1]) if row else None
 
     def list_artifact_refs(self) -> list[sqlite3.Row]:
         """P65-07.2 project-evidence listing: every *live* artifact's metadata across
@@ -1502,7 +1737,7 @@ class TypedArtifactStore:
                 "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
                 "trust_tier = ?, signature = NULL, promoted_at = NULL WHERE id = ?",
                 (
-                    json.dumps(sanitized_content),
+                    _persisted_text(row["content"], sanitized_content),
                     new_version,
                     new_trust_tier,
                     artifact_id,
@@ -1578,7 +1813,7 @@ class TypedArtifactStore:
             new_version = _write_version(
                 conn,
                 artifact_id,
-                content=json.loads(row["content"]),
+                content=_content_or_none(row["content"]),
                 source=row["source"],
                 trust_tier=row["trust_tier"],
                 expected_version=expected_version,
@@ -1867,7 +2102,16 @@ class TypedArtifactStore:
         columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        if not {"archived_at", "expired_at"} <= columns:
+        version_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(memory_artifact_versions)")
+        }
+        # 72-T01: a store without the payload-hash columns predates the shared read
+        # decision; reads never backfill it (plan §2.1 item 2).
+        if not (
+            {"archived_at", "expired_at", *PAYLOAD_HASH_COLUMNS} <= columns
+            and set(PAYLOAD_HASH_COLUMNS) <= version_columns
+        ):
             conn.close()
             return None, "migration_required"
         view = cls.__new__(cls)
@@ -1988,6 +2232,9 @@ class TypedArtifactStore:
                     "ALTER TABLE memory_artifacts ADD COLUMN artifact_version "
                     "INTEGER NOT NULL DEFAULT 1"
                 )
+            # 72-T01 (X2): payload-hash columns and their backfill, in this same
+            # transaction, before any legacy history row is written (those copy it).
+            _migrate_payload_hash_columns(conn)
             for statement in _VERSION_TABLE_STATEMENTS:
                 conn.execute(statement)
             changes_columns = {
@@ -2027,13 +2274,22 @@ class TypedArtifactStore:
 
     @classmethod
     def _backfill_legacy_row(cls, conn: sqlite3.Connection, row: sqlite3.Row) -> None:
-        """Writes one pre-existing row's history as version 1 (MC01 §6.1 legacy migration)."""
+        """Writes one pre-existing row's history as version 1 (MC01 §6.1 legacy migration).
+        72-T01: version 1 holds the row's exact bytes, so it carries the row's binding."""
         now = time.time()
         conn.execute(
             "INSERT INTO memory_artifact_versions "
-            "(artifact_id, artifact_version, content, source, trust_tier, created_at, deleted) "
-            "VALUES (?,1,?,?,?,?,0)",
-            (row["id"], row["content"], row["source"], row["trust_tier"], now),
+            "(artifact_id, artifact_version, content, source, trust_tier, created_at, "
+            "deleted, payload_hash, payload_hash_origin) VALUES (?,1,?,?,?,?,0,?,?)",
+            (
+                row["id"],
+                row["content"],
+                row["source"],
+                row["trust_tier"],
+                now,
+                _row_value(row, "payload_hash"),
+                _row_value(row, "payload_hash_origin"),
+            ),
         )
         conn.execute(
             "INSERT INTO memory_changes (artifact_id, artifact_version, tombstone, created_at) "
@@ -2110,7 +2366,7 @@ class TypedArtifactStore:
         tombstone_version = _write_version(
             conn,
             artifact_id,
-            content=json.loads(row["content"]),
+            content=_content_or_none(row["content"]),
             source=row["source"],
             trust_tier=row["trust_tier"],
             expected_version=expected_version,
@@ -2167,8 +2423,11 @@ class TypedArtifactStore:
     def _insert_row(self, conn: sqlite3.Connection, stored: MemoryArtifact) -> None:
         """Shared insert body for `write()`/`write_pass()`: the artifact row plus its
         `memory_artifact_versions`/`memory_changes` audit trail. Caller owns the
-        transaction (BEGIN/commit)."""
+        transaction (BEGIN/commit). 72-T01: both rows carry the `write`-bound
+        `payload_hash` of the exact persisted text."""
         now = time.time()
+        text = json.dumps(stored.content)
+        digest = payload_digest(text)
         conn.execute(
             _INSERT_SQL,
             (
@@ -2176,7 +2435,7 @@ class TypedArtifactStore:
                 stored.family,
                 stored.subject,
                 stored.trust_tier,
-                json.dumps(stored.content),
+                text,
                 stored.source,
                 stored.created_at,
                 stored.symbol_ref,
@@ -2190,19 +2449,23 @@ class TypedArtifactStore:
                 stored.artifact_version,
                 (stored.owner_scope or self._owner_scope_default).kind,
                 (stored.owner_scope or self._owner_scope_default).id,
+                digest,
+                "write",
             ),
         )
         conn.execute(
             "INSERT INTO memory_artifact_versions "
-            "(artifact_id, artifact_version, content, source, trust_tier, created_at, deleted) "
-            "VALUES (?,?,?,?,?,?,0)",
+            "(artifact_id, artifact_version, content, source, trust_tier, created_at, "
+            "deleted, payload_hash, payload_hash_origin) VALUES (?,?,?,?,?,?,0,?,?)",
             (
                 stored.id,
                 stored.artifact_version,
-                json.dumps(stored.content),
+                text,
                 stored.source,
                 stored.trust_tier,
                 now,
+                digest,
+                "write",
             ),
         )
         conn.execute(
@@ -2525,27 +2788,40 @@ class TypedArtifactStore:
         `memory_artifact_versions`/`memory_changes` row, and raises `VersionConflictError` if
         `expected_version` is given and stale. A missing `artifact_id` is a silent no-op,
         matching this method's pre-MC01 behavior.
+
+        72-T01: like `edit()`, a content change demotes a STATED row to DERIVED and
+        clears `signature`/`promoted_at` in the same transaction, so changed bytes never
+        keep promoted authority; the version row records the demoted tier.
         """
         sanitized_content = sanitize_value(content).value
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
-                "SELECT source, trust_tier FROM memory_artifacts WHERE id = ?",
+                "SELECT source, trust_tier, content FROM memory_artifacts WHERE id = ?",
                 (artifact_id,),
             ).fetchone()
             if row is None:
                 return
+            new_trust_tier = (
+                "DERIVED" if row["trust_tier"] == "STATED" else row["trust_tier"]
+            )
             new_version = _write_version(
                 conn,
                 artifact_id,
                 content=sanitized_content,
                 source=row["source"],
-                trust_tier=row["trust_tier"],
+                trust_tier=new_trust_tier,
                 expected_version=expected_version,
             )
             conn.execute(
-                "UPDATE memory_artifacts SET content = ?, artifact_version = ? WHERE id = ?",
-                (json.dumps(sanitized_content), new_version, artifact_id),
+                "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
+                "trust_tier = ?, signature = NULL, promoted_at = NULL WHERE id = ?",
+                (
+                    _persisted_text(row["content"], sanitized_content),
+                    new_version,
+                    new_trust_tier,
+                    artifact_id,
+                ),
             )
             conn.commit()
             note_committed_write(artifact_id, new_version, row["source"], "update")
@@ -2678,6 +2954,22 @@ class TypedArtifactStore:
         opts back into rows an `archive()` call has excluded from normal recall -- default
         False, matching "excluded from normal recall" for every other caller.
         """
+        return [
+            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
+            for row in self.search_rows(
+                subject, query, include_archived=include_archived
+            )
+        ]
+
+    def search_rows(
+        self,
+        subject: MemorySubject,
+        query: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[sqlite3.Row]:
+        """`search()`'s FTS5 match as raw rows, for callers that run the 72-T01 shared
+        decision (`retrieval.evaluate_artifact_visibility`) on each one."""
         archived_clause = "" if include_archived else "AND ma.archived_at IS NULL "
         with self._connect() as conn:
             cur = conn.execute(
@@ -2688,11 +2980,7 @@ class TypedArtifactStore:
                 + "ORDER BY f.rank",
                 (query, subject),
             )
-            rows = cur.fetchall()
-        return [
-            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
-            for row in rows
-        ]
+            return list(cur.fetchall())
 
     def recall(
         self,
@@ -2701,71 +2989,45 @@ class TypedArtifactStore:
         session_allowlist: Iterable[str] | None = None,
         *,
         include_archived: bool = False,
+        access: MemoryAccess | None = None,
+        mode: Literal["ordinary", "inspect", "historical"] = "inspect",
     ) -> list[MemoryArtifact]:
-        """FTS5 match (identical to search()) with signature, Trojan-source, and staleness checks.
+        """FTS5 match (identical to search()) through the 72-T01 shared decision
+        (`retrieval.evaluate_artifact_visibility`).
 
-        `session_allowlist` scopes results to rows whose `source` is in the allowlist, applied
-        before Invariants 3/4/6 run on any returned row (§9 P61.9). An empty or absent allowlist
-        fails closed: zero rows are returned, never all rows (matches
-        `src/rush/release/provenance_policy.py`'s empty-allowlist fail-closed precedent).
+        `session_allowlist` is the legacy access form: rows whose `source` is in it, with no
+        owner filter; an empty or absent allowlist with no `access` fails closed (zero
+        rows, never all rows -- `src/rush/release/provenance_policy.py`'s precedent).
+        `access` is a resolved `retrieval.MemoryAccess`; passing both raises `ValueError`.
+
+        `mode="inspect"` (the default) returns every visible row with its decision
+        `freshness` (and `stale=True` only for `stale`); `"ordinary"` returns only rows
+        usable as current; `include_archived=True` selects `"historical"`. Archived,
+        expired and integrity-failed rows are never returned outside historical mode.
+
+        Legacy access keeps the documented raise, applied after the source/owner filter:
+        `SignatureMismatchError` for a STATED row whose signature is missing or wrong,
+        `TrojanSourceFoundError` for Trojan Source characters (§9 P61.9, Invariants 3/4).
         """
-        allowed_sources = set(session_allowlist) if session_allowlist else set()
-        if not allowed_sources:
-            return []
-        verified: list[MemoryArtifact] = []
-        for artifact in self.search(subject, query, include_archived=include_archived):
-            if artifact.source not in allowed_sources:
-                continue
-            if artifact.trust_tier == "STATED" and (
-                artifact.signature is None
-                or compute_content_signature(artifact.content) != artifact.signature
-            ):
-                raise SignatureMismatchError(
-                    f"signature mismatch for STATED artifact {artifact.id}"
-                )
+        from rush.memory.retrieval import MemoryAccess, visible_artifacts
 
-            findings = _inspect_text_for_trojan_chars(
-                json.dumps(artifact.content, ensure_ascii=False)
-            )
-            if findings:
-                raise TrojanSourceFoundError(
-                    f"Trojan Source characters detected in artifact {artifact.id}: {findings}"
-                )
-
-            if artifact.symbol_ref is not None and artifact.content_hash is not None:
-                path_part = artifact.symbol_ref.split("::", 1)[0]
-                file_path = (self.project_root / path_part).resolve()
-                try:
-                    # Same sha256 as `MerkleInvalidator.hash_content`, computed
-                    # directly so a read-only view (which has no invalidator; its
-                    # construction mkdirs `.rush/cache`) can recall too.
-                    current_hash = hashlib.sha256(
-                        file_path.read_text(encoding="utf-8").encode("utf-8")
-                    ).hexdigest()
-                except (OSError, UnicodeError):
-                    current_hash = None
-                if current_hash != artifact.content_hash:
-                    artifact = dataclasses.replace(artifact, stale=True)
-
-            # API-diff staleness (§6.5 Invariant 5): independent baseline (git `base_ref`)
-            # from the merkle check above (last-hashed content) — evaluated unconditionally,
-            # never gated by it. An "unknown" ApiDiffer result never clears an existing
-            # stale=True; this block only ever sets stale=True, never resets it to False.
-            if artifact.symbol_ref is not None:
-                path_part, sep, symbol_part = artifact.symbol_ref.partition("::")
-                if sep and symbol_part:
-                    file_path = (self.project_root / path_part).resolve()
-                    if file_path.is_file():
-                        from rush.tools.api_diff import ApiDiffer
-
-                        diff_result = ApiDiffer(
-                            project_root=self.project_root
-                        ).diff_symbol(file_path, symbol_part)
-                        if isinstance(diff_result, dict):
-                            artifact = dataclasses.replace(artifact, stale=True)
-
-            verified.append(artifact)
-        return verified
+        if access is not None and session_allowlist is not None:
+            raise ValueError("pass access or session_allowlist, not both")
+        if access is None:
+            if not session_allowlist:
+                return []
+            access = MemoryAccess.legacy(self.project_root, session_allowlist)
+        if include_archived:
+            mode = "historical"
+        rows = self.search_rows(
+            subject, query, include_archived=include_archived or mode == "historical"
+        )
+        found = visible_artifacts(
+            self, rows, access=access, mode=mode, legacy_raise=True
+        )
+        # 72-T01 F2: recheck the policy immediately before emit; a moved policy emits
+        # nothing (fail closed).
+        return found if access.recheck() == "ok" else []
 
 
 def promote_stored_artifact(
@@ -2791,6 +3053,14 @@ def promote_stored_artifact(
     artifact = _row_to_artifact(
         row, default_owner_scope=legacy_owner_scope(project_root)
     )
+    if payload_mismatched(row["content"], _row_value(row, "payload_hash")):
+        # 72-T01 F1: promotion never blesses bytes that fail their payload binding.
+        return artifact, PromotionResult(
+            promoted=False,
+            new_tier=artifact.trust_tier,
+            denial_reason="integrity_payload_mismatch",
+            corroboration_count=artifact.corroboration_count,
+        )
     artifact = dataclasses.replace(
         artifact, content=sanitize_value(artifact.content).value
     )
@@ -2821,7 +3091,7 @@ def promote_stored_artifact(
             "UPDATE memory_artifacts SET content = ?, trust_tier = ?, promoted_at = ?, "
             "signature = ?, corroboration_count = ?, artifact_version = ? WHERE id = ?",
             (
-                json.dumps(artifact.content),
+                _persisted_text(row["content"], artifact.content),
                 artifact.trust_tier,
                 artifact.promoted_at,
                 artifact.signature,

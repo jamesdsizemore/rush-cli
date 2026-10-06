@@ -399,3 +399,13 @@ The T018 RED author found four gaps against §3. The PM closes them here, and T0
    - otherwise they resolve policy at `default_data_root()` or the given `data_root`.
 
    Functions without an allowlist parameter use only the policy route. T018 test 14 encodes this.
+
+## PM gate delta 2 (2026-10-05, T019 blockers)
+
+T019 implemented the design. 15 of the 16 RED tests passed, and it stopped on six blockers. The PM decides them as follows, and T019's allowed files grow to match:
+
+- **B1 (RED test defect).** `_drop_payload_columns` and `_columns` in `tests/test_phase72_memory_correctness.py` open `with sqlite3.connect(db) as conn`, which commits but never closes. The leaked connection keeps `memory.db-wal` alive until garbage collection. Fix the helpers to close their connection (`contextlib.closing`). This is a fixture fix; no assertion changes.
+- **B2 (OD-3 policy route).** `compare_last_success` and `plan_checks` have no allowlist, so they take the policy route only, as decided. With no grant they return no baseline and no evidence; that is the intended T01 behavior. `tests/test_memory_last_success.py` and `tests/test_memory_check_plan.py` get a grant fixture: register the project and grant ask on the sources they read, under a temp data root. Their assertions stay as they are.
+- **B3.** `tests/test_memory_hybrid.py:316-350` rewrites content with raw SQL. That is now tampering by design. The fixture's UPDATE also sets the matching `payload_hash` (origin `write`), so the test keeps measuring embed calls on current rows.
+- **B4 and B5 (expired-row leak).** `tests/test_phase62_expiry.py:194-200` and `tests/test_phase70_memory_visibility.py:444-445` expect an expired row in ordinary results. T01 closes that leak (the same M03 flip as `test_benchmark_memory.py:155`). The visibility test's own comment says query mode honors the default exclusion. Flip both to expect the expired row to be absent, and adjust the totals.
+- **B6 (checkpoint names in symbol_ref).** `checkpoint_journal.py:100` stores the checkpoint name in `symbol_ref` as a lookup key, not a code anchor. `artifact_freshness` treats rows whose source is `checkpoint_journal:save_checkpoint` as unanchored (`not_applicable`), so their freshness is never computed from the name. The malformed-ref rule (RED test 2, row x1) still applies to every other row. Pin the case with a test: a checkpoint row with `symbol_ref="cp-1"` is `not_applicable` and usable as current.

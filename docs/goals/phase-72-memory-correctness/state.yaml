@@ -80,7 +80,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
     command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
 
-active_task: T019
+active_task: T021
 
 tasks:
   - id: T001
@@ -1133,7 +1133,7 @@ tasks:
   - id: T019
     type: worker
     assignee: Worker
-    status: active
+    status: done
     reasoning_hint: high
     objective: "Implement 72-T01 Safe read, authority and symbol containment until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -1146,6 +1146,7 @@ tasks:
       - "T004 design-gate note"
       - "T018 receipt"
     constraints:
+      - "PM gate delta 2 (T004 note, 2026-10-05) decides T019 blockers B1-B6 and adds six test files to allowed_files; the RED file only for the B1 helper fix and the new B6 test."
       - "Cross-gate requirements on 72-T01 (PM 2026-10-05): X1 (T008 4.1) evaluate_artifact_visibility accepts the overlay access (user_overlay_owner_scope, overlay_read) against a store rooted at data_root/user and does not require store.project_root == access.project_root for that owner. X2 (T005) nullable payload_hash on memory_artifacts and memory_artifact_versions, computed in _write_version, write, update_content, edit, archive and expiry/maintenance version writes, backfilled by upgrade, plus a (content, payload_hash) version reader; resolved access and optional now threaded through recall_page, expand_artifact, MemoryTool._compact_query and MemoryTool._expand. X3 (T006) a legacy-allowlist access form and a historical authorization input, both usable by evaluate_artifact_visibility; symbol_ref=None rows stay ordinary-usable. X4 (T009) T01 owns the PAS test name test_foreign_owner_and_verified_claim_do_not_authorize. X5 (T007) an access-free freshness helper."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."
@@ -1161,6 +1162,12 @@ tasks:
       - "Full suite / ruff / format / mypy output vs T001 baseline"
       - "rush_check result"
     allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+      - "tests/test_memory_last_success.py"
+      - "tests/test_memory_check_plan.py"
+      - "tests/test_memory_hybrid.py"
+      - "tests/test_phase62_expiry.py"
+      - "tests/test_phase70_memory_visibility.py"
       - "src/rush/memory/store.py"
       - "src/rush/memory/retrieval.py"
       - "src/rush/tools/memory.py"
@@ -1187,11 +1194,48 @@ tasks:
       - "Need files outside allowed_files (PM amends only with gate-note justification)."
       - "Behavior is ambiguous against the gate note."
       - "Verification fails twice."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/store.py
+        - src/rush/memory/retrieval.py
+        - src/rush/memory/trust.py
+        - src/rush/memory/experience.py
+        - src/rush/memory/intent.py
+        - src/rush/memory/verification.py
+        - src/rush/tools/api_diff.py
+        - src/rush/tools/memory.py
+        - tests/test_phase72_memory_correctness.py
+        - tests/test_memory_efficiency.py
+        - tests/test_memory_core_regressions.py
+        - tests/test_phase62_cache_gate.py
+        - tests/test_phase70_t19.py
+        - tests/test_benchmark_memory.py
+        - tests/test_memory_last_success.py
+        - tests/test_memory_check_plan.py
+        - tests/test_memory_hybrid.py
+        - tests/test_phase62_expiry.py
+        - tests/test_phase70_memory_visibility.py
+      commands:
+        - cmd: "PM: pytest both T01 RED files (17 passed)"
+          status: pass
+        - cmd: "PM: pytest retrieval/trust/versions/authorization/last_success/check_plan/hybrid/expiry/memory_visibility (148 passed, 1 deselected)"
+          status: pass
+        - cmd: "PM: ruff check src tests scripts; ruff format --check (942 files); mypy src/rush (475 files)"
+          status: pass
+        - cmd: "PM: plan 2.2 probe: archive_hidden, expansion_denied, outside_denied True; paging False is T02's field"
+          status: pass
+        - cmd: "Worker full suite (2 failed baseline, 6561 passed, 15 deselected; NEW FAILURES []; 14:40); PM full suite running in parallel with T020"
+          status: pass
+      summary: "72-T01 implemented: MemoryAccess, VisibilityDecision, evaluate_artifact_visibility, artifact_freshness, payload_hash columns with backfill and get_version_payload, containment, diff_symbol unknowns, update_content demotion, all retrieval routes, MemoryTool and the five OD-3 readers. First pass stopped on blockers B1-B6; PM gate delta 2 decided them and widened allowed_files by six test files; the worker finished. 9 implementer deviations go to T020 for judgment."
+      facts:
+        - "16 RED tests plus 1 B6 pinning test pass"
+        - "No fix rounds used yet"
   - id: T020
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Full-attack review of 72-T01 Safe read, authority and symbol containment: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
     inputs:
@@ -1219,11 +1263,297 @@ tasks:
       - "Findings with file:line and reproduction"
       - "Fix round number"
       - "Plan completion criterion met: yes/no with evidence"
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge: unit gate green (17 T01 tests, 134 related, ruff/format/mypy, probe T01 fields True); 14 guard mutations caught"
+          status: pass
+        - cmd: "Judge probes: F1 compact-JSON tamper then promote gives STATED verified usable; F2 defended_recall and MemoryTool ask return r1 after a mid-call revoke"
+          status: fail
+        - cmd: "PM reproduction of F1: tampered a1 not_visible, promote True, then visible usable_as_current integrity verified"
+          status: fail
+        - cmd: "PM reading of F2: defended_recall rechecks only at entry (retrieval.py:681); store.recall has no recheck"
+          status: fail
+      summary: "FAIL. F1 MUST-FIX promotion blesses tampered bytes; F2 MUST-FIX no recheck before emit on defended_recall, store.recall, MemoryTool._query and read_visible; F3 SHOULD-FIX wire loses freshness (PM: fix now with an additive key); F4 SHOULD-FIX checkpoint exemption keys on a caller-controlled source (exempt only refs without '::'); F5 SHOULD-FIX integrity label 'verified' on a mismatched row. Deviations 2-6, 8-10 approved; 1 rejected (F1); 7 conditional on F3; 11 see F4. The coverage-report change is the PM's board sync, not T019. Fix round 1: T063 RED, T064 implement, T065 re-review."
+      facts:
+        - "fix_round: 1 pending"
+  - id: T063
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T01 fix round 1, RED: write regression tests for T020 F1-F5 in tests/test_phase72_memory_correctness.py and prove each FAILS on the current code before any fix."
+    inputs:
+      - "T020 receipt"
+      - "notes/T004-design-gate-72-t01.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T020 findings (PM reproduced F1 and F2): F1 MUST-FIX promotion blesses tampered bytes: _write_version (store.py:755) keeps the binding only on exact text equality, so a compact-JSON tamper followed by promote_stored_artifact (store.py:2964) is rebound with origin write, STATED and verified. Fix: keep the binding when json.loads(stored) == content, and refuse to promote a row whose payload binding mismatches; a tampered row stays excluded after promote and after maintenance auto-promotion. F2 MUST-FIX no recheck before emit: defended_recall (retrieval.py:656-692), store.recall (store.py:2919-2960), MemoryTool._query (tools/memory.py:872/932) and read_visible (OD-3) must call access.recheck() immediately before returning results on the policy route; a mid-call revocation returns no rows (fail-closed) and a revision change maps to E_RESTART on MemoryTool. F3 SHOULD-FIX (PM decision: fix now) MemoryTool legacy list/recall/ask rows carry an additive freshness key (current, stale, unknown, not_applicable); stale stays True only for stale; adjust exact-shape equality tests only by adding the key. F4 SHOULD-FIX the checkpoint-source freshness exemption applies only when symbol_ref has no '::' (a name, not a code anchor); a checkpoint-source row anchored as x.py::K still gets real freshness. F5 SHOULD-FIX reference.integrity is 'mismatch' for a row with integrity_payload_mismatch, never 'verified'."
+      - "Separate test author: no production edits; add tests only, never edit existing assertions."
+    expected_output:
+      - "Tests added, one or more per finding"
+      - "RED proof: each new test fails for its finding"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -q -p no:cacheprovider -k t01_fix1  # every selected test fails"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_phase72_portable_memory_policy.py -q -p no:cacheprovider -k \"not t01_fix1\"  # the 17 existing tests still pass"
+    stop_if:
+      - "A finding cannot be reproduced as a failing test."
+      - "A file outside allowed_files is needed."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+      commands:
+        - cmd: "PM: pytest tests/test_phase72_memory_correctness.py -k t01_fix1 (11 failed, 16 deselected)"
+          status: pass
+        - cmd: "PM: pytest both T01 files -k 'not t01_fix1' (17 passed)"
+          status: pass
+        - cmd: "ruff check, ruff format --check on the file; 0 skip markers"
+          status: pass
+      summary: "10 test functions (11 cases) pin T020 F1-F5, each failing on current code for its finding: promote and maintenance promotion of a tampered row; mid-call revoke on defended_recall, store.recall, MemoryTool ask and intent_evidence; MemoryTool revision change gives E_RESTART; wire freshness key; checkpoint exemption on anchored and outside refs; mismatch integrity label. The author flagged maintenance.py:441/483 re-binding payload_hash over tampered bytes; the PM added maintenance.py to T064."
+      facts:
+        - "Existing 17 T01 tests unchanged and passing"
+  - id: T064
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T01 fix round 1 of max 2: fix T020 F1-F5 until the T063 tests and every T019 verify command pass. Dispatch on Opus (trust boundary)."
+    inputs:
+      - "T020 receipt"
+      - "T063 receipt"
+      - "notes/T004-design-gate-72-t01.md"
+    constraints:
+      - "PM (from T063): maintenance._mutate_promotion_sweep falls back to recounting corroboration and calls _write_version with re-serialized content (maintenance.py:441/483), re-binding payload_hash with origin write over tampered bytes; that path gets the same guard, so maintenance.py is added to allowed_files."
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T020 findings (PM reproduced F1 and F2): F1 MUST-FIX promotion blesses tampered bytes: _write_version (store.py:755) keeps the binding only on exact text equality, so a compact-JSON tamper followed by promote_stored_artifact (store.py:2964) is rebound with origin write, STATED and verified. Fix: keep the binding when json.loads(stored) == content, and refuse to promote a row whose payload binding mismatches; a tampered row stays excluded after promote and after maintenance auto-promotion. F2 MUST-FIX no recheck before emit: defended_recall (retrieval.py:656-692), store.recall (store.py:2919-2960), MemoryTool._query (tools/memory.py:872/932) and read_visible (OD-3) must call access.recheck() immediately before returning results on the policy route; a mid-call revocation returns no rows (fail-closed) and a revision change maps to E_RESTART on MemoryTool. F3 SHOULD-FIX (PM decision: fix now) MemoryTool legacy list/recall/ask rows carry an additive freshness key (current, stale, unknown, not_applicable); stale stays True only for stale; adjust exact-shape equality tests only by adding the key. F4 SHOULD-FIX the checkpoint-source freshness exemption applies only when symbol_ref has no '::' (a name, not a code anchor); a checkpoint-source row anchored as x.py::K still gets real freshness. F5 SHOULD-FIX reference.integrity is 'mismatch' for a row with integrity_payload_mismatch, never 'verified'."
+      - "Never edit the RED tests; never weaken an assertion. Fix round 1 of max 2."
+    expected_output:
+      - "Finding -> code change -> test table"
+      - "Unit gate, ruff, format, mypy, probe"
+    allowed_files:
+      - "src/rush/memory/maintenance.py"
+      - "src/rush/memory/store.py"
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/memory/trust.py"
+      - "src/rush/tools/memory.py"
+      - "src/rush/memory/experience.py"
+      - "src/rush/memory/intent.py"
+      - "src/rush/memory/verification.py"
+      - "tests/test_memory_core_regressions.py"
+      - "tests/test_memory_public_contract.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_phase72_portable_memory_policy.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_retrieval.py tests/test_phase61_trust.py tests/test_memory_versions.py tests/test_memory_efficiency.py tests/test_memory_core_regressions.py tests/test_phase62_cache_gate.py tests/test_phase70_t19.py tests/test_benchmark_memory.py tests/test_memory_last_success.py tests/test_memory_check_plan.py tests/test_memory_hybrid.py tests/test_phase62_expiry.py tests/test_phase70_memory_visibility.py tests/test_memory_public_contract.py -q -p no:cacheprovider"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts"
+      - "rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "A fix needs a file outside allowed_files or changes authorization.py."
+      - "A read path creates .rush, a DB, a sidecar, a key or a policy file."
+      - "Untampered rows written by Rush lose their write binding."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/store.py
+        - src/rush/memory/maintenance.py
+        - src/rush/memory/trust.py
+        - src/rush/memory/retrieval.py
+        - src/rush/memory/experience.py
+        - src/rush/tools/memory.py
+        - tests/test_memory_core_regressions.py
+      commands:
+        - cmd: "PM: pytest both T01 files (28 passed)"
+          status: pass
+        - cmd: "PM: pytest 15 related files (270 passed)"
+          status: pass
+        - cmd: "PM: ruff check, ruff format --check (942 files), mypy src/rush (475 files)"
+          status: pass
+        - cmd: "Worker full suite (2 failed baseline, 6572 passed; NEW FAILURES []); PM full suite running in parallel with T065"
+          status: pass
+        - cmd: "Worker mutation runner: every fix's mutation killed"
+          status: pass
+      summary: "Fix round 1 of 2 for 72-T01. F1: _write_version treats equal parsed content as unchanged and never re-binds tampered or unbound bindings; promote_stored_artifact refuses payload-mismatched rows (new PromotionDenialReason integrity_payload_mismatch); both maintenance sweeps skip them. F2: store.recall, defended_recall, read_visible and the experience baseline reader recheck before emit; MemoryTool._query returns E_PERMISSION or E_RESTART. F3: additive freshness key on legacy list/recall/ask. F4: checkpoint exemption only without '::'. F5: mismatch label. The worker's pkill stopped the PM disk monitor (exit 144); the PM restarted it at 14:35:54."
+      facts:
+        - "fix_round: 1"
+        - "28 T01 tests pass"
+  - id: T065
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 72-T01 after fix round 1 (T063/T064): confirm F1-F5 closed with mutation-checked tests, re-run the T020 probes, attack the changed code."
+    inputs:
+      - "T020 receipt"
+      - "T064 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only. Probes keep every data_root inside a TemporaryDirectory."
+      - "On pass the PM commits 72-T01. On fail this is fix round 2, the last; the PM finishes any remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge unit gate: 28 passed; 270 passed; ruff, format, mypy clean; probe T01 fields True"
+          status: pass
+        - cmd: "Judge probe A: backfilled non-canonical rows after archive+unarchive, sweep_expired, staleness sweep become integrity_payload_mismatch and vanish"
+          status: fail
+        - cmd: "Judge race probe: update_content between the promotion sweep SELECT and BEGIN IMMEDIATE leaves a mismatched live row and stale version"
+          status: fail
+        - cmd: "Judge mutations W1, W2, MP, MS, E1, W2+MP, W2+MS survive 298 related tests"
+          status: fail
+        - cmd: "PM reading: store.py:775 re-hashes canonical text onto memory_artifacts.payload_hash while content stays row[1]; maintenance.py:421 builds the artifact before BEGIN IMMEDIATE"
+          status: fail
+      summary: "FAIL. F1-F5 closed on their named paths. J1 High: the T064 re-hash branch makes honest non-canonical rows falsely tampered. J2 Medium: promotion-sweep race writes pre-transaction content. J3: W2, MP and MS guards untested. J4: compare_last_success recheck untested. PM decision for fix round 2: parsed-equal content keeps the stored text verbatim in the version row with the binding unchanged. Cards T066 (RED), T067 (fix, last round), T068 (re-review)."
+      facts:
+        - "fix_round: 2 pending (last)"
+  - id: T066
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T01 fix round 2, RED: write regression tests for T065 J1-J4 in tests/test_phase72_memory_correctness.py (names test_t01_fix2_*) and prove each FAILS on current code (J3 and J4 tests fail under the reverted guard; record that mutation proof)."
+    inputs:
+      - "T065 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Single phase-72 .venv; tmp_path or TemporaryDirectory only; every data_root explicit inside the temp dir, never falsy; never kill or pkill a process you did not start. Never write to .scratch/. Zero SKIPPED tests."
+      - "T065 findings (PM confirmed J1 and J2 in the code) and PM design decision: J1 _write_version (store.py ~766-781) re-hashes the canonical text and stores that hash on memory_artifacts while archive, expiry, the staleness sweep and the promotion-sweep corroboration write leave memory_artifacts.content untouched, so an honest non-canonical (for example backfilled ensure_ascii=False) row becomes integrity_payload_mismatch and disappears. PM DECISION: when the new content parses equal to the stored content, _write_version writes the version row with the stored text VERBATIM (not json.dumps) and keeps the existing binding (payload_hash and origin) unchanged; it never re-hashes and never canonicalizes. New bytes (parsed content differs) are bound with origin write. Live row and latest version row then always hold the same bytes with the same binding. J2 _mutate_promotion_sweep (maintenance.py ~421) builds the artifact from the row selected before BEGIN IMMEDIATE; it must re-read the row inside the transaction and write that content. J3 tests must fail when the _write_version mismatch guard, the maintenance promotion guard or the staleness-sweep guard is reverted: assert a tampered row gets no new verified version row (latest version payload consistent with live row, never origin write over tampered bytes). J4 a test pins the compare_last_success pre-emit recheck (experience.py ~605): revoke during visible_artifacts gives no baseline."
+      - "Separate test author: tests only; never edit existing tests."
+    expected_output:
+      - "Tests per finding and RED or mutation proof"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -q -p no:cacheprovider -k t01_fix2"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_phase72_portable_memory_policy.py -q -p no:cacheprovider -k \"not t01_fix2\""
+    stop_if:
+      - "A finding cannot be reproduced."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+      commands:
+        - cmd: "PM: pytest -k t01_fix2 (5 failed: J1 archive/expiry/staleness/promotion_sweep, J2; 7 passed: J1 promote_stated, J1 control, J3 x4, J4)"
+          status: pass
+        - cmd: "PM: pytest both T01 files -k 'not t01_fix2' (28 passed)"
+          status: pass
+        - cmd: "Author mutation proofs: reverting W2, MP, MS or the J4 recheck each fails its test; production restored"
+          status: pass
+      summary: "12 test_t01_fix2_* cases pin T065 J1-J4. J1 and J2 fail on current code at the live-binding mismatch; J3 and J4 pass on current code and fail under their reverted guards. J1 promote_stated passes today because promote rewrites live content canonically; under the PM verbatim decision promote must also keep the stored text verbatim, or this test fails."
+      facts:
+        - "T067 must keep promote's stored text verbatim too"
+  - id: T067
+    type: worker
+    assignee: Worker
+    status: done
+    reasoning_hint: high
+    objective: "72-T01 fix round 2 of 2 (last): fix T065 J1 and J2 per the PM decision until the T066 tests and every gate pass. Opus. Anything still red afterwards is finished by the PM directly."
+    inputs:
+      - "T065 receipt"
+      - "T066 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Single phase-72 .venv; tmp_path or TemporaryDirectory only; every data_root explicit inside the temp dir, never falsy; never kill or pkill a process you did not start. Never write to .scratch/. Zero SKIPPED tests."
+      - "T065 findings (PM confirmed J1 and J2 in the code) and PM design decision: J1 _write_version (store.py ~766-781) re-hashes the canonical text and stores that hash on memory_artifacts while archive, expiry, the staleness sweep and the promotion-sweep corroboration write leave memory_artifacts.content untouched, so an honest non-canonical (for example backfilled ensure_ascii=False) row becomes integrity_payload_mismatch and disappears. PM DECISION: when the new content parses equal to the stored content, _write_version writes the version row with the stored text VERBATIM (not json.dumps) and keeps the existing binding (payload_hash and origin) unchanged; it never re-hashes and never canonicalizes. New bytes (parsed content differs) are bound with origin write. Live row and latest version row then always hold the same bytes with the same binding. J2 _mutate_promotion_sweep (maintenance.py ~421) builds the artifact from the row selected before BEGIN IMMEDIATE; it must re-read the row inside the transaction and write that content. J3 tests must fail when the _write_version mismatch guard, the maintenance promotion guard or the staleness-sweep guard is reverted: assert a tampered row gets no new verified version row (latest version payload consistent with live row, never origin write over tampered bytes). J4 a test pins the compare_last_success pre-emit recheck (experience.py ~605): revoke during visible_artifacts gives no baseline."
+      - "Never edit the RED tests; never weaken an assertion."
+    expected_output:
+      - "Finding -> change -> test -> mutation table; gate results"
+    allowed_files:
+      - "src/rush/memory/store.py"
+      - "src/rush/memory/maintenance.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py tests/test_phase72_portable_memory_policy.py -q -p no:cacheprovider"
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_memory_retrieval.py tests/test_phase61_trust.py tests/test_memory_versions.py tests/test_memory_efficiency.py tests/test_memory_core_regressions.py tests/test_phase62_cache_gate.py tests/test_phase70_t19.py tests/test_benchmark_memory.py tests/test_memory_last_success.py tests/test_memory_check_plan.py tests/test_memory_hybrid.py tests/test_phase62_expiry.py tests/test_phase70_memory_visibility.py tests/test_memory_public_contract.py tests/test_mcp.py -q -p no:cacheprovider"
+      - "rtk proxy uv run --python 3.12 --extra dev ruff check src tests scripts && rtk proxy uv run --python 3.12 --extra dev ruff format --check src tests scripts && rtk proxy uv run --python 3.12 --extra dev mypy src/rush"
+      - "PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "A file outside allowed_files is needed."
+      - "Keeping stored text verbatim breaks the STATED signature check or the FTS triggers."
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/store.py
+        - src/rush/memory/maintenance.py
+      commands:
+        - cmd: "PM: pytest both T01 files plus test_memory_compatibility_regressions.py (55 passed)"
+          status: pass
+        - cmd: "PM: ruff check, ruff format --check (942 files), mypy src/rush (475 files)"
+          status: pass
+        - cmd: "Worker: 17 related files 285 passed; probe T01 fields True; mutations J1, promote, loose-equality, J2 each fail their tests"
+          status: pass
+        - cmd: "Worker full suite attempt 2: 2 failed baseline, 6584 passed; NEW FAILURES []; PM full suite running with T068"
+          status: pass
+      summary: "Fix round 2 of 2 (last). J1: _persisted_text keeps stored text verbatim when content is unchanged (type-strict compare); _write_version keeps the binding when bytes are identical, else binds origin write; promote, edit and update_content write the same text to the live row. J2: _mutate_promotion_sweep re-reads its row after BEGIN IMMEDIATE. Signature (compute_content_signature over parsed canonical JSON) and FTS triggers (json_extract) are unaffected. Deviation: edit/update_content verbatim path has no dedicated test (ad-hoc probe only)."
+      facts:
+        - "fix_round: 2 (cap reached)"
+        - "40 T01 tests pass"
+  - id: T068
+    type: judge
+    assignee: Judge
+    status: done
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 72-T01 after fix round 2 (T066/T067): confirm J1-J4 closed with mutation-checked tests and re-run the T020 and T065 probes."
+    inputs:
+      - "T065 receipt"
+      - "T067 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only. Never kill or pkill a process you did not start."
+      - "On pass the PM commits 72-T01. On fail there is no third round: the PM finishes the remainder directly."
+    expected_output:
+      - "pass | fail with file:line and reproduction"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: pass_after_pm_fix
+      full_outcome_complete: true
+      changed_files:
+        - src/rush/memory/store.py
+        - src/rush/memory/retrieval.py
+        - src/rush/memory/expiry.py
+        - src/rush/memory/maintenance.py
+        - tests/test_phase72_memory_correctness.py
+      commands:
+        - cmd: "Judge T068: J1, J2, J4 and J3 (text) closed; all earlier guards mutation-killed; new J5 (BLOB content rebound as write), J6 (RecursionError crashes reads, blocks delete), J7 (edit/update verbatim untested), J8 (no second source scope in T01 file)"
+          status: fail
+        - cmd: "PM post-cap fix (no third round): decode_content maps too-deep JSON to ValueError; _content_or_none lets archive, delete and expiry carry corrupt content over unparsed; _stored_text and _content_unchanged handle BLOB content type-strictly; _write_version keeps the binding for unchanged or carried-over bytes and binds only new json.dumps bytes as write; retrieval _parsed_content, _candidate_to_item and the hybrid loop also catch RecursionError"
+          status: pass
+        - cmd: "PM RED then GREEN: 4 new tests (blob, deep nesting, edit/update verbatim x2, second source scope); blob and deep-nesting failed before the fix"
+          status: pass
+        - cmd: "PM mutations: J5 blob decode, J6 store mapping, J6 retrieval catch, J7 edit, J7 update, J8 source guard -> all KILLED; files restored, diff stat unchanged"
+          status: pass
+        - cmd: "pytest both T01 files plus compatibility (60 passed); 17 related files (285 passed); ruff check, format --check (942), mypy src/rush (475); git diff --check"
+          status: pass
+        - cmd: "PM full suite after the fix (2 failed baseline, 6589 passed, 15 deselected; NEW FAILURES []; EXIT=0; 23:21)"
+          status: pass
+      summary: "72-T01 closed after 2 fix rounds plus a PM post-cap fix for T068 J5-J8. The pre-existing RecursionError sites the judge listed (archive, _delete_row, expiry, maintenance row conversion) are fixed in the same change, not deferred. The skill-admission pre-lock trust check (maintenance.py _mutate_skill_admission_check) is recorded on the 72-T04 card T028. The docs coverage-report line is the board receipt refresh required by sync_docs --check."
+      facts:
+        - "44 T01 tests"
+        - "fix rounds: 2 plus PM post-cap"
   - id: T021
     type: worker
     assignee: Worker
-    status: queued
+    status: active
     reasoning_hint: high
     objective: "Write the full 72-T02 Honest pagination and exact UTF-8 recovery test matrix from the T005 gate note; prove each new test FAILS by execution before any production change."
     inputs:
@@ -1540,6 +1870,7 @@ tasks:
       - "T007 design-gate note"
       - "T027 receipt"
     constraints:
+      - "From the T068 review (2026-10-05): maintenance._mutate_skill_admission_check (maintenance.py ~519-545) checks plugin trust on the row read before BEGIN IMMEDIATE; the write re-reads under the lock via promote_stored_artifact, but the trust decision is a time-of-check/time-of-use gap. 72-T04 re-reads the row and re-checks plugin trust under the lock, with a race test."
       - "Gate package (notes/T007-design-gate-72-t04.md worker_package.implement), copied by the PM 2026-10-05: Implement 72-T04 per T007 D1-D4 on Opus (trust boundary) until all T04 RED tests and guards pass with full-suite, ruff, format and mypy green; adjust existing fixtures only by seeding real grants or grounded same-owner evidence."
       - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
       - "Use only the single phase-72 worktree .venv created in T001 (decision D4); never build another. Temp dirs only via pytest tmp_path or TemporaryDirectory; delete any temp HOME before reporting."

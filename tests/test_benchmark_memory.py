@@ -152,7 +152,9 @@ def test_memory_probe_metrics_match_recorded_tool_result(
 def test_memory_probe_detects_stale_record_via_legacy_path_only(tmp_path: Path) -> None:
     result = run_memory_probe(_scenario("M03"), output_root=tmp_path)
 
-    assert result.metrics["stale_visible_legacy"] is True
+    # 72-T01 (75-T02 M03): the shared decision closes the expired-legacy leak, so the
+    # legacy path no longer shows the expired record either.
+    assert result.metrics["stale_visible_legacy"] is False
     assert result.metrics["stale_visible_compact"] is False
     assert result.metrics["expiry_sweep_changed"] >= 1
 

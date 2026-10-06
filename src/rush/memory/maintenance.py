@@ -25,8 +25,10 @@ from rush.memory.store import (
     OwnerScope,
     TypedArtifactStore,
     _write_version,
+    decode_content,
     legacy_owner_scope,
     note_committed_write,
+    payload_mismatched,
     promote_stored_artifact,
     readonly_preview_error,
 )
@@ -388,7 +390,7 @@ def _artifact_from_row(row: sqlite3.Row) -> MemoryArtifact:
         family=row["family"],
         subject=row["subject"],
         trust_tier=row["trust_tier"],
-        content=json.loads(row["content"]),
+        content=decode_content(row["content"]),
         source=row["source"],
         created_at=row["created_at"],
         symbol_ref=row["symbol_ref"],
@@ -417,10 +419,18 @@ def _mutate_promotion_sweep(
     root: Path,
     expected_version: int | None = None,
 ) -> bool:
+    conn.execute("BEGIN IMMEDIATE")
+    _refuse_unless_reviewed(conn, row["id"], expected_version)
+    # 72-T01 fix round 2 (J2): `row` was selected before the write lock; re-read it
+    # under the lock so a concurrent edit is never overwritten with pre-edit content.
+    row = conn.execute(
+        "SELECT * FROM memory_artifacts WHERE id = ?", (row["id"],)
+    ).fetchone()
+    if row is None:
+        conn.commit()
+        return False
     artifact = _artifact_from_row(row)
     candidate_sources = _candidate_sources(conn, artifact.subject, artifact.symbol_ref)
-    conn.execute("BEGIN IMMEDIATE")
-    _refuse_unless_reviewed(conn, artifact.id, expected_version)
     promoted, decision = promote_stored_artifact(
         conn,
         artifact.id,
@@ -437,7 +447,11 @@ def _mutate_promotion_sweep(
     recomputed_count = count_corroboration(
         artifact.subject, artifact.symbol_ref, candidate_sources
     )
-    if recomputed_count != row["corroboration_count"]:
+    # 72-T01 F1: a payload-mismatched row is never rewritten (or re-bound) here.
+    if (
+        recomputed_count != row["corroboration_count"]
+        and decision.denial_reason != "integrity_payload_mismatch"
+    ):
         new_version = _write_version(
             conn,
             artifact.id,
@@ -477,9 +491,14 @@ def _mutate_staleness_sweep(
         conn.execute("BEGIN IMMEDIATE")
         _refuse_unless_reviewed(conn, row["id"], expected_version)
         artifact_row = conn.execute(
-            "SELECT content, source, trust_tier FROM memory_artifacts WHERE id = ?",
+            "SELECT content, source, trust_tier, payload_hash FROM memory_artifacts "
+            "WHERE id = ?",
             (row["id"],),
         ).fetchone()
+        if payload_mismatched(artifact_row["content"], artifact_row["payload_hash"]):
+            # 72-T01 F1: a payload-mismatched row is never rewritten (or re-bound).
+            conn.commit()
+            return False
         new_version = _write_version(
             conn,
             row["id"],

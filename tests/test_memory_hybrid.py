@@ -16,7 +16,7 @@ from rush.memory.embeddings import (
     validate_embedding_response,
 )
 from rush.memory.retrieval import embedding_text, hybrid_candidates, hybrid_page
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, TypedArtifactStore, payload_digest
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 
@@ -314,10 +314,14 @@ def test_model_digest_change_invalidates_vectors(tmp_path: Path) -> None:
     # for raw-row setup): the digest-v1 vector keyed by the old content hash is untouched,
     # but the new content hash has never been embedded and must be recomputed.
     new_content = {"text": "different content now"}
+    # 72-T01: rebind the payload hash too (origin `write`), so this stands for a real
+    # content change rather than a tamper the shared decision would exclude.
+    new_text = json.dumps(new_content)
     with sqlite3.connect(store.db_path) as conn:
         conn.execute(
-            "UPDATE memory_artifacts SET content = ? WHERE id = 'A1'",
-            (json.dumps(new_content),),
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ?, "
+            "payload_hash_origin = 'write' WHERE id = 'A1'",
+            (new_text, payload_digest(new_text)),
         )
         conn.commit()
     new_hash = _content_hash(new_content)

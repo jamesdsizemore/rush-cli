@@ -13,6 +13,16 @@ class ApiDiffer:
     def __init__(self, project_root: Path | None = None):
         self.project_root = project_root or Path.cwd()
 
+    def _signatures_or_none(self, code: str) -> dict[str, list[str]] | None:
+        """72-T01 parse-or-None: `None` when `code` does not parse, so a parse failure
+        is never read as "every symbol was removed"."""
+        try:
+            ast.parse(code)
+        except (SyntaxError, ValueError, RecursionError):
+            return None
+        # ponytail: parses twice; fold into one walk if this ever shows up in a profile.
+        return self._extract_public_signatures(code)
+
     def _extract_public_signatures(self, code: str) -> dict[str, list[str]]:
         signatures: dict[str, list[str]] = {}
         try:
@@ -87,30 +97,47 @@ class ApiDiffer:
         `"unknown"` when `base_ref` (or the file at `base_ref`) is unavailable for any
         other git reason (missing branch, detached HEAD, shallow clone) — callers must
         never treat `"unknown"` as evidence the symbol is fresh.
-        """
-        rel_path = str(
-            file_path.relative_to(self.project_root)
-            if file_path.is_relative_to(self.project_root)
-            else file_path
-        ).replace("\\", "/")
 
-        res = run_subprocess(
-            ["git", "show", f"{base_ref}:{rel_path}"], cwd=self.project_root
-        )
+        72-T01: also `"unknown"` for a non-`.py` file, a path not contained in
+        `project_root` (checked before anything is read), a base or current file that does
+        not parse, and a missing or unreadable current file.
+        """
+        from rush.io.physical_paths import ContainmentError, PhysicalRoot
+
+        root = Path(self.project_root).resolve()
+        candidate = Path(file_path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        if candidate.suffix != ".py" or not candidate.is_relative_to(root):
+            return "unknown"
+        try:
+            contained = PhysicalRoot(root).open_contained(candidate.relative_to(root))
+        except (ContainmentError, ValueError, OSError):
+            return "unknown"
+        rel_path = contained.relative_to(root).as_posix()
+
+        res = run_subprocess(["git", "show", f"{base_ref}:{rel_path}"], cwd=root)
         if res.returncode != 0 or not res.stdout:
             stderr = (res.stderr or "").lower()
             if "does not exist in" in stderr or "exists on disk, but not in" in stderr:
-                old_sigs: dict[str, list[str]] = {}
+                old_sigs: dict[str, list[str]] | None = {}
             else:
                 return "unknown"
         else:
-            old_sigs = self._extract_public_signatures(res.stdout)
+            old_sigs = self._signatures_or_none(res.stdout)
+        if old_sigs is None:
+            return "unknown"
+
+        try:
+            new_code = contained.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return "unknown"
+        new_sigs = self._signatures_or_none(new_code)
+        if new_sigs is None:
+            return "unknown"
 
         if symbol not in old_sigs:
             return None
-
-        new_code = file_path.read_text(encoding="utf-8", errors="ignore")
-        new_sigs = self._extract_public_signatures(new_code)
 
         if symbol not in new_sigs:
             return {

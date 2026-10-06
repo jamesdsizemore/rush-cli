@@ -6,9 +6,50 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from rush.memory import authorization as auth
 from rush.memory.experience import write_observation
+from rush.memory.store import legacy_owner_scope
 from rush.memory.verification import plan_checks
+from rush.setup.provision import default_data_root
 from rush.tools.memory import MemoryTool
+from rush.workflows.projects import register_project
+
+# 72-T01 (OD-3, PM gate delta 2 B2): this reader has no allowlist, so only the memory
+# policy authorizes it. Every test grants `ask` on the sources it reads, under a
+# per-test data root (HOME/XDG_DATA_HOME/LOCALAPPDATA point at a temp dir).
+_GRANTED_SOURCES = [
+    "test:regression",
+    "test:early-pass",
+    "test:dynamic-consumer",
+    "test:license-scan",
+    "test:mutation",
+]
+
+
+@pytest.fixture(autouse=True)
+def _ask_grant(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+    data_root = default_data_root()
+    register_project(tmp_path, data_root=data_root)
+    revision = auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+    auth.grant_memory_scope(
+        project_root=tmp_path,
+        owner_scope=legacy_owner_scope(tmp_path),
+        approved_sources=_GRANTED_SOURCES,
+        allowed_operations=["ask"],
+        expected_policy_revision=int(revision),
+        consent=True,
+        data_root=data_root,
+    )
 
 
 def test_past_payload_regression_prioritizes_contract_check(tmp_path: Path) -> None:

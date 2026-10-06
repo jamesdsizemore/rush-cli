@@ -334,16 +334,20 @@ def recall_repair_episodes(
 ) -> dict[str, Any]:
     """MC06.2/MC06.3: recall prior repair episodes for `symptom`, bucketed by outcome.
 
-    Read-only: only ever calls `TypedArtifactStore.search()` -- never executes a command,
-    never writes. Fails closed on an empty/absent `session_allowlist`, matching
-    `TypedArtifactStore.recall()`'s existing empty-allowlist precedent (no default
+    Read-only: a read-only view (a missing store creates nothing) and FTS matches -- never
+    executes a command, never writes. 72-T01 (OD-3): every candidate goes through the
+    shared decision (`retrieval.evaluate_artifact_visibility`, ordinary mode). A non-empty
+    `session_allowlist` is the legacy access form (no owner filter); otherwise the memory
+    policy at the default data root decides, and no grant fails closed (no default
     cross-session access). `patch_hash`, when given, is the proposed patch being considered
     for retrial; entries under `"failures"` carry a `"match"` state for it. Omitting it
     never produces a `match="same"` claim -- recall never asserts an exact repeat for a
     patch it wasn't asked to compare.
     """
-    allowed_sources = set(session_allowlist or ())
-    if not allowed_sources:
+    from rush.memory.retrieval import read_access, read_visible
+
+    access = read_access(project_root, "ask", session_allowlist)
+    if access is None:
         return {
             "code": "E_PERMISSION",
             "message": "recall_repair_episodes requires a non-empty session_allowlist.",
@@ -352,14 +356,14 @@ def recall_repair_episodes(
             "untested_hypotheses": [],
         }
 
-    store = TypedArtifactStore(project_root)
     failures: list[dict[str, Any]] = []
     verified_repairs: list[dict[str, Any]] = []
     untested_hypotheses: list[dict[str, Any]] = []
-    candidates = [*store.search("failure", symptom), *store.search("episodic", symptom)]
+    found = read_visible(
+        project_root, [("failure", symptom), ("episodic", symptom)], access=access
+    )
+    candidates = [artifact for batch in found for artifact in batch]
     for artifact in candidates:
-        if artifact.source not in allowed_sources:
-            continue
         content = artifact.content
         if content.get("kind") != "repair_episode" or content.get("symptom") != symptom:
             continue
@@ -520,39 +524,92 @@ def compare_last_success(
     is only `"reproduced"` when a prior `record_cause_experiment()` call already recorded
     a controlled-comparison result for this exact baseline -- correlation alone never
     upgrades it.
+
+    72-T01 (OD-3): this function has no allowlist, so only the memory policy at the default
+    data root authorizes the read (no grant: no baseline). The baseline pass and every
+    cause experiment go through the shared decision (`retrieval.evaluate_artifact_
+    visibility`, ordinary mode) over a read-only view; an archived, expired, tampered or
+    foreign baseline is no baseline.
     """
-    store = TypedArtifactStore(project_root)
+    from rush.memory.retrieval import (
+        evaluate_artifact_visibility,
+        read_access,
+        visible_artifacts,
+    )
+    from rush.memory.store import payload_digest
+
+    no_baseline: dict[str, Any] = {
+        "baseline_ref": None,
+        "code_changes": None,
+        "config_changes": None,
+        "dependency_changes": None,
+        "engine_changes": None,
+        "environment_compatible": True,
+        "cause_state": "candidate",
+    }
+    access = read_access(project_root, "ask")
+    if access is None:
+        return no_baseline
+    view, _state = TypedArtifactStore.open_readonly_view(project_root)
+    if view is None:
+        return no_baseline
     digest = behavior_runtime_digest(
         runtime=conditions.get("runtime"), platform=conditions.get("platform")
     )
-    pointer = store.get_behavior_success(
-        namespace=namespace, behavior_id=behavior_id, runtime_digest=digest
-    )
-    environment_compatible = True
-    if pointer is None and historical:
-        pointer = store.find_any_behavior_success(
-            namespace=namespace, behavior_id=behavior_id
-        )
-        environment_compatible = pointer is None
 
-    if pointer is None:
-        return {
-            "baseline_ref": None,
-            "code_changes": None,
-            "config_changes": None,
-            "dependency_changes": None,
-            "engine_changes": None,
-            "environment_compatible": True,
-            "cause_state": "candidate",
-        }
+    def usable_text(found: tuple[str, int] | None) -> str | None:
+        """The pointed-to version's bytes, or `None` unless the shared decision
+        delivers that artifact as current and the version's payload binding holds."""
+        if found is None:
+            return None
+        decision = evaluate_artifact_visibility(
+            view, view.get_current_row(found[0]), access=access
+        )
+        if not decision.usable_as_current:
+            return None
+        payload = view.get_version_payload(*found)
+        if payload is None:
+            return None
+        text, bound = payload
+        if bound is not None and payload_digest(text) != bound:
+            return None
+        return text
+
+    try:
+        pointer = view.get_behavior_success(
+            namespace=namespace, behavior_id=behavior_id, runtime_digest=digest
+        )
+        raw = usable_text(pointer)
+        if raw is None:
+            pointer = None
+        environment_compatible = True
+        if pointer is None and historical:
+            pointer = view.find_any_behavior_success(
+                namespace=namespace, behavior_id=behavior_id
+            )
+            raw = usable_text(pointer)
+            if raw is None:
+                pointer = None
+            environment_compatible = pointer is None
+        causes = (
+            visible_artifacts(
+                view, view.search_rows("episodic", behavior_id), access=access
+            )
+            if pointer is not None
+            else []
+        )
+    finally:
+        view.close()
+
+    # 72-T01 F2: recheck immediately before emit; a moved policy is no baseline.
+    if pointer is None or raw is None or access.recheck() != "ok":
+        return no_baseline
 
     artifact_id, artifact_version = pointer
-    raw = store.get_version_content(artifact_id, artifact_version)
     baseline_conditions: dict[str, Any] = {}
-    if raw is not None:
-        parsed = json.loads(raw)
-        if isinstance(parsed, dict):
-            baseline_conditions = parsed.get("conditions") or {}
+    parsed = json.loads(raw)
+    if isinstance(parsed, dict):
+        baseline_conditions = parsed.get("conditions") or {}
 
     def _delta(field: str) -> dict[str, Any] | None:
         baseline_value = baseline_conditions.get(field)
@@ -578,7 +635,7 @@ def compare_last_success(
 
     baseline_ref = {"id": artifact_id, "version": artifact_version}
     cause_state: CauseState = "candidate"
-    for artifact in store.search("episodic", behavior_id):
+    for artifact in causes:
         content = artifact.content
         if (
             content.get("kind") == "cause_experiment"

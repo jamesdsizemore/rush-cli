@@ -328,20 +328,28 @@ def intent_evidence(
     """MC07.3: read-only -- the current intent record (refs only, not resolved evidence) for
     each of `behavior_ids`, for `prepare_memory` to surface without executing anything.
 
-    Fails closed on an empty/absent `session_allowlist` or empty `behavior_ids`, matching
-    `recall_repair_episodes()`'s existing no-default-cross-session-access precedent.
+    Fails closed on empty `behavior_ids`. 72-T01 (OD-3): a non-empty `session_allowlist` is
+    the legacy access form (no owner filter); otherwise the memory policy at the default
+    data root decides, and no grant fails closed, matching `recall_repair_episodes()`.
+    Every record goes through the shared decision (ordinary mode) over a read-only view.
     """
-    allowed_sources = set(session_allowlist or ())
-    if not behavior_ids or not allowed_sources:
+    from rush.memory.retrieval import read_access, read_visible
+
+    if not behavior_ids:
         return []
-    store = TypedArtifactStore(project_root)
+    access = read_access(project_root, "ask", session_allowlist)
+    if access is None:
+        return []
+    found = read_visible(
+        project_root,
+        [("architectural_decision", _fts_phrase(b)) for b in behavior_ids],
+        access=access,
+    )
     seen_ids: set[str] = set()
     results: list[dict[str, Any]] = []
-    for behavior_id in behavior_ids:
-        for artifact in store.search(
-            "architectural_decision", _fts_phrase(behavior_id)
-        ):
-            if artifact.id in seen_ids or artifact.source not in allowed_sources:
+    for behavior_id, artifacts in zip(behavior_ids, found, strict=True):
+        for artifact in artifacts:
+            if artifact.id in seen_ids:
                 continue
             content = artifact.content
             if (

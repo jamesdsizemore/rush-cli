@@ -5,6 +5,7 @@ Covers T-62.01, T-62.02, T-62.18, T-62.19, T-62.20 (phase-62-memory-integration-
 
 from __future__ import annotations
 
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,29 @@ from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.token_economy.memory_cache_gate import check_memory_before_pack
 from rush.tools.continuity import SessionContinuityTool
+
+
+def _git_baseline(root: Path, *files: str) -> None:
+    """72-T01: a `main` commit holding `files`, so `ApiDiffer` has a baseline. Without
+    one the API diff is `"unknown"`, which the shared decision never treats as current."""
+    for args in (
+        ["init", "--initial-branch=main"],
+        ["add", *files],
+        ["commit", "-m", "baseline"],
+    ):
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                *args,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
 
 
 def _write_target(tmp_path: Path) -> Path:
@@ -51,6 +75,7 @@ def _seed_cache_row(tmp_path: Path, target: Path, *, packed_text: str) -> None:
 
 def test_cache_hit_returns_stored_content_without_new_pack(tmp_path: Path):
     target = _write_target(tmp_path)
+    _git_baseline(tmp_path, "service.py")
     _seed_cache_row(tmp_path, target, packed_text="CACHED PACKED TEXT")
 
     with patch.object(ContextPacker, "pack") as spy_pack:

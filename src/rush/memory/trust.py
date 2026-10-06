@@ -28,6 +28,7 @@ PromotionDenialReason = Literal[
     "incomplete_schema_fields",
     "failed_grounding_check",
     "insufficient_corroboration",
+    "integrity_payload_mismatch",
 ]
 
 
@@ -105,16 +106,29 @@ def _incomplete_schema(artifact: MemoryArtifact) -> bool:
     return False
 
 
+def contained_source_path(project_root: Path, path_part: str) -> Path | None:
+    """72-T01: `path_part` inside `project_root`, or `None` for an absolute path, a `..`
+    component, a symlink component or an escape (`PhysicalRoot.open_contained`). Never
+    reads the file, so a rejected path is never opened."""
+    from rush.io.physical_paths import ContainmentError, PhysicalRoot
+
+    try:
+        return PhysicalRoot(project_root).open_contained(path_part)
+    except (ContainmentError, ValueError, OSError):
+        return None
+
+
 def resolve_symbol_ref(symbol_ref: str, project_root: Path) -> bool:
     """Confirms `symbol_ref` ('path/to/file.py::Symbol') names a real file + top-level def/class.
 
     New, dedicated code — not a reuse of `GroundingVerifier` (which only resolves imports).
+    72-T01: the path must be contained in `project_root` before anything is read or parsed.
     """
     if "::" not in symbol_ref:
         return False
     path_part, symbol_name = symbol_ref.split("::", 1)
-    file_path = (Path(project_root) / path_part).resolve()
-    if not file_path.is_file():
+    file_path = contained_source_path(Path(project_root), path_part)
+    if file_path is None or not file_path.is_file():
         return False
     try:
         tree = ast.parse(file_path.read_text(encoding="utf-8"))

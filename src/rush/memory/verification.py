@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from rush.memory.experience import write_observation
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact
 from rush.patch.applier import PatchApplier
 from rush.patch.contracts import (
     DirtyWorkspaceError,
@@ -196,15 +196,29 @@ def _fts_phrase(text: str) -> str:
 
 
 def _plan_evidence(
-    store: TypedArtifactStore, target_ids: Sequence[str]
+    project_root: Path, target_ids: Sequence[str]
 ) -> list[tuple[MemoryArtifact, dict[str, Any]]]:
     """MC09.3: read-only lookup of already-recorded `episodic` observations (written
     through the existing `write_observation` -- never a parallel store) whose content
     mentions one of `target_ids`. Deduplicated by (id, version) since one artifact can
-    match more than one target's search."""
+    match more than one target's search.
+
+    72-T01 (OD-3): `plan_checks` has no allowlist, so only the memory policy at the
+    default data root authorizes the read (no grant: no evidence). Every observation goes
+    through the shared decision (ordinary mode) over a read-only view."""
+    from rush.memory.retrieval import read_access, read_visible
+
+    access = read_access(project_root, "ask")
+    if access is None or not target_ids:
+        return []
+    found = read_visible(
+        project_root,
+        [("episodic", _fts_phrase(target_id)) for target_id in target_ids],
+        access=access,
+    )
     seen: dict[tuple[str, int], tuple[MemoryArtifact, dict[str, Any]]] = {}
-    for target_id in target_ids:
-        for artifact in store.search("episodic", _fts_phrase(target_id)):
+    for artifacts in found:
+        for artifact in artifacts:
             key = (artifact.id, artifact.artifact_version)
             if key not in seen and artifact.content.get("evidence_kind") in (
                 _RELEVANT_EVIDENCE_KINDS
@@ -236,7 +250,6 @@ def plan_checks(
     """
     target_versions = {str(t["id"]): t.get("version") for t in changed_targets}
     available_engines = set(environment.get("available_engines", ()))
-    store = TypedArtifactStore(project_root)
 
     coverage_gaps: list[dict[str, Any]] = []
     seen_gaps: set[tuple[str, str]] = set()
@@ -258,7 +271,7 @@ def plan_checks(
         )
 
     by_check: dict[str, list[tuple[MemoryArtifact, dict[str, Any]]]] = {}
-    for artifact, content in _plan_evidence(store, list(target_versions)):
+    for artifact, content in _plan_evidence(project_root, list(target_versions)):
         check_id = content.get("check_id")
         if check_id:
             by_check.setdefault(str(check_id), []).append((artifact, content))
