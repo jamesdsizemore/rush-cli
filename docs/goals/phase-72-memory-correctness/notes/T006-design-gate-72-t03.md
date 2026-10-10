@@ -317,6 +317,30 @@ RED verify passes only when every selected `t03` test fails. Matrix size: 19 tes
 
 These are given in the receipt below. The implement `allowed_files` are copied verbatim from the plan's T03 Deliverables. `expiry.py` is left out: T03 needs no expiry predicate, because expiry visibility comes from T01's decision and swept expiry bumps the version. The card's prep-time list included it.
 
+## PM gate delta (after T024)
+
+Bindings to the committed code at fe1ffb0 (72-T01 ef24aeb, 72-T02 fe1ffb0). The PM accepted each one; T025 implements against them.
+
+**Access object.** The committed `access` is the frozen `MemoryAccess` dataclass from `retrieval.py`, not a dict with an `"access"` read/write field. Direct-API link and consolidate tests pass `MemoryAccess.resolve(root, operation="write", owner_scope=..., data_root=...)`. T025 treats an access resolved for the `write` grant operation as write-capable, and MemoryTool maps `link` and `consolidate` to the `write` grant (the grant vocabulary is ask, bootstrap, expand, list, write, history, overlay_read). T01-HIST is `MemoryAccess.resolve(operation="historical")`, so Alice's test grant includes `history`, and her sources include `consolidation` because MemoryTool consolidate writes its summary under that source.
+
+**Existing-test edits.** `test_memory_consolidation.py` also gains the `MemoryAccess` import and one binding line (`legacy = MemoryAccess.legacy(tmp_path, ["allowed"])`) before the line-83 assertion, so ruff format keeps both assertions on one line; the assertions at 83 and 94 are the gate's.
+
+**T03-16.** The single hidden m1 to m2 edge already passes at HEAD because T01 filters after traversal. The test adds 31 more hidden Bob neighbors so the node cap would drop visible c1; it asserts the same rule (invisible neighbors are omitted and use no cap).
+
+**Tier row.** A 20th function, `test_t03_consolidation_summary_tier_is_weakest_member`, pins the owner-decided tier order (a summary takes its weakest member's tier). It runs in legacy mode to isolate the tier assertion.
+
+**T03-17, 18, 19.** These build their world without the direct consolidate call, so each fails on its own assertion: T03-18 adds a positive related control before the revoke, and T03-19 pauses in `relations._connect` (in the code map) between the endpoint fetch and the commit.
+
+**RED shape.** 38 cases fail at fe1ffb0: 29 at fixture setup on the missing `access` keyword (`consolidate_episodes` 23, `add_relation` 6), 9 on behavior assertions. T024 also ran the suite under a scratchpad-only shim that accepts the keyword; every test then reached and failed its own T03 assertion.
+
+verified-by: PM re-run at fe1ffb0 of `pytest tests/test_phase72_memory_correctness.py -k t03` (38 failed, 305 deselected), the relations and consolidation files (2 failed, the two edited tests; 5 passed), and the five T02/T01 files with `-k "not t03"` (373 passed).
+
+## PM gate delta (after T025)
+
+**A third existing-test edit the gate missed.** `test_t01_relations_and_hybrid_never_disclose_excluded_neighbors` (tests/test_phase72_memory_correctness.py, the T01 section-11 test) built its edges with the legacy `add_relation` and expected `OK` for an archived endpoint (row-a2) and a cross-owner endpoint (row-b1). T03 refuses both (T03-3, T03-7), so no implementation can pass both tests. The PM changed only that test's setup: the two ineligible edges are inserted with `_t03_edge`, as an older writer could have left them, and `add_relation` still creates the visible row-c1 edge. Every assertion is unchanged; the test still checks that recall and hybrid never disclose the hidden neighbors.
+
+verified-by: the edited test passes on the T025 code and on the committed fe1ffb0 code in a TemporaryDirectory copy (1 passed each); PM re-run on the T025 code: `-k t03` 38 passed; relations and consolidation 7 passed; the eight-file T01/T02/T03 set 576 passed.
+
 ## (B) Receipt
 
 ```json

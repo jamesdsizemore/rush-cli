@@ -123,6 +123,7 @@ Each item names the task it gates. A task does not start while its decision is o
 - **T013 OD-T08-2 (embedding model):** "nomic-embed-text", pulled into the local Ollama.
 - **T013 OD-T08-3 (live spend):** "Yes, both routes for T048".
 - **T013 OD-T08-4 (hybrid decision rule):** "Rule as drafted, default on benefit".
+- **T026 legacy mode (2026-10-06, "Policy governs all routes"):** once a project has a registered memory policy, every MemoryTool route (ask, expand, list, write, link, related, consolidate) must resolve through that policy, and a legacy allowlist or no-owner call gets E_PERMISSION. Projects with no registered policy keep legacy mode. This is done in the 72-T03 fix round: the T079 design gate maps every route and caller, then T076 (RED) and T077 (fix, Opus) implement it, including the 72-T01 `read_access` rule and the existing tests that call without a policy grant.
 - **T013 OD-T08-6 (revoked-source cases):** "Real policy revoke, temp HOME".
 - **T013 OD-T08-7 (metadata arm):** "Add live metadata arm".
 - **T014 OD1 (installed artifact):** "PyInstaller into phase-72 .venv".

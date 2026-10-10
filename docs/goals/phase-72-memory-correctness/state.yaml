@@ -80,7 +80,7 @@ visual_board:
     url: "http://goalbuddy.localhost:41737/phase-72-memory-correctness/"
     command: "node /Users/jamesdsizemore/.claude/skills/goal-prep/surfaces/local-goal-board/scripts/local-goal-board.mjs --goal docs/goals/phase-72-memory-correctness"
 
-active_task: T024
+active_task: T079
 
 tasks:
   - id: T001
@@ -2060,7 +2060,7 @@ tasks:
   - id: T024
     type: worker
     assignee: Worker
-    status: active
+    status: done
     reasoning_hint: high
     objective: "Write the full 72-T03 Relations and derived-memory validity test matrix from the T006 gate note; prove each new test FAILS by execution before any production change."
     inputs:
@@ -2099,11 +2099,32 @@ tasks:
       - "payload_hash column absent from memory_artifact_versions after T02."
       - "Need files outside allowed_files, or any selected t03 test passes, skips or errors at collection."
       - "Verification fails twice."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - tests/test_phase72_memory_correctness.py
+        - tests/test_memory_relations.py
+        - tests/test_memory_consolidation.py
+      commands:
+        - cmd: "PM re-run at fe1ffb0: pytest tests/test_phase72_memory_correctness.py -k t03 -> 38 failed, 305 deselected (29 TypeError on the missing access keyword: consolidate_episodes 23, add_relation 6; 9 behavior AssertionErrors)"
+          status: pass
+        - cmd: "PM re-run: test_memory_relations.py and test_memory_consolidation.py -> 2 failed (the two edited tests, predicted reasons), 5 passed"
+          status: pass
+        - cmd: "PM re-run: 5 T01/T02 files -k 'not t03' -> 373 passed"
+          status: pass
+        - cmd: "PM: existing-test edits limited to relations line 83 and consolidation lines 83/94 plus the MemoryAccess import and one binding line"
+          status: pass
+        - cmd: "Worker: ruff check and ruff format --check clean on the three files"
+          status: pass
+      summary: "72-T03 RED: 20 t03 functions (38 cases) all fail at fe1ffb0 for their predicted reasons; the two proven existing-test edits applied. Bindings to committed code (MemoryAccess dataclass, write grant for link/consolidate, T03-16 cap-leak form, tier row) recorded as a PM gate delta in the T006 note."
+      facts:
+        - "38 t03 cases"
+        - "20 t03 functions"
   - id: T025
     type: worker
     assignee: Worker
-    status: queued
+    status: done
     reasoning_hint: high
     objective: "Implement 72-T03 Relations and derived-memory validity until its RED tests pass, with full-suite, ruff, format and mypy gates green."
     inputs:
@@ -2151,11 +2172,31 @@ tasks:
       - "73-T02 exposes no policy-path or lock helper usable with identity memory-policy:<policy path>."
       - "Any existing test beyond the three cited lines fails because of the T03 change."
       - "Max two fix rounds; after round 2 the PM finishes directly."
-    receipt: null
+    receipt:
+      result: done
+      harness: claude-code
+      changed_files:
+        - src/rush/memory/relations.py
+        - src/rush/memory/consolidation.py
+        - src/rush/memory/retrieval.py
+        - src/rush/tools/memory.py
+      commands:
+        - cmd: "Worker stop_if (correctly raised): test_t01_relations_and_hybrid_never_disclose_excluded_neighbors seeded an archived and a cross-owner edge through legacy add_relation and expected OK, which T03-3/T03-7 forbid; PM gate delta seeds those two edges raw with _t03_edge, assertions unchanged; the edited test passes on T025 code and on committed fe1ffb0 code (1 passed each)"
+          status: pass
+        - cmd: "PM re-run: -k t03 38 passed; relations and consolidation 7 passed; eight-file T01/T02/T03 set 576 passed; plan 2.2 probe all four true"
+          status: pass
+        - cmd: "PM re-run: ruff check clean; ruff format --check 942; mypy src/rush 475 clean; diff --check clean"
+          status: pass
+        - cmd: "PM full suite after the gate delta: 2 failed (baseline pair), 6890 passed, 15 deselected; NEW FAILURES []; EXIT=0; 24:11"
+          status: pass
+      summary: "72-T03 implemented: access-aware add_relation (E_INPUT self-supersedes, E_PERMISSION without a write grant, T01 decision, legacy same-owner, E_VERSION and cycle checks inside BEGIN IMMEDIATE); related_artifacts with per-hop T01 decisions, current-version edges, cap after visibility and historical mode; required-access summary_is_current with member_refs binding; owner-scoped consolidate_episodes with weakest-member tier; derived-summary adapter in _decide; MemoryTool link/related/consolidate grant threading with the policy lock through commit and a post-traversal recheck. Worker deviations go to T026, first the no-owner_scope legacy path for link and consolidate."
+      facts:
+        - "38 t03 cases pass"
+        - "full suite 6890 passed, 2 baseline failures"
   - id: T026
     type: judge
     assignee: Judge
-    status: queued
+    status: done
     reasoning_hint: xhigh
     objective: "Full-attack review of 72-T03 Relations and derived-memory validity: spec compliance vs plan packet and gate note, adversarial bypass attempts on each read/write path, test quality, file-scope check."
     inputs:
@@ -2183,6 +2224,114 @@ tasks:
       - "Findings with file:line and reproduction"
       - "Fix round number"
       - "Plan completion criterion met: yes/no with evidence"
+    receipt:
+      result: done
+      harness: claude-code
+      decision: fail
+      full_outcome_complete: false
+      changed_files: []
+      commands:
+        - cmd: "Judge and PM re-run (scratchpad t026/test_t026_probes.py, 10 passed): P7 legacy access with operation write, cross-owner add_relation OK, 1 edge; P10 consolidate pulls m1 and Bob's m2 into a project-owned summary"
+          status: fail
+        - cmd: "Judge and PM re-run: P3 MemoryTool link with no owner_scope OK after Alice's grant is revoked (with owner E_PERMISSION); P4 Bob with no write grant links his own rows with no owner_scope"
+          status: fail
+        - cmd: "Judge mutants (11-file set, CONTROL 584 passed): M10, M13, M15, M20 survive; M1-M9, M11, M12, M14, M16-M19, M21 killed"
+          status: fail
+        - cmd: "Judge: P1/P2 no-owner link to a cross-owner or archived endpoint E_NOT_VISIBLE; P6 related missing and foreign root bodies identical; P8/P8b consolidate project and grant checks E_PERMISSION; P9 summary currency follows member visibility; T02 probes probe_f1.py and test_t071_attack.py -k hybrid pass"
+          status: pass
+        - cmd: "PM full suite log T025-pm-fullsuite.log: 2 failed baseline, 6890 passed, NEW FAILURES [], EXIT=0"
+          status: pass
+      summary: "FAIL, fix round 1 next. Finding 1 HIGH: is_write_access ignores access.kind, so a legacy access with operation write skips both owner guards. Finding 2 MEDIUM: MemoryTool link and consolidate with no owner_scope skip the write grant (revoked or absent grant still links); owner decision pending on legacy mode under a registered policy. Finding 3 MEDIUM: M10, M13, M15, M20 survive. Deviations 2-5 accepted. Fix round 1 cards: T076 RED, T077 fix (Opus), T078 re-review."
+      facts:
+        - "fix_round: 1 next"
+        - "plan completion criterion met: no"
+  - id: T079
+    type: scout
+    assignee: Scout
+    status: active
+    reasoning_hint: xhigh
+    objective: "Design gate for owner decision T026 legacy mode (Policy governs all routes): once a project has a registered memory policy, every MemoryTool route resolves through it and legacy allowlist or no-owner calls get E_PERMISSION; projects with no policy keep legacy mode. Produce the exact rule for detecting a registered policy (existing 73-T02 authorization helpers only), the per-route behavior and error bodies, the complete code and caller map (read_access, MemoryAccess.legacy callers, learned-advice readers, MemoryTool routes, CLI, MCP request models), every existing test that would flip with the exact edit each needs, conflicts with later units (72-T06 owner_scope in MCP v2, 72-T08 hybrid), and the full test matrix for T076, folded with T026 findings 1 and 3. No open decisions."
+    inputs:
+      - "goal.md decision T026 legacy mode"
+      - "T026 receipt"
+      - "notes/T004-design-gate-72-t01.md"
+      - "notes/T006-design-gate-72-t03.md"
+      - "notes/T003-design-gate-policy.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only; probes only inside a TemporaryDirectory with an explicit data_root and HOME. Never write to .scratch/."
+    expected_output:
+      - "Gate note notes/T079-design-gate-legacy-mode.md body: rule, code map, flipping tests, test matrix, allowed_files for T076 and T077"
+    receipt: null
+  - id: T076
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "72-T03 fix round 1, RED (after the T079 gate; its matrix and allowed_files override this card for the legacy-mode rule): t03_fix1 tests for T026 finding 1 (legacy access with operation write refused by add_relation and consolidate_episodes with E_PERMISSION, no edge, no new row) and finding 3 (tests killing M10, M13, M15, M20); finding-2 tests are added after the owner decision. Prove finding-1 tests fail on current code and each mutant test fails under its mutant in a TemporaryDirectory copy against an unmutated CONTROL."
+    inputs:
+      - "T026 receipt"
+      - "notes/T006-design-gate-72-t03.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T026 findings (PM reproduced 1 and 2 with scratchpad t026/test_t026_probes.py). 1 HIGH: is_write_access (retrieval.py:253-256) checks only access.operation, so MemoryAccess.legacy(root, sources, operation=write) passes; add_relation then skips the legacy same-owner check (relations.py:161,187 run it only when access is None) and consolidate_episodes has no owner filter (consolidation.py:110-124). P7: cross-owner add_relation OK, 1 edge. P10: consolidate pulls Bob's m2 into a project-owned summary. Fix: is_write_access is True only for access.kind == policy resolved for the write grant. 2 MEDIUM: MemoryTool link and consolidate with no owner_scope run the grant-free legacy path (tools/memory.py _link, _consolidate); P3 link OK after Alice's grant is revoked, P4 Bob with no write grant links his own rows. Owner decision pending on how legacy mode coexists with a registered policy. 3 MEDIUM: mutants survive the 11-file set: M10 (add_relation refusing a non-write access), M13 (legacy consolidate keeps only legacy-owner members), M15 (consolidate project check), M20 (member_refs content_hash binding)."
+      - "Separate test author: tests only; never edit an existing assertion."
+    expected_output:
+      - "RED proof per finding and per mutant"
+    allowed_files:
+      - "tests/test_phase72_memory_correctness.py"
+    verify:
+      - "rtk proxy env -u PYTHONPATH uv run --python 3.12 --extra dev python -m pytest tests/test_phase72_memory_correctness.py -q -p no:cacheprovider -k t03_fix1"
+      - "mutant runner over the 11-file set (CONTROL vs M10, M13, M15, M20)"
+    stop_if:
+      - "A finding cannot be reproduced as a failing test; the M20 member cannot stay usable under T01 after the content_hash rewrite (report the exact command and output)."
+    receipt: null
+  - id: T077
+    type: worker
+    assignee: Worker
+    status: queued
+    reasoning_hint: high
+    objective: "72-T03 fix round 1 of max 2 (allowed_files per the T079 gate): fix T026 findings 1 and 2 (owner decision T026 legacy mode: Policy governs all routes) until the T076 tests and every T025 verify command pass. Dispatch on Opus (trust boundary)."
+    inputs:
+      - "T026 receipt"
+      - "T076 receipt"
+      - "notes/T006-design-gate-72-t03.md"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Use only the single phase-72 worktree .venv; temp dirs only via tmp_path or TemporaryDirectory; every probe data_root and HOME explicit inside the temp dir, never falsy. Never write to .scratch/. Zero SKIPPED tests."
+      - "T026 findings (PM reproduced 1 and 2 with scratchpad t026/test_t026_probes.py). 1 HIGH: is_write_access (retrieval.py:253-256) checks only access.operation, so MemoryAccess.legacy(root, sources, operation=write) passes; add_relation then skips the legacy same-owner check (relations.py:161,187 run it only when access is None) and consolidate_episodes has no owner filter (consolidation.py:110-124). P7: cross-owner add_relation OK, 1 edge. P10: consolidate pulls Bob's m2 into a project-owned summary. Fix: is_write_access is True only for access.kind == policy resolved for the write grant. 2 MEDIUM: MemoryTool link and consolidate with no owner_scope run the grant-free legacy path (tools/memory.py _link, _consolidate); P3 link OK after Alice's grant is revoked, P4 Bob with no write grant links his own rows. Owner decision pending on how legacy mode coexists with a registered policy. 3 MEDIUM: mutants survive the 11-file set: M10 (add_relation refusing a non-write access), M13 (legacy consolidate keeps only legacy-owner members), M15 (consolidate project check), M20 (member_refs content_hash binding)."
+      - "Never edit the RED tests; never weaken an assertion. Fix round 1 of max 2."
+    expected_output:
+      - "Finding -> code change -> test table"
+    allowed_files:
+      - "src/rush/memory/relations.py"
+      - "src/rush/memory/consolidation.py"
+      - "src/rush/memory/retrieval.py"
+      - "src/rush/tools/memory.py"
+    verify:
+      - "the T025 verify set plus tests/test_windows_import_safety.py; scratchpad t026/test_t026_probes.py; T02 probes probe_f1.py and test_t071_attack.py -k hybrid"
+      - "ruff check, ruff format --check, mypy src/rush, git diff --check; PM full suite within the T001 baseline, zero skipped"
+    stop_if:
+      - "A production caller legitimately passes a legacy MemoryAccess with operation write to add_relation or consolidate_episodes."
+      - "A file outside allowed_files is needed."
+    receipt: null
+  - id: T078
+    type: judge
+    assignee: Judge
+    status: queued
+    reasoning_hint: xhigh
+    objective: "Full-attack re-review of 72-T03 after fix round 1 (T076/T077): confirm T026 findings 1-3 closed with mutation-checked tests, re-run the T026 probes, attack the changed code."
+    inputs:
+      - "T026 receipt"
+      - "T077 receipt"
+    constraints:
+      - "Work only in /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-72 (cd <worktree> && rtk ...; absolute paths). Never touch the main checkout or another repo."
+      - "Read-only. Probes keep every data_root inside a TemporaryDirectory."
+      - "On pass the PM commits 72-T03. On fail this is fix round 2, the last; the PM finishes any remainder directly."
+    expected_output:
+      - "pass | fail"
+      - "Findings with file:line and reproduction"
     receipt: null
   - id: T027
     type: worker
