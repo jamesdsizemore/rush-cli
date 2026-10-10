@@ -50,14 +50,14 @@ Status on 2026-09-28: **not complete.** The code for T1–T29 is on the phase br
 | Pushed head | `e7c29b1` (origin, draft PR #2 "DO NOT MERGE … (CI only)") |
 | Local, not pushed | `30cd77c` retro docs; this handoff doc |
 | Last local gate | `f2db51d` (same tree as `e7c29b1`): 6348 passed, 0 failed, 0 skipped; slow tests 1 passed; ruff, format, mypy `src/rush`, `sync_docs --check`, `git diff --check`, pip-audit all exit 0 |
-| Orchestrator run | active: `phase-70/.orchestrator/run.json`, `~/.claude/orchestrator/active-run` points at the phase-70 worktree |
-| Logs | `phase-70/.orchestrator/` (gate logs, progress log); every removed worktree's `.orchestrator/` is under `phase-70/.orchestrator/worktree-archive/` |
+| Orchestrator run | active: `/Users/jamesdsizemore/Developer/rush-cli-archive/phase-70/.orchestrator/run.json`, `~/.claude/orchestrator/active-run` points at the phase-70 worktree |
+| Logs | `/Users/jamesdsizemore/Developer/rush-cli-archive/phase-70/.orchestrator/` (gate logs, progress log); every removed worktree's `.orchestrator/` is under `/Users/jamesdsizemore/Developer/rush-cli-archive/phase-70/.orchestrator/worktree-archive/` |
 
 Merging into `main` is a separate step and needs the owner's approval.
 
 ## Red CI to fix first
 
-Run 36465316792 on `e7c29b1`: https://github.com/jamesdsizemore/rush-cli/actions/runs/36465316792. The failed-job log is saved at `phase-70/.orchestrator/ci-36465316792-failed.log`.
+Run 36465316792 on `e7c29b1`: https://github.com/jamesdsizemore/rush-cli/actions/runs/36465316792. The failed-job log is saved at `/Users/jamesdsizemore/Developer/rush-cli-archive/phase-70/.orchestrator/ci-36465316792-failed.log`.
 
 Five jobs pass: Executed workload contracts, Representative Python engine smoke, Static tool acceptance, and Isolated artifact probes on Ubuntu and on Windows.
 
