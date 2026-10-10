@@ -1,3 +1,5 @@
+Current status: historical record; on 2026-10-10 the phase-70 worktree was removed and the untracked `.scratch/phase-70-native-1364158/`, `.scratch/phase-70-g6-1364158/`, `.orchestrator/`, `dist/` and `.rush/` it held moved to `/Users/jamesdsizemore/Developer/rush-cli-archive/phase-70/`; every `.scratch/` path below resolves under that directory, and `git worktree add /Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70 phase/70-agent-adoption-and-usability` recreates the checkout.
+
 # Phase 70 implementation evidence (T29)
 
 Recorded 2026-09-27 on macOS 26 (Darwin 25.6.0, arm64). Every row below is an observation made in this run against the frozen release binary described under Runtime identity; nothing is restated from the plan or inferred from test fixtures. Temporary project and HOME paths are redacted to `<tmp>`.
