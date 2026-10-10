@@ -25,9 +25,13 @@ from scripts.benchmarks.run import run_dashboard_user_journey
 
 
 @pytest.fixture(scope="module")
-def ui_journey(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def ui_journey(
+    tmp_path_factory: pytest.TempPathFactory, hermetic_engine_path_module: None
+) -> dict[str, Any]:
     """Runs the whole real dashboard HTTP journey exactly once; every test
-    below asserts a different stage of this single, shared execution."""
+    below asserts a different stage of this single, shared execution.
+    Engines resolve only from this venv (`hermetic_engine_path_module`,
+    conftest.py), never the host's PATH."""
     tmp_root = tmp_path_factory.mktemp("dashboard-user-journey")
     return run_dashboard_user_journey(tmp_root)
 
@@ -110,6 +114,11 @@ def test_benchmark_action_helper_sends_owner_scope_on_the_calls_it_makes(
 
 def test_tokens_snapshot_reflects_real_telemetry(ui_journey: dict[str, Any]) -> None:
     _assert_stage(ui_journey, "tokens")
+    snapshot = ui_journey["tokens_snapshot"]
+    assert snapshot["actual"]["raw_tokens"] == 100
+    assert snapshot["actual"]["sent_tokens"] == 40
+    assert snapshot["actual"]["events_count"] == 1
+    assert snapshot["estimated_avoided"]["tokens_saved"] == 60
 
 
 def test_git_snapshot_reports_real_repo_identity(ui_journey: dict[str, Any]) -> None:

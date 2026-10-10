@@ -294,10 +294,18 @@ def _send_native(
                 "authorized in this session."
             ),
         )
-    context = multiprocessing.get_context("spawn")
+    context = _native_context()
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(
-        target=_native_process, args=(sender, payload, options, allowed_tool_names)
+        target=_native_process,
+        args=(
+            sender,
+            payload,
+            options,
+            allowed_tool_names,
+            dict(os.environ),
+            os.getcwd(),
+        ),
     )
     try:
         process.start()
@@ -336,9 +344,43 @@ def _send_native(
                 process.close()
 
 
+_NATIVE_PRELOAD = ("claude_agent_sdk", "rush.memory.transport")
+
+
+def _native_context() -> Any:
+    """The multiprocessing context for native handoffs.
+
+    POSIX: a forkserver with the SDK preloaded, started here -- before the
+    handoff deadline begins -- so each handoff forks a ready child instead of
+    paying a cold interpreter plus the SDK's multi-second import inside the
+    deadline (which, under CPU load, alone exhausted it). Windows has no
+    forkserver and keeps spawn.
+    """
+    if sys.platform == "win32":
+        return multiprocessing.get_context("spawn")
+    from multiprocessing import forkserver
+
+    context = multiprocessing.get_context("forkserver")
+    context.set_forkserver_preload(list(_NATIVE_PRELOAD))
+    forkserver.ensure_running()
+    return context
+
+
 def _native_process(
-    sender, payload: str, options, allowed_tool_names: tuple[str, ...] = ()
+    sender,
+    payload: str,
+    options,
+    allowed_tool_names: tuple[str, ...] = (),
+    environ: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> None:
+    # A forkserver child inherits the server's environment and cwd, not the
+    # caller's: restore the caller's, exactly as a spawned child had them.
+    if environ is not None:
+        os.environ.clear()
+        os.environ.update(environ)
+    if cwd is not None:
+        os.chdir(cwd)
     if sys.platform != "win32":
         os.setsid()
     # SDK diagnostics must not reach stdio MCP stdout or reveal private content.

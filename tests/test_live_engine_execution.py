@@ -107,5 +107,19 @@ def test_cli_live_scans_on_polyglot_repo(tmp_path: Path) -> None:
 
     # 7. rush doctor
     res_doc = runner.invoke(cli, ["doctor", str(repo_dir)])
-    assert res_doc.exit_code == 0
     assert "doctor:" in res_doc.output
+    # T15 contract: a required engine that is not installed is a real `warn`
+    # (exit 1) naming that engine; a fully provisioned host is clean (exit 0).
+    from rush.tools.doctor import build_engine_inventory
+
+    missing = sorted(
+        e["engine"]
+        for e in build_engine_inventory(repo_dir, probe=False)
+        if e["required"] and e["disposition"] == "missing"
+    )
+    if missing:
+        assert res_doc.exit_code == 1, res_doc.output
+        for engine in missing:
+            assert engine in res_doc.output
+    else:
+        assert res_doc.exit_code == 0, res_doc.output

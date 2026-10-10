@@ -1,0 +1,9 @@
+{
+  "name": "rush",
+  "version": "@RUSH_VERSION@",
+  "description": "Rush code-quality checks for Claude Code: the core Rush MCP tools, the rush skill and opt-in post-edit checks.",
+  "author": {
+    "name": "Rush"
+  },
+  "mcpServers": "./.mcp.json"
+}

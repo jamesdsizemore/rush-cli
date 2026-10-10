@@ -17,6 +17,7 @@ the original tool result (§6.4). Failure is reported as a log diagnostic only.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import time
@@ -189,13 +190,37 @@ def record_observation(
             "cache_policy": context.cache_policy,
         },
     }
+    root = project_root
+    if root is None:
+        root, content = _unstaged(context.workspace_root, content)
     return write_observation(
         evidence_kind=evidence_kind,
         operation_id=context.operation_id,
         source=f"invocation:{context.operation_id}:{context.transport}",
         content=content,
-        project_root=project_root or context.workspace_root,
+        project_root=root,
     )
+
+
+def _unstaged(
+    workspace_root: Path, content: dict[str, Any]
+) -> tuple[Path, dict[str, Any]]:
+    """T19 R19.4 (G2): an invocation inside a staged scan attempt records into
+    the live project's store (`staging.original_root`), never the temporary
+    copy deleted with the attempt, with its path-bearing content mapped back
+    to live paths. Outside staging the workspace root is unchanged."""
+    from rush.engines.staging import active_staging, map_staged_path, remap_paths
+
+    staging = active_staging()
+    if staging is None or not workspace_root.is_relative_to(staging.staged_root):
+        return workspace_root, content
+    live = remap_paths(
+        copy.deepcopy(content), staging.staged_root, staging.original_root
+    )
+    live["workspace_root"] = map_staged_path(
+        str(workspace_root), staging.staged_root, staging.original_root
+    )
+    return staging.original_root, live
 
 
 RepairOutcome = Literal["failed", "verified", "untested"]

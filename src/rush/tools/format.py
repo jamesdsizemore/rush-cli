@@ -18,7 +18,7 @@ from pathlib import Path
 
 from .base import ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_engine
-from .routing import collect_files, combine_status
+from .routing import aggregate_status, collect_files, concat_engine_entries
 
 
 class FormatTool(ToolFn):
@@ -72,35 +72,43 @@ class FormatTool(ToolFn):
             if t.suffix.lstrip(".") in ENGINES["prettier"].file_extensions
         ]
 
-        findings_all: list = []
+        # T16 (R16.1, S16.3): keep every engine child and aggregate once --
+        # no `skipped` sentinel, which the new precedence would turn into warn.
+        children: list[ToolResult] = []
         engines_used: list[str] = []
-        last_status: ToolStatus = "skipped"
 
         if ruff_files:
             argv = ["format", "--check", *[str(p) for p in ruff_files]]
-            r = run_engine(
-                ENGINES["ruff"],
-                path,
-                argv,
-                tool_name="format",
-                consumed_paths=[str(p) for p in ruff_files],
+            children.append(
+                run_engine(
+                    ENGINES["ruff"],
+                    path,
+                    argv,
+                    tool_name="format",
+                    consumed_paths=[str(p) for p in ruff_files],
+                )
             )
-            findings_all.extend(r.get("findings", []))
             engines_used.append("ruff")
-            last_status = combine_status(last_status, r.get("status", "ok"))
 
         if prettier_files:
             argv = ["--check", *[str(p) for p in prettier_files]]
-            r = run_engine(
-                ENGINES["prettier"],
-                path,
-                argv,
-                tool_name="format",
-                consumed_paths=[str(p) for p in prettier_files],
+            children.append(
+                run_engine(
+                    ENGINES["prettier"],
+                    path,
+                    argv,
+                    tool_name="format",
+                    consumed_paths=[str(p) for p in prettier_files],
+                )
             )
-            findings_all.extend(r.get("findings", []))
             engines_used.append("prettier")
-            last_status = combine_status(last_status, r.get("status", "ok"))
+
+        findings_all: list = [
+            finding for child in children for finding in child.get("findings", [])
+        ]
+        last_status: ToolStatus = aggregate_status(
+            str(child.get("status", "ok")) for child in children
+        )
 
         if not engines_used:
             return ToolResult(
@@ -123,7 +131,7 @@ class FormatTool(ToolFn):
                 else f"format [{'+'.join(engines_used)}]: engine {status}"
             )
         else:
-            status = combine_status(last_status, "warn")
+            status = aggregate_status([last_status, "warn"])
             summary = (
                 f"format [{'+'.join(engines_used)}]: engine error"
                 if status == "error"
@@ -139,4 +147,5 @@ class FormatTool(ToolFn):
             summary=summary,
             findings=findings_all,
             raw=None,
+            metadata={"engines": concat_engine_entries(children)},
         )

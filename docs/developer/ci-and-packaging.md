@@ -6,44 +6,69 @@ This guide details the continuous integration workflow, package build procedures
 
 ## 1. Local Pre-Push CI Simulation
 
-Before pushing commits or opening pull requests, execute the currently provisioned local gates below. CI also invokes the pending `mypy` gate described in §4.
+Before an authorized push, run the locked Python 3.12 gates below. Explicit empty
+marker selection includes slow tests. Source typechecking uses `src/rush`.
 
 ```bash
-# 1. Clear foreign virtualenv contamination
-unset VIRTUAL_ENV PYTHONPATH
-
-# 2. Synchronize exact pinned dependencies
-uv sync --all-extras --frozen
-
-# 3. Run all pytest test suites; every collected test must pass
-.venv/Scripts/python.exe -m pytest tests/ -q
-
-# 4. Verify documentation parity & internal cross-links
-.venv/Scripts/python.exe scripts/sync_docs.py --check
-
-# 5. Run Ruff linter and formatter
-.venv/Scripts/ruff.exe check src tests scripts
-.venv/Scripts/ruff.exe format --check src tests scripts
-
-# 6. Run dependency audit and whitespace check
-uv run pip-audit
-git diff --check
-
-# 7. Build wheel and sdist
-uv build
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev python --version
+rtk proxy env -u PYTHONPATH TERM=xterm-256color uv run --frozen --no-sync --python 3.12 --extra dev env -u NO_COLOR python -m pytest tests/ -q -m ""
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev python scripts/sync_docs.py --check
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev ruff check src tests scripts
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev ruff format --check src tests scripts
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev mypy src/rush
+rtk proxy env -u PYTHONPATH uv run --frozen --python 3.12 --extra dev pip-audit
+rtk git diff --check
+rtk proxy uv build --python 3.12
 ```
 
 ---
 
 ## 2. GitHub Actions CI Matrix (`.github/workflows/ci.yml`)
 
-The quality job runs on Ubuntu; installed-artifact probes run on Ubuntu and Windows:
+The quality job runs on Ubuntu; installed-artifact probes and Windows runtime
+contracts execute on their respective CI runners. The artifact matrix also
+includes `macos-15` arm64. Its PR-head checkout builds the native candidate with
+the existing release recipe, probes the generated archive, and uploads
+`rush-macos-<source SHA>` containing the archive, `SHA256SUMS` and `SOURCE_COMMIT`.
+The upload runs only after probes pass. This route is configured; acceptance
+requires the actual CI result and downloaded candidate checks. Record each run's actual revision,
+URL and conclusion; an older run does not accept new source.
+Existing Linux quality and Windows contracts jobs also execute installed TUI
+journeys against their built native archive. `RUSH_G8_NATIVE_ARCHIVE`,
+`RUSH_G8_NATIVE_SUMS` and `RUSH_G8_NATIVE_RECEIPT_DIR` bind archive, checksum
+manifest and observation directory. Tests assert actual terminal/console
+behavior; the job additionally requires valid `posix-installed-tui.json` or
+`windows-installed-tui.json` so omitted native collection fails. Source PTY,
+reader tests and receipt presence alone do not prove native acceptance.
+Linux sets `TERM=xterm-256color` and clears inherited `PYTHONPATH` and `NO_COLOR`
+inside the command after `uv run`. Windows preserves pytest's `$LASTEXITCODE`
+before checking its receipt. Both jobs print parsed observation JSON with the
+`RUSH_G8_NATIVE_RECEIPT=` prefix for CI logs; no receipt artifact upload is
+configured. Static workflow review does not establish an executed CI result.
+Extended POSIX native assertions include real scan grants/cancellation,
+configuration failure/recovery, literal paste, color/motion and idle interrupt
+alongside three viewport sizes and section/action observations. Source passes
+and collection alone do not establish those installed-binary outcomes; execute
+the rebuilt archive in the existing job or local macOS lane before acceptance.
+Native journey tests require owned process groups to disappear after normal
+quit and idle interrupt before their safety cleanup runs. Real orphan cleanup
+regressions exercise harness cleanup separately; they do not prove installed
+Rush exited cleanly. Keep final native observations distinct from source/helper
+passes and inspect each actual action, grant, cancellation and recovery result.
+
 1. **Lint & Formatting**: `ruff check` and `ruff format --check`.
 2. **Doc Parity & Links**: `python scripts/sync_docs.py --check`.
 3. **Unit & Engine Reference Tests**: `pytest tests/ -q`.
 4. **Vulnerability Audit**: `pip-audit`.
 5. **Distribution Build**: `uv build`.
-6. **Isolated Artifact Probes (Finding R-001 Closed)**: Matrix job across `ubuntu-latest` and `windows-latest` executing `scripts/probe_installed_artifacts.py` in scrubbed virtual environments.
+6. **Isolated Artifact Probes**: Matrix job across `ubuntu-latest`, `windows-latest` and `macos-15` executing `scripts/probe_installed_artifacts.py` in scrubbed virtual environments.
+
+Download the selected run's `rush-macos-<source SHA>` artifact into an isolated
+directory. Confirm `SOURCE_COMMIT` equals the intended candidate, run
+`shasum -a 256 -c SHA256SUMS` from that directory, and probe its native archive
+on matching arm64 macOS. An upload digest proves artifact integrity; it is not
+a signed build attestation. G6 still requires actual Claude Code/Codex adoption
+and the separately approved real-home preview/consent packet.
 
 ---
 
@@ -86,4 +111,38 @@ Commands above use Windows executable paths. On macOS/Linux use `.clean_test_env
 
 See [Distribution Guide](../DISTRIBUTION.md) and [Release Process](release-process.md).
 ### Hardened CI & Engine Conformance (Phase 59)
-CI invokes `uv run mypy src/rush`, but `mypy` is not yet declared in `pyproject.toml` or `uv.lock`. Status: planned — implementation [P64-20](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-20--repair-baseline-test-packaging-and-ci-gates-f27-f29) adds the locked dependency before this gate can count as provisioned typecheck evidence.
+CI invokes `uv run mypy src/rush`; development dependencies pin `mypy==2.3.1`
+in `pyproject.toml` and `uv.lock`. Test helpers that launch ordinary children
+must import without POSIX terminal modules on Windows. Import `pty` only inside
+the PTY helper; use the existing `spawn_child` helper for independent child
+processes when background threads may already exist.
+
+## 5. Native Dashboard Assets
+
+Native PyInstaller builds must include all three data collections:
+
+```text
+--collect-data license_expression --collect-data rush.integrations --collect-data rush.dashboard --collect-submodules tiktoken_ext
+```
+
+Keep these flags aligned in `.github/workflows/ci.yml`,
+`.github/workflows/release.yml` and `tests/conftest.py`. The dashboard collection
+includes `application.js` and `project_map.js`; Python imports and MCP startup
+alone cannot verify that these browser modules reached the native archive.
+
+The existing native probe in `tests/test_phase52_installed_artifacts.py`
+extracts the checksummed archive, starts `dashboard --port 0 --no-open --json`
+from an arbitrary directory with isolated HOME and no Python or uv on PATH,
+then requires HTTP 200 and exact source bytes from `/assets/application.js`
+and `/assets/project_map.js`. It keeps the private bootstrap URL out of logs
+and stops the dashboard process afterward. Run this probe against the rebuilt
+archive alongside `scripts/probe_installed_artifacts.py`; wheel or source
+checks do not verify native asset packaging.
+
+Native Memory expansion also requires the dynamically discovered
+`tiktoken_ext` plugin. Its acceptance walkthrough uses an existing, verified
+`cl100k_base` BPE cache; verify cached bytes against SHA-256
+`223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7`.
+This proves expansion under that cache condition, not offline operation with
+an empty cache. Do not let acceptance fixtures fetch tokenizer data without
+explicit network authorization.

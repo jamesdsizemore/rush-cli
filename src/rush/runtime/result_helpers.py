@@ -7,9 +7,16 @@ from __future__ import annotations
 
 import hashlib
 import time
+from typing import TYPE_CHECKING
 
 from ..safety.redactor import SecretRedactor
-from ..tools.base import Finding, Severity, ToolResult
+
+if TYPE_CHECKING:
+    from ..tools.base import Finding, Severity, ToolResult
+
+# rush.tools.base is imported inside the builders below, never at module import:
+# importing it runs rush/tools/__init__.py, whose tools import this module back,
+# which breaks any entry point (rush.entry) that imports rush.runtime first.
 
 
 def skipped_result(
@@ -21,6 +28,8 @@ def skipped_result(
     metadata: dict | None = None,
 ) -> ToolResult:
     """Build a ToolResult for an unavailable local engine or missing permission."""
+    from ..tools.base import ToolResult
+
     result = ToolResult(
         tool=tool_name,
         engine=engine,
@@ -47,6 +56,8 @@ def error_result(
     metadata: dict | None = None,
 ) -> ToolResult:
     """Build an engine error result with optional execution metadata."""
+    from ..tools.base import ToolResult
+
     result = ToolResult(
         tool=tool_name,
         engine=engine,
@@ -95,6 +106,8 @@ def normalize_findings(
     Invalid records without a message are omitted. At most 10,000 records are
     processed to bound memory use from a malformed external engine payload.
     """
+    from ..tools.base import Finding
+
     findings: list[Finding] = []
     for raw_finding in raw_findings[:10000]:
         path = str(raw_finding.get("path") or raw_finding.get("filename") or "")
@@ -149,6 +162,14 @@ def normalize_findings(
             patch=raw_finding.get("patch"),
             suggested_fix=raw_finding.get("suggested_fix"),
         )
+        # T13 (finding 22, fix round 1): carry a caller-supplied `extensions`
+        # dict through by identity (the same record it came in on), not
+        # re-derived after the fact from a recomputed sort/zip -- a caller
+        # like ruff's `end_location` needs this to survive the redaction and
+        # sorting below without ever risking misalignment.
+        extensions = raw_finding.get("extensions")
+        if extensions:
+            normalized["extensions"] = extensions
         normalized["fingerprint"] = finding_fingerprint(
             normalized["path"],
             normalized["line"],
@@ -172,7 +193,9 @@ def normalize_findings(
 
 
 def exit_code_for(result: object) -> int:
-    """Map canonical statuses to CLI process exit codes."""
+    """Map canonical statuses to CLI process exit codes.
+
+    T27: a missing or unknown status is INVALID_RESULT (exit 2), never 0."""
     status: object
     if isinstance(result, str):
         status = result
@@ -187,9 +210,7 @@ def exit_code_for(result: object) -> int:
         return 0
     if status in ("warn", "fail"):
         return 1
-    if status == "error":
-        return 2
-    return 0
+    return 2
 
 
 def now_ms() -> int:

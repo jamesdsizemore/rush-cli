@@ -8,10 +8,52 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
-from rush.tools.common import elapsed_ms, finding_fingerprint
+from rush.runtime.result_helpers import elapsed_ms, finding_fingerprint
+
+if TYPE_CHECKING:
+    from rush.tools.base import Finding, LlmStatus, ToolResult, ToolStatus
+
+
+def _consumed(target: Path) -> bool:
+    """The heuristics read a file only below the size cap (`collection`)."""
+    from rush.review.collection import MAX_FILE_BYTES
+
+    try:
+        return target.stat().st_size <= MAX_FILE_BYTES
+    except OSError:
+        return False
+
+
+def review_scope_v1(
+    scope: dict[str, Any],
+    *,
+    root: Path,
+    targets: Sequence[Path],
+    requested_file_count: int,
+) -> dict[str, Any]:
+    """T16 (finding 8): the §3.2 v1 scope, keeping review's own `mode` and
+    `files`. Requested = what the caller asked for (explicit files) or what
+    matched under the target; consumed = files the heuristics read."""
+    consumed = sum(1 for target in targets if _consumed(target))
+    if consumed == 0:
+        coverage, reason = "none", "no_reviewable_python_files"
+    elif consumed < requested_file_count:
+        coverage, reason = "partial", "requested_files_not_reviewed"
+    else:
+        coverage, reason = "complete", None
+    return {
+        "version": 1,
+        "kind": "file",
+        **scope,
+        "logical_root": str(root),
+        "requested_file_count": requested_file_count,
+        "matched_file_count": len(targets),
+        "consumed_file_count": consumed,
+        "coverage": coverage,
+        "reason": reason,
+    }
 
 
 def _sanitize_finding(finding: Finding) -> None:
@@ -70,6 +112,8 @@ def assemble_review_result(
     review_provider: str | None = None,
 ) -> ToolResult:
     """Assemble and validate canonical ToolResult for the review pipeline."""
+    from rush.tools.base import ToolResult
+
     normalized: list[Finding] = [
         f if isinstance(f, dict) else f.to_dict() for f in findings
     ]
@@ -104,6 +148,8 @@ def assemble_review_result(
 
 def build_error_review_result(error_msg: str, start_ms: int) -> ToolResult:
     """Build canonical ToolResult for a review configuration or collection error."""
+    from rush.tools.base import ToolResult
+
     return ToolResult(
         tool="review",
         engine="heuristic-v1",
@@ -123,6 +169,8 @@ def build_empty_review_result(
     path: Path, scope: dict[str, Any], start_ms: int
 ) -> ToolResult:
     """Build canonical ToolResult when no reviewable Python files are discovered."""
+    from rush.tools.base import ToolResult
+
     return ToolResult(
         tool="review",
         engine="heuristic-v1",
@@ -146,4 +194,5 @@ __all__ = [
     "assemble_review_result",
     "build_empty_review_result",
     "build_error_review_result",
+    "review_scope_v1",
 ]

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from rush.config import ReviewConfig, RushConfig
+from rush.permissions import ExecutionPermissions
 from rush.tools import (
     FormatTool,
     LintTool,
@@ -14,7 +15,6 @@ from rush.tools import (
     SecurityTool,
     TestTool,
 )
-from rush.tools.common import resolve_binary
 
 
 @pytest.fixture
@@ -159,9 +159,21 @@ def test_review_honors_explicit_changed_file_scope_without_git_inference(
     assert {finding["path"] for finding in result["findings"]} == {
         str(tmp_path / "changed.py")
     }
+    # Phase 70 T16 (finding 8): the §3.2 v1 scope keeps `mode`/`files`.
     assert result["metadata"] == {
         "graft": "not-requested",
-        "scope": {"mode": "explicit-files", "files": ["changed.py"]},
+        "scope": {
+            "version": 1,
+            "kind": "file",
+            "mode": "explicit-files",
+            "files": ["changed.py"],
+            "logical_root": str(tmp_path),
+            "requested_file_count": 1,
+            "matched_file_count": 1,
+            "consumed_file_count": 1,
+            "coverage": "complete",
+            "reason": None,
+        },
     }
 
 
@@ -185,7 +197,18 @@ def test_review_preserves_empty_explicit_scope_metadata(tmp_path: Path) -> None:
     assert result["status"] == "ok"
     assert result["metadata"] == {
         "graft": "not-requested",
-        "scope": {"mode": "explicit-files", "files": []},
+        "scope": {
+            "version": 1,
+            "kind": "file",
+            "mode": "explicit-files",
+            "files": [],
+            "logical_root": str(tmp_path),
+            "requested_file_count": 1,
+            "matched_file_count": 0,
+            "consumed_file_count": 0,
+            "coverage": "none",
+            "reason": "no_reviewable_python_files",
+        },
     }
 
 
@@ -228,7 +251,6 @@ def test_review_llm_with_env_key_returns_llm_kind(tmp_path: Path, monkeypatch):
 # --- LintTool ---------------------------------------------------------------
 
 
-@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
 def test_lint_runs_ruff_on_python_repo(py_repo: Path):
     tool = LintTool()
     result = tool.run(py_repo)
@@ -295,7 +317,6 @@ def test_lint_missing_ruff_skips_nonempty_python_project(monkeypatch, tmp_path: 
 # --- FormatTool -------------------------------------------------------------
 
 
-@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
 def test_format_runs_ruff_format_check(py_repo: Path):
     """ruff format --check on dirty.py should produce a finding."""
     tool = FormatTool()
@@ -330,7 +351,6 @@ def test_format_preserves_engine_error_without_findings(monkeypatch, py_repo: Pa
     assert result["status"] == "error"
 
 
-@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
 def test_format_unformatted_reports_exact_path(tmp_path: Path):
     source = tmp_path / "unformatted.py"
     source.write_text("value=1\n")
@@ -341,7 +361,6 @@ def test_format_unformatted_reports_exact_path(tmp_path: Path):
     assert any(finding["path"] == str(source) for finding in result["findings"])
 
 
-@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
 def test_format_syntax_error_is_error(tmp_path: Path):
     source = tmp_path / "invalid.py"
     source.write_text("def broken(:\n    pass\n")
@@ -351,7 +370,6 @@ def test_format_syntax_error_is_error(tmp_path: Path):
     assert result["status"] == "error"
 
 
-@pytest.mark.skipif(resolve_binary("ruff") is None, reason="ruff not installed")
 def test_format_clean_is_ok(tmp_path: Path):
     source = tmp_path / "clean.py"
     source.write_text("value = 1\n")
@@ -389,11 +407,95 @@ def test_ruff_format_parser_handles_current_diagnostics(tmp_path: Path):
 # --- TestTool ---------------------------------------------------------------
 
 
-@pytest.mark.skipif(resolve_binary("pytest") is None, reason="pytest not installed")
+def test_test_preserves_explicit_nested_python_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from subprocess import CompletedProcess
+
+    import rush.engines.pytest as pytest_engine
+
+    root = tmp_path / "repo"
+    target = root / ".scratch" / "fixture" / "project"
+    target.mkdir(parents=True)
+    (root / "pyproject.toml").write_text('[project]\nname = "parent"\n')
+    (root / "test_unrelated.py").write_text("def test_unrelated(): assert False\n")
+    (target / "fixture.py").write_text('def greeting(): return "Rush G6 fixture"\n')
+    (target / "test_greeting.py").write_text(
+        'from fixture import greeting\ndef test_greeting(): assert greeting() == "Rush G6 fixture"\n'
+    )
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append((argv, kwargs.get("cwd")))
+        return CompletedProcess(argv, 0, "1 passed in 0.01s\n", "")
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda _binary: True)
+    monkeypatch.setattr(pytest_engine, "project_python", lambda _root: "/python")
+    monkeypatch.setattr(pytest_engine, "run_subprocess", fake_run)
+    monkeypatch.setattr(pytest_engine.PytestEngine, "version", lambda self: "fixture")
+
+    result = TestTool()(target, allow_build=True)
+
+    assert calls == [
+        (["/python", "-m", "pytest", str(target), "--tb=line", "-q"], root)
+    ]
+    assert result["status"] == "ok"
+    assert result["summary"] == "1 passed in 0.01s"
+
+
+def test_test_preserves_outer_engine_scope_for_owned_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from subprocess import CompletedProcess
+
+    import rush.engines.pytest as pytest_engine
+    from rush.runtime.binaries import (
+        AnalysisScope,
+        analysis_scope,
+        current_analysis_scope,
+    )
+
+    root = tmp_path / "project"
+    root.mkdir()
+    probe = tmp_path / "data" / "probes" / "owned"
+    probe.mkdir(parents=True)
+    (probe / "pyproject.toml").write_text('[project]\nname = "probe"\n')
+    (probe / "test_probe.py").write_text("def test_probe(): assert True\n")
+    calls = []
+    scopes = []
+
+    def engine_available(_binary):
+        scope = current_analysis_scope()
+        assert scope is not None
+        scopes.append(scope.logical_root)
+        return scope.logical_root == root
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs.get("cwd")))
+        return CompletedProcess(argv, 0, "1 passed in 0.01s\n", "")
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", engine_available)
+    monkeypatch.setattr(pytest_engine, "project_python", lambda _root: "/python")
+    monkeypatch.setattr(pytest_engine, "run_subprocess", run)
+    monkeypatch.setattr(pytest_engine.PytestEngine, "version", lambda self: "fixture")
+
+    with analysis_scope(AnalysisScope(root)):
+        result = TestTool()(probe, allow_build=True)
+
+    assert scopes == [root]
+    assert calls == [
+        (["/python", "-m", "pytest", str(probe), "--tb=line", "-q"], probe)
+    ]
+    assert result["status"] == "ok"
+    assert result["summary"] == "1 passed in 0.01s"
+
+
 def test_test_runs_pytest_on_python_repo(py_repo: Path):
     """A repo without tests → pytest collects nothing → ok (exit 5)."""
     tool = TestTool()
-    result = tool.run(py_repo)
+    # Phase 70 T17 S17.3: the runner executes project code only under a
+    # build grant.
+    result = tool.run(py_repo, permissions=ExecutionPermissions(build=True))
     assert result["tool"] == "test"
     assert result["status"] in ("ok", "fail")
     assert "pytest" in (result.get("engine") or "")

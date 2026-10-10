@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import os
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal, cast
 
-from ..continuity.context import pack_context, retrieve_context
+from ..continuity.context import pack_context, retrieve_context, retrieve_result_view
 from ..continuity.coordination import (
     check_coordination,
     preview_merge,
@@ -31,13 +32,21 @@ from ..continuity.results import (
     valid_name,
 )
 from ..contracts.results import ToolResultV1
+from ..invocation.models import AmbiguousRootError, InvocationError
+from ..invocation.targets import RootSelection, select_root
 from ..io.physical_paths import ContainmentError, PhysicalRoot
 from ..memory.checkpoint_journal import CheckpointJournal
+from ..memory.store import (
+    MemoryStoreUnreadableError,
+    collect_committed_writes,
+    collect_memory_reads,
+)
 from ..permissions import (
     ExecutionPermissions,
     check_permissions,
 )
 from .base import Finding, ToolFn, ToolResult
+from .routing import attach_memory_attribution, memory_block, memory_receipt
 
 SessionOperation = Literal[
     "save",
@@ -69,6 +78,71 @@ __all__ = [
     "SessionContinuityTool",
     "os",
 ]
+
+
+def state_location(path: Path, project_id: str | None = None) -> tuple[Path, Path]:
+    """T10 (R10.1): `(root, base)`. `root` is the logical root that owns this
+    call's `.rush` state, never `Path.resolve()` of the given path (a file target
+    would become the "root"). `base` is the root-relative directory `path` names
+    (its parent for a file), so path-relative arguments keep their meaning.
+
+    1. The ambient `current_invocation_root()` of the executing invocation, when
+       `path` lies within it (walked by the T8 no-follow `select_root`).
+    2. Else a registered `project_id` (it also serves as the declared root on
+       MCP); an unregistered value stays pure telemetry attribution.
+    3. Else the T8 logical root of `path`: the deepest marked or registered
+       directory on its walk, else the deepest existing directory.
+    """
+    from ..invocation.executor import current_invocation_root
+    from ..invocation.targets import registered_root_index, route_project_reference
+    from ..workflows.projects import ProjectNotFoundError, ProjectRootMissingError
+
+    anchor = Path.cwd()
+    index = registered_root_index()
+    ambient = current_invocation_root()
+    if ambient is not None:
+        within = _within(path, ambient, anchor, index)
+        if within is not None:
+            return within
+    if project_id:
+        try:
+            _, registered = route_project_reference(
+                project_id, anchor=anchor, index=index
+            )
+        except ProjectNotFoundError:
+            pass
+        else:
+            if not registered.is_dir():
+                raise ProjectRootMissingError(
+                    f"registered project root is missing: {registered}"
+                )
+            return _within(path, registered, anchor, index) or (registered, Path("."))
+    return _location(select_root(path, anchor=anchor, index=index))
+
+
+def _within(
+    path: Path, declared: Path, anchor: Path, index: Mapping[str, str]
+) -> tuple[Path, Path] | None:
+    try:
+        return _location(
+            select_root(path, anchor=anchor, declared_root=declared, index=index)
+        )
+    except AmbiguousRootError:
+        return None
+
+
+def _location(selection: RootSelection) -> tuple[Path, Path]:
+    base = selection.relative
+    if selection.target.is_file():
+        base = base.parent
+    return selection.root, base
+
+
+def _rebase(base: Path, value: str | None) -> str | None:
+    """A `path`-relative argument re-expressed relative to the logical root."""
+    if not value or os.path.isabs(value) or base == Path("."):
+        return value
+    return (base / value).as_posix()
 
 
 class SessionContinuityTool(ToolFn):
@@ -112,6 +186,11 @@ class SessionContinuityTool(ToolFn):
         project_id: str | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        view: Literal["result", "bytes"] | None = None,
+        cursor: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        max_bytes: int | None = None,
     ) -> ToolResult | ToolResultV1:
         result = self.run(
             path,
@@ -144,6 +223,11 @@ class SessionContinuityTool(ToolFn):
             project_id=project_id,
             run_id=run_id,
             session_id=session_id,
+            view=view,
+            cursor=cursor,
+            offset=offset,
+            limit=limit,
+            max_bytes=max_bytes,
         )
         # FastMCP needs schema-bearing public types; ContinuityResult is the
         # exact legacy ToolResult dictionary with retained conversion methods.
@@ -182,8 +266,21 @@ class SessionContinuityTool(ToolFn):
         project_id: str | None = None,
         run_id: str | None = None,
         session_id: str | None = None,
+        # T16 §3 item 10: result/bytes views of a stored compact result.
+        view: str | None = None,
+        cursor: str | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        max_bytes: int | None = None,
     ) -> ContinuityOutput:
         del config
+        self._result_view = {
+            "view": view,
+            "cursor": cursor,
+            "offset": offset,
+            "limit": limit,
+            "max_bytes": max_bytes,
+        }
         self._as_v1 = as_v1
         # P69-07 subsection e: one real per-call identity minted before dispatch, shared
         # by every operation in `dispatch_table` below -- never re-minted per branch. A
@@ -191,7 +288,6 @@ class SessionContinuityTool(ToolFn):
         # that same identity instead of minting a new one, so a real retry still dedupes.
         self._invocation_id = idempotency_key or str(uuid.uuid4())
         started = monotonic()
-        root = path.resolve()
         granted = permissions or ExecutionPermissions()
 
         if operation not in VALID_OPERATIONS:
@@ -202,8 +298,38 @@ class SessionContinuityTool(ToolFn):
                 operation=operation,
                 granted=granted,
             )
+        from ..workflows.projects import ProjectError
+
+        if project_id is None and not Path(path).exists():
+            # T27: a missing explicit root is reported, never walked up to the
+            # nearest existing directory. (Checkpoint `files` may name paths
+            # that no longer exist; only the root is a target.)
+            from rush.invocation.executor import target_error_result
+
+            return cast(
+                ContinuityOutput,
+                target_error_result(
+                    self.name,
+                    "TARGET_NOT_FOUND",
+                    f"target not found: {path}",
+                    target=str(path),
+                    reason="target_not_found",
+                ),
+            )
+        try:
+            root, base = state_location(path, project_id)
+        except (InvocationError, ProjectError, ValueError) as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session state root could not be resolved: {exc}",
+                operation=operation,
+                granted=granted,
+            )
 
         handoff = {**(handoff or {}), "target_provider": provider_id}
+        context_path = _rebase(base, context_path)
+        coordination_path = _rebase(base, coordination_path)
 
         dispatch_table = {
             "context_pack": lambda: self._context_pack(
@@ -286,11 +412,12 @@ class SessionContinuityTool(ToolFn):
             )
         handoff_receipt = self._save_handoff_receipt(root, handoff or {})
         journal = CheckpointJournal(root)
-        checkpoint = journal.save_checkpoint(
-            name or "",
-            {"cwd": str(root), "handoff": handoff_receipt},
-            list(files or []),
-        )
+        with collect_committed_writes() as committed:
+            checkpoint = journal.save_checkpoint(
+                name or "",
+                {"cwd": str(root), "handoff": handoff_receipt},
+                list(files or []),
+            )
         data = journal.restore_checkpoint(name or "")
         return self._result(
             started,
@@ -302,6 +429,12 @@ class SessionContinuityTool(ToolFn):
             raw=data,
             artifacts=[str(checkpoint)],
             handoff=handoff_receipt,
+            memory=memory_block(
+                written=[
+                    memory_receipt(w["id"], w["revision"], w["source"], "checkpoint")
+                    for w in committed
+                ]
+            ),
         )
 
     def _run_list(
@@ -310,14 +443,18 @@ class SessionContinuityTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
     ) -> ContinuityOutput:
+        # T10 (finding 3): JSON first, then `memory.db` read-only, whether or not
+        # `.rush/sessions` exists; `list_checkpoints` never creates anything.
         try:
-            session_dir = PhysicalRoot(root).open_contained(
-                Path(".rush") / "sessions", purpose="read"
-            )
-            sessions = (
-                CheckpointJournal(root).list_checkpoints()
-                if session_dir.exists()
-                else []
+            with collect_memory_reads() as reads:
+                sessions = CheckpointJournal(root).list_checkpoints()
+        except MemoryStoreUnreadableError as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session checkpoint store is unreadable ({exc.code}): {exc}",
+                operation="list",
+                granted=granted,
             )
         except ContainmentError:
             return self._result(
@@ -367,6 +504,12 @@ class SessionContinuityTool(ToolFn):
             granted=granted,
             raw=sessions,
             findings=findings,
+            memory=memory_block(
+                used=[
+                    memory_receipt(r["id"], r["revision"], r["source"], "list")
+                    for r in reads
+                ]
+            ),
         )
 
     def _run_restore(
@@ -385,7 +528,18 @@ class SessionContinuityTool(ToolFn):
                 granted=granted,
             )
         try:
-            data = CheckpointJournal(root).restore_checkpoint(name or "")
+            # T19: a restore served by the migrated-store fallback reads (and
+            # returns) one checkpoint artifact; a JSON-file restore reads none.
+            with collect_memory_reads() as reads:
+                data = CheckpointJournal(root).restore_checkpoint(name or "")
+        except MemoryStoreUnreadableError as exc:
+            return self._result(
+                started,
+                "error",
+                f"Session checkpoint store is unreadable ({exc.code}): {exc}",
+                operation="restore",
+                granted=granted,
+            )
         except ContainmentError:
             return self._result(
                 started,
@@ -424,7 +578,7 @@ class SessionContinuityTool(ToolFn):
             if evidence_file is None:
                 return self._result(
                     started,
-                    "skipped",
+                    "error",
                     f"Session checkpoint '{name}' was not found.",
                     operation="restore",
                     granted=granted,
@@ -480,6 +634,12 @@ class SessionContinuityTool(ToolFn):
             granted=granted,
             raw=data,
             handoff=handoff_receipt,
+            memory=memory_block(
+                used=[
+                    memory_receipt(r["id"], r["revision"], r["source"], "restore")
+                    for r in reads
+                ]
+            ),
         )
 
     def _context_pack(
@@ -523,6 +683,14 @@ class SessionContinuityTool(ToolFn):
         agent_id: str | None = None,
         session_id: str | None = None,
     ) -> ContinuityOutput:
+        view = getattr(self, "_result_view", {})
+        if view.get("view") is not None:
+            # T16 S16.6: a view reads the stored compact result read-only;
+            # no view keeps the legacy full retrieval below.
+            return cast(
+                ContinuityOutput,
+                retrieve_result_view(root, handle or "", **view),
+            )
         return retrieve_context(
             started,
             root,
@@ -592,8 +760,24 @@ class SessionContinuityTool(ToolFn):
         provider_id: str | None,
         granted: ExecutionPermissions,
     ) -> ContinuityOutput:
-        return resume_provider(
-            started, root, name, provider_id, granted, as_v1=self._as_v1
+        # T19: a checkpoint served from the migrated store is a real read.
+        with collect_memory_reads() as reads:
+            result = resume_provider(
+                started, root, name, provider_id, granted, as_v1=self._as_v1
+            )
+        return cast(
+            ContinuityOutput,
+            attach_memory_attribution(
+                result,
+                memory_block(
+                    used=[
+                        memory_receipt(
+                            r["id"], r["revision"], r["source"], "provider_resume"
+                        )
+                        for r in reads
+                    ]
+                ),
+            ),
         )
 
     def _omniroute_resume(
@@ -660,6 +844,7 @@ class SessionContinuityTool(ToolFn):
         provider_route: dict[str, Any] | None = None,
         findings: list[Finding] | None = None,
         as_v1: bool | None = None,
+        memory: dict[str, Any] | None = None,
     ) -> ContinuityOutput:
         effective_v1 = as_v1 if as_v1 is not None else getattr(self, "_as_v1", False)
         return build_continuity_result(
@@ -678,4 +863,5 @@ class SessionContinuityTool(ToolFn):
             findings=findings,
             as_v1=effective_v1,
             tool_name=self.name,
+            memory=memory,
         )

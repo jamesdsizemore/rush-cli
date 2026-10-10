@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -620,6 +621,7 @@ def test_preview_apply_false_still_reports_real_row_state(tmp_path: Path) -> Non
         "id": "a1",
         "revision": 1,
         "trust_tier": "IMPORTED",
+        "unchanged": "preview only (apply=false); nothing committed",
     }
 
     denied = MemoryTool().run(
@@ -815,8 +817,24 @@ def _memory_state(tmp_path: Path):
     return state
 
 
+def _drain(state, actions) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    from rush.tui import _pump
+
+    deadline = time.monotonic() + 2
+    _pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        _pump(state, actions)
+
+
 def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) -> None:
-    from rush.tui import _memory_delete_preview, _memory_edit_commit
+    from rush.tui import (
+        _handle_memory_key,
+        _memory_delete_preview,
+        _memory_edit_commit,
+    )
 
     calls: list[dict[str, object]] = []
     actions = _fake_actions(calls)
@@ -827,12 +845,21 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
     state.memory_selected_ids = {"a1"}
 
     _memory_edit_commit(state, state.active_project, actions)
+    _handle_memory_key(state, "y", actions)
+    _drain(state, actions)
+    # T28-D: the applied edit refreshes the list and clears the selection
+    # (these fake actions list no rows), so the delete is previewed on a
+    # listed, reselected row -- never on one the refresh dropped.
+    state.memory_items = _memory_state(tmp_path).memory_items
+    state.memory_selected_ids = {"a1"}
     _memory_delete_preview(state, state.active_project, actions)
 
     assert [call["request"]["owner_scope"] for call in calls] == [
         {"kind": "user", "id": "alice"},
         {"kind": "user", "id": "alice"},
+        {"kind": "user", "id": "alice"},
     ]
+    assert [call["request"]["apply"] for call in calls] == [False, True, False]
 
 
 def test_tui_owner_scope_selector_cycles_all_four_kinds(tmp_path: Path) -> None:

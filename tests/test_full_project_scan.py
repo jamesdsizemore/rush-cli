@@ -33,6 +33,7 @@ from rush.permissions import ExecutionPermissions
 from rush.tools.ai_eval import AiEvalTool
 from rush.tools.review import ReviewTool
 from rush.tools.scan import ScanTool
+from rush.tools.security import SecurityTool
 from rush.workflows import project_run
 from rush.workflows.project_run import (
     ScanInvalidRequestError,
@@ -42,6 +43,8 @@ from rush.workflows.project_run import (
     plan_scan,
 )
 from rush.workflows.projects import register_project
+
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
 
 
 class _BrokenTypecheck:
@@ -405,9 +408,11 @@ def test_scantool_flat_plan_run_status_round_trip(
         permissions=ExecutionPermissions(cache_write=True, artifact_write=True),
         data_root=data_root,
     )
-    assert run_result["status"] == "ok"
-    run_id = run_result["raw"]["run_id"]
+    # T27/R27.1: an incomplete run reports its own aggregate, never a bare ok.
     assert run_result["raw"]["run_state"] == "incomplete"
+    assert run_result["status"] == run_result["raw"]["aggregate"]["status"]
+    assert run_result["status"] != "ok"
+    run_id = run_result["raw"]["run_id"]
 
     status_page = tool.run(
         Path(project_id), action="status", run_id=run_id, limit=1, data_root=data_root
@@ -463,8 +468,10 @@ def test_scantool_handle_request_plan_and_run_envelope(
     finally:
         projects_module.default_data_root = original_default_data_root
 
-    assert run_response["status"] == "ok"
-    assert run_response["raw"]["data"]["plan_id"] == plan_id
+    run_data = run_response["raw"]["data"]
+    assert run_data["plan_id"] == plan_id
+    assert run_response["status"] == run_data["aggregate"]["status"]
+    assert run_data["run_state"] != "complete" or run_response["status"] == "ok"
 
 
 def test_scantool_handle_request_run_denied_without_scope(
@@ -538,9 +545,7 @@ def test_offline_review_dead_asset_license_matrix_all_read_staged_bytes(
     with staging_scope(staging):
         # Live content diverges after staging -- every assertion below must
         # reflect the staged bytes captured before this mutation, not this.
-        (root / "index.html").write_text(
-            "no image reference here\n", encoding="utf-8"
-        )
+        (root / "index.html").write_text("no image reference here\n", encoding="utf-8")
         (root / "pyproject.toml").write_text(
             '[project]\ndependencies = ["riskypkg"]\n', encoding="utf-8"
         )
@@ -727,3 +732,29 @@ def test_gitguard_candidate_executes_through_execute_scan_with_a_real_or_fixture
     by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
     assert by_id["git-guard"].outcome == "executed"
     assert by_id["git-guard"].repository_state_evidence
+
+
+@pytest.mark.usefixtures("host_engine_path")
+def test_full_scan_surfaces_python_dependency_audit_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T14: a project scan's real `security` candidate carries
+    `metadata.scope.dependencies` all the way through `execute_scan` --
+    not just when `SecurityTool` is called directly. It audits with the
+    host's real osv-scanner, so it runs on the host PATH."""
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [SecurityTool()])
+    root = _fixture_root(tmp_path)
+    (root / "uv.lock").write_text(
+        'version = 1\nrequires-python = ">=3.12"\n', encoding="utf-8"
+    )
+    data_root = _data_root(tmp_path)
+    record = register_project(root, data_root=data_root)
+
+    plan = plan_scan(record.project_id, data_root=data_root)
+    run = execute_scan(plan, permissions=ExecutionPermissions(), data_root=data_root)
+
+    by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
+    security_result = by_id["security"].result
+    deps = security_result["metadata"]["scope"]["dependencies"]
+    uv_entry = next(d for d in deps if d["kind"] == "uv_lock")
+    assert uv_entry["state"] == "audited"

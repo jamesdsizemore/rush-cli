@@ -52,6 +52,10 @@ class Finding(TypedDict, total=False):
     freshness: str | None
     patch: str | None
     suggested_fix: str | None
+    # The one open extension field (T12 and T16 reconciled): T12's scope
+    # classification (`scope`, `dependency_kind`), T13's `end_location`, and
+    # any other adapter data. Strict V1 carries it as `FindingV1.extensions`.
+    extensions: dict[str, Any]
 
 
 class ToolResult(TypedDict, total=False):

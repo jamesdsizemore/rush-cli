@@ -9,11 +9,11 @@ from __future__ import annotations
 import ast
 import json
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
+from ..runtime.project_python import PYTHON_PREREQUISITE, project_python
 from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
@@ -249,6 +249,20 @@ class MemProfileTool(ToolFn):
         if dynamic and getattr(granted_perms, "slow", False) and py_files:
             # Run dynamic tracemalloc probe on target
             target_py = py_files[0]
+            python = project_python(target_py)
+            if python is None:
+                return ToolResult(
+                    tool=self.name,
+                    engine="mem-profile",
+                    engine_version="1.0.0",
+                    status="skipped",
+                    duration_ms=elapsed_ms(start),
+                    summary=f"mem-profile: {PYTHON_PREREQUISITE}",
+                    findings=findings,
+                    metrics={"completed": False, "peak_memory_bytes": None},
+                    raw=None,
+                    metadata={"terminal_reason": "prerequisite_missing"},
+                )
             target_literal = json.dumps(str(target_py.resolve()))
             report_prefix = f"rush-memory-{uuid.uuid4().hex}:"
             code = (
@@ -261,7 +275,7 @@ class MemProfileTool(ToolFn):
             )
             try:
                 res = run_subprocess(
-                    [sys.executable, "-c", code],
+                    [python, "-c", code],
                     cwd=p if p.is_dir() else p.parent,
                     timeout=int(timeout_seconds),
                 )

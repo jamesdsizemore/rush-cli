@@ -25,7 +25,8 @@ Each result includes:
 2. **Tool Name & Engine** (`lint [ruff]`): Which tool ran and which underlying engine produced the findings.
 3. **Summary Message**: Total count of findings or confirmation of success.
 4. **Duration** (`120ms`): Exactly how fast the engine finished.
-5. **Findings List**: Location (`path:line:col`), rule name (`F401`), and a helpful description of what was flagged.
+5. **Findings List**: Location (`path:line:col`), rule name (`F401`), and a helpful description of what was flagged. `lint` and `check` collapse identical repeated findings from the same producer at the same physical file into one entry; a finding that differs in end location, message, fix, or producer is kept separate.
+6. **Memory Contribution (optional)**: For `rush scan`/`rush check`, when the run actually used or wrote memory records, the summary ends with one clause naming how many prior records it read and wrote — for example `memory: read 1 prior record, wrote 1 record`. The clause is absent when neither happened, and its presence alone is not a claim that memory made the result more accurate.
 
 ---
 

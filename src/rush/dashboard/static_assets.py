@@ -323,6 +323,7 @@ body {{
     right: 0;
     width: 85vw;
     max-width: 360px;
+    overflow-y: auto;
     transform: translateX(100%);
     z-index: 20;
   }}

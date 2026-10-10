@@ -326,7 +326,29 @@ def test_no_cache_performs_no_read_or_write(tmp_path: Path) -> None:
     ctx_bypass = _create_valid_context(tmp_path, cache_policy="bypass")
     res = executor.execute(ctx_bypass)
 
-    assert res == expected_result
+    # Phase 70 T16 (S16.1/R16.2): the executor adds the default v1 scope to
+    # a catalog result that reports none, in strict V1 `extensions.metadata`.
+    assert res == replace(
+        expected_result,
+        extensions={
+            "metadata": {
+                "scope": {
+                    "version": 1,
+                    "kind": "file",
+                    "logical_root": str(tmp_path),
+                    "requested_targets": ["src/main.py"],
+                    "original_requested_targets": None,
+                    "invocation_start_cwd": None,
+                    "execution_cwds": [],
+                    "requested_file_count": None,
+                    "matched_file_count": None,
+                    "consumed_file_count": None,
+                    "coverage": "unavailable",
+                    "reason": "tool_reports_no_file_consumption",
+                }
+            }
+        },
+    )
     # Strictly zero cache reads and zero cache writes
     assert mock_cache.get.call_count == 0
     assert mock_cache.set.call_count == 0

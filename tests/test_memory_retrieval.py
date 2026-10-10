@@ -359,7 +359,23 @@ def test_legacy_memory_response_remains_compatible(tmp_path: Path) -> None:
     assert legacy["raw"][0]["id"]
     assert "schema_version" not in legacy
     assert not isinstance(legacy["raw"], dict)
-    assert legacy["metadata"] == {"operation": "ask"}
+    # T19 B1: the legacy response's metadata also carries the recall receipt.
+    assert len(legacy["raw"]) == 1
+    assert legacy["metadata"] == {
+        "operation": "ask",
+        "memory": {
+            "version": 1,
+            "used": [
+                {
+                    "id": legacy["raw"][0]["id"],
+                    "revision": 1,
+                    "source": "allowed",
+                    "operation": "ask",
+                }
+            ],
+            "written": [],
+        },
+    }
 
     compact = tool.run(
         tmp_path,
@@ -395,14 +411,14 @@ def test_two_identical_distinct_calls_are_counted_twice_and_one_retry_is_counted
         source="allowed",
         permissions=ExecutionPermissions(cache_write=True),
     )
-    common = dict(
-        operation="ask",
-        subject="domain_knowledge",
-        query="needle",
-        session_allowlist=["allowed"],
-        request={"view": "compact"},
-        permissions=ExecutionPermissions(cache_write=True),
-    )
+    common = {
+        "operation": "ask",
+        "subject": "domain_knowledge",
+        "query": "needle",
+        "session_allowlist": ["allowed"],
+        "request": {"view": "compact"},
+        "permissions": ExecutionPermissions(cache_write=True),
+    }
     db_path = tmp_path / ".rush" / "telemetry" / "tokens.db"
 
     tool.run(tmp_path, **common)
@@ -446,12 +462,12 @@ def test_persisted_attribution_columns_match_the_public_invocation_id_on_every_s
     artifact_id = write_result["raw"]["id"]
 
     granted = ExecutionPermissions(cache_write=True, network=True)
-    attribution = dict(
-        project_id="proj-uuid-123",
-        run_id="run-1",
-        agent_id="agent-1",
-        session_id="session-1",
-    )
+    attribution = {
+        "project_id": "proj-uuid-123",
+        "run_id": "run-1",
+        "agent_id": "agent-1",
+        "session_id": "session-1",
+    }
 
     tool.run(
         tmp_path,
@@ -493,7 +509,7 @@ def test_persisted_attribution_columns_match_the_public_invocation_id_on_every_s
         ).fetchall()
     by_invocation = {r[0]: r for r in rows}
     assert set(by_invocation) == {"inv-lexical", "inv-hybrid-fallback", "inv-expand"}
-    for invocation_id, row in by_invocation.items():
+    for row in by_invocation.values():
         _, _kind, project_id, run_id, agent_id, session_id = row
         assert (project_id, run_id, agent_id, session_id) == (
             "proj-uuid-123",

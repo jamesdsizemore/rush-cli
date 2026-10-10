@@ -9,10 +9,10 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
+from ..runtime.project_python import PYTHON_PREREQUISITE, project_python
 from .base import Finding, ToolFn, ToolName, ToolResult, ToolStatus
 from .common import elapsed_ms, now_ms, run_subprocess
 
@@ -270,10 +270,24 @@ class ColdStartTool(ToolFn):
 
         if dynamic and getattr(granted_perms, "slow", False) and py_files:
             target_file = py_files[0]
+            python = project_python(target_file)
+            if python is None:
+                return ToolResult(
+                    tool=self.name,
+                    engine="cold-start",
+                    engine_version="1.0.0",
+                    status="skipped",
+                    duration_ms=elapsed_ms(start),
+                    summary=f"cold-start: {PYTHON_PREREQUISITE}",
+                    findings=findings,
+                    metrics={"completed": False, "import_time_measured": False},
+                    raw=None,
+                    metadata={"terminal_reason": "prerequisite_missing"},
+                )
             # Run python -X importtime on target
             try:
                 res = run_subprocess(
-                    [sys.executable, "-X", "importtime", str(target_file.resolve())],
+                    [python, "-X", "importtime", str(target_file.resolve())],
                     cwd=p if p.is_dir() else p.parent,
                     timeout=int(timeout_seconds),
                 )

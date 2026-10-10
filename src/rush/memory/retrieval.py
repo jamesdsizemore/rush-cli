@@ -69,6 +69,11 @@ DEFAULT_ENCODING = "cl100k_base"
 
 _EXCERPT_CHARS = 200
 
+# T19: `MerkleInvalidator.hash_content` (sha256 of the UTF-8 text) through an
+# instance built without `__init__`, whose constructor creates `.rush/cache`;
+# a read-only recall creates nothing.
+_CONTENT_HASHER = MerkleInvalidator.__new__(MerkleInvalidator)
+
 
 @dataclasses.dataclass
 class SourceValidationMemo:
@@ -82,10 +87,10 @@ class SourceValidationMemo:
         default_factory=dict
     )
 
-    def source_hash(self, merkle: MerkleInvalidator, file_path: Path) -> str | None:
+    def source_hash(self, file_path: Path) -> str | None:
         if file_path not in self._hash_cache:
             try:
-                self._hash_cache[file_path] = merkle.hash_content(
+                self._hash_cache[file_path] = _CONTENT_HASHER.hash_content(
                     file_path.read_text(encoding="utf-8")
                 )
             except (OSError, UnicodeError):
@@ -129,7 +134,6 @@ def defended_recall(
     if not allowed_sources:
         return []
     memo = memo or SourceValidationMemo()
-    merkle = MerkleInvalidator(project_root=store.project_root)
     rows = store.search_candidates(
         subject,
         query,
@@ -160,7 +164,7 @@ def defended_recall(
         if artifact.symbol_ref is not None and artifact.content_hash is not None:
             path_part = artifact.symbol_ref.split("::", 1)[0]
             file_path = (store.project_root / path_part).resolve()
-            current_hash = memo.source_hash(merkle, file_path)
+            current_hash = memo.source_hash(file_path)
             if current_hash != artifact.content_hash:
                 artifact = dataclasses.replace(artifact, stale=True)
 
@@ -272,7 +276,30 @@ def _excerpt(content: dict[str, Any]) -> str:
     return text[:_EXCERPT_CHARS]
 
 
-def _candidate_to_item(row: Any) -> dict[str, Any] | None:
+def _item_relations(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    version: int,
+    allowed_sources: Sequence[str],
+) -> list[dict[str, Any]]:
+    """MC03: the candidate's authorized depth-1 relations through
+    `related_artifacts()`, which revalidates every neighbor's source and current
+    version, so a denied or version-changed neighbor is never disclosed."""
+    # Deferred import: `rush.memory.relations` imports this module's budgets.
+    from rush.memory.relations import related_artifacts
+
+    related = related_artifacts(
+        store,
+        artifact_id=artifact_id,
+        version=version,
+        session_allowlist=allowed_sources,
+    )
+    return list(related["items"]) if related["code"] == "OK" else []
+
+
+def _candidate_to_item(
+    row: Any, store: TypedArtifactStore, allowed_sources: Sequence[str]
+) -> dict[str, Any] | None:
     """`None` marks a corrupt candidate (malformed/non-object `content`) to skip — never
     raises, so one bad row can't abort the whole page (MC02.1 "corrupt candidates do not
     starve page")."""
@@ -289,9 +316,9 @@ def _candidate_to_item(row: Any) -> dict[str, Any] | None:
         "source": row["source"],
         "trust": row["trust_tier"],
         "freshness": "stale" if row["stale"] else "fresh",
-        # MC03 (relations.py) isn't implemented yet; every item reports no known relations
-        # rather than fabricating any.
-        "relations": [],
+        "relations": _item_relations(
+            store, row["id"], row["artifact_version"], allowed_sources
+        ),
     }
 
 
@@ -309,6 +336,43 @@ def _measure_page(
     }
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return len(text.encode("utf-8")), _count_tokens(text, encoding)
+
+
+def _contains_special_token(text: str, encoding: str) -> bool:
+    """Whether tiktoken's default `encode` would refuse `text` (it raises
+    `ValueError` on any special-token string)."""
+    return any(token in text for token in _encoder(encoding).special_tokens_set)
+
+
+def _trial_page_bytes(
+    items: list[dict[str, Any]],
+    items_bytes: int,
+    item: dict[str, Any],
+    *,
+    max_bytes: int,
+    max_tokens: int,
+    encoding: str,
+) -> int | None:
+    """Byte size of the `_measure_page(items + [item], None, True, ...)` page,
+    or `None` when that page exceeds either budget -- the same decision as
+    measuring the whole trial page, without retokenizing it per candidate.
+
+    `items_bytes` is the running byte size of the current page. Appending an
+    item adds its compact JSON plus one separating comma. Tiktoken's
+    encodings are byte-level, so a text never has more tokens than bytes:
+    while the trial page's bytes are within `max_tokens` its tokens are too,
+    and only a larger page is fully tokenized. An item carrying a
+    special-token string is always fully tokenized so tiktoken raises its
+    `ValueError` exactly as it did when every trial page was tokenized."""
+    item_text = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+    trial_bytes = items_bytes + len(item_text.encode("utf-8")) + (1 if items else 0)
+    if trial_bytes > max_tokens or _contains_special_token(item_text, encoding):
+        _bytes, trial_tokens = _measure_page([*items, item], None, True, encoding)
+        if trial_tokens > max_tokens:
+            return None
+    if trial_bytes > max_bytes:
+        return None
+    return trial_bytes
 
 
 def _page(
@@ -414,6 +478,7 @@ def recall_page(
         return _page("E_BUDGET", encoding=encoding)
 
     items: list[dict[str, Any]] = []
+    items_bytes = floor_bytes
     scanned = 0
     hit_cap = False
     exhausted = False
@@ -433,16 +498,22 @@ def recall_page(
             break
         for row in batch:
             scanned += 1
-            item = _candidate_to_item(row)
+            item = _candidate_to_item(row, store, allowed_sources)
             if item is None:
                 continue
-            trial_bytes, trial_tokens = _measure_page(
-                [*items, item], None, True, encoding
+            trial_bytes = _trial_page_bytes(
+                items,
+                items_bytes,
+                item,
+                max_bytes=max_bytes,
+                max_tokens=max_tokens,
+                encoding=encoding,
             )
-            if trial_bytes > max_bytes or trial_tokens > max_tokens:
+            if trial_bytes is None:
                 budget_full = True
                 break
             items.append(item)
+            items_bytes = trial_bytes
             if len(items) >= limit:
                 break
         scan_offset += len(batch)
@@ -935,14 +1006,23 @@ def hybrid_page(
         return fallback
 
     items: list[dict[str, Any]] = []
+    items_bytes, _tokens = _measure_page([], None, True, encoding)
     for row in fused["rows"]:
-        item = _candidate_to_item(row)
+        item = _candidate_to_item(row, store, allowed_sources)
         if item is None:
             continue
-        trial_bytes, trial_tokens = _measure_page([*items, item], None, True, encoding)
-        if trial_bytes > max_bytes or trial_tokens > max_tokens:
+        trial_bytes = _trial_page_bytes(
+            items,
+            items_bytes,
+            item,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding=encoding,
+        )
+        if trial_bytes is None:
             break
         items.append(item)
+        items_bytes = trial_bytes
         if len(items) >= limit:
             break
 

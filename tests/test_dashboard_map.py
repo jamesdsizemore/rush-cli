@@ -24,6 +24,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from _process_children import spawn_child
 
 import rush.tools.common  # noqa: F401 -- import first: avoids a circular
 
@@ -110,6 +111,12 @@ class _StubLint:
 
 
 def _isolate_data_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate the registry/data roots. A test that runs a scan also takes
+    the `hermetic_engine_path` fixture (conftest.py), so its engine rows
+    resolve only the engines pinned in this venv instead of whatever the
+    host has on PATH (aislop, detect-secrets, osv-scanner, a local LLM, ...)
+    -- the real engine route and catalog rows, without host-dependent scan
+    duration, findings and cancel timing."""
     data_root = tmp_path / "rush-data"
     monkeypatch.setattr(projects_module, "default_data_root", lambda: data_root)
     monkeypatch.setattr(provision_module, "default_data_root", lambda: data_root)
@@ -137,7 +144,9 @@ def _empty_snapshot(project_id: str, root: Path) -> dict[str, Any]:
 
 
 def _serve(server: Any) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -306,9 +315,12 @@ def test_large_map_pagination_is_complete() -> None:
         "agents": [],
     }
 
-    started = time.perf_counter()
+    # CPU time of this thread, not wall-clock: under a loaded host (parallel
+    # test shards) wall time mostly measures waiting for a CPU, which says
+    # nothing about the quadratic-blowup regression this bound guards.
+    started = time.thread_time()
     result = build_project_map(snapshot)
-    elapsed = time.perf_counter() - started
+    elapsed = time.thread_time() - started
 
     # Full evidence inventory (10,000 files + 30,000 findings + root) is
     # never dropped, even though only a bounded overview is rendered.
@@ -663,6 +675,7 @@ def test_non_map_section_cursor_rejects_malformed_or_cross_snapshot_value(
 # dispatchers, and CHECK_SUITE's initial-launch scan) before P69-03.2 GREEN.
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_launch_populates_map_from_completed_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -692,6 +705,7 @@ def test_launch_populates_map_from_completed_scan(
     assert any(n["path"] == "app.py" for n in finding_nodes)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_findings_carry_a_real_finding_id_and_are_visible_in_the_scans_section(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -720,6 +734,7 @@ def test_check_suite_findings_carry_a_real_finding_id_and_are_visible_in_the_sca
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_manifest_summary_reports_its_real_finding_count_not_zero(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -786,6 +801,7 @@ def test_scan_result_published_atomically_not_partially_visible(
     assert ctx.projects.get(project_id).sequence == 201
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_initial_launch_scan_publishes_via_same_path_as_rescan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -840,6 +856,7 @@ def test_initial_launch_scan_publishes_via_same_path_as_rescan(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_resume_publishes_result_not_discarded(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -949,6 +966,7 @@ def test_pre_execution_guard_detects_equal_length_content_replacement_via_ctime_
     assert project_run_module._source_signature(root) != before
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_resume_pre_execution_guard_is_a_separate_cheap_check_not_the_consumption_aggregate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -993,6 +1011,7 @@ def test_resume_pre_execution_guard_is_a_separate_cheap_check_not_the_consumptio
     assert "old-format" in str(excinfo.value)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_retained_candidates_on_resume_carry_forward_their_original_per_file_digests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1064,6 +1083,7 @@ def test_retained_candidates_on_resume_carry_forward_their_original_per_file_dig
     )
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_persisted_inventory_survives_restart_and_file_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1099,6 +1119,7 @@ def test_persisted_inventory_survives_restart_and_file_changes(
     assert snapshot["files"] != server_module._scan_file_inventory(root)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_legacy_attempt_without_inventory_reports_missing_provenance_not_current_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1134,6 +1155,7 @@ def test_legacy_attempt_without_inventory_reports_missing_provenance_not_current
     assert snapshot["file_inventory_missing"] is True
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_present_but_empty_inventory_is_not_treated_as_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1603,6 +1625,7 @@ def test_git_state_dependent_engines_git_guard_diff_cover_undercover_run_against
 # --- P69-03.3 RED (subsections k/l/n): publication paths, sequence/identity -
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_rescan_with_unchanged_source_bumps_sequence_not_source_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1701,6 +1724,7 @@ def test_memory_mutation_bumps_sequence_without_touching_source_identity(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_initial_launch_scan_captures_provenance_before_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1924,6 +1948,7 @@ def test_publication_pointer_update_is_a_compare_and_swap_a_lower_generation_nev
     assert ledger.published_pointer("project-a")["run_id"] == "run-newest"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_hydration_racing_a_newer_local_publish_loses_via_the_existing_generation_check_not_a_separate_mechanism(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2041,6 +2066,7 @@ def test_hydrating_server_discovers_the_current_published_run_and_attempt_from_t
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_second_server_reading_a_published_run_it_never_executed_hydrates_its_own_map_from_the_manifest_not_just_its_publication_field(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2080,6 +2106,7 @@ def test_a_second_server_reading_a_published_run_it_never_executed_hydrates_its_
             server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_restarted_server_rehydrates_its_map_from_the_latest_published_manifest_on_first_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2344,6 +2371,7 @@ def test_historical_snapshot_survives_cache_eviction_and_restart_identically(
         server_b.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_per_run_publication_record_answers_independent_of_newest_pointer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2398,6 +2426,7 @@ def test_unpublished_run_id_reports_not_yet(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_a_completion_that_loses_the_generation_race_reports_superseded_not_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2441,6 +2470,7 @@ def test_a_completion_that_loses_the_generation_race_reports_superseded_not_abse
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_publication_query_resolves_the_correct_attempt_not_whichever_attempt_id_is_omitted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2599,6 +2629,12 @@ def test_standalone_tui_process_acquires_its_own_owner_lock_before_reserving_loc
     )
     tui_module._start_scan_thread(project, actions)
     try:
+        # T28-F: the start admits on its worker; wait (bounded) until it has.
+        deadline = time.monotonic() + 5.0
+        while not (project.owner_instance_id and project.ledger_admitted):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.005)
         assert project.owner == "local"
         assert project.owner_instance_id
         lock_path = (
@@ -2817,6 +2853,7 @@ def test_detach_force_exit_escalates_to_sigkill_when_a_descendant_ignores_sigter
             os.killpg(pgid, signal.SIGKILL)
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_recovery_required_is_never_ttl_pruned_like_pending(tmp_path: Path) -> None:
     ledger = MutationLedger(db_path=tmp_path / "ledger.db")
     reservation = ledger.reserve(
@@ -2860,34 +2897,12 @@ def test_recovery_claims_a_recovery_required_row_through_the_same_ownership_lock
     owner_id = "tui:recovery-claim"
     op_id_file = tmp_path / "op_id.txt"
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            reservation = ledger.reserve(
-                project_id,
-                request_id="tui-local:run-x",
-                body_hash="",
-                operation_type="scan_start:plan-1",
-            )
-            op_id = reservation.operation_id
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=op_id,
-                operation_id=op_id,
-                run_id="run-x",
-                plan_id="plan-1",
-                owner_instance_id=owner_id,
-            )
-            ledger.record_status_transition(
-                op_id, "recovery_required", {"status": "recovery_required"}
-            )
-            op_id_file.write_text(op_id)
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_admit_and_mark_recovery_required",
+        [project_id, str(data_root), owner_id, str(op_id_file)],
+    )
+    proc.wait()
 
     op_id = op_id_file.read_text()
     ledger = MutationLedger()
@@ -2901,6 +2916,7 @@ def test_recovery_claims_a_recovery_required_row_through_the_same_ownership_lock
     assert ledger.get_operation_status(op_id)["status"] == "terminal"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2909,33 +2925,12 @@ def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
     _project_id, root = _register(tmp_path)
     result_file = tmp_path / "result.json"
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            tui_module._OWNER_INSTANCE.clear()
-            project = tui_module.ProjectState(name="demo", root=root)
-            never = threading.Event()
-            actions = _local_scan_actions(
-                execute_scan=lambda plan, **k: (
-                    never.wait(timeout=30),
-                    SimpleNamespace(aggregate={}),
-                )[1],
-            )
-            tui_module._start_scan_thread(project, actions)
-            time.sleep(0.2)
-            state = tui_module.TuiState(projects=[project])
-            tui_module._handle_detach(state, project, actions, timeout=0.2)
-            result_file.write_text(
-                json.dumps(
-                    {
-                        "op_id": project.operation_id,
-                        "owner_id": project.owner_instance_id,
-                    }
-                )
-            )
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_start_and_detach_local_run",
+        [str(root), str(data_root), str(result_file)],
+    )
+    proc.wait()
 
     result = json.loads(result_file.read_text())
     op_id, owner_id = result["op_id"], result["owner_id"]
@@ -2950,6 +2945,7 @@ def test_recovery_required_is_reconciled_by_a_later_invocations_recovery_path(
     assert ledger.get_operation_status(op_id)["status"] == "terminal"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_reconcile_admissions_recovers_a_prepared_handoff_left_by_a_dead_owner(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2996,54 +2992,12 @@ def test_reconcile_admissions_recovers_a_prepared_handoff_left_by_a_dead_owner(
         encoding="utf-8",
     )
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            effect_ids = {
-                "artifact_create": "artifact-receipt-dead-1",
-                "session_create": "session-receipt-dead-1",
-                "delivery_transition": "delivery-receipt-dead-1",
-            }
-            handoff_reservation = ledger.reserve(
-                project_id,
-                request_id="handoff-req-1",
-                body_hash="",
-                operation_type="handoff_send",
-                effect_ids=effect_ids,
-            )
-            handoff = project_run_module.build_handoff(
-                project_id,
-                "run-dead",
-                "codex-cli",
-                data_root=data_root,
-                operation_id=handoff_reservation.operation_id,
-                effect_ids=effect_ids,
-                owner_instance_id=owner_id,
-            )
-            # This same dead owner also has a live (now-dead) scan admission
-            # for the same project -- the trigger that puts this project's
-            # row in `reconcile_admissions`'s sweep in the first place.
-            scan_reservation = ledger.reserve(
-                project_id,
-                request_id="scan-req-1",
-                body_hash="",
-                operation_type="scan_start",
-            )
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=scan_reservation.operation_id,
-                operation_id=scan_reservation.operation_id,
-                run_id="run-dead",
-                plan_id="fixture-plan",
-                owner_instance_id=owner_id,
-            )
-            handoff_id_file.write_text(handoff.handoff_id)
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_build_handoff_with_scan_admission",
+        [project_id, str(data_root), owner_id, str(handoff_id_file)],
+    )
+    proc.wait()
 
     handoff_id = handoff_id_file.read_text()
     ledger = MutationLedger()
@@ -3058,6 +3012,7 @@ def test_reconcile_admissions_recovers_a_prepared_handoff_left_by_a_dead_owner(
     assert reloaded["state"] == "delivered"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_reconcile_admissions_revokes_and_records_recovery_required_for_a_dead_owner_handoff_with_a_mismatched_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3112,63 +3067,12 @@ def test_reconcile_admissions_revokes_and_records_recovery_required_for_a_dead_o
         encoding="utf-8",
     )
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            effect_ids = {
-                "artifact_create": "artifact-receipt-mismatch-1",
-                "session_create": "session-receipt-mismatch-1",
-                "delivery_transition": "delivery-receipt-mismatch-1",
-            }
-            handoff_reservation = ledger.reserve(
-                project_id,
-                request_id="handoff-req-mismatch-1",
-                body_hash="",
-                operation_type="handoff_send",
-                effect_ids=effect_ids,
-            )
-            handoff = project_run_module.build_handoff(
-                project_id,
-                "run-dead",
-                "codex-cli",
-                data_root=data_root,
-                operation_id=handoff_reservation.operation_id,
-                effect_ids=effect_ids,
-                owner_instance_id=owner_id,
-            )
-            # Same dead owner also has a live (now-dead) scan admission for
-            # the same project -- the trigger that puts this project's row
-            # in `reconcile_admissions`'s sweep in the first place.
-            scan_reservation = ledger.reserve(
-                project_id,
-                request_id="scan-req-mismatch-1",
-                body_hash="",
-                operation_type="scan_start",
-            )
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=scan_reservation.operation_id,
-                operation_id=scan_reservation.operation_id,
-                run_id="run-dead",
-                plan_id="fixture-plan",
-                owner_instance_id=owner_id,
-            )
-            info_file.write_text(
-                json.dumps(
-                    {
-                        "handoff_id": handoff.handoff_id,
-                        "operation_id": handoff.operation_id,
-                        "artifact_id": handoff.artifact_id,
-                        "memory_session_id": handoff.memory_session_id,
-                    }
-                )
-            )
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_build_handoff_with_scan_admission_mismatch",
+        [project_id, str(data_root), owner_id, str(info_file)],
+    )
+    proc.wait()
 
     info = json.loads(info_file.read_text())
     handoff_id = info["handoff_id"]
@@ -3251,6 +3155,347 @@ def _write_run_dead_manifest(root: Path) -> None:
     )
 
 
+def _child_admit_and_mark_recovery_required(
+    project_id: str, data_root: str, owner_id: str, op_id_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    reservation = ledger.reserve(
+        project_id,
+        request_id="tui-local:run-x",
+        body_hash="",
+        operation_type="scan_start:plan-1",
+    )
+    op_id = reservation.operation_id
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=op_id,
+        operation_id=op_id,
+        run_id="run-x",
+        plan_id="plan-1",
+        owner_instance_id=owner_id,
+    )
+    ledger.record_status_transition(
+        op_id, "recovery_required", {"status": "recovery_required"}
+    )
+    Path(op_id_file).write_text(op_id)
+
+
+def _child_start_and_detach_local_run(
+    root: str, data_root: str, result_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    tui_module._OWNER_INSTANCE.clear()
+    project = tui_module.ProjectState(name="demo", root=Path(root))
+    never = threading.Event()
+    actions = _local_scan_actions(
+        execute_scan=lambda plan, **k: (
+            never.wait(timeout=30),
+            SimpleNamespace(aggregate={}),
+        )[1],
+    )
+    tui_module._start_scan_thread(project, actions)
+    time.sleep(0.2)
+    state = tui_module.TuiState(projects=[project])
+    tui_module._handle_detach(state, project, actions, timeout=0.2)
+    Path(result_file).write_text(
+        json.dumps(
+            {
+                "op_id": project.operation_id,
+                "owner_id": project.owner_instance_id,
+            }
+        )
+    )
+
+
+def _child_build_handoff_with_scan_admission(
+    project_id: str, data_root: str, owner_id: str, handoff_id_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    effect_ids = {
+        "artifact_create": "artifact-receipt-dead-1",
+        "session_create": "session-receipt-dead-1",
+        "delivery_transition": "delivery-receipt-dead-1",
+    }
+    handoff_reservation = ledger.reserve(
+        project_id,
+        request_id="handoff-req-1",
+        body_hash="",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    handoff = project_run_module.build_handoff(
+        project_id,
+        "run-dead",
+        "codex-cli",
+        data_root=data_root_path,
+        operation_id=handoff_reservation.operation_id,
+        effect_ids=effect_ids,
+        owner_instance_id=owner_id,
+    )
+    # This same dead owner also has a live (now-dead) scan admission for
+    # the same project -- the trigger that puts this project's row in
+    # `reconcile_admissions`'s sweep in the first place.
+    scan_reservation = ledger.reserve(
+        project_id,
+        request_id="scan-req-1",
+        body_hash="",
+        operation_type="scan_start",
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=scan_reservation.operation_id,
+        operation_id=scan_reservation.operation_id,
+        run_id="run-dead",
+        plan_id="fixture-plan",
+        owner_instance_id=owner_id,
+    )
+    Path(handoff_id_file).write_text(handoff.handoff_id)
+
+
+def _child_build_handoff_with_scan_admission_mismatch(
+    project_id: str, data_root: str, owner_id: str, info_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    effect_ids = {
+        "artifact_create": "artifact-receipt-mismatch-1",
+        "session_create": "session-receipt-mismatch-1",
+        "delivery_transition": "delivery-receipt-mismatch-1",
+    }
+    handoff_reservation = ledger.reserve(
+        project_id,
+        request_id="handoff-req-mismatch-1",
+        body_hash="",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    handoff = project_run_module.build_handoff(
+        project_id,
+        "run-dead",
+        "codex-cli",
+        data_root=data_root_path,
+        operation_id=handoff_reservation.operation_id,
+        effect_ids=effect_ids,
+        owner_instance_id=owner_id,
+    )
+    # Same dead owner also has a live (now-dead) scan admission for the
+    # same project -- the trigger that puts this project's row in
+    # `reconcile_admissions`'s sweep in the first place.
+    scan_reservation = ledger.reserve(
+        project_id,
+        request_id="scan-req-mismatch-1",
+        body_hash="",
+        operation_type="scan_start",
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=scan_reservation.operation_id,
+        operation_id=scan_reservation.operation_id,
+        run_id="run-dead",
+        plan_id="fixture-plan",
+        owner_instance_id=owner_id,
+    )
+    Path(info_file).write_text(
+        json.dumps(
+            {
+                "handoff_id": handoff.handoff_id,
+                "operation_id": handoff.operation_id,
+                "artifact_id": handoff.artifact_id,
+                "memory_session_id": handoff.memory_session_id,
+            }
+        )
+    )
+
+
+def _child_crash_after_artifact_receipt(
+    project_id: str, data_root: str, owner_id: str, op_id_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    effect_ids = {
+        "artifact_create": "artifact-receipt-crash-1",
+        "session_create": "session-receipt-crash-1",
+        "delivery_transition": "delivery-receipt-crash-1",
+    }
+    reservation = ledger.reserve(
+        project_id,
+        request_id="handoff-req-crash-1",
+        body_hash="",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    scan_reservation = ledger.reserve(
+        project_id,
+        request_id="scan-req-crash-1",
+        body_hash="",
+        operation_type="scan_start",
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=scan_reservation.operation_id,
+        operation_id=scan_reservation.operation_id,
+        run_id="run-dead",
+        plan_id="fixture-plan",
+        owner_instance_id=owner_id,
+    )
+    Path(op_id_file).write_text(reservation.operation_id)
+
+    # T052: simulate a real crash strictly between the artifact_create
+    # receipt committing (`store.write`, already run inside
+    # `build_handoff` before this point) and the session_create receipt
+    # committing (inside `prepare_handoff`, replaced here to die
+    # immediately instead) -- this whole process exiting never lets
+    # `build_handoff` reach `_persist_handoff`, so no descriptor is ever
+    # written.
+    def _crash(*_a: object, **_k: object) -> None:
+        os._exit(0)
+
+    project_run_module.prepare_handoff = _crash
+    project_run_module.build_handoff(
+        project_id,
+        "run-dead",
+        "codex-cli",
+        data_root=data_root_path,
+        operation_id=reservation.operation_id,
+        effect_ids=effect_ids,
+        owner_instance_id=owner_id,
+    )
+
+
+def _child_crash_after_session_receipt(
+    project_id: str, data_root: str, owner_id: str, op_id_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    effect_ids = {
+        "artifact_create": "artifact-receipt-crash-2",
+        "session_create": "session-receipt-crash-2",
+        "delivery_transition": "delivery-receipt-crash-2",
+    }
+    reservation = ledger.reserve(
+        project_id,
+        request_id="handoff-req-crash-2",
+        body_hash="",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    scan_reservation = ledger.reserve(
+        project_id,
+        request_id="scan-req-crash-2",
+        body_hash="",
+        operation_type="scan_start",
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=scan_reservation.operation_id,
+        operation_id=scan_reservation.operation_id,
+        run_id="run-dead",
+        plan_id="fixture-plan",
+        owner_instance_id=owner_id,
+    )
+    Path(op_id_file).write_text(reservation.operation_id)
+
+    # T052: simulate a real crash strictly after both receipts have
+    # committed (`store.write` then `prepare_handoff`, both already run
+    # by this point) but before `build_handoff` ever reaches its own
+    # final statement -- replacing `_persist_handoff` itself with an
+    # immediate `os._exit` means no descriptor is ever written, exactly
+    # the gap the fix must recover from without one.
+    def _crash(*_a: object, **_k: object) -> None:
+        os._exit(0)
+
+    project_run_module._persist_handoff = _crash
+    project_run_module.build_handoff(
+        project_id,
+        "run-dead",
+        "codex-cli",
+        data_root=data_root_path,
+        operation_id=reservation.operation_id,
+        effect_ids=effect_ids,
+        owner_instance_id=owner_id,
+    )
+
+
+def _child_build_and_dispatch_handoff(
+    project_id: str, data_root: str, owner_id: str, info_file: str
+) -> None:
+    data_root_path = Path(data_root)
+    projects_module.default_data_root = lambda: data_root_path
+    provision_module.default_data_root = lambda: data_root_path
+    OwnerLock(owner_id, data_root=data_root_path)
+    ledger = MutationLedger()
+    effect_ids = {
+        "artifact_create": "artifact-receipt-delivered-1",
+        "session_create": "session-receipt-delivered-1",
+        "delivery_transition": "delivery-receipt-delivered-1",
+    }
+    handoff_reservation = ledger.reserve(
+        project_id,
+        request_id="handoff-req-delivered-1",
+        body_hash="",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    handoff = project_run_module.build_handoff(
+        project_id,
+        "run-dead",
+        "codex-cli",
+        data_root=data_root_path,
+        operation_id=handoff_reservation.operation_id,
+        effect_ids=effect_ids,
+        owner_instance_id=owner_id,
+    )
+    dispatched = project_run_module.dispatch_handoff(
+        project_id,
+        handoff.handoff_id,
+        handoff.session_capability,
+        data_root=data_root_path,
+        delivery_receipt_id=effect_ids["delivery_transition"],
+    )
+    assert dispatched.state == "delivered"
+    scan_reservation = ledger.reserve(
+        project_id,
+        request_id="scan-req-delivered-1",
+        body_hash="",
+        operation_type="scan_start",
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:plan-1",
+        slot_id=scan_reservation.operation_id,
+        operation_id=scan_reservation.operation_id,
+        run_id="run-dead",
+        plan_id="fixture-plan",
+        owner_instance_id=owner_id,
+    )
+    Path(info_file).write_text(json.dumps({"handoff_id": handoff.handoff_id}))
+
+
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3272,62 +3517,12 @@ def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
     op_id_file = tmp_path / "op_id.txt"
     _write_run_dead_manifest(root)
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            effect_ids = {
-                "artifact_create": "artifact-receipt-crash-1",
-                "session_create": "session-receipt-crash-1",
-                "delivery_transition": "delivery-receipt-crash-1",
-            }
-            reservation = ledger.reserve(
-                project_id,
-                request_id="handoff-req-crash-1",
-                body_hash="",
-                operation_type="handoff_send",
-                effect_ids=effect_ids,
-            )
-            scan_reservation = ledger.reserve(
-                project_id,
-                request_id="scan-req-crash-1",
-                body_hash="",
-                operation_type="scan_start",
-            )
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=scan_reservation.operation_id,
-                operation_id=scan_reservation.operation_id,
-                run_id="run-dead",
-                plan_id="fixture-plan",
-                owner_instance_id=owner_id,
-            )
-            op_id_file.write_text(reservation.operation_id)
-            # T052: simulate a real crash strictly between the
-            # artifact_create receipt committing (`store.write`, already
-            # run inside `build_handoff` before this point) and the
-            # session_create receipt committing (inside `prepare_handoff`,
-            # replaced here to die immediately instead) -- `os._exit`
-            # never returns, so `build_handoff` never reaches
-            # `_persist_handoff` and no descriptor is ever written.
-            def _crash(*_a: object, **_k: object) -> None:
-                os._exit(0)
-
-            project_run_module.prepare_handoff = _crash
-            project_run_module.build_handoff(
-                project_id,
-                "run-dead",
-                "codex-cli",
-                data_root=data_root,
-                operation_id=reservation.operation_id,
-                effect_ids=effect_ids,
-                owner_instance_id=owner_id,
-            )
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_crash_after_artifact_receipt",
+        [project_id, str(data_root), owner_id, str(op_id_file)],
+    )
+    proc.wait()
 
     operation_id = op_id_file.read_text()
     ledger = MutationLedger()
@@ -3357,6 +3552,7 @@ def test_crash_after_artifact_receipt_before_session_receipt_is_recoverable(
     assert status["payload"]["code"] == "handoff_leaked_before_descriptor"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3376,62 +3572,12 @@ def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
     op_id_file = tmp_path / "op_id.txt"
     _write_run_dead_manifest(root)
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            effect_ids = {
-                "artifact_create": "artifact-receipt-crash-2",
-                "session_create": "session-receipt-crash-2",
-                "delivery_transition": "delivery-receipt-crash-2",
-            }
-            reservation = ledger.reserve(
-                project_id,
-                request_id="handoff-req-crash-2",
-                body_hash="",
-                operation_type="handoff_send",
-                effect_ids=effect_ids,
-            )
-            scan_reservation = ledger.reserve(
-                project_id,
-                request_id="scan-req-crash-2",
-                body_hash="",
-                operation_type="scan_start",
-            )
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=scan_reservation.operation_id,
-                operation_id=scan_reservation.operation_id,
-                run_id="run-dead",
-                plan_id="fixture-plan",
-                owner_instance_id=owner_id,
-            )
-            op_id_file.write_text(reservation.operation_id)
-            # T052: simulate a real crash strictly after both receipts have
-            # committed (`store.write` then `prepare_handoff`, both already
-            # run by this point) but before `build_handoff` ever reaches
-            # its own final statement -- replacing `_persist_handoff`
-            # itself with an immediate `os._exit` means no descriptor is
-            # ever written, exactly the gap the fix must recover from
-            # without one.
-            def _crash(*_a: object, **_k: object) -> None:
-                os._exit(0)
-
-            project_run_module._persist_handoff = _crash
-            project_run_module.build_handoff(
-                project_id,
-                "run-dead",
-                "codex-cli",
-                data_root=data_root,
-                operation_id=reservation.operation_id,
-                effect_ids=effect_ids,
-                owner_instance_id=owner_id,
-            )
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_crash_after_session_receipt",
+        [project_id, str(data_root), owner_id, str(op_id_file)],
+    )
+    proc.wait()
 
     operation_id = op_id_file.read_text()
     ledger = MutationLedger()
@@ -3467,6 +3613,7 @@ def test_crash_after_session_receipt_before_prepared_descriptor_is_recoverable(
     assert status["payload"]["code"] == "handoff_leaked_before_descriptor"
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_crash_after_delivered_descriptor_before_acknowledgment_does_not_auto_acknowledge(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3487,59 +3634,12 @@ def test_crash_after_delivered_descriptor_before_acknowledgment_does_not_auto_ac
     info_file = tmp_path / "handoff_info.json"
     _write_run_dead_manifest(root)
 
-    child_pid = os.fork()
-    if child_pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            OwnerLock(owner_id, data_root=data_root)
-            ledger = MutationLedger()
-            effect_ids = {
-                "artifact_create": "artifact-receipt-delivered-1",
-                "session_create": "session-receipt-delivered-1",
-                "delivery_transition": "delivery-receipt-delivered-1",
-            }
-            handoff_reservation = ledger.reserve(
-                project_id,
-                request_id="handoff-req-delivered-1",
-                body_hash="",
-                operation_type="handoff_send",
-                effect_ids=effect_ids,
-            )
-            handoff = project_run_module.build_handoff(
-                project_id,
-                "run-dead",
-                "codex-cli",
-                data_root=data_root,
-                operation_id=handoff_reservation.operation_id,
-                effect_ids=effect_ids,
-                owner_instance_id=owner_id,
-            )
-            dispatched = project_run_module.dispatch_handoff(
-                project_id,
-                handoff.handoff_id,
-                handoff.session_capability,
-                data_root=data_root,
-                delivery_receipt_id=effect_ids["delivery_transition"],
-            )
-            assert dispatched.state == "delivered"
-            scan_reservation = ledger.reserve(
-                project_id,
-                request_id="scan-req-delivered-1",
-                body_hash="",
-                operation_type="scan_start",
-            )
-            ledger.admit(
-                project_id,
-                execution_identity="scan_start:plan-1",
-                slot_id=scan_reservation.operation_id,
-                operation_id=scan_reservation.operation_id,
-                run_id="run-dead",
-                plan_id="fixture-plan",
-                owner_instance_id=owner_id,
-            )
-            info_file.write_text(json.dumps({"handoff_id": handoff.handoff_id}))
-        finally:
-            os._exit(0)
-    os.waitpid(child_pid, 0)
+    proc = spawn_child(
+        __name__,
+        "_child_build_and_dispatch_handoff",
+        [project_id, str(data_root), owner_id, str(info_file)],
+    )
+    proc.wait()
 
     info = json.loads(info_file.read_text())
     handoff_id = info["handoff_id"]
@@ -3618,6 +3718,7 @@ def test_cancel_timeout_marks_recovery_required_not_silent_loss(
     gate.set()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_dashboard_owned_scan_then_rescan_stays_dashboard_owned_not_silently_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3655,12 +3756,21 @@ def test_quit_after_dashboard_owned_rescan_cancels_the_correct_run_not_a_stale_l
         cancel_scan_run=lambda root, run_id: cancel_calls.append(run_id),
     )
     tui_module._request_cancel(project, actions_with_cancel)
-    assert cancel_calls == ["dashboard-run"], (
+    # T28-F: the cancel request runs on a worker; wait (bounded) for it.
+    deadline = time.monotonic() + 5.0
+    while owner.calls[-1][0] != "cancel" and time.monotonic() < deadline:
+        time.sleep(0.005)
+    # T28-B: dashboard-owned work is cancelled by the owning server's own
+    # `cancel` operation, never the local marker-file cancel.
+    assert cancel_calls == [], "a dashboard-owned cancel must never run locally"
+    operation, arguments = owner.calls[-1]
+    assert (operation, arguments["run_id"]) == ("cancel", "dashboard-run"), (
         "Cancel run and stay must target the current run, never the stale "
         "pre-rescan local one"
     )
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_start_with_live_dashboard_server_dispatches_through_its_http_action_not_a_local_thread(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3797,6 +3907,7 @@ def test_paused_scan_publication_and_concurrent_memory_refresh_both_survive(
     assert record.snapshot["findings"] == [{"id": "f1"}]
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_scan_bytes_a_changed_to_b_then_hydrate_still_reports_a(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3830,6 +3941,7 @@ def test_scan_bytes_a_changed_to_b_then_hydrate_still_reports_a(
         _server.server_close()
 
 
+@pytest.mark.usefixtures("hermetic_engine_path")
 def test_check_suite_manifest_carries_content_identity_inventory_generation_and_git_link(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3951,7 +4063,7 @@ def test_historical_map_request_without_attempt_id_is_rejected(
     attempt happens to be latest."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
-    _server, ctx, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+    _server, _ctx, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
         _write_attempt(root, "run-a", "att-a", finding_id="finding-a")
         resp = _get(

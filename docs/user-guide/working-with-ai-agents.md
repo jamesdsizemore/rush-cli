@@ -8,7 +8,7 @@ If `rush context pack` reports `recovery.state: "available"`, use its CCR handle
 
 Save a local checkpoint and resume it through an already configured Claude Code, Codex, or Antigravity CLI, through `9router_cli`, or through OmniRoute's fixed local API, with explicit `--allow-network`. `9router_cli` uses the installed Codex CLI and fixed local 9Router; set `RUSH_9ROUTER_API_KEY` in the invoking process and do not provide a model. The receiving provider gets a short work frontier, not the original transcript or hidden instructions. Z.AI is deferred.
 
-AI coding assistants like **Cursor, Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
+AI coding assistants like **Claude Code, Cline, Windsurf, Roo Code, and GitHub Copilot** are revolutionizing software development. They can generate complete modules, write complex algorithms, and draft test suites in seconds.
 
 However, working with AI models without guardrails introduces common frustrations:
 1. **Hallucinations**: The AI invents non-existent APIs or writes placeholder stubs that do nothing.
@@ -35,7 +35,7 @@ Rush includes a built-in local Model Context Protocol (MCP) server. Current sour
 uv run --directory /absolute/path/to/rush-cli rush mcp serve
 ```
 
-### Adding Rush to Cursor, Claude Code, or Cline:
+### Adding Rush to Claude Code or Cline:
 Add Rush to your assistant's MCP configuration (`settings.json` or `claude_desktop_config.json`):
 
 ```json
@@ -49,7 +49,102 @@ Add Rush to your assistant's MCP configuration (`settings.json` or `claude_deskt
 }
 ```
 
-Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Automatic client connection is **planned — implementation [Phase 65, P65-10](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-10--one-command-installation-and-readiness-integration-f35-f42).**
+Restart the client, inspect its discovered Rush tools, then invoke one read-only tool with an absolute project path. Hand-editing this JSON is no longer the only route: `rush install --agents all` and `rush agent connect AGENT_ID --session ID` (below) register a host's Rush MCP entry directly.
+
+Add `--profile core|full` to `mcp serve` to pick the registered tool set (Phase 70 T4): `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every tool, and a call outside the running profile's set returns "Unknown tool". `rush agent connect AGENT_ID --session ID --profile core|full --yes` migrates an existing agent's Rush MCP entry between profiles, always previewing the change first; a new registration always launches `mcp serve --profile core`.
+
+### Installing the native Claude Code or Codex CLI plugin
+
+Instead of a manual MCP entry, Claude Code and Codex CLI can install Rush through their own plugin CLI:
+
+```bash
+rush install --agent-plugin claude
+rush install --agent-plugin codex
+# both, and remove an existing manual "rush" MCP entry Rush did not record:
+rush install --agent-plugin claude --agent-plugin codex --convert-manual-entry
+```
+
+`--agent-plugin` is repeatable. Without `--convert-manual-entry`, a host with an existing unrecorded `rush` MCP entry is left unchanged and reported, so Rush never runs two servers for the same host at once; the flag consents to removing that entry (shown as a diff) before the plugin installs, and Rush restores the manual entry if the install fails. Each host's own CLI performs the install under native approval — `claude plugin marketplace add`/`claude plugin install` for Claude Code, `codex plugin marketplace add`/`codex plugin add` for Codex — so a policy denial or a missing host CLI is reported, not faked.
+
+Upgrading to a new Rush version needs more than the host's own `update` command, because it re-reads the marketplace's already-registered source and reports "already at the latest version" otherwise. Re-run the same `rush install --agent-plugin <host>` command after upgrading Rush: it re-points the marketplace at the new version directory first (`claude plugin marketplace add` again to replace the source, or `codex plugin marketplace remove` then re-`add` since Codex refuses a second source under one name) before running the host's update/add step.
+
+`rush agent hook claude|codex` is the post-edit hook entrypoint the installed plugin's `hooks.json` invokes; it reads the host's JSON event on stdin and always exits 0, so a hook never changes the edit's result.
+
+### What the installed skill teaches (Phase 70 T1)
+
+`rush install --agent-plugin claude` and `rush install --agent-plugin codex` each bundle an
+identical copy of the canonical guidance (`src/rush/integrations/agent_assets/claude/skills/rush/SKILL.md`
+and `.../codex/skills/rush/SKILL.md`, both copies of `agent_assets/skills/rush/SKILL.md`) as the
+host's `rush:rush` skill. It teaches, in the model's own context: when to call Rush (before every
+commit; after every code change; whenever the user asks about quality, lint, formatting, types,
+tests, security, secrets or dead code); the `core`/`full` profile tool lists and that a tool outside
+the connected profile fails as an unknown tool; path resolution against the declared project root;
+the five result statuses (`ok`, `warn`, `fail`, `error`, `skipped`) and that `skipped` never means
+the code passed; the seven permission grants and that a grant is never implied by a profile or a
+previous call; compact-result recovery (`result_view="compact"`, `rush_status(operation="result",
+result_handle=...)`); memory scope (`rush_memory` reads only sessions named in a non-empty
+`session_allowlist`); and verification limits (a registered server is not proof it ran; a result
+covers only the files and engines it lists). A manual `rush agent connect` without the native plugin
+gets the same contract a different way: the MCP server's own `instructions` field (Phase 70 T5,
+`build_server_instructions`) carries the identical triggers, statuses, grants, compact recovery,
+memory scope and verification-limit text, generated from the same source as the skill.
+
+### Truthful tool descriptions and guarantees (Phase 70 T5)
+
+Every core tool's MCP description and the server's `instructions` state only what that tool
+actually verifies, current source:
+- `rush_check`: "Before commit/after edits: format-check, lint, typecheck, dead, slop, test at
+  `<path>`. Test step runs only with `allow_build`; else it is skipped and the result is never `ok`
+  (`warn` if all else passes)."
+- `rush_status`: "Call first each session. Read-only, no grant: `<path>` project setup, engines,
+  scans, results, agents, memory. Agent registration is not verified activity. `operation=result`
+  reads a stored result."
+- `rush_review`: "Before commit: heuristic review of `<path>`; engines are deterministic. ...
+  `use_llm=true` sends findings to a configured external LLM; no Rush grant gates it." Turning on
+  `use_llm` is a data-egress decision the caller makes explicitly, not a permission Rush enforces.
+- `rush_memory`: reads need a non-empty `session_allowlist`; writes and other mutations need
+  `allow_cache_write`.
+- `rush_test`: runs only with `allow_build`; without it, nothing runs.
+
+### Opt-in post-edit checks (Phase 70 T7)
+
+Post-edit checks are off until you opt in per host and per project:
+
+```bash
+rush agent connect claude-code --session ID --project /absolute/path/to/registered-project \
+  --allow-cache-write --allow-artifact-write --enable-agent-hooks
+```
+
+To stop checks for that registered project while keeping the native plugin:
+
+```bash
+rush agent connect claude-code --session ID --project /absolute/path/to/registered-project \
+  --allow-cache-write --allow-artifact-write --disable-agent-hooks
+```
+
+Use `codex` instead of `claude-code` for Codex. This disable-only command requires the native Rush
+plugin already installed. It removes the selected project's activation while leaving the plugin and
+host MCP registration in place; it does not start a second Rush server. If activation changed since
+Rush wrote it, Rush reports a conflict instead of removing it.
+
+The native plugin's own hook approval still applies -- `rush agent connect --enable-agent-hooks`
+records project-level consent, but the check only actually runs through the plugin installed by
+`rush install --agent-plugin claude` (or `codex`) and that host's own hook acceptance. Once both are
+in place, every `Write`/`Edit`/`MultiEdit` in Claude Code (or `apply_patch`/`Edit`/`Write` in Codex)
+runs the plugin's `PostToolUse` hook, which calls `rush agent hook claude` (or `rush agent hook
+codex`) with the host's event on stdin. The hook only checks an edit inside the activated,
+registered project; an edited path outside that project, or reached through a symlink, is excluded
+and named as such, and Rush's own tool calls are never rechecked (no recursion). The host wraps the
+hook in a 30-second timeout; Rush's own check stops around 15 seconds, reserving time for native
+startup and feedback, and reports the steps that did not run rather than hang. The model sees a bounded plain-text report (at most 8,192 bytes) in its
+context: an invocation ID, the checked scope, the overall status (with an incomplete-step count when
+the deadline or a cancellation cut steps short), each of the six check steps (`format`, `lint`,
+`typecheck`, `dead`, `slop`, `test`) with its own status, and findings (or `findings: none`). Add
+`--hook-result-cache` to also let the check store its full result, so the report includes a
+`result_handle` you can pass to `rush_status(operation="result", result_handle=...)` or `rush status
+PATH --result HANDLE --json`. `--disable-agent-hooks`, or `rush agent disconnect claude-code
+--project /absolute/path/to/project`, removes the activation; loading or installing the plugin alone
+never runs a check.
 
 ---
 
@@ -100,12 +195,12 @@ Rush will flag useless comment repetitions (like `# This function adds two numbe
 
 ## 4. Keeping Agent Rules Synchronized with `rush governance`
 
-If your team uses multiple AI tools across different developers (Cursor, Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
+If your team uses multiple AI tools across different developers (Cline, Windsurf), you can declare your project rules once in `AGENTS.md` and compile them across all IDE formats in one keystroke:
 
 ```bash
 uv run rush governance sync
 ```
-Rush automatically updates `.cursorrules`, `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
+Rush automatically updates `.clinerules`, `.windsurfrules`, and GitHub Copilot configuration files so all AI assistants follow identical coding standards.
 
 ---
 

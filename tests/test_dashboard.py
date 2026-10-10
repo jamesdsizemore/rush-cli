@@ -63,7 +63,9 @@ def _start_test_server(results: list[ToolResult], token: str) -> tuple[HTTPServe
     server = HTTPServer(("127.0.0.1", 0), handler_cls)
     port = server.server_address[1]
 
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return server, port
 
@@ -162,7 +164,9 @@ def _load_fixture(name: str) -> dict:
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -946,10 +950,9 @@ def test_current_generation_accepts_an_existing_connection_and_does_not_open_a_s
     store._connect = _counting_connect
 
     with store._connect() as conn:
-        pass
-    connect_calls["n"] = 0
-    store.current_generation(conn)
-    assert connect_calls["n"] == 0
+        connect_calls["n"] = 0
+        store.current_generation(conn)
+        assert connect_calls["n"] == 0
 
     store.current_generation()
     assert connect_calls["n"] == 1

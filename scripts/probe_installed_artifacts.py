@@ -39,6 +39,48 @@ class ArtifactProbeResult:
     mcp_initialized: bool = False
 
 
+# Phase 70 T2: native host plugin sources every artifact must carry, dot
+# directories included (materialization resolves them via importlib.resources).
+AGENT_ASSET_MEMBERS = (
+    "rush/integrations/agent_assets/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/claude/.claude-plugin/plugin.json",
+    "rush/integrations/agent_assets/claude/.claude-plugin/marketplace.json",
+    "rush/integrations/agent_assets/claude/.mcp.json",
+    "rush/integrations/agent_assets/claude/hooks/hooks.json",
+    "rush/integrations/agent_assets/claude/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/codex/.codex-plugin/plugin.json",
+    "rush/integrations/agent_assets/codex/mcp.json",
+    "rush/integrations/agent_assets/codex/hooks/hooks.json",
+    "rush/integrations/agent_assets/codex/skills/rush/SKILL.md",
+)
+
+_INSTALLED_ASSETS_CODE = (
+    "import sys\n"
+    "from importlib.resources import files\n"
+    "root = files('rush.integrations')\n"
+    "missing = [m for m in sys.argv[1:] "
+    "if not root.joinpath(m.removeprefix('rush/integrations/')).is_file()]\n"
+    "print('\\n'.join(missing))\n"
+    "sys.exit(1 if missing else 0)\n"
+)
+
+
+def missing_frozen_agent_assets(binary_path: Path) -> list[str]:
+    """Agent asset members absent from a PyInstaller binary.
+
+    PyInstaller stores each bundled data file's name uncompressed in the
+    executable's archive table of contents, so a byte search proves the
+    member was collected without running the binary or importing PyInstaller.
+    """
+    data = binary_path.read_bytes()
+    return [
+        member
+        for member in AGENT_ASSET_MEMBERS
+        if member.encode() not in data
+        and member.replace("/", "\\").encode() not in data
+    ]
+
+
 def scrub_environment(env: dict[str, str] | None = None) -> dict[str, str]:
     """Return an environment dictionary stripped of PYTHONPATH and VIRTUAL_ENV."""
     source_env = dict(env if env is not None else os.environ)
@@ -295,6 +337,8 @@ def probe_native_artifact(
                 except subprocess.TimeoutExpired:
                     mcp_stderr = ""
 
+    missing_assets = missing_frozen_agent_assets(binary_path)
+
     if not mcp_initialized and not mcp_error:
         mcp_error = f"MCP handshake did not initialize: stdout_line={stdout_line!r}"
     if mcp_stderr.strip():
@@ -303,7 +347,12 @@ def probe_native_artifact(
 
     status = (
         "passed"
-        if (version_probe.returncode == 0 and origin_verified and mcp_initialized)
+        if (
+            version_probe.returncode == 0
+            and origin_verified
+            and mcp_initialized
+            and not missing_assets
+        )
         else "failed"
     )
 
@@ -315,6 +364,8 @@ def probe_native_artifact(
             failure_reasons.append("origin not verified")
         if not mcp_initialized:
             failure_reasons.append("mcp not initialized")
+        if missing_assets:
+            failure_reasons.append(f"agent assets missing: {missing_assets}")
         detail = version_probe.stderr.strip() or mcp_error
         combined_stderr = "; ".join(failure_reasons)
         if detail:
@@ -476,10 +527,26 @@ def probe_installed_artifact(
     )
     import_clean = import_probe.returncode == 0
 
+    # 6. Agent plugin assets resolve from the installed package (Phase 70 T2)
+    assets_probe = subprocess.run(
+        [str(venv_python), "-c", _INSTALLED_ASSETS_CODE, *AGENT_ASSET_MEMBERS],
+        cwd=external_cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assets_present = assets_probe.returncode == 0
+
     overall_status = (
         "passed"
-        if (origin_verified and cli_returncode == 0 and import_clean)
+        if (origin_verified and cli_returncode == 0 and import_clean and assets_present)
         else "failed"
+    )
+    assets_error = (
+        ""
+        if assets_present
+        else f"agent assets missing: {assets_probe.stdout.split() or assets_probe.stderr}"
     )
 
     return ArtifactProbeResult(
@@ -489,7 +556,7 @@ def probe_installed_artifact(
         origin_verified=origin_verified,
         import_clean=import_clean,
         stdout=cli_stdout,
-        stderr=cli_stderr or import_probe.stderr,
+        stderr=cli_stderr or import_probe.stderr or assets_error,
     )
 
 

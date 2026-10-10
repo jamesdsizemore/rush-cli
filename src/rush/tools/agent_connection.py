@@ -12,6 +12,14 @@ config file (or invokes its native registration command) and requires
 explicit cache-write + artifact-write permission, matching the write gate
 `ProjectTool` uses for `add`/`create`.
 
+Phase 70 T3: `connect` also previews the project instruction block
+(`CLAUDE.md`/`AGENTS.md`) and writes it only with separate guidance consent
+(`install_guidance=True`, or an interactive `confirm_guidance` prompt);
+memory consent, grants and `acknowledge` never imply it. Every file write of
+the transaction is journaled and undone on a later failure. `disconnect`
+removes only Rush-owned, unchanged components recorded in the ownership
+ledger.
+
 MCP registration (`rush_agent_connection` in `src/rush/mcp.py`) is out of
 this task's allowed files -- see this packet's own receipt for the exact
 disclosed gap; a follow-up task registers it against this same tool.
@@ -19,42 +27,74 @@ disclosed gap; a follow-up task registers it against this same tool.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from time import monotonic
 from typing import Any, Literal
 
+from rush.integrations.agent_hooks import (
+    HOOK_AGENTS,
+    registered_project_id,
+    set_hook_activation,
+)
 from rush.integrations.agents import (
+    ADAPTERS,
+    MCP_PROFILES,
     AgentConnectionError,
-    acknowledge_agent_connection,
+    AgentTransactionError,
+    GuidanceConsent,
+    OwnedResource,
+    ProfileConsent,
     agent_readiness,
-    apply_agent_registration,
+    connect_agent,
+    disconnect_agent,
     discover_agents,
-    initialize_agent_memory,
-    plan_agent_registration,
-    probe_agent_connection,
+    installed_plugin_roots,
     read_agent_memory_state,
-    resolve_rush_binary,
+    read_registration_entry,
 )
 from rush.permissions import ExecutionPermissions, check_permissions
 
 from .base import Finding, ToolFn, ToolResult, ToolStatus
 
-AgentAction = Literal["list", "connect", "doctor"]
+AgentAction = Literal["list", "connect", "doctor", "disconnect"]
 
 _CONNECT_PERMISSION = ExecutionPermissions(cache_write=True, artifact_write=True)
 
+_DISCONNECT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "operation",
+        "agent_id",
+        "project_root",
+        "allow_cache_write",
+        "allow_artifact_write",
+    }
+)
+
+
+def _registration_failure(raw: Any) -> str | None:
+    """The cause when a connect's host registration (`apply`) failed and no
+    profile migration owns the outcome; None when it succeeded."""
+    apply = raw.get("apply") if isinstance(raw, dict) else None
+    if not isinstance(apply, dict) or apply.get("ok") is not False:
+        return None
+    if raw.get("migration") is not None:
+        return None
+    return str(apply.get("error") or "the host rejected the registration")
+
 
 class AgentConnectionTool(ToolFn):
-    """Discover, connect, and diagnose local MCP-capable coding agents."""
+    """Discover, connect, disconnect, and diagnose local MCP-capable coding agents."""
 
     name = "agent_connection"
 
     @property
     def mcp_description(self) -> str:
         return (
-            "Discover and connect local coding agents. action=list|connect|doctor. "
-            "Returns {status, findings[], summary, raw}. `connect` requires explicit "
-            "cache-write and artifact-write permission; status='skipped' means denied."
+            "Discover/connect/disconnect local coding agents. "
+            "action=list|connect|doctor|disconnect. Returns {status, findings[], "
+            "summary, raw}. connect/disconnect need cache+artifact write grants."
         )
 
     def __call__(
@@ -65,6 +105,7 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None = None,
         consent: bool = False,
         acknowledge: bool = False,
+        install_guidance: bool = False,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
     ) -> ToolResult:
@@ -75,6 +116,7 @@ class AgentConnectionTool(ToolFn):
             rush_binary=rush_binary,
             consent=consent,
             acknowledge=acknowledge,
+            install_guidance=install_guidance,
             permissions=ExecutionPermissions(
                 cache_write=allow_cache_write, artifact_write=allow_artifact_write
             ),
@@ -89,11 +131,22 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None = None,
         consent: bool = False,
         acknowledge: bool = False,
+        install_guidance: bool = False,
+        confirm_guidance: GuidanceConsent | None = None,
         project_root: Path | None = None,
         permissions: ExecutionPermissions | None = None,
         home: Path | None = None,
         data_root: Path | None = None,
+        resources: Sequence[OwnedResource] = (),
+        profile: str | None = None,
+        confirm_profile: ProfileConsent = False,
+        agent_hooks: Literal["enable", "disable"] | None = None,
+        hook_result_cache: bool = False,
     ) -> ToolResult:
+        """Phase 70 T7: `agent_hooks` enables or disables this host's post-edit
+        hook for `project_root` (D3 opt-in, connect only); `hook_result_cache`
+        additionally lets each hook check store its full result for a
+        `result_handle`. Invalid hook requests are rejected before any write."""
         started = monotonic()
         granted = permissions or ExecutionPermissions()
 
@@ -103,6 +156,55 @@ class AgentConnectionTool(ToolFn):
                 return self._result(
                     started, "skipped", f"agent connect requires {', '.join(missing)}."
                 )
+        if agent_hooks is not None or hook_result_cache:
+            try:
+                _check_hook_request(
+                    action,
+                    agent_id,
+                    project_root,
+                    agent_hooks,
+                    hook_result_cache,
+                    data_root,
+                )
+            except ValueError as exc:
+                return self._result(started, "error", f"agent {action}: {exc}")
+
+        if (
+            action == "connect"
+            and agent_hooks in ("enable", "disable")
+            and agent_id in HOOK_AGENTS
+            and profile is None
+            and not install_guidance
+            and confirm_guidance is None
+            and not consent
+            and not acknowledge
+            and not resources
+            and installed_plugin_roots(HOOK_AGENTS[agent_id], data_root)
+        ):
+            assert project_root is not None
+            if not session_id:
+                return self._result(
+                    started, "error", "agent connect: connect requires session_id"
+                )
+            try:
+                hooks = set_hook_activation(
+                    agent_id,
+                    project_root,
+                    enable=agent_hooks == "enable",
+                    recovery_cache_write=hook_result_cache,
+                    data_root=data_root,
+                )
+            except (AgentConnectionError, ValueError, OSError) as exc:
+                hooks = {"state": "error", "error": str(exc)}
+            return self._result(
+                started,
+                "warn" if hooks["state"] in ("conflict", "error") else "ok",
+                f"agent hooks: {hooks['state']}",
+                raw={
+                    "hooks": hooks,
+                    "readback": _host_readback(agent_id, home),
+                },
+            )
 
         try:
             raw = self._dispatch(
@@ -112,16 +214,106 @@ class AgentConnectionTool(ToolFn):
                 rush_binary=rush_binary,
                 consent=consent,
                 acknowledge=acknowledge,
+                guidance_consent=(
+                    True if install_guidance else (confirm_guidance or False)
+                ),
                 project_root=project_root,
                 home=home,
                 data_root=data_root,
+                resources=resources,
+                profile=profile,
+                confirm_profile=confirm_profile,
+            )
+        except AgentTransactionError as exc:
+            return self._result(
+                started,
+                "error",
+                f"agent {action}: {exc}",
+                raw={"error": str(exc), "recovery_required": exc.recovery},
             )
         except AgentConnectionError as exc:
             return self._result(started, "error", f"agent {action}: {exc}")
         except ValueError as exc:
             return self._result(started, "error", f"agent {action}: {exc}")
 
+        if action == "connect":
+            if agent_hooks is None:
+                return self._connect_result(started, raw)
+            assert agent_id is not None and project_root is not None  # checked above
+            raw["hooks"] = _apply_hooks(
+                raw, agent_id, project_root, agent_hooks, hook_result_cache, data_root
+            )
+            result = self._connect_result(started, raw)
+            result["summary"] += f"; agent hooks: {raw['hooks']['state']}"
+            if (
+                raw["hooks"]["state"] in ("conflict", "error")
+                and result["status"] == "ok"
+            ):
+                result["status"] = "warn"
+            return result
+        if action == "disconnect":
+            status: ToolStatus = "ok" if raw["status"] == "ok" else "warn"
+            return self._result(
+                started,
+                status,
+                f"agent disconnect: {raw['status']}; removed "
+                f"{len(raw['removed'])}, conflicts {len(raw['conflicts'])}",
+                raw=raw,
+            )
         return self._result(started, "ok", f"agent {action}: ok", raw=raw)
+
+    def _connect_result(self, started: float, raw: dict[str, Any]) -> ToolResult:
+        """T4: a profile migration that wrote nothing is `skipped` (preview
+        only, declined, conflict, or a failed native add whose prior entry was
+        restored); one needing a manual restore is `error`."""
+        migration = raw.get("migration")
+        failure = _registration_failure(raw)
+        if migration is None and failure is not None:
+            # T27: the host registration itself did not happen.
+            return self._result(
+                started,
+                "error",
+                f"agent connect: registration failed: {failure}",
+                raw=raw,
+            )
+        if migration is None:
+            guidance_state = raw["guidance"]["state"]
+            return self._result(
+                started, "ok", f"agent connect: ok; guidance: {guidance_state}", raw=raw
+            )
+        state = migration["state"]
+        if state == "applied":
+            return self._result(
+                started,
+                "ok",
+                f"agent connect: ok; profile migration applied "
+                f"({migration['profile']}); guidance: {raw['guidance']['state']}",
+                raw=raw,
+            )
+        if state in ("pending", "declined"):
+            summary = (
+                f"agent connect: profile migration {state}; preview only, nothing "
+                "written. Rerun with --yes (MCP: confirm_profile_migration) to apply."
+            )
+        elif state == "conflict":
+            summary = (
+                f"agent connect: profile migration conflict: {migration['config_path']} "
+                "changed since the preview; nothing written."
+            )
+        elif state == "failed":
+            summary = (
+                "agent connect: profile migration failed and the previous entry "
+                f"is unchanged: {raw['apply']['error']}"
+            )
+        else:
+            return self._result(
+                started,
+                "error",
+                "agent connect: profile migration failed and restoring the previous "
+                f"entry failed too; recovery_required: {raw['apply']['recovery_required']}",
+                raw=raw,
+            )
+        return self._result(started, "skipped", summary, raw=raw)
 
     def _dispatch(
         self,
@@ -132,9 +324,13 @@ class AgentConnectionTool(ToolFn):
         rush_binary: str | None,
         consent: bool,
         acknowledge: bool,
+        guidance_consent: GuidanceConsent,
         project_root: Path | None,
         home: Path | None,
         data_root: Path | None,
+        resources: Sequence[OwnedResource] = (),
+        profile: str | None = None,
+        confirm_profile: ProfileConsent = False,
     ) -> Any:
         if action == "list":
             return agent_readiness(home=home, rush_binary=rush_binary)
@@ -144,26 +340,27 @@ class AgentConnectionTool(ToolFn):
                 raise ValueError("connect requires agent_id")
             if not session_id:
                 raise ValueError("connect requires session_id")
-            binary = resolve_rush_binary(rush_binary)
-            plan = plan_agent_registration(agent_id, rush_binary=binary, home=home)
-            applied = apply_agent_registration(plan)
-            memory_entry = initialize_agent_memory(
+            before = _host_readback(agent_id, home)
+            connected = connect_agent(
                 agent_id,
-                session_id,
-                project_root=project_root,
-                data_root=data_root,
+                session_id=session_id,
+                rush_binary=rush_binary,
                 consent=consent,
+                acknowledge=acknowledge,
+                guidance_consent=guidance_consent,
+                project_root=project_root,
+                home=home,
+                data_root=data_root,
+                resources=resources,
+                profile=profile,
+                profile_consent=confirm_profile,
             )
-            if applied.ok and acknowledge:
-                memory_entry = acknowledge_agent_connection(
-                    agent_id, session_id, project_root=project_root, data_root=data_root
-                )
-            probe = probe_agent_connection(agent_id, home=home, rush_binary=binary)
-            return {
-                "apply": applied.to_dict(),
-                "probe": probe.to_dict(),
-                "memory": memory_entry,
-            }
+            return _connect_view(connected, before, _host_readback(agent_id, home))
+
+        if action == "disconnect":
+            if not agent_id:
+                raise ValueError("disconnect requires agent_id")
+            return _disconnect(agent_id, project_root, data_root, home)
 
         if action == "doctor":
             statuses = discover_agents(home=home, rush_binary=rush_binary)
@@ -203,7 +400,10 @@ class AgentConnectionTool(ToolFn):
                 started, str(operation), status="skipped", error=denied
             )
 
-        return self._envelope_result(started, str(operation), status="ok", data=data)
+        failed = operation == "connect" and _registration_failure(data) is not None
+        return self._envelope_result(
+            started, str(operation), status="error" if failed else "ok", data=data
+        )
 
     def _handle_request_unsafe(self, request: dict[str, Any]) -> Any:
         if not isinstance(request, dict):
@@ -212,8 +412,16 @@ class AgentConnectionTool(ToolFn):
             raise _AgentInvalidRequestError("schema_version must be 1")
 
         operation = request.get("operation")
-        if operation not in ("list", "connect", "doctor"):
+        if operation not in ("list", "connect", "doctor", "disconnect"):
             raise _AgentInvalidRequestError(f"unknown operation: {operation!r}")
+
+        if operation == "disconnect":
+            return self._handle_disconnect_request(request)
+
+        install_guidance = request.get("install_guidance", False)
+        if type(install_guidance) is not bool:
+            raise _AgentInvalidRequestError("install_guidance must be a boolean")
+        profile, confirm_profile = _profile_fields(request, operation)
 
         if operation == "connect":
             granted = ExecutionPermissions(
@@ -231,11 +439,50 @@ class AgentConnectionTool(ToolFn):
             rush_binary=request.get("rush_binary"),
             consent=bool(request.get("consent", False)),
             acknowledge=bool(request.get("acknowledge", False)),
+            guidance_consent=install_guidance,
             project_root=Path(request["project_root"])
             if request.get("project_root")
             else None,
             home=None,
             data_root=None,
+            profile=profile,
+            confirm_profile=confirm_profile,
+        )
+
+    def _handle_disconnect_request(self, request: dict[str, Any]) -> Any:
+        """Strict fields: unknown keys, wrong types and non-bool grants are rejected."""
+        unknown = sorted(set(request) - _DISCONNECT_FIELDS)
+        if unknown:
+            raise _AgentInvalidRequestError(
+                f"unknown field(s) for disconnect: {', '.join(unknown)}"
+            )
+        agent_id = request.get("agent_id")
+        if not isinstance(agent_id, str) or not agent_id:
+            raise _AgentInvalidRequestError("disconnect requires a string agent_id")
+        project_root = request.get("project_root")
+        if project_root is not None and (
+            not isinstance(project_root, str) or not project_root
+        ):
+            raise _AgentInvalidRequestError(
+                "project_root must be a non-empty string or null"
+            )
+        grants = {
+            key: request.get(key, False)
+            for key in ("allow_cache_write", "allow_artifact_write")
+        }
+        if any(type(value) is not bool for value in grants.values()):
+            raise _AgentInvalidRequestError("permission grants must be booleans")
+        allowed, missing = check_permissions(
+            _CONNECT_PERMISSION,
+            ExecutionPermissions(
+                cache_write=grants["allow_cache_write"],
+                artifact_write=grants["allow_artifact_write"],
+            ),
+        )
+        if not allowed:
+            raise _ScopeDenied(f"missing permission(s): {', '.join(missing)}")
+        return _disconnect(
+            agent_id, Path(project_root) if project_root else None, None, None
         )
 
     def _envelope_result(
@@ -285,6 +532,82 @@ class AgentConnectionTool(ToolFn):
         )
 
 
+def _profile_fields(request: dict[str, Any], operation: str) -> tuple[str | None, bool]:
+    """T4: strict `profile` (null, "core" or "full") and
+    `confirm_profile_migration` (bool), accepted only on connect."""
+    profile = request.get("profile")
+    confirm = request.get("confirm_profile_migration", False)
+    if type(confirm) is not bool:
+        raise _AgentInvalidRequestError("confirm_profile_migration must be a boolean")
+    if profile is not None and (
+        type(profile) is not str or profile not in MCP_PROFILES
+    ):
+        raise _AgentInvalidRequestError(
+            f"profile must be null or one of: {', '.join(MCP_PROFILES)}"
+        )
+    if operation != "connect" and (profile is not None or confirm):
+        raise _AgentInvalidRequestError(
+            "profile and confirm_profile_migration are only valid for connect"
+        )
+    if confirm and profile is None:
+        raise _AgentInvalidRequestError("confirm_profile_migration requires profile")
+    return profile, confirm
+
+
+def _check_hook_request(
+    action: str,
+    agent_id: str | None,
+    project_root: Path | None,
+    agent_hooks: str | None,
+    hook_result_cache: bool,
+    data_root: Path | None,
+) -> None:
+    """T7: every hook-flag precondition, checked read-only before connect writes."""
+    if action != "connect":
+        raise ValueError("agent hook flags apply to connect only")
+    if agent_hooks is None or (hook_result_cache and agent_hooks != "enable"):
+        raise ValueError("--hook-result-cache needs --enable-agent-hooks")
+    if agent_id not in HOOK_AGENTS:
+        raise ValueError(
+            f"agent hooks are available for {', '.join(sorted(HOOK_AGENTS))} only"
+        )
+    if project_root is None:
+        raise ValueError("agent hooks are enabled per project; pass --project PATH")
+    registered_project_id(project_root, data_root)
+
+
+def _apply_hooks(
+    raw: dict[str, Any],
+    agent_id: str,
+    project_root: Path,
+    agent_hooks: str,
+    hook_result_cache: bool,
+    data_root: Path | None,
+) -> dict[str, Any]:
+    if "apply" not in raw:  # a refused profile migration wrote nothing
+        return {
+            "state": "pending",
+            "reason": "nothing was written because the profile migration was not applied",
+        }
+    try:
+        hooks = set_hook_activation(
+            agent_id,
+            project_root,
+            enable=agent_hooks == "enable",
+            recovery_cache_write=hook_result_cache,
+            data_root=data_root,
+        )
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {"state": "error", "error": str(exc)}
+    if agent_hooks == "enable" and hooks["state"] in ("applied", "unchanged"):
+        hooks["note"] = (
+            f"{agent_id} runs this hook only through the Rush plugin "
+            f"(rush install --agent-plugin {HOOK_AGENTS[agent_id]}) and its own "
+            "hook approval"
+        )
+    return hooks
+
+
 class _AgentInvalidRequestError(AgentConnectionError):
     code = "INVALID_REQUEST"
     retryable = False
@@ -293,6 +616,85 @@ class _AgentInvalidRequestError(AgentConnectionError):
 class _ScopeDenied(AgentConnectionError):
     code = "SCOPE_DENIED"
     retryable = False
+
+
+# --- T27: changed/readback for the human mutation view ------------------------
+
+
+def _host_readback(agent_id: str, home: Path | None) -> dict[str, Any] | None:
+    """The host config's current `rush` entry, re-read from disk; None for a
+    host with no known config location."""
+    if agent_id not in ADAPTERS:
+        return None
+    try:
+        path, entry = read_registration_entry(agent_id, home=home)
+    except (AgentConnectionError, ValueError, OSError) as exc:
+        return {"error": f"host config unreadable: {exc}"}
+    return {
+        "config_path": str(path),
+        "registered": entry is not None,
+        "rush_entry": entry,
+    }
+
+
+_NOTHING_WRITTEN_MIGRATION = {
+    "pending": "preview only, nothing written",
+    "declined": "preview only, nothing written",
+    "conflict": "config changed since the preview, nothing written",
+    "failed": "previous entry restored, nothing written",
+}
+
+
+def _connect_view(
+    raw: dict[str, Any],
+    before: dict[str, Any] | None,
+    after: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """`changed` = the host entry, instruction block and resources this
+    connect actually wrote, else `unchanged` with the reason; `readback` =
+    the host entry re-read after the write."""
+    view: dict[str, Any] = {} if after is None else {"readback": after}
+    state = (raw.get("migration") or {}).get("state")
+    if state in _NOTHING_WRITTEN_MIGRATION:
+        reason = _NOTHING_WRITTEN_MIGRATION[state]
+        return {**raw, **view, "unchanged": f"profile migration {state}; {reason}"}
+    changed: dict[str, Any] = {}
+    applied = raw.get("apply") or {}
+    if applied.get("ok") and after is not None and before != after:
+        changed["mcp_entry"] = applied.get("config_path") or after.get("config_path")
+    guidance = raw.get("guidance") or {}
+    if guidance.get("state") == "applied":
+        changed["instruction_block"] = guidance.get("target_path")
+    written = [
+        r["path"] for r in raw.get("resources", []) if r.get("state") == "applied"
+    ]
+    if written:
+        changed["resources"] = written
+    if changed:
+        return {**raw, **view, "changed": changed}
+    return {**raw, **view, "unchanged": "already connected; nothing written"}
+
+
+def _disconnect(
+    agent_id: str,
+    project_root: Path | None,
+    data_root: Path | None,
+    home: Path | None,
+) -> dict[str, Any]:
+    """Disconnect plus `changed` (the components removed) or `unchanged` with
+    the reason, and `readback` = the host entry re-read after removal."""
+    result = disconnect_agent(
+        agent_id, project_root=project_root, data_root=data_root, home=home
+    ).to_dict()
+    readback = _host_readback(agent_id, home)
+    view: dict[str, Any] = {} if readback is None else {"readback": readback}
+    if result["removed"]:
+        view["changed"] = {"removed": result["removed"]}
+    elif result["conflicts"]:
+        view["unchanged"] = f"{len(result['conflicts'])} conflict(s); nothing removed"
+    else:
+        view["unchanged"] = "nothing Rush-owned to remove"
+    return {**result, **view}
 
 
 __all__ = ["AgentConnectionTool"]

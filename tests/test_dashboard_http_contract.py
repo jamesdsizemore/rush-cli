@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from _process_children import spawn_child
 
 from rush.dashboard import state as dashboard_state
 from rush.dashboard.server import (
@@ -229,42 +230,40 @@ def _load_fixture(name: str) -> dict:
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
 
-def _child_hold_owner_lock(owner_id: str, data_root: Path, hold_seconds: float) -> None:
-    """Forked-child target (P69-01 subsection h): acquire a real
+def _child_hold_owner_lock(owner_id: str, data_root: str, hold_seconds: float) -> None:
+    """Child-process target (P69-01 subsection h): acquire a real
     owner-liveness lock and sleep, so the parent can SIGKILL this process
     to simulate a genuine crash (the lock's own `finally`/context-manager
     release never runs -- only the kernel's on-exit release does)."""
     from rush.dashboard.state import OwnerLock
 
-    OwnerLock(owner_id, data_root=data_root)
+    OwnerLock(owner_id, data_root=Path(data_root))
     time.sleep(hold_seconds)
 
 
-def _child_hold_scan_lock(project_root: Path, hold_seconds: float) -> None:
-    """Forked-child target: hold the real scan-exclusion lock and sleep, so
+def _child_hold_scan_lock(project_root: str, hold_seconds: float) -> None:
+    """Child-process target: hold the real scan-exclusion lock and sleep, so
     the parent can SIGKILL this process to prove the lock releases on real
     process death, not on any staleness timer."""
-    with _run_lock(project_root, timeout=10):
+    with _run_lock(Path(project_root), timeout=10):
         time.sleep(hold_seconds)
 
 
 def _fork_and_run(target, *args) -> int:
-    """Fork a real child process running `target(*args)`; return its pid.
+    """Run `target(*args)` in a real child process; return its pid.
     Callers use `_kill_and_reap` for an unclean (SIGKILL) death, which is
     the real crash scenario P69-01 subsection h's lock semantics defend
     against -- no reliance on the child's own cleanup code ever running."""
-    pid = os.fork()
-    if pid == 0:
-        try:
-            target(*args)
-        finally:
-            os._exit(0)
-    return pid
+    json_args = [str(a) if isinstance(a, Path) else a for a in args]
+    proc = spawn_child(target.__module__, target.__name__, json_args)
+    return proc.pid
 
 
 def _kill_and_reap(pid: int) -> None:
@@ -316,7 +315,7 @@ def test_second_server_can_acquire_lock_only_after_first_servers_real_process_ex
     project_root.mkdir()
     pid = _fork_and_run(_child_hold_scan_lock, project_root, 30.0)
     try:
-        time.sleep(0.3)
+        time.sleep(1.5)  # real subprocess startup + import is slower than a fork
         with pytest.raises(ScanBusyError), _run_lock(project_root, timeout=0.3):
             pass
     finally:
@@ -332,7 +331,7 @@ def test_slow_but_alive_owner_holding_the_lock_blocks_recovery_claim(tmp_path) -
     owner_id = "server:slow-owner"
     pid = _fork_and_run(_child_hold_owner_lock, owner_id, tmp_path, 2.0)
     try:
-        time.sleep(0.3)
+        time.sleep(1.5)  # real subprocess startup + import is slower than a fork
         with claim_dead_owner(owner_id, data_root=tmp_path) as claimed:
             assert claimed is False
     finally:
@@ -1554,7 +1553,7 @@ def test_reconnect_selects_newest_confirmed_live_descriptor_not_newest_by_mtime(
         live_server.server_close()
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows-only data directory ACL check")
+@pytest.mark.windows_only
 def test_windows_data_dir_acl_checked_before_persisting_capability(
     tmp_path, monkeypatch
 ) -> None:
@@ -3163,9 +3162,7 @@ def test_kill_recovery_after_confirmed_reap_but_before_finalization_restart_cons
         assert ledger.admission_for_project("project-a") is not None
         assert ledger.pending_outcome("op-dead") is not None
 
-        monkeypatch.setattr(
-            MutationLedger, "terminalize_and_release", real_terminalize
-        )
+        monkeypatch.setattr(MutationLedger, "terminalize_and_release", real_terminalize)
         assert (
             reconcile_admissions(
                 ledger, data_root=tmp_path, recovering_owner_instance_id="owner-live-2"
@@ -3200,9 +3197,7 @@ def test_admission_schema_carries_attempt_id_column(tmp_path) -> None:
     must persist and return whatever executing attempt is passed in."""
     ledger = MutationLedger(db_path=tmp_path / "admission.db")
     with sqlite3.connect(str(tmp_path / "admission.db")) as conn:
-        columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")
-        }
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(scan_admission)")}
     assert "attempt_id" in columns
 
     result = ledger.admit(
@@ -3305,6 +3300,118 @@ def test_concurrent_old_schema_startup_migration_is_race_free(tmp_path) -> None:
     )
     assert result.started is True
     assert result.attempt_id == "attempt-1"
+
+
+@pytest.mark.parametrize(
+    ("wait_result", "owned", "observed"),
+    [
+        (0x00000000, True, "dead"),
+        (0x00000080, True, "dead"),
+        (0x00000102, False, "alive"),
+        (0xFFFFFFFF, False, "activity_unverified"),
+        (0x00000103, False, "activity_unverified"),
+    ],
+)
+def test_windows_owner_mutex_wait_results_fail_closed(
+    tmp_path, monkeypatch, wait_result, owned, observed
+) -> None:
+    """Only owned mutex results admit startup, recovery or project mutation."""
+    import ctypes
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, Mock
+
+    kernel = MagicMock()
+    kernel.CreateMutexW.return_value = 41
+    kernel.OpenMutexW.return_value = 41
+    kernel.WaitForSingleObject.return_value = wait_result
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False
+    )
+    monkeypatch.setattr(dashboard_state, "sys", SimpleNamespace(platform="win32"))
+
+    lock = object.__new__(OwnerLock)
+    lock.owner_instance_id = "owner-windows-wait"
+    try:
+        if owned:
+            lock._acquire_windows_mutex()
+            assert lock._windows_mutex_handle == 41
+        else:
+            with pytest.raises(dashboard_state.OwnerLockError):
+                lock._acquire_windows_mutex()
+    finally:
+        if hasattr(lock, "_windows_park"):
+            lock.release()
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    with claim_dead_owner("owner-windows-wait", data_root=tmp_path) as claimed:
+        assert claimed is owned
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    assert dashboard_state.observe_owner("owner-windows-wait", tmp_path) == observed
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+
+    kernel.reset_mock()
+    entered = []
+    project_id = "project-windows-wait"
+    if owned:
+        with cross_process_project_lock(project_id):
+            entered.append("outer")
+            with cross_process_project_lock(project_id):
+                entered.append("inner")
+        assert entered == ["outer", "inner"]
+    else:
+        with (
+            pytest.raises(OSError, match="WaitForSingleObject failed"),
+            cross_process_project_lock(project_id),
+        ):
+            entered.append("unowned")
+        assert entered == []
+    kernel.WaitForSingleObject.assert_called_once_with(41, 0xFFFFFFFF)
+    assert kernel.ReleaseMutex.call_count == int(owned)
+    kernel.CloseHandle.assert_called_once_with(41)
+    assert dashboard_state._cross_process_lock_depth.held[project_id] == 0
+
+    if not owned:
+        ledger = MutationLedger(db_path=tmp_path / "admission.db")
+        _seed_operation(ledger, "op-foreign")
+        ledger.admit(
+            "project-a",
+            execution_identity="scan_start:plan-1",
+            slot_id="op-foreign",
+            operation_id="op-foreign",
+            run_id="run-foreign",
+            plan_id="plan-1",
+            owner_instance_id="owner-windows-wait",
+        )
+        ledger.register_pending_outcome(
+            "op-foreign",
+            operation_id="op-foreign",
+            payload={"status": "success", "run_id": "run-foreign"},
+            owner_instance_id="owner-windows-wait",
+        )
+        admission = ledger.admission_for_project("project-a")
+        pending = ledger.pending_outcome("op-foreign")
+        status = ledger.get_operation_status("op-foreign")
+        reaper = Mock(side_effect=AssertionError("unowned mutex must not reap"))
+        monkeypatch.setattr("rush.runtime.subprocesses.reap_owner_processes", reaper)
+
+        assert (
+            reconcile_admissions(
+                ledger,
+                data_root=tmp_path,
+                recovering_owner_instance_id="owner-recovering",
+            )
+            == 0
+        )
+        assert ledger.admission_for_project("project-a") == admission
+        assert ledger.pending_outcome("op-foreign") == pending
+        assert ledger.get_operation_status("op-foreign") == status
+        reaper.assert_not_called()
 
 
 def test_windows_mutex_name_is_deterministic_and_namespaced() -> None:
@@ -3727,6 +3834,7 @@ def test_check_suite_control_command_calls_start_or_attach_before_dispatching(
         assert admission["owner_instance_id"] == ctx.owner_instance_id
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3770,6 +3878,7 @@ def test_concurrent_full_scan_and_check_suite_against_same_project_resolve_throu
         assert len(probe.calls) == 1, "an attach must not dispatch a second suite run"
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3819,6 +3928,7 @@ def test_check_suite_control_command_and_a_concurrent_full_scan_never_silently_a
         assert "check_suite:check" in body["error"]["message"]
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3847,6 +3957,7 @@ def test_check_suite_control_command_actually_dispatches_inside_the_dashboard_pr
         assert probe.calls[0]["run_id"]
     finally:
         gate.set()
+        server.shutdown()
         server.server_close()
 
 
@@ -3886,6 +3997,7 @@ def test_check_suite_control_command_rejects_browser_session_credentials(
 
         assert probe.calls == [], "a rejected request must never dispatch"
     finally:
+        server.shutdown()
         server.server_close()
 
 
@@ -3912,6 +4024,7 @@ def test_check_suite_startup_job_does_not_fabricate_a_scan_start_plan_id_or_gran
         assert permissions.artifact_write is False
         assert permissions.network is False
     finally:
+        server.shutdown()
         server.server_close()
 
 
@@ -3941,7 +4054,9 @@ def test_check_suite_startup_job_uses_its_own_real_tool_selection_not_a_full_sca
             "typecheck",
             "dead",
             "slop",
+            "test",
         )
         assert Path(call["path"]) == root
     finally:
+        server.shutdown()
         server.server_close()

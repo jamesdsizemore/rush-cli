@@ -9,6 +9,7 @@ never a hardcoded fake result standing in for a live call.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
@@ -263,7 +264,6 @@ def test_bridge_denies_unrelated_tools_and_scope_widening(tmp_path: Path) -> Non
     `mcp` client library, exposes exactly one tool (`rush_memory`); any operation outside
     receive/expand/related/resume is denied, and an artifact outside the session's own
     `session_allowlist` is never visible even when its id is guessed."""
-    pytest.importorskip("mcp.client.stdio")
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -395,7 +395,8 @@ def test_default_transport_still_denies_all_tools(
     """T-MC11.3 regression: the plain (non-bridge) `dispatch()` path used by every existing
     Phase 61 cross-tool handoff caller still builds `tools=[]`/`mcp_servers={}` -- MC11's
     additions never widen the default."""
-    sdk = pytest.importorskip("claude_agent_sdk")
+    import claude_agent_sdk as sdk
+
     monkeypatch.setattr(transport, "_native_sdk_available", lambda tool: True)
     captured: dict[str, Any] = {}
 
@@ -475,9 +476,26 @@ def test_cancelled_receiver_leaks_no_process(tmp_path: Path) -> None:
         env=env,
     )
     try:
-        time.sleep(0.5)
+        # Synchronize on the receiver actually serving (an MCP initialize
+        # round trip), never on a fixed sleep: a cold start under load can
+        # outlast any sleep, and closing stdin before it serves turns this
+        # into a startup-time check instead of a cancellation check.
+        assert process.stdin is not None and process.stdout is not None
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "t-mc11.4", "version": "1"},
+            },
+        }
+        process.stdin.write((json.dumps(initialize) + "\n").encode())
+        process.stdin.flush()
+        response = json.loads(process.stdout.readline())
+        assert response["id"] == 1 and "result" in response, response
         assert process.poll() is None, "receiver exited before it could be cancelled"
-        assert process.stdin is not None
         process.stdin.close()
         process.wait(timeout=10)
     finally:

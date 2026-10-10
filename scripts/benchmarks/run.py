@@ -596,13 +596,14 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
     project_b_id = register_project(project_b_root, data_root=data_root).project_id
 
     provision_plan = build_provision_plan(
-        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS)
+        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS), data_root=data_root
     )
     provision_result = apply_provision_plan(
         provision_plan,
         full_permissions,
         project_id=project_a_id,
         data_root=data_root,
+        reviewed_plan_id=provision_plan.plan_id,
         which=lambda _name: None,
     )
 
@@ -928,7 +929,9 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         ),
     ):
         server, ctx, token = create_dashboard_server({})
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         try:
             base_url = ctx.launch_origin
@@ -1172,8 +1175,16 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
 
             # --- tokens ----------------------------------------------------
             start = time.monotonic()
-            TelemetryStore(project_root).record_savings(
-                "review", raw_tokens=100, compressed_tokens=40
+            telemetry = TelemetryStore(project_root)
+            telemetry.record_savings(
+                "review", raw_tokens=100, compressed_tokens=40, project_id=project_id
+            )
+            telemetry.record_savings("review", raw_tokens=1000, compressed_tokens=400)
+            telemetry.record_savings(
+                "review",
+                raw_tokens=2000,
+                compressed_tokens=800,
+                project_id=str(uuid.uuid4()),
             )
             tok_status, tok_snap = _snapshot(base_url, project_id, cookie, "tokens")
             timings_ms["tokens"] = round((time.monotonic() - start) * 1000, 3)
@@ -1181,7 +1192,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 "tokens",
                 tok_status == 200
                 and tok_snap.get("data", {}).get("actual", {}).get("raw_tokens", 0)
-                >= 100,
+                == 100,
                 f"status={tok_status}",
             )
 
@@ -1215,6 +1226,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         "coverage": coverage,
         "errors": errors,
         "memory_mutation_arguments_sent": memory_mutation_arguments_sent,
+        "tokens_snapshot": tok_snap.get("data", {}),
         "blockers": [
             (
                 "actual pixel layout at 360px/1280px and a real visual "

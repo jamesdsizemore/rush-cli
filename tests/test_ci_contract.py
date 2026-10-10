@@ -49,5 +49,31 @@ def test_ci_windows_contracts_build_before_installed_tests() -> None:
     job = workflow["jobs"]["windows-contracts"]
     assert job["runs-on"] == "windows-latest"
     commands = [step.get("run", "") for step in job["steps"]]
-    test_command = "uv run pytest tests/test_providers.py tests/test_staged_scan_bytes.py tests/test_phase52_installed_artifacts.py -q"
-    assert commands.index("uv build") < commands.index(test_command)
+    test_index = next(
+        i
+        for i, command in enumerate(commands)
+        if "tests/test_phase52_installed_artifacts.py" in command
+    )
+    assert commands.index("uv build") < test_index
+    native_build = next(
+        i for i, command in enumerate(commands) if "build_release_archive" in command
+    )
+    assert native_build < test_index
+    lines = [line.strip() for line in commands[test_index].splitlines() if line.strip()]
+    assert lines[0].split() == [
+        "uv",
+        "run",
+        "pytest",
+        "tests/test_providers.py",
+        "tests/test_staged_scan_bytes.py",
+        "tests/test_phase52_installed_artifacts.py",
+        "tests/test_windows_import_safety.py",
+        "tests/test_dashboard_http_contract.py::test_windows_owner_mutex_wait_results_fail_closed",
+        "-q",
+    ]
+    assert lines[1] == "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"
+    assert job["steps"][test_index]["env"] == {
+        "RUSH_G8_NATIVE_ARCHIVE": "${{ github.workspace }}/dist/rush-windows-x86_64.zip",
+        "RUSH_G8_NATIVE_SUMS": "${{ github.workspace }}/dist/SHA256SUMS",
+        "RUSH_G8_NATIVE_RECEIPT_DIR": "${{ runner.temp }}/rush-native-terminal",
+    }

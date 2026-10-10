@@ -222,8 +222,26 @@ def _cli_call(
     return json.loads(result.output)
 
 
+# Phase 70 T16: the executor's default scope names each transport's own
+# root (cli_root vs mcp_root); only those root-bearing fields are dropped.
+_ROOT_BEARING_SCOPE_FIELDS = (
+    "logical_root",
+    "invocation_start_cwd",
+    "original_requested_targets",
+    "execution_cwds",
+)
+
+
 def _normalized(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     normalized = {k: v for k, v in payload.items() if k != "duration_ms"}
+    metadata = normalized.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("scope"), dict):
+        scope = {
+            k: v
+            for k, v in metadata["scope"].items()
+            if k not in _ROOT_BEARING_SCOPE_FIELDS
+        }
+        normalized["metadata"] = {**metadata, "scope": scope}
     volatile = _NONDETERMINISTIC_DATA_FIELDS.get(operation)
     if volatile and isinstance(normalized.get("raw"), dict):
         raw = dict(normalized["raw"])

@@ -17,7 +17,7 @@ This document defines the release workflow, semantic versioning rules, and pre-p
 1. **Verify All Test Suites & Linters**:
    ```bash
    unset VIRTUAL_ENV PYTHONPATH
-   uv run --python 3.12 --extra dev python -m pytest tests/ -q
+   uv run --python 3.12 --extra dev python -m pytest tests/ -q -m ""
    uv run --python 3.12 --extra dev python scripts/sync_docs.py --check
    uv run --python 3.12 --extra dev ruff check src tests scripts
    uv run --python 3.12 --extra dev ruff format --check src tests scripts
@@ -54,4 +54,4 @@ See [Release Process Guide](developer/release-process.md) and [Versioning Policy
 5. Run `rush ship pack` to ensure zero secret leaks in distributions.
 6. Run `rush ship gate` for final 7-vector release readiness authorization.
 ### Pre-Release Verification (Phase 59)
-Release readiness requires passing the current required tests, Ruff and installed-artifact checks. The old 1,189-test count is historical. CI currently invokes undeclared `mypy` and has ordering/portability failures; repair remains planned in [P64-20](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Archive/checksum and clean-machine installation work remains planned in [P65-01](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md). No release readiness is established by this document.
+Release readiness requires passing the current required tests, Ruff and installed-artifact checks. The old 1,189-test count is historical. CI invokes `mypy src/rush`; development dependencies pin `mypy==2.3.1`. Current candidate CI portability and installed-artifact evidence remains required; see [P64-20](phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md). Archive/checksum and clean-machine installation work remains planned in [P65-01](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md). No release readiness is established by this document.

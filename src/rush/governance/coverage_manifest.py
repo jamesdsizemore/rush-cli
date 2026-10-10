@@ -36,8 +36,10 @@ EXCLUDED_DIRS = {
     "dist",
     "build",
     ".worktrees",
+    ".scratch",
     ".rush",
     ".hermes",
+    ".orchestrator",
     "graft",
     ".codegraph",
     ".gemini",
@@ -61,6 +63,25 @@ def classify_path(rel_path: str) -> CoverageRecord:
             classification="excluded",
             inclusion_rule="directory-boundary:research",
             exclusion_reason="Untracked local research artifacts governed by AGENTS.md",
+        )
+
+    # PyInstaller byproducts of the ci.yml/release.yml native-archive step
+    if normalized in {"rush_entry.py", "rush.spec"}:
+        return CoverageRecord(
+            path=normalized,
+            classification="excluded",
+            inclusion_rule="pyinstaller-build-byproduct",
+            exclusion_reason="Untracked entry script and spec written by the native-archive build step",
+        )
+
+    # OS-generated metadata files (macOS Finder/AppleDouble, Windows)
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename in {".DS_Store", "Thumbs.db"} or basename.startswith("._"):
+        return CoverageRecord(
+            path=normalized,
+            classification="excluded",
+            inclusion_rule="os-metadata-file",
+            exclusion_reason="OS-generated metadata file not part of the tracked checkout",
         )
 
     # Source code

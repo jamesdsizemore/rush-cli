@@ -8,13 +8,25 @@
 
 Use `operation: "save" | "list" | "restore"` with the project `path`. `save` additionally accepts `name`, `files`, `allow_cache_write: true`, `current_goal`, `open_work`, `historic_instruction`, `failure_fingerprint`, and `dependencies`; all responses are canonical `ToolResult` objects. A missing checkpoint or ungranted save is a structured `skipped` result, never prose on stdio. CLI and MCP expose identical redacted `metadata.handoff` receipt semantics.
 
-`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools.
+`rush mcp serve` registers each catalog tool as `rush_<name>` using the same Python tool objects as the CLI. Registered names use underscores, for example `rush_semantic_drift` and `rush_ai_eval`. CLI groups are not automatically MCP tools. `rush mcp serve --profile core|full` (Phase 70) narrows that registration: `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every tool below. A call naming a tool the running profile did not register returns "Unknown tool".
+
+## `rush_check` (Phase 70)
+
+Before commit/after edits: format-check, lint, typecheck, dead, slop, and test at `path`. The test step runs only with `allow_build`; otherwise it is skipped and the result is never `ok` (`warn` if every other step passes). Accepts `fail_fast` (default `false`; stop at the first failing step), the seven permission flags, and the common `project`/`result_view`/`limit`/`max_bytes`/`no_cache` fields above.
+
+## `rush_status` (Phase 70)
+
+Call first each session: read-only, no grant required. Reports `path`'s project setup, engines, scans, results, agents, and memory state without changing anything; an agent being registered does not by itself confirm the agent is actually active. `operation: "status"` (default) or `"result"` (reads a stored result via `result_handle`, `view: "result"|"bytes"`, `cursor`, `offset`, and the common `limit`/`max_bytes` fields); also accepts `session_id` and `project`.
 
 Legacy `rush_context_pack` and `rush_context_retrieve` also delegate to the continuity implementation and return the same `ToolResult` envelope as their CLI equivalents.
 
 `rush_continuity` additionally supports `coordination_check`, `coordination_merge_preview`, and `coordination_recovery`. `metadata.coordination.state` is `available`, `conflict`, `stale`, `merge_conflict`, `recovery_evidence`, or `unavailable`. The response is evidence, not an instruction to release locks, merge, replay, or retry work.
 
 For `operation: "provider_resume"`, pass `name`, `provider_id`, and `allow_network: true`. `claude_code`, `codex_cli`, and `antigravity_cli` use an existing local authenticated profile; `9router_cli` runs Codex through fixed local 9Router with `RUSH_9ROUTER_API_KEY` copied only to the child process and no model argument; `omniroute_api` uses one fixed loopback OpenAI-compatible request with `model: "auto"` and semantic response validation. The response exposes only `metadata.provider_route` and never model output or credentials. `zai` is deferred; direct `9router_api` remains unavailable.
+
+## Strict published schemas for `rush_project`, `rush_scan`, `rush_memory`
+
+`tools/list` publishes a top-level object schema for these three tools with `additionalProperties: false` and a full `operation` enum; every field declares an exact type, enum, and bounds. `rush_project`/`rush_scan` accept either the legacy `{"request": {"schema_version": 1, "operation": ..., ...}}` envelope or named top-level fields (`operation` plus that operation's own fields); `rush_memory` stays flat as today with the same per-operation fields typed. A call is rejected before any project resolution, reservation, lock, or write when it mixes the legacy `request` form with named fields, sends an unknown key, sends an explicit `null` where the field forbids it, sends a non-boolean value for a boolean grant, or sends `schema_version` as anything but the integer `1`. The rejection is returned as structured content, never a thrown protocol error: `rush_project`/`rush_scan` return `{"schema_version": 1, "operation": ..., "data": null, "error": {"code": "INVALID_REQUEST", "message": ..., "retryable": false, "details": [...]}}`; `rush_memory` returns `{"schema_version": 1, "operation": ..., "data": {"message": ..., "details": [...]}, "code": "E_INPUT"}`. On `rush_memory`, an empty `session_allowlist` on `ask`, `recall`, or `list` is rejected the same way (`code: "E_INPUT"`, "requires a non-empty session_allowlist"). Non-MCP callers (CLI, TUI, dashboard) enforce the same strict checks against the same request models.
 
 ## `rush_memory` (Phase 61)
 
@@ -30,7 +42,7 @@ Every mutating operation (`edit`, `archive`, `delete`) also accepts an optional 
 
 ## `rush_scan` (Phase 65)
 
-Single-`dict` envelope over `ScanTool` (plan §6.1: `{"schema_version": 1, "operation": ..., ...}` in, `{"schema_version": 1, "operation": ..., "data": ..., "error": ...}` out), matching `rush_project`'s wiring. Supports `operation: "plan" | "run" | "status" | "rescan"` (P65-06 landed `rescan`); `cancel`/`resume` are P65-08's CLI-only workflow functions (`rush scan cancel`/`rush scan resume`) and are rejected here as an unknown operation — no MCP equivalent exists yet. `plan(project, full=true, exclude=[], targets={}, severity="warn", concurrency=2, timeout_seconds=300)` stages an immutable plan covering every catalog candidate and returns its `plan_id` and full candidate list with dispositions; it does not execute anything. `run(project, plan_id, install=false, allow_cache_write, allow_artifact_write, ...)` requires `allow_cache_write` and `allow_artifact_write`, executes every `applicable` candidate exactly once, and returns `run_id`, `run_state`, the scheduled candidates, and the aggregate `ToolResult`; a failed post-install probe or missing input never silently shrinks the reported denominator. `status(project, run_id, after_sequence=0, limit=50, cursor=null)` returns the run's `totals` (coverage: candidate/scheduled/executed/finding counts) and a paginated, HMAC-signed cursor over the scheduled candidates. `rescan(project, run_id)` re-executes `run_id`'s own staged plan against current source (`rush.workflows.project_run.rescan_project_run`) and returns the new run plus a `comparison` of `resolved`/`persisting`/`new`/`unverified` finding IDs against the baseline — an engine missing from the current run marks its prior findings `unverified`, never `resolved`. The CLI's `rush scan --full` composes `plan` + `run` + `status` into one call for convenience; this MCP tool does not auto-compose them — call each operation explicitly.
+Single-`dict` envelope over `ScanTool` (plan §6.1: `{"schema_version": 1, "operation": ..., ...}` in, `{"schema_version": 1, "operation": ..., "data": ..., "error": ...}` out), matching `rush_project`'s wiring. Supports `operation: "plan" | "run" | "status" | "rescan"` (P65-06 landed `rescan`); `cancel`/`resume` are P65-08's CLI-only workflow functions (`rush scan cancel`/`rush scan resume`) and are rejected here as an unknown operation — no MCP equivalent exists yet. `plan(project, full=true, exclude=[], targets={}, severity="warn", concurrency=2, timeout_seconds=300)` stages an immutable plan covering every catalog candidate and returns its `plan_id` and full candidate list with dispositions; it does not execute anything. `run(project, plan_id, install=false, allow_cache_write, allow_artifact_write, ...)` requires `allow_cache_write` and `allow_artifact_write`, executes every `applicable` candidate exactly once, and returns `run_id`, `run_state`, the scheduled candidates, and the aggregate `ToolResult`; a failed post-install probe or missing input never silently shrinks the reported denominator. `status(project, run_id, after_sequence=0, limit=50, cursor=null)` returns the run's `totals` (coverage: candidate/scheduled/executed/finding counts) and a paginated, HMAC-signed `cursor` value over the scheduled candidates. `rescan(project, run_id)` re-executes `run_id`'s own staged plan against current source (`rush.workflows.project_run.rescan_project_run`) and returns the new run plus a `comparison` of `resolved`/`persisting`/`new`/`unverified` finding IDs against the baseline — an engine missing from the current run marks its prior findings `unverified`, never `resolved`. The CLI's `rush scan --full` composes `plan` + `run` + `status` into one call for convenience; this MCP tool does not auto-compose them — call each operation explicitly.
 
 ## `rush_scan_handoff` (Phase 65 P65-06)
 
@@ -38,7 +50,9 @@ Single-`dict` envelope over `ScanHandoffTool` (plan §6.1), matching `rush_scan`
 
 ## `rush_agent_connection` (Phase 65 P65-05)
 
-Single-`dict` envelope over `AgentConnectionTool` (`src/rush/tools/agent_connection.py`), the MCP-exposed equivalent of `rush agent list/connect/doctor`. Discovers `claude-desktop`, `claude-code`, `cursor`, `windsurf`, `zed`, and `codex`, registers Rush into a selected client's own config file (format-preserving, backed up first, never touching an unrelated setting), and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. A config failure on one client is reported against that client alone and never marks a different client as failed or connected. `consent` gates whether real tool-observation payloads are ever recorded for that scope; `connected: true` is only reported after explicit acknowledgment, never from a config write alone.
+Single-`dict` envelope over `AgentConnectionTool` (`src/rush/tools/agent_connection.py`), the MCP-exposed equivalent of `rush agent list/connect/doctor`. Discovers `claude-desktop`, `claude-code`, `windsurf`, `zed`, and `codex`, registers Rush into a selected client's own config file (format-preserving, backed up first, never touching an unrelated setting), and activates a Phase 63 memory scope for `(project-or-user, session, agent)`. A config failure on one client is reported against that client alone and never marks a different client as failed or connected. `consent` gates whether real tool-observation payloads are ever recorded for that scope; `connected: true` is only reported after explicit acknowledgment, never from a config write alone.
+
+On `operation: "connect"` only, strict `profile` (`null`, `"core"`, or `"full"`) and `confirm_profile_migration` (boolean, default `false`) fields migrate an existing agent's Rush MCP entry to a server profile; either field on any other operation, or `confirm_profile_migration: true` without `profile`, is rejected as `INVALID_REQUEST`. A new registration always launches `mcp serve --profile core`. With `profile` set, the migration is previewed first (`migration.state: "pending"`, with `config_path`, `current_command`/`current_args`/`current_profile`, `new_command`/`new_args`, and `current_sha256`) and applied only when `confirm_profile_migration: true` re-checks that same digest. The result's `status` is `"ok"` for `migration.state: "applied"`; `"skipped"` for `"pending"` (preview only), `"declined"`, `"conflict"` (the config changed since the preview), or `"failed"` (the write failed and the prior entry was restored); and `"error"` for `"recovery_required"` (the write failed and restoring the prior entry failed too).
 
 ## `rush_project` (Phase 65)
 
@@ -64,6 +78,8 @@ Most tools accept:
   "allow_browser": false
 }
 ```
+
+Most catalog tools also accept (Phase 70): `project` (registered project ID or root path; when given, every relative path in the call resolves against that project root instead of the server-start working directory), `result_view` (`"full"`, the default, returns the whole result; `"compact"` stores it, requires `allow_cache_write`, and returns a bounded page and handle), `limit` (findings per page, 1-50, default 50), `max_bytes` (size budget of the whole serialized response, 4096-65536 bytes, default 32768), and `no_cache` (bypass the result cache; not allowed with `result_view="compact"`).
 
 Special callable options include:
 
@@ -106,7 +122,7 @@ See [MCP client setup](integrations/mcp-client-setup.md) and [MCP development](d
 
 * **`rush_context_pack(path, symbol="", budget=4000, allow_cache_write=false)`**: Pack graph-pruned context outline under a strict token budget.
 
-* **`rush_context_gain_stats()`**: Return local token/compression estimates; no measured provider billing or cache-hit guarantee.
+* **`rush_context_gain_stats()`**: Return local token/compression estimates; no measured provider billing or cache-hit guarantee. Read-only and anchored at the logical root; a missing telemetry DB is never created and returns `available: false` with a `reason` and the DB's `path` instead of an error.
 
 * **`rush_blast_radius(path, depth=5)`**: Calculate downstream transitive blast radius for a changed file.
 * **`rush_arch_guard()`**: Validate codebase against clean architecture layer boundaries.
@@ -159,6 +175,8 @@ Administrative operations for plugin management check user ledger authorization 
 ## Core Tool Parity & Schemas (Phase 57)
 
 All 10 core quality tools (`continuity`, `semantic-drift`, `review`, `lint`, `format`, `test`, `security`, `typecheck`, `dead`, `complexity`) provide identical schemas, input normalization, and `ToolResultV1` output shapes across FastMCP stdio and CLI.
+
+`rush_typecheck` additionally accepts `environment: "project" | "isolated"` (which interpreter `mypy`/`pyrefly` analyze against; `project` requires `allow_build`), `typecheck_config` (an explicit tsconfig/mypy/pyrefly config path inside the project root, matching the target CLI's `--typecheck-config`), and `allow_cache_write` (required before the `tsc` child runs at all, including its own config discovery — without it, `tsc` is `skipped`).
 
 ## Phase 58 Architecture: Capability Locks, CAS Memory, and Fail-Closed Patch Verification
 

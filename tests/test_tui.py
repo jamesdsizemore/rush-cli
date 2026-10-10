@@ -59,6 +59,7 @@ def test_ui_cmd_accepts_multiple_project_paths(
     # exercising that interactive multi-seed path, not the non-tty snapshot
     # path Click's `CliRunner` would otherwise select by default.
     monkeypatch.setattr(cli_module, "_stdout_is_tty", lambda: True)
+    monkeypatch.setattr(cli_module, "_stdin_is_tty", lambda: True)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ui", str(proj_a), str(proj_b)])
@@ -73,31 +74,33 @@ def test_ui_cmd_accepts_multiple_project_paths(
 def test_ui_json_flag_returns_snapshot_and_exits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P69-06a: `--json` prints each project's check-suite result as JSON
-    and exits 0, never entering the interactive interface."""
+    """P69-06a / T28 Non-TTY: `--json` prints `[{project, path, status}]`
+    (status = the StatusTool raw payload) and exits 0, never entering the
+    interactive interface and never running checks."""
     from click.testing import CliRunner
 
+    import rush.tools.status as status_module
     import rush.tui as tui_module
     import rush.workflows.suites as suites_module
     from rush.cli import cli
 
     proj = tmp_path / "proj"
     proj.mkdir()
+    status_paths: list[Path] = []
 
-    def fake_run_workflow_suite(
-        *, suite: object, path: Path, permissions: object, **kwargs: object
-    ) -> dict:
-        return {
-            "tool": "suite",
-            "status": "ok",
-            "findings": [],
-            "summary": f"checked {path.name}",
-        }
+    class FakeStatusTool:
+        def __call__(self, path: Path) -> dict:
+            status_paths.append(path)
+            return {"raw": {"checked": path.name}, "summary": "status ok"}
+
+    def fail_run_workflow_suite(*a: object, **k: object) -> dict:
+        raise AssertionError("--json must never run checks")
 
     def fail_run_interactive_tui(*a: object, **k: object) -> None:
         raise AssertionError("--json must not enter the interactive interface")
 
-    monkeypatch.setattr(suites_module, "run_workflow_suite", fake_run_workflow_suite)
+    monkeypatch.setattr(status_module, "StatusTool", FakeStatusTool)
+    monkeypatch.setattr(suites_module, "run_workflow_suite", fail_run_workflow_suite)
     monkeypatch.setattr(tui_module, "run_interactive_tui", fail_run_interactive_tui)
 
     runner = CliRunner()
@@ -105,19 +108,26 @@ def test_ui_json_flag_returns_snapshot_and_exits(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert isinstance(payload, list)
-    assert payload[0]["project"] == proj.name
-    assert payload[0]["result"]["summary"] == f"checked {proj.name}"
+    assert payload == [
+        {
+            "project": proj.name,
+            "path": str(proj.resolve()),
+            "status": {"checked": proj.name},
+        }
+    ]
+    assert status_paths == [proj.resolve()]
 
 
 def test_ui_non_tty_plain_pipe_exits_immediately_no_read_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P69-06a: without `--json`, a non-tty stdout (a real pipe, and
-    `CliRunner`'s default capture) prints a concise plain snapshot and
-    exits 0 rather than entering the interactive read loop."""
+    """P69-06a / T28 Non-TTY: without `--json`, a non-tty stdout (a real
+    pipe, and `CliRunner`'s default capture) prints one status line per
+    project plus the `rush status`/`rush check` next steps and exits 0,
+    never entering the interactive read loop and never running checks."""
     from click.testing import CliRunner
 
+    import rush.tools.status as status_module
     import rush.tui as tui_module
     import rush.workflows.suites as suites_module
     from rush.cli import cli
@@ -125,24 +135,32 @@ def test_ui_non_tty_plain_pipe_exits_immediately_no_read_loop(
     proj = tmp_path / "proj"
     proj.mkdir()
 
-    def fake_run_workflow_suite(
-        *, suite: object, path: Path, permissions: object, **kwargs: object
-    ) -> dict:
-        return {"tool": "suite", "status": "ok", "findings": [], "summary": "done"}
+    class FakeStatusTool:
+        def __call__(self, path: Path) -> dict:
+            return {"raw": {}, "summary": "status done"}
+
+    def fail_run_workflow_suite(*a: object, **k: object) -> dict:
+        raise AssertionError("a non-tty `rush ui` must never run checks")
 
     def fail_run_interactive_tui(*a: object, **k: object) -> None:
         raise AssertionError(
             "must not enter the interactive read loop for a non-tty pipe"
         )
 
-    monkeypatch.setattr(suites_module, "run_workflow_suite", fake_run_workflow_suite)
+    monkeypatch.setattr(status_module, "StatusTool", FakeStatusTool)
+    monkeypatch.setattr(suites_module, "run_workflow_suite", fail_run_workflow_suite)
     monkeypatch.setattr(tui_module, "run_interactive_tui", fail_run_interactive_tui)
 
     runner = CliRunner()
     result = runner.invoke(cli, ["ui", str(proj)])
 
     assert result.exit_code == 0, result.output
-    assert "done" in result.output
+    root = proj.resolve()
+    assert result.output.splitlines() == [
+        f"{proj.name}: status done",
+        f"Next: rush status {root} --json",
+        f"      rush check {root}",
+    ]
 
 
 def test_ui_cmd_starts_interface_before_scan_completes() -> None:
@@ -180,6 +198,8 @@ def test_ui_cmd_starts_interface_before_scan_completes() -> None:
 
         def read_key(self, timeout: float) -> str | None:
             self._ticks += 1
+            if self._ticks == 1:
+                return "C"  # T28-A: analysis starts only on an explicit Start
             if scan_started.is_set() and not scan_finished.is_set():
                 tick_seen_while_scanning.set()
             if self._ticks > 60:
@@ -374,14 +394,14 @@ def test_alternate_screen_used_with_refresh_rate_limit(
 
 
 def test_f3_switches_section() -> None:
-    """U01 fix: F3 cycles Sections -- Scans (`list`) -> Map -> Git ->
-    Scans (Phase 66 §3.8) -- distinct from the direct `G` binding (still
+    """T28-A: F3 opens the section chooser; a digit enters that section
+    (2 Map, 6 Git, 1 Overview) -- distinct from the direct `G` binding (still
     `toggle_git_view`, unaffected) and from Tab/Shift+Tab's pane cycling."""
     seed = ProjectSeed(name="demo", root=Path("/tmp/rush-tui-f3"))
 
     after_one = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3"]),
+        key_reader=_ScriptedReader(["f3", "2"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=5,
@@ -390,7 +410,7 @@ def test_f3_switches_section() -> None:
 
     after_two = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "f3"]),
+        key_reader=_ScriptedReader(["f3", "6"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=10,
@@ -399,7 +419,7 @@ def test_f3_switches_section() -> None:
 
     after_three = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "f3", "f3"]),
+        key_reader=_ScriptedReader(["f3", "2", "f3", "1"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=15,
@@ -454,7 +474,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     expanded_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "down", "+", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -469,7 +489,7 @@ def test_map_hierarchical_navigation_expand_collapse() -> None:
 
     collapsed_again_state = run_interactive_tui(
         [seed],
-        key_reader=_ScriptedReader(["f3", "down", "+", "-", "q"]),
+        key_reader=_ScriptedReader(["f3", "2", "down", "l", "h", "q"]),
         actions=_noop_actions(),
         use_live=False,
         max_ticks=50,
@@ -1300,7 +1320,9 @@ def test_admit_local_run_refuses_to_reserve_work_when_owner_lock_acquisition_fai
     swallow that continued regardless."""
     import rush.tui as tui_module
 
-    monkeypatch.setattr(tui_module, "_tui_owner_instance_id", lambda: None)
+    monkeypatch.setattr(
+        tui_module, "_tui_owner_instance_id", lambda data_root=None: None
+    )
     admit_calls: list[object] = []
     monkeypatch.setattr(
         tui_module,
@@ -1308,13 +1330,21 @@ def test_admit_local_run_refuses_to_reserve_work_when_owner_lock_acquisition_fai
         lambda *a, **k: admit_calls.append((a, k)),
     )
 
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-a"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
     assert admit_calls == [], "a failed lifetime lock must never reserve work"
-    assert project.scan_thread is None
+    assert local_executions == [], "a failed lifetime lock must never launch work"
     assert project.status == "error"
 
 
@@ -1360,12 +1390,20 @@ def test_admit_local_run_attaches_to_stored_executor_identity_when_admission_res
             owner_instance_id="attached-owner",
         ),
     )
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-c"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
-    assert project.scan_thread is None
+    assert local_executions == [], "an attached start must never launch a worker"
     assert project.run_id == "attached-run"
     assert project.operation_id == "attached-op"
     assert project.owner_instance_id == "attached-owner"
@@ -1397,12 +1435,20 @@ def test_admission_conflict_or_error_launches_nothing_and_displays_failure(
             slot_id="fake-slot", started=False, attached=False, conflict=True
         ),
     )
-    actions = _ownership_actions(dashboard_owner=lambda root: None)
+    local_executions: list[int] = []
+    actions = _ownership_actions(
+        dashboard_owner=lambda root: None,
+        execute_scan=lambda *a, **k: local_executions.append(1),
+    )
     project = tui_module.ProjectState(name="demo", root=Path("/tmp/rush-tui-s15-d1"))
 
     tui_module._start_scan_thread(project, actions)
+    # T28-F: the start decides on its worker; wait (bounded) for it.
+    assert project.scan_thread is not None
+    project.scan_thread.join(timeout=5)
+    assert not project.scan_thread.is_alive()
 
-    assert project.scan_thread is None
+    assert local_executions == [], "a conflict must launch nothing"
     assert project.status == "error"
     assert "conflict" in project.last_message.lower()
 
@@ -1682,8 +1728,20 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
             )
         ],
     )
-    keys: list[str | None] = ["f3", "down", "+", None, None, "q"]
-    sizes = [(120, 40), (120, 40), (120, 40), (60, 18), (60, 18), (60, 18)]
+    keys: list[str | None] = ["f3", "2", "down", "l", None, None, "q"]
+    # The launch read consumes the first size, so ticks 1-4 (every key up
+    # to "l") run at 120x40 and the shrink to 60x18 happens afterwards.
+    # Below 60x20 only q/c/F2/Escape are accepted (T28 shared design).
+    sizes = [
+        (120, 40),
+        (120, 40),
+        (120, 40),
+        (120, 40),
+        (120, 40),
+        (60, 18),
+        (60, 18),
+        (60, 18),
+    ]
     reader = _ResizingReader(keys, sizes)
     state = run_interactive_tui(
         [seed],
@@ -1693,6 +1751,7 @@ def test_selection_and_expanded_hierarchy_preserved_across_resize() -> None:
         max_ticks=50,
     )
     assert "file:a.py" in state.map_expanded
+    assert state.map_selected_index == 1
     assert state.terminal_size == (60, 18)
 
 

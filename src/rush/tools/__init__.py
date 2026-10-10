@@ -26,6 +26,7 @@ from .base import (
     validate_tool_result,
 )
 from .benchmark import BenchmarkTool
+from .check import CheckTool
 from .ci import CiTool
 from .codeql import CodeqlTool
 from .cold_start import ColdStartTool
@@ -78,6 +79,7 @@ from .semantic_drift import SemanticDriftTool
 from .slop import SlopTool
 from .snapshot import SnapshotTool
 from .sql import SqlTool
+from .status import StatusTool
 from .tdd_guard import TddGuardTool
 from .templates import TemplatesTool
 from .test import TestTool
@@ -141,6 +143,8 @@ ALL_TOOLS: list[ToolFn] = [
     ProvenanceAiTool(),
     DeadAssetTool(),
     PrSynthesizeTool(),
+    CheckTool(),
+    StatusTool(),
 ]
 
 __all__ = [  # noqa: RUF022
@@ -149,6 +153,7 @@ __all__ = [  # noqa: RUF022
     "AiEvalTool",
     "AttestationTool",
     "BenchmarkTool",
+    "CheckTool",
     "ColdStartTool",
     "ComplexityTool",
     "DeadAssetScanner",
@@ -181,6 +186,7 @@ __all__ = [  # noqa: RUF022
     "SessionContinuityTool",
     "Severity",
     "SlopTool",
+    "StatusTool",
     "TestTool",
     "ToolFn",
     "ToolName",

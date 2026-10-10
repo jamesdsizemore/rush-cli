@@ -15,7 +15,7 @@ from rush.engines.radon import RadonEngine
 from rush.engines.sloppylint import SloppylintEngine
 from rush.engines.tsc import TscEngine
 from rush.engines.vulture import VultureEngine
-from rush.tools.common import clear_binary_cache, resolve_binary
+from rush.tools.common import clear_binary_cache
 from rush.tools.complexity import ComplexityTool
 from rush.tools.dead import DeadTool
 from rush.tools.slop import SlopTool
@@ -39,8 +39,6 @@ from rush.tools.typecheck import TypecheckTool
 def test_static_engine_is_opt_in_and_discoverable(binary: str, marker: str) -> None:
     """Real-engine contract: probe the installed adapter without source config."""
     clear_binary_cache()
-    if resolve_binary(binary) is None:
-        pytest.skip(f"{marker}: {binary} not installed")
     assert ENGINES[binary].version() is not None
 
 
@@ -159,14 +157,21 @@ def test_tsc_normalizes_documented_text_fixture() -> None:
 
     result = TscEngine().normalize(raw, Path("."), "typecheck")
 
+    # T12 S12.3/A11: absolute (joined with the cwd) and scope-classified.
     assert result["findings"] == [
         {
-            "path": "src/example.ts",
+            "path": str(Path("src/example.ts").absolute()),
             "line": 7,
             "column": 3,
             "rule": "TS2322",
             "severity": "error",
             "message": "Type 'string' is not assignable to type 'number'.",
+            "extensions": {
+                "scope": "dependency",
+                "dependency_kind": "import",
+                "config": None,
+                "group": 0,
+            },
         }
     ]
 

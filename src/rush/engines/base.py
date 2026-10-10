@@ -5,6 +5,7 @@ Architecture §4.1. Every engine (ruff, eslint, etc.) implements ``Engine``.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -16,9 +17,16 @@ from ..tools.common import resolve_binary, run_subprocess
 RawFinding = dict[str, Any]
 
 
+class OwnershipKwargs(TypedDict, total=False):
+    """The `run_subprocess` ownership pair, present together or not at all."""
+
+    owner_instance_id: str
+    run_id: str
+
+
 def ownership_kwargs(
     owner_instance_id: str | None, run_id: str | None
-) -> dict[str, str]:
+) -> OwnershipKwargs:
     """P69-01.2j: the ownership pair as `run_subprocess` kwargs, or `{}`.
 
     An engine forwards its own `owner_instance_id`/`run_id` into its
@@ -33,6 +41,18 @@ def ownership_kwargs(
     return {"owner_instance_id": owner_instance_id, "run_id": run_id}
 
 
+class EnvKwargs(TypedDict, total=False):
+    """A `run_subprocess` `env`, present only when the engine sets one."""
+
+    env: dict[str, str]
+
+
+def env_kwargs(env: dict[str, str] | None) -> EnvKwargs:
+    """`{"env": env}`, or `{}` so an engine inheriting Rush's environment
+    keeps its exact prior kwargs."""
+    return {} if env is None else {"env": env}
+
+
 class EngineResult(TypedDict, total=False):
     exit_code: int
     stdout: str
@@ -41,6 +61,16 @@ class EngineResult(TypedDict, total=False):
     findings: list[RawFinding]  # engine-native records; normalize before ToolResult
     summary: str
     duration_ms: int
+    # T12 finding 10: the cwd the engine actually ran in, so normalize joins
+    # relative output paths with it (and staging remaps the absolute result).
+    cwd: str
+    # T12 A13: the scoped tsc run (groups, exclusions, temp directory). It
+    # holds no `path`/`file` key, so staging's generic remap leaves it alone.
+    tsc: dict[str, Any]
+    # P69-03h: a repository-state engine's (git-guard/diff-cover/undercover)
+    # real-evidence digest; `run_engine` carries it onto the ToolResult's
+    # `metadata["repository_state_provenance"]`.
+    provenance: dict[str, str | None]
 
 
 class Engine(ABC):
@@ -65,7 +95,13 @@ class Engine(ABC):
         run_id: str | None = None,
     ) -> EngineResult: ...
 
-    _cached_versions: ClassVar[dict[str, str]] = {}
+    # (path, st_ino, st_size, st_mtime_ns) -> version: replacing the
+    # executable's bytes at an unchanged path invalidates the entry (S11.7).
+    _cached_versions: ClassVar[dict[tuple[str, int, int, int], str]] = {}
+
+    def child_env(self) -> dict[str, str] | None:
+        """The environment for this engine's children; None inherits Rush's."""
+        return None
 
     def version(
         self,
@@ -85,13 +121,21 @@ class Engine(ABC):
         binary_path = resolve_binary(self.binary)
         if binary_path is None:
             return None
-        if binary_path in Engine._cached_versions:
-            return Engine._cached_versions[binary_path]
+        cache_key: tuple[str, int, int, int] | None
+        try:
+            st = os.stat(binary_path)
+            cache_key = (binary_path, st.st_ino, st.st_size, st.st_mtime_ns)
+        except OSError:
+            cache_key = None
+        if cache_key is not None and cache_key in Engine._cached_versions:
+            return Engine._cached_versions[cache_key]
 
+        env = self.child_env()
         try:
             r = run_subprocess(
                 [binary_path, "--version"],
                 timeout=10,
+                **env_kwargs(env),
                 **ownership_kwargs(owner_instance_id, run_id),
             )
             if r.returncode != 0:
@@ -109,8 +153,8 @@ class Engine(ABC):
                     break
             if ver is None and out:
                 ver = out.splitlines()[0]
-            if ver is not None:
-                Engine._cached_versions[binary_path] = ver
+            if ver is not None and cache_key is not None:
+                Engine._cached_versions[cache_key] = ver
             return ver
         except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
             return None

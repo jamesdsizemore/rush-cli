@@ -49,3 +49,36 @@ def test_pip_audit_rejects_malformed_clean_output(monkeypatch, tmp_path: Path) -
     )
 
     assert result["status"] == "error"
+
+
+def test_pip_audit_project_mode_targets_root_with_no_requirement_flag(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """T14 (R14.1/S14.3): `--project-mode` drops `--requirement` entirely and
+    targets the audited project's own root -- pyproject-declared dependencies,
+    never Rush's interpreter, never an implicit requirements.txt lookup."""
+    calls: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv, 0, stdout='{"dependencies": []}', stderr=""
+        )
+
+    monkeypatch.setattr(pip_audit, "resolve_binary", lambda _binary: "pip-audit")
+    monkeypatch.setattr(pip_audit, "run_subprocess", fake_run)
+
+    raw = PipAuditEngine().run(tmp_path, ["--project-mode"], cwd=tmp_path)
+
+    assert raw["parsed"] == {"dependencies": []}
+    assert calls == [
+        [
+            "pip-audit",
+            "--format=json",
+            "--strict",
+            "--progress-spinner=off",
+            str(tmp_path),
+        ]
+    ]

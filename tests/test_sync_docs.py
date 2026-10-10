@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from scripts.sync_docs import check_docs, main
+from scripts.sync_docs import _json_default, check_docs, main
 
 REPORT = "docs/reports/phase-64-66-documentation-coverage.md"
 CONTRACTS = {
@@ -214,6 +214,23 @@ def test_github_style_dash_heading_anchor_passes(tmp_path: Path) -> None:
     index = root / "docs/index.md"
     index.write_text(
         "# Packet — Preserve\n\n[Packet](#packet--preserve)\n", encoding="utf-8"
+    )
+    _write_report(
+        root,
+        [_entry(root, "docs/index.md"), _entry(root, "docs/nested/guide.md")],
+    )
+
+    assert check_docs(root, contracts=CONTRACTS) == []
+
+
+def test_github_style_underscore_heading_anchors_pass(tmp_path: Path) -> None:
+    root = _fixture(tmp_path)
+    index = root / "docs/index.md"
+    index.write_text(
+        "# `rush_token_outline`\n\n[Code](#rush_token_outline)\n\n"
+        "# plain_name\n\n[Literal](#plain_name)\n\n"
+        "# _Packet_\n\n[Emphasis](#packet)\n",
+        encoding="utf-8",
     )
     _write_report(
         root,
@@ -495,3 +512,15 @@ def test_ignored_document_file_is_retained_without_referrer(tmp_path: Path) -> N
     _write_report(root, entries)
 
     assert check_docs(root, contracts=CONTRACTS) == []
+
+
+def _lazy_default() -> str:
+    return "value"
+
+
+def test_callable_default_is_recorded_without_a_memory_address() -> None:
+    """A callable Click default must serialize the same in every process, or
+    the recorded contract can never match the live one."""
+    recorded = _json_default(_lazy_default)
+    assert recorded == {"callable": f"{__name__}._lazy_default"}
+    assert "0x" not in json.dumps(recorded)

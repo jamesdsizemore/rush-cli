@@ -1,5 +1,20 @@
 # Restarting Rush development
 
+**Current retained-runtime checkpoint (2026-10-04):** Phase 70's retained
+non-UI implementation and native Claude Code/Codex journeys now have accepted
+runtime receipts, including bounded timeout, public disable and independent
+fresh-CAS cleanup/restoration. Accepted installed source is `26fec7d`, artifact
+`11317344545`; documentation checkpoint CI `37248692518` passes all retained
+backend gates and companion selections while preserving Phase 71 UI failures.
+Documentation verification and frozen review passed after correction. The
+retained Phase 70 scope is accepted; final checkpoint delivery is through the
+authorized commit/push. See
+`phase-70-restart-checklist.md` and
+`../reports/phase-70-implementation-evidence.md` for the current closure ledger.
+The 2026-10-03 restart diagnosis below is historical, not a new instruction to
+repeat completed acceptance. Primary user-owned work remains untouched; merge
+and publication require their own authorization.
+
 **Owner acceptance approval (2026-10-04):** The owner explicitly approved the reviewed temporary Claude Code/Codex Rush configuration conversion, native plugin/guidance installation, scoped fixture hook acceptance and cleanup/restoration, plus exactly five existing CI gate conditionals so mypy, documentation parity, dependency audit, whitespace and Windows data-directory ACL checks run after test failures unless cancelled. This supersedes the earlier no-CI-edit restriction for those five steps in addition to the approved macOS artifact job. Existing failures remain visible; no new runner/job or UI waiver is approved. Consent authorizes execution, not an acceptance result.
 
 **Owner CI approval (2026-10-04):** The owner approved extending Phase 70's existing artifact-probes CI job with native `macos-15` arm64 build and downloadable checksum/source-commit-bound candidate. This supersedes the prior no-CI-edit/local-macOS-build decision only for G5/G6 artifact production. Build runs on CI, without release publication or version changes. Acceptance still requires the exact run, current artifact checks and separately consented real Claude Code/Codex adoption. All UI acceptance remains Phase 71.

@@ -56,4 +56,4 @@ flowchart TD
 ## Next Steps
 
 - Learn the rhythm of a high-velocity session in [The Vibecoder Workflow](the-vibecoder-workflow.md).
-- Connect Rush to Cursor, Claude, or Cline in [Setting Up Your AI Agent](setting-up-your-agent.md).
+- Connect Rush to Claude or Cline in [Setting Up Your AI Agent](setting-up-your-agent.md).

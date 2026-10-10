@@ -2,6 +2,7 @@
 
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +30,7 @@ class TelemetryStore:
 
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS token_events (
@@ -158,7 +159,7 @@ class TelemetryStore:
         if not (opt_in or cache_write):
             return False
         real_invocation_id = invocation_id if invocation_id is not None else request_id
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO memory_events
@@ -210,7 +211,7 @@ class TelemetryStore:
         sql = "SELECT COALESCE(SUM(tokens), 0) FROM memory_events"
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             row = conn.execute(sql, params).fetchone()
         return int(row[0])
 
@@ -227,7 +228,7 @@ class TelemetryStore:
         session_id: str = _UNSCOPED,
     ) -> None:
         now = int(time.time())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO token_events
@@ -260,37 +261,202 @@ class TelemetryStore:
         """M10: optionally scoped to one `project_id`/`run_id`/`agent_id`/`session_id`,
         the same clause shape `get_memory_event_total()` already uses -- omitted (the
         default) sums every row, unchanged from before this filter existed."""
-        clauses: list[str] = []
-        params: list[str] = []
+        sql, params = _summary_query(project_id, run_id, agent_id, session_id)
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            cur = conn.execute(sql, params)
+            count, total_raw, total_comp = cur.fetchone()
+        return _summary_payload(count, total_raw, total_comp)
+
+
+def _summary_query(
+    project_id: str | None,
+    run_id: str | None,
+    agent_id: str | None,
+    session_id: str | None,
+) -> tuple[str, list[str]]:
+    clauses: list[str] = []
+    params: list[str] = []
+    for column, value in (
+        ("project_id", project_id),
+        ("run_id", run_id),
+        ("agent_id", agent_id),
+        ("session_id", session_id),
+    ):
+        if value is not None:
+            clauses.append(f"{column} = ?")
+            params.append(value)
+    sql = (
+        "SELECT COUNT(*), COALESCE(SUM(raw_tokens), 0), "
+        "COALESCE(SUM(compressed_tokens), 0) FROM token_events"
+    )
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return sql, params
+
+
+def _summary_payload(count: int, total_raw: int, total_comp: int) -> dict[str, Any]:
+    net_saved = max(0, total_raw - total_comp)
+    ratio = (net_saved / total_raw) if total_raw > 0 else 0.0
+    # Estimated cost savings using blended $3.00 per 1M tokens ($0.000003/token)
+    est_dollars = round(net_saved * 0.000003, 4)
+
+    return {
+        "events_count": count,
+        "total_raw_tokens": total_raw,
+        "total_compressed_tokens": total_comp,
+        "net_tokens_saved": net_saved,
+        "compression_ratio": round(ratio, 4),
+        "dollar_savings_est": est_dollars,
+    }
+
+
+def read_memory_event_totals_readonly(
+    project_root: Path,
+    kinds: tuple[str, ...],
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, int]:
+    """T27: `TelemetryStore.get_memory_event_total(kind)` per kind without
+    constructing a store; a missing DB or table counts zero and creates
+    nothing."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    filters = {
+        column: value
         for column, value in (
             ("project_id", project_id),
             ("run_id", run_id),
             ("agent_id", agent_id),
             ("session_id", session_id),
-        ):
-            if value is not None:
-                clauses.append(f"{column} = ?")
-                params.append(value)
-        sql = (
-            "SELECT COUNT(*), COALESCE(SUM(raw_tokens), 0), "
-            "COALESCE(SUM(compressed_tokens), 0) FROM token_events"
         )
-        if clauses:
-            sql += " WHERE " + " AND ".join(clauses)
-        with sqlite3.connect(self.db_path) as conn:
-            cur = conn.execute(sql, params)
-            count, total_raw, total_comp = cur.fetchone()
+        if value is not None
+    }
 
-        net_saved = max(0, total_raw - total_comp)
-        ratio = (net_saved / total_raw) if total_raw > 0 else 0.0
-        # Estimated cost savings using blended $3.00 per 1M tokens ($0.000003/token)
-        est_dollars = round(net_saved * 0.000003, 4)
+    def read(conn: sqlite3.Connection) -> dict[str, int]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return {}
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if not set(filters) <= columns:
+            return {}
+        where = " AND ".join(f"{column} = ?" for column in filters)
+        rows = conn.execute(
+            "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events"
+            + (f" WHERE {where}" if where else "")
+            + " GROUP BY kind",
+            list(filters.values()),
+        ).fetchall()
+        return {str(kind): int(total) for kind, total in rows}
 
+    totals = read_sqlite_readonly(db_path, read) or {}
+    return {kind: totals.get(kind, 0) for kind in kinds}
+
+
+def read_artifact_expansion_receipts_readonly(
+    project_root: Path, artifact_id: str, version: int, *, limit: int = 8
+) -> list[dict[str, Any]]:
+    """Real expansion invocations for an exact artifact revision, without DB setup."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    prefix = f"{artifact_id}:{version}:"
+
+    def read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return []
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if (
+            not {
+                "invocation_id",
+                "event_id",
+                "kind",
+                "tokens",
+                "timestamp",
+                "request_id",
+            }
+            <= columns
+        ):
+            return []
+        rows = conn.execute(
+            "SELECT invocation_id, kind, tokens, timestamp FROM memory_events "
+            "WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ? "
+            "ORDER BY timestamp DESC, invocation_id LIMIT ?",
+            (prefix, prefix, max(1, min(limit, 32))),
+        ).fetchall()
+        return [
+            {
+                "id": row["invocation_id"],
+                "artifact_version": version,
+                "kind": row["kind"],
+                "origin": "telemetry",
+                "timestamp": row["timestamp"],
+                "tokens": row["tokens"],
+            }
+            for row in rows
+        ]
+
+    return read_sqlite_readonly(db, read) or []
+
+
+def read_summary_readonly(
+    project_root: Path,
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+) -> dict[str, Any]:
+    """T10 (finding 15): `TelemetryStore.get_summary()` without constructing a store.
+    Reads `<project_root>/.rush/telemetry/tokens.db` through the X1 read-only opener,
+    so nothing (no directory, DB, `-wal`/`-shm` or migration) is ever created. A
+    missing DB or table gives the empty summary with `available: false`, a reason,
+    and the path."""
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
+    sql, params = _summary_query(project_id, run_id, agent_id, session_id)
+    requested = {
+        column
+        for column, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
+    legacy = False
+
+    def read(conn: sqlite3.Connection) -> tuple[int, int, int] | None:
+        nonlocal legacy
+        if not sqlite_has_table(conn, "token_events"):
+            return None
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(token_events)")}
+        if not requested <= columns:
+            # Legacy schema: rows carry no stored identity, so they are
+            # unscoped and never attributed to a scoped selection.
+            legacy = True
+            return 0, 0, 0
+        count, total_raw, total_comp = conn.execute(sql, params).fetchone()
+        return int(count), int(total_raw), int(total_comp)
+
+    row = read_sqlite_readonly(db_path, read)
+    if legacy:
         return {
-            "events_count": count,
-            "total_raw_tokens": total_raw,
-            "total_compressed_tokens": total_comp,
-            "net_tokens_saved": net_saved,
-            "compression_ratio": round(ratio, 4),
-            "dollar_savings_est": est_dollars,
+            **_summary_payload(0, 0, 0),
+            "available": True,
+            "unscoped": True,
+            "reason": "legacy telemetry rows carry no run/agent/session identity",
+            "path": str(db_path),
         }
+    if row is None:
+        return {
+            **_summary_payload(0, 0, 0),
+            "available": False,
+            "reason": "no token telemetry has been recorded for this project",
+            "path": str(db_path),
+        }
+    return {**_summary_payload(*row), "available": True, "path": str(db_path)}

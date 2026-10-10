@@ -12,6 +12,10 @@ MCP exposes the catalogued `rush_continuity` tool with `path`, `operation` (`sav
 
 MCP exposes the catalogued `rush_memory` tool with `operation` (`ask`, `write`, `promote`, `list`, `recall`, `maintain`) over the unified `TypedArtifactStore`. `ask`, `list`, and `recall` require a non-empty `session_allowlist` and apply the same content defenses. `write`, `promote`, and `maintain` require `allow_cache_write: true`; denied calls return `status="skipped"`. Maintenance operates on the repository selected by `path`, including its lock and grounding checks.
 
+## MCP profiles (Phase 70)
+
+`rush mcp serve --profile core|full` picks which tools the server registers. `core` registers exactly `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory`; `full` (the default) registers every catalog tool. The server's `instructions` response lists only the tools that profile registered, and a call naming a tool outside the running profile returns "Unknown tool" — never a request-model validation envelope. `rush agent connect AGENT_ID --profile core|full --yes` migrates an existing agent's Rush MCP entry to a different profile: it always previews the change first (current and new command/args, current profile, current config sha256) and writes only after `--yes` or a terminal `[y/N]`; a preview-only run, a decline, a conflict with a config that changed since the preview, or a failed write whose prior entry was restored reports `status="skipped"`, and a failed write that could not restore the prior entry reports `status="error"`. A new agent registration always launches `mcp serve --profile core`. MCP's `rush_agent_connection` tool accepts the same `profile` (`null`, `"core"`, or `"full"`) and `confirm_profile_migration` (boolean) fields, both connect-only.
+
 A compatible coding assistant can launch Rush as a local child process and ask it to run the same checks available in the terminal. MCP is the protocol; stdio is the local pipe used to carry requests and results.
 
 ```mermaid

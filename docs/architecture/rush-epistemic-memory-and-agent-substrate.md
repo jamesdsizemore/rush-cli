@@ -8,7 +8,7 @@ Context omissions are stored only after redaction as local CCR chunks and expose
 
 ## 1. Why Existing Agent Memory Fails
 
-Current agent memory implementations (chat history summaries, vector databases, or static `.cursorrules` / `AGENTS.md` files) break down because they treat all text equally:
+Current agent memory implementations (chat history summaries, vector databases, or static `AGENTS.md` files) break down because they treat all text equally:
 * **No distinction between proof and guesswork:** An unverified assumption made by an agent in Turn 3 is stored alongside a verified test result or explicit user instruction. Future sessions treat guesses as ground truth.
 * **No invalidation when code changes:** When code is refactored, past memories about function signatures, API behavior, or test assumptions become silently toxic, poisoning future agent turns with stale information.
 * **Context pollution:** Dumping memory files into every prompt burns token budgets and dilutes the model's focus on the active task.

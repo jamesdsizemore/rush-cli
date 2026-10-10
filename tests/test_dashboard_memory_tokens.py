@@ -34,7 +34,7 @@ from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.retrieval import recall_page
 from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
 from rush.token_economy.telemetry import TelemetryStore
-from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
+from rush.tui import ProjectState, TuiState, _dispatch_key, _pump, default_scan_actions
 from rush.workflows import projects as projects_module
 from rush.workflows.projects import register_project
 
@@ -59,7 +59,9 @@ def _isolated_dashboard_data_root(tmp_path, monkeypatch):
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -1022,8 +1024,12 @@ def test_tokens_actual_vs_estimated_and_provider_usage_unavailable(
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
     telemetry = TelemetryStore(root)
-    telemetry.record_savings("review", raw_tokens=1000, compressed_tokens=400)
-    telemetry.record_savings("review", raw_tokens=500, compressed_tokens=100)
+    telemetry.record_savings(
+        "review", raw_tokens=1000, compressed_tokens=400, project_id=project_id
+    )
+    telemetry.record_savings(
+        "review", raw_tokens=500, compressed_tokens=100, project_id=project_id
+    )
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
         status, body = _snapshot(base_url, project_id, cookie, "tokens")
@@ -1045,12 +1051,14 @@ def test_tokens_per_run_agent_session_from_handoff_evidence(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    foreign_project_id, _ = _register(tmp_path, "foreign-project")
     handoffs_dir = root / ".rush" / "handoffs"
     handoffs_dir.mkdir(parents=True)
     (handoffs_dir / "handoff-1.json").write_text(
         json.dumps(
             {
                 "handoff_id": "handoff-1",
+                "project_id": project_id,
                 "run_id": "run-alpha",
                 "agent_id": "agent-1",
                 "memory_session_id": "session-1",
@@ -1069,6 +1077,7 @@ def test_tokens_per_run_agent_session_from_handoff_evidence(
         json.dumps(
             {
                 "handoff_id": "handoff-2",
+                "project_id": project_id,
                 "run_id": "run-beta",
                 "agent_id": "agent-2",
                 "memory_session_id": "session-2",
@@ -1083,11 +1092,37 @@ def test_tokens_per_run_agent_session_from_handoff_evidence(
         ),
         encoding="utf-8",
     )
+    for name, owner in (
+        ("foreign", foreign_project_id),
+        ("unscoped", "unscoped"),
+        ("missing", None),
+    ):
+        (handoffs_dir / f"handoff-{name}.json").write_text(
+            json.dumps(
+                {
+                    "handoff_id": f"handoff-{name}",
+                    **({"project_id": owner} if owner is not None else {}),
+                    "run_id": "run-alpha",
+                    "agent_id": "agent-1",
+                    "memory_session_id": "session-1",
+                    "state": "prepared",
+                    "packet": {
+                        "tokens": 999,
+                        "bytes": 9999,
+                        "encoding": "cl100k_base",
+                        "remainder_ids": [],
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
         status, body = _snapshot(base_url, project_id, cookie, "tokens")
         assert status == 200
         rows = body["data"]["runs"]
+        assert [row["handoff_id"] for row in rows] == ["handoff-1", "handoff-2"]
+        assert body["data"]["export_rows"] == rows
         by_run = {r["run_id"]: r for r in rows}
         assert by_run["run-alpha"]["agent_id"] == "agent-1"
         assert by_run["run-alpha"]["session_id"] == "session-1"
@@ -1100,6 +1135,21 @@ def test_tokens_per_run_agent_session_from_handoff_evidence(
             base_url, project_id, cookie, "tokens", run_id="run-alpha"
         )
         assert [r["run_id"] for r in body["data"]["runs"]] == ["run-alpha"]
+        assert [r["handoff_id"] for r in body["data"]["runs"]] == ["handoff-1"]
+        assert body["data"]["export_rows"] == body["data"]["runs"]
+
+        status, body = _snapshot(
+            base_url,
+            project_id,
+            cookie,
+            "tokens",
+            run_id="run-alpha",
+            agent_id="agent-1",
+            session_id="session-1",
+        )
+        assert status == 200
+        assert [r["handoff_id"] for r in body["data"]["runs"]] == ["handoff-1"]
+        assert body["data"]["export_rows"] == body["data"]["runs"]
 
         status, body = _snapshot(
             base_url, project_id, cookie, "tokens", agent_id="agent-2"
@@ -1127,6 +1177,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         "review",
         raw_tokens=1000,
         compressed_tokens=400,
+        project_id=project_id,
         run_id="run-a",
         agent_id="agent-a",
         session_id="sess-a",
@@ -1135,6 +1186,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         "review",
         raw_tokens=200,
         compressed_tokens=50,
+        project_id=project_id,
         run_id="run-b",
         agent_id="agent-b",
         session_id="sess-b",
@@ -1145,6 +1197,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         request_id="r1",
         event_id="e1",
         invocation_id="i1",
+        project_id=project_id,
         run_id="run-a",
         agent_id="agent-a",
         session_id="sess-a",
@@ -1156,6 +1209,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         request_id="r2",
         event_id="e2",
         invocation_id="i2",
+        project_id=project_id,
         run_id="run-b",
         agent_id="agent-b",
         session_id="sess-b",
@@ -1170,9 +1224,7 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         assert body["data"]["actual"]["events_count"] == 2
         assert body["data"]["actual"]["by_memory_event_kind"]["retrieval"] == 37
 
-        status, body = _snapshot(
-            base_url, project_id, cookie, "tokens", run_id="run-a"
-        )
+        status, body = _snapshot(base_url, project_id, cookie, "tokens", run_id="run-a")
         assert body["data"]["actual"]["raw_tokens"] == 1000
         assert body["data"]["actual"]["sent_tokens"] == 400
         assert body["data"]["actual"]["events_count"] == 1
@@ -1201,21 +1253,220 @@ def test_tokens_section_totals_respect_run_agent_session_filters_not_just_handof
         server.server_close()
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_tokens_get_project_identity_filters_and_no_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, legacy: bool
+) -> None:
+    from contextlib import closing
+
+    from rush.token_economy.telemetry import (
+        read_memory_event_totals_readonly,
+        read_summary_readonly,
+    )
+
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_a, root_a = _register(tmp_path, "project-a")
+    project_b, root_b = _register(tmp_path, "project-b")
+    rows = (
+        (project_a, "run-a", "agent-a", "sess-a", 1000, 400, 30),
+        (project_a, "run-b", "agent-b", "sess-b", 200, 50, 7),
+        (project_b, "run-a", "agent-a", "sess-a", 500, 100, 17),
+        ("unscoped", "run-a", "agent-a", "sess-a", 900, 800, 91),
+    )
+    for root in (root_a, root_b):
+        db = root / ".rush" / "telemetry" / "tokens.db"
+        if legacy:
+            db.parent.mkdir(parents=True)
+            with closing(sqlite3.connect(db)) as conn, conn:
+                conn.execute(
+                    "CREATE TABLE token_events (id INTEGER PRIMARY KEY, "
+                    "timestamp INTEGER NOT NULL, tool_name TEXT NOT NULL, "
+                    "raw_tokens INTEGER NOT NULL, compressed_tokens INTEGER NOT NULL, "
+                    "duration_ms REAL NOT NULL)"
+                )
+                conn.execute(
+                    "INSERT INTO token_events VALUES (1, 1, 'review', 900, 800, 0)"
+                )
+                conn.execute(
+                    "CREATE TABLE memory_events (request_id TEXT NOT NULL, "
+                    "event_id TEXT NOT NULL, kind TEXT NOT NULL, tokens INTEGER NOT NULL, "
+                    "timestamp INTEGER NOT NULL, PRIMARY KEY (request_id, event_id))"
+                )
+                conn.execute(
+                    "INSERT INTO memory_events VALUES ('r', 'e', 'retrieval', 91, 1)"
+                )
+        else:
+            store = TelemetryStore(root)
+            for index, (owner, run, agent, session, raw, sent, memory) in enumerate(
+                rows
+            ):
+                identities = {
+                    "project_id": owner,
+                    "run_id": run,
+                    "agent_id": agent,
+                    "session_id": session,
+                }
+                store.record_savings("review", raw, sent, **identities)
+                assert store.record_memory_event(
+                    "retrieval",
+                    memory,
+                    request_id=f"request-{index}",
+                    event_id=f"event-{index}",
+                    invocation_id=f"invocation-{index}",
+                    opt_in=True,
+                    **identities,
+                )
+                assert store.record_memory_event(
+                    "expansion",
+                    memory + 1,
+                    request_id=f"request-{index}",
+                    event_id=f"expansion-{index}",
+                    invocation_id=f"invocation-{index}",
+                    opt_in=True,
+                    **identities,
+                )
+        handoffs_dir = root / ".rush" / "handoffs"
+        handoffs_dir.mkdir()
+        for index, (owner, run, agent, session, _raw, _sent, memory) in enumerate(rows):
+            handoff = {
+                "handoff_id": f"handoff-{index}",
+                "project_id": owner,
+                "run_id": run,
+                "agent_id": agent,
+                "memory_session_id": session,
+                "state": "prepared",
+                "packet": {
+                    "tokens": memory,
+                    "bytes": memory * 5,
+                    "encoding": "cl100k_base",
+                    "remainder_ids": [],
+                },
+            }
+            (handoffs_dir / f"handoff-{index}.json").write_text(
+                json.dumps(handoff), encoding="utf-8"
+            )
+            if index == 0:
+                handoff.pop("project_id")
+                handoff["handoff_id"] = "handoff-legacy"
+                (handoffs_dir / "handoff-legacy.json").write_text(
+                    json.dumps(handoff), encoding="utf-8"
+                )
+
+    def fingerprint(db: Path):
+        with closing(
+            sqlite3.connect(f"{db.as_uri()}?mode=ro&immutable=1", uri=True)
+        ) as conn:
+            schema = conn.execute(
+                "SELECT name, sql FROM sqlite_master ORDER BY name"
+            ).fetchall()
+        return (
+            db.read_bytes(),
+            db.stat().st_mtime_ns,
+            schema,
+            sorted(path.name for path in db.parent.iterdir()),
+        )
+
+    cases = (
+        (
+            project_a,
+            root_a,
+            {},
+            (1200, 450, 2, 37, 0.625, 0.0023, 39),
+            ["handoff-0", "handoff-1"],
+        ),
+        (
+            project_a,
+            root_a,
+            {"run_id": "run-a"},
+            (1000, 400, 1, 30, 0.6, 0.0018, 31),
+            ["handoff-0"],
+        ),
+        (
+            project_a,
+            root_a,
+            {"agent_id": "agent-b"},
+            (200, 50, 1, 7, 0.75, 0.0004, 8),
+            ["handoff-1"],
+        ),
+        (
+            project_a,
+            root_a,
+            {"session_id": "sess-a"},
+            (1000, 400, 1, 30, 0.6, 0.0018, 31),
+            ["handoff-0"],
+        ),
+        (
+            project_a,
+            root_a,
+            {"run_id": "run-a", "session_id": "sess-b"},
+            (0, 0, 0, 0, 0.0, 0.0, 0),
+            [],
+        ),
+        (project_b, root_b, {}, (500, 100, 1, 17, 0.8, 0.0012, 18), ["handoff-2"]),
+    )
+    for project_id, root, query, expected, handoff_ids in cases:
+        server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
+        db = root / ".rush" / "telemetry" / "tokens.db"
+        before = fingerprint(db)
+        try:
+            assert read_memory_event_totals_readonly(
+                root, ("retrieval", "embedding")
+            ) == {
+                "retrieval": 91 if legacy else 145,
+                "embedding": 0,
+            }
+            status, body = _snapshot(base_url, project_id, cookie, "tokens", **query)
+            shared_summary = read_summary_readonly(root, project_id=project_id, **query)
+            after = fingerprint(db)
+            assert status == 200
+            assert after == before
+            actual = body["data"]["actual"]
+            assert (
+                actual["raw_tokens"],
+                actual["sent_tokens"],
+                actual["events_count"],
+                actual["by_memory_event_kind"]["retrieval"],
+            ) == ((0, 0, 0, 0) if legacy else expected[:4])
+            assert actual["by_memory_event_kind"] == {
+                "retrieval": 0 if legacy else expected[3],
+                "expansion": 0 if legacy else expected[6],
+                "packing": 0,
+                "handoff": 0,
+                "embedding": 0,
+            }
+            assert body["data"]["estimated_avoided"] == {
+                "tokens_saved": 0 if legacy else expected[0] - expected[1],
+                "compression_ratio": 0.0 if legacy else expected[4],
+                "dollar_savings_est": 0.0 if legacy else expected[5],
+            }
+            assert body["data"]["estimated_avoided"] == {
+                "tokens_saved": shared_summary["net_tokens_saved"],
+                "compression_ratio": shared_summary["compression_ratio"],
+                "dollar_savings_est": shared_summary["dollar_savings_est"],
+            }
+            assert [row["handoff_id"] for row in body["data"]["runs"]] == handoff_ids
+            assert body["data"]["export_rows"] == body["data"]["runs"]
+        finally:
+            server.shutdown()
+            server.server_close()
+
+
 def test_tokens_and_gain_tui_share_same_telemetry_computation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No duplicated savings calculator: the dashboard's `actual`/
-    `estimated_avoided` numbers and the TUI's `build_gain_panel` both derive
-    from the exact same `TelemetryStore.get_summary()` call."""
+    """Dashboard project totals share the telemetry savings computation;
+    the TUI uses that computation through its root-level usage reader."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
     telemetry = TelemetryStore(root)
-    telemetry.record_savings("review", raw_tokens=200, compressed_tokens=50)
+    telemetry.record_savings(
+        "review", raw_tokens=200, compressed_tokens=50, project_id=project_id
+    )
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
         status, body = _snapshot(base_url, project_id, cookie, "tokens")
         assert status == 200
-        dashboard_summary = TelemetryStore(root).get_summary()
+        dashboard_summary = telemetry.get_summary(project_id=project_id)
         assert (
             body["data"]["actual"]["raw_tokens"]
             == dashboard_summary["total_raw_tokens"]
@@ -1247,9 +1498,11 @@ def test_two_project_memory_and_token_isolation(
     )
     _seed_artifact(store_b, content={"note": "beta-only secretless"}, source="b-source")
     TelemetryStore(root_a).record_savings(
-        "review", raw_tokens=100, compressed_tokens=10
+        "review", raw_tokens=100, compressed_tokens=10, project_id=project_a
     )
-    TelemetryStore(root_b).record_savings("review", raw_tokens=999, compressed_tokens=1)
+    TelemetryStore(root_b).record_savings(
+        "review", raw_tokens=999, compressed_tokens=1, project_id=project_b
+    )
 
     snapshot_a = {
         "schema_version": 1,
@@ -1509,6 +1762,21 @@ def _tui_state(root: Path) -> TuiState:
     return TuiState(projects=[project])
 
 
+def _drain(state: TuiState, actions: Any) -> None:
+    """Pumps like `run_interactive_tui` until no memory request is in flight."""
+    deadline = time.monotonic() + 2
+    _pump(state, actions)
+    while state.memory_request is not None:
+        assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"
+        time.sleep(0.005)
+        _pump(state, actions)
+
+
+def _key(state: TuiState, key: str, actions: Any) -> None:
+    _dispatch_key(state, key, actions)
+    _drain(state, actions)
+
+
 def test_tui_memory_search_lists_real_results(tmp_path: Path) -> None:
     root = tmp_path / "proj"
     root.mkdir()
@@ -1519,13 +1787,13 @@ def test_tui_memory_search_lists_real_results(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
+    _key(state, "M", actions)
     assert state.mode == "memory"
-    _dispatch_key(state, "/", actions)
+    _key(state, "/", actions)
     assert state.mode == "memory_search"
     for ch in "widget":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
 
     assert state.mode == "memory"
     assert len(state.memory_items) == 1
@@ -1541,19 +1809,19 @@ def test_tui_memory_delete_preview_cancel_deletes_zero(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "doomed":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 2
 
-    _dispatch_key(state, " ", actions)  # select first row
-    _dispatch_key(state, "d", actions)  # preview delete
+    _key(state, " ", actions)  # select first row
+    _key(state, "d", actions)  # preview delete
     assert state.memory_pending_delete is not None
     assert len(state.memory_pending_delete["artifact_ids"]) == 1
 
-    _dispatch_key(state, "n", actions)  # cancel
+    _key(state, "n", actions)  # cancel
     assert state.memory_pending_delete is None
     assert "0 records removed" in state.memory_message
 
@@ -1570,22 +1838,22 @@ def test_tui_memory_delete_confirm_deletes_only_selected(tmp_path: Path) -> None
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "batch":  # matches both seeded rows
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 2
 
     doomed_index = next(
         i for i, item in enumerate(state.memory_items) if item["id"] == doomed.id
     )
     state.memory_selected_index = doomed_index
-    _dispatch_key(state, " ", actions)
-    _dispatch_key(state, "d", actions)
+    _key(state, " ", actions)
+    _key(state, "d", actions)
     assert state.memory_pending_delete["artifact_ids"] == [doomed.id]
 
-    _dispatch_key(state, "y", actions)
+    _key(state, "y", actions)
     assert state.memory_pending_delete is None
     assert "deleted 1 record" in state.memory_message
 
@@ -1601,14 +1869,15 @@ def test_tui_memory_promote_denied_without_corroboration(tmp_path: Path) -> None
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "lonely":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "p", actions)
+    _key(state, "p", actions)
+    _key(state, "y", actions)
     assert "promotion denied" in state.memory_message
     assert "insufficient_corroboration" in state.memory_message
 
@@ -1621,14 +1890,14 @@ def test_tui_memory_expand_shows_full_content(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "expand":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "x", actions)
+    _key(state, "x", actions)
     assert state.memory_expanded is not None
     decoded = base64.b64decode(state.memory_expanded["content_base64"]).decode("utf-8")
     assert "full body" in decoded
@@ -1644,18 +1913,19 @@ def test_tui_memory_edit_commits_new_content(tmp_path: Path) -> None:
     state = _tui_state(root)
     actions = default_scan_actions()
 
-    _dispatch_key(state, "M", actions)
-    _dispatch_key(state, "/", actions)
+    _key(state, "M", actions)
+    _key(state, "/", actions)
     for ch in "editable":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
     assert len(state.memory_items) == 1
 
-    _dispatch_key(state, "e", actions)
+    _key(state, "e", actions)
     assert state.mode == "memory_edit"
     for ch in "hello":
-        _dispatch_key(state, ch, actions)
-    _dispatch_key(state, "enter", actions)
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
+    _key(state, "y", actions)
 
     assert state.mode == "memory"
     assert state.memory_message == "edit applied"

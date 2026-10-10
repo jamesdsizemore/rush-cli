@@ -175,7 +175,17 @@ def test_review_aggregation_records_partial_child_evidence_and_baseline_freshnes
     )
 
     assert result["findings"][0]["freshness"] == "existing"
+    # Phase 70 T16 (S16.2/§3 item 3): every aggregation also carries the
+    # children's engine entries (none here) and the aggregate scope.
     assert result["metadata"] == {
+        "engines": [],
+        "scope": {
+            "version": 1,
+            "kind": "aggregate",
+            "coverage": "unavailable",
+            "requested_targets": [],
+            "logical_root": None,
+        },
         "aggregation": {
             "mode": "serial",
             "partial": True,

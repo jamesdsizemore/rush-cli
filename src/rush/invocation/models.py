@@ -53,6 +53,19 @@ class InvocationContext:
     # additive and defaulted, so every existing construction is unaffected.
     owner_instance_id: str = ""
     run_id: str = ""
+    # T8: verbatim input strings as the caller originally typed them, for
+    # diagnostics only -- never re-executed or used to recompute targets.
+    # Additive and defaulted, so every existing construction is unaffected.
+    # An empty tuple means the caller did not supply an original -- this is
+    # explicitly "unavailable", never reconstructed from resolved targets.
+    original_requested_targets: tuple[str, ...] = ()
+    invocation_start_cwd: Path | None = None
+    # T8: the registered root the caller declared (MCP `project`/`project_id`),
+    # `None` when none was declared.
+    declared_root: Path | None = None
+    # T10 (R10.5): the contained targets built from the request's `files` list
+    # (a subset of `targets`), `None` when the request carried no `files`.
+    file_targets: tuple[PhysicalTarget, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,8 +90,24 @@ class ScopeWideningError(InvocationError):
     """Raised when target resolution widens execution scope beyond boundary."""
 
 
+class AmbiguousRootError(InvocationError):
+    """Raised when an explicit registered root conflicts with the requested target."""
+
+
 class UndeclaredInputError(InvocationError):
     """Raised when input artifacts or parameters are undeclared."""
+
+
+class InvalidTargetError(InvocationError):
+    """T9: a target that is not a usable path at all (e.g. an embedded NUL).
+    Input syntax, not containment: transports render it as a `TARGET_INVALID`
+    result instead of raising."""
+
+    code = "TARGET_INVALID"
+
+    def __init__(self, message: str, target: str = "") -> None:
+        super().__init__(message)
+        self.target = target
 
 
 class SignatureAdaptationError(InvocationError):
@@ -112,8 +141,10 @@ class ProviderEgressError(InvocationError):
 
 
 __all__ = [
+    "AmbiguousRootError",
     "CacheDecision",
     "CachePolicy",
+    "InvalidTargetError",
     "InvocationContext",
     "InvocationError",
     "OperationKind",

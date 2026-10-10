@@ -6,9 +6,18 @@ The `provider_resume` operation accepts a checkpoint name and supported provider
 
 ## `rush_continuity`
 
-Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional checkpoint `name`, `files`, and `allow_cache_write`. The result is canonical JSON, with denied writes and absent checkpoints represented by `status: "skipped"`.
+Arguments: project `path`; `operation` (`save`, `list`, `restore`); optional checkpoint `name`, `files`, and `allow_cache_write`. The result is canonical JSON, with denied writes represented by `status: "skipped"` and a restore of an absent checkpoint by `status: "error"`.
 
-`uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`.
+`uv run rush mcp serve` registers each catalog tool through the shared invocation executor. Catalog hyphens become underscores in MCP names, for example `rush_semantic_drift` and `rush_ai_eval`. `rush mcp serve --profile core|full` (Phase 70) registers only `rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, and `rush_memory` for `core`, or every tool below for `full` (the default); a call naming a tool outside the running profile returns "Unknown tool".
+
+### `rush_check` (Phase 70)
+Before commit/after edits: format-check, lint, typecheck, dead, slop, and test at `path`. The test step runs only with `allow_build`; otherwise it is skipped and the result is never `ok` (`warn` if every other step passes). Accepts `fail_fast` (default `false`), the seven permission flags, and the common `project`/`result_view`/`limit`/`max_bytes`/`no_cache` fields below.
+
+### `rush_status` (Phase 70)
+Call first each session: read-only, no grant required. Reports `path`'s project setup, engines, scans, results, agents, and memory state without changing anything. `operation: "status"` (default) or `"result"` (reads a stored result via `result_handle`, `view: "result"|"bytes"`, `cursor`, `offset`, and the common `limit`/`max_bytes` fields); also accepts `session_id` and `project`.
+
+### Truthful descriptions and server instructions (Phase 70 T5)
+Core `mcp_description` text and the server's own `instructions` field (`build_server_instructions` in `src/rush/mcp.py`) share one contract and never claim more than a tool verifies: `rush_check`'s test step runs only with `allow_build`, else it is skipped and the check is never `ok`; `rush_status` states plainly that agent registration is not verified activity; `rush_review` states that its engines are deterministic heuristics and that `use_llm=true` sends the heuristic findings to a configured external LLM provider, with no Rush grant gating that call; `rush_memory` states that reads need a non-empty `session_allowlist` and writes need `allow_cache_write`. The `instructions` text also varies by connected profile (`core`, `full`, or the fixed restricted memory-session text) and lists exactly that profile's registered tool names.
 
 ## Common result
 
@@ -17,6 +26,8 @@ Catalog tools return canonical `ToolResultV1` data (`schema_version: "1.0.0"`) d
 ## Inputs
 
 Catalog wrappers commonly accept `path`, permission flags, and tool-specific options. Defaults are false for permission flags. Inspect the generated MCP schema before invocation; not every tool accepts every field.
+
+Most catalog tools also accept (Phase 70): `project` (registered project ID or root path; relative paths in the call resolve against it instead of the server-start working directory), `result_view` (`"full"`, the default, returns the whole result; `"compact"` stores it, requires `allow_cache_write`, and returns a bounded page and handle), `limit` (findings per page, 1-50, default 50), `max_bytes` (size budget of the whole serialized response, 4096-65536 bytes, default 32768), and `no_cache` (bypass the result cache; not allowed with `result_view="compact"`).
 
 ```json
 {
@@ -50,6 +61,7 @@ At baseline `997b56e`, live `build_server().list_tools()` returns 74 registered 
 - `rush_apply_fix`: Applies validated unified diffs through the current patch path. Invocation-owned restoration remains required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--real-isolated-patch-application-f05-f2425-f43); do not treat current broad cleanup as safe promotion evidence.
 - `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
 - `rush_memory` (Phase 61): `MemoryTool`'s `ask`/`write`/`promote`/`list`/`recall`/`maintain` operations over the unified `TypedArtifactStore`; returns `ToolResultV1` with `status="skipped"` for denied/absent cases, matching the `rush_session_context` precedent — same registration path (`ALL_TOOLS`/`TOOL_SPECS`), not a different shape.
+- `rush_project`, `rush_scan`, `rush_memory` publish a strict top-level object schema (`additionalProperties: false`, a full `operation` enum, exact per-field types/bounds). `rush_project`/`rush_scan` accept the legacy `{"request": {...}}` envelope or named top-level fields, never both; a call mixing the two forms, sending an unknown key, an explicit `null` on a field that forbids it, a non-boolean grant, or a `schema_version` other than the integer `1` is rejected before any project resolution, reservation, lock, or write — `rush_project`/`rush_scan` as `error.code: "INVALID_REQUEST"`, `rush_memory` as `code: "E_INPUT"`. On `rush_memory`, an empty `session_allowlist` on `ask`/`recall`/`list` is rejected the same way. The CLI, TUI, and dashboard enforce the same strict checks against the same request models.
 - `rush_guard`: Validates shell command safety and confines path traversal.
 - `rush_token`: Fast BPE token counting and AST outline compression.
 - `rush_codegraph`: Explores polyglot Code Property Graph and extracts verbatim symbol slices.

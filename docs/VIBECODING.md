@@ -2,7 +2,7 @@
 
 Welcome to **Vibecoding with Rush**.
 
-If you are a modern builder who codes by talking to AI models—prompting **Cursor, Claude Code, Cline, Windsurf, ChatGPT, or GitHub Copilot** to manifest full-stack apps, APIs, and tools at the speed of thought—you are a **Vibecoder**.
+If you are a modern builder who codes by talking to AI models—prompting **Claude Code, Cline, Windsurf, ChatGPT, or GitHub Copilot** to manifest full-stack apps, APIs, and tools at the speed of thought—you are a **Vibecoder**.
 
 Vibecoding is the most exhilarating way to build software in human history. You can go from a napkin sketch to a deployed product in an afternoon.
 
@@ -44,7 +44,7 @@ With Rush running in the background:
 |---|---|
 | 📖 **[What is Vibecoding with Rush?](vibecoding/what-is-vibecoding-with-rush.md)** | The philosophy of high-velocity creative flow paired with rock-solid automated quality. |
 | 🔄 **[The Vibecoder Workflow](vibecoding/the-vibecoder-workflow.md)** | A practical, step-by-step walkthrough of a friction-free vibecoding session. |
-| 🔌 **[Setting Up Your AI Agent](vibecoding/setting-up-your-agent.md)** | 2-minute setup guides for Cursor, Claude Code, Cline, Windsurf, and Roo Code via FastMCP. |
+| 🔌 **[Setting Up Your AI Agent](vibecoding/setting-up-your-agent.md)** | 2-minute setup guides for Claude Code, Cline, Windsurf, and Roo Code via FastMCP. |
 | 🧹 **[Slop-Busting & Hallucination Defense](vibecoding/slop-busting-and-hallucination-defense.md)** | How `rush slop` and `rush tdd` purge AI filler, empty stubs, and phantom dependencies. |
 | ⚡ **[Instant Fix & Auto-Remediation](vibecoding/instant-fix-and-auto-remediation.md)** | How `rush fix` and `rush watch` eliminate manual formatting and import cleanup forever. |
 | 📉 **[Token Diet for Vibecoders](vibecoding/token-diet-for-vibecoders.md)** | How `rush token` and `rush codegraph` slash prompt token usage by 70–90%. |
@@ -66,7 +66,7 @@ rush governance sync
 rush watch .
 ```
 
-### 3. Open your favorite AI IDE (Cursor / Cline / Claude) and start vibing!
+### 3. Open your favorite AI IDE (Cline / Claude) and start vibing!
 Rush will quietly watch your files, auto-format on save, alert your AI to any broken tests, and keep your project spotless while you build.
 
 ## Vibecoding with Context Intelligence (Phases 41–43)

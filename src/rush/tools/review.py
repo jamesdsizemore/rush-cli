@@ -15,6 +15,7 @@ Heuristics only — no LLM call unless --llm=True AND env key set.
 
 from __future__ import annotations
 
+import os
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -51,12 +52,14 @@ from rush.review.results import (
     assemble_review_result,
     build_empty_review_result,
     build_error_review_result,
+    review_scope_v1,
 )
 
 from ..memory.retrieval import SourceValidationMemo, defended_recall
 from ..memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import now_ms
+from .routing import attach_memory_attribution, memory_block, memory_receipt
 
 # P62.2: recall() fails closed without a session_allowlist (Phase 61 §9 P61.9) — mirrors
 # `token_economy/memory_cache_gate.py`'s precedent of allowlisting the known writer(s) for
@@ -96,36 +99,75 @@ def _format_memory_citation(
     )
 
 
-def _recall_memory_citations(targets: list[Path], root: Path) -> list[Finding]:
+def _memory_root(path: Path) -> Path | None:
+    """T19 R19.3/R19.4: the project whose store review reads. Inside a staged
+    scan attempt that is the live project (`staging.original_root`), never the
+    temporary copy; otherwise the target's T8 logical root, never its parent.
+    `None` when no root can be selected: review then recalls nothing."""
+    from ..engines.staging import active_staging
+    from ..invocation.models import InvocationError
+    from ..invocation.targets import resolve_logical_root
+
+    staging = active_staging()
+    if staging is not None:
+        return staging.original_root
+    try:
+        return Path(resolve_logical_root(Path(os.path.abspath(path))))
+    except (InvocationError, OSError, ValueError):
+        return None
+
+
+def _recall_memory_citations(
+    targets: list[Path], root: Path | None
+) -> tuple[list[Finding], list[dict[str, Any]]]:
     """Cite prior failure/architectural-decision memory matching each reviewed file's name.
 
     MC04 §9.0: one `defended_recall()` query per (target, subject) pair — never the old
     `search()`-then-`recall()` double query — sharing one `SourceValidationMemo` across the
     whole run, so N reviewed targets/subjects that cite the same backing source file hash/
     API-diff it once, not once per citation.
+
+    T19: reads through a read-only store (no directory, DB, sidecar or
+    migration is created; an absent or older store recalls nothing) and
+    returns a `recall` receipt for every non-stale artifact that produced a
+    citation.
     """
-    if not targets:
-        return []
-    store = TypedArtifactStore(root)
+    if not targets or root is None:
+        return [], []
+    store, _state = TypedArtifactStore.open_readonly_view(root)
+    if store is None:
+        return [], []
     memo = SourceValidationMemo()
     findings: list[Finding] = []
+    used: list[dict[str, Any]] = []
     memory_sources: tuple[tuple[MemorySubject, list[str]], ...] = (
         ("failure", _FAILURE_MEMORY_SOURCES),
         ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
     )
-    for target in targets:
-        for subject, sources in memory_sources:
-            artifacts: list[MemoryArtifact] = []
-            # Optional citations must never expose content from a failed recall.
-            with suppress(Exception):
-                artifacts = defended_recall(
-                    store, subject, target.name, sources, memo=memo
-                )
-            for artifact in artifacts:
-                if artifact.stale:
-                    continue
-                findings.append(_format_memory_citation(target, subject, artifact))
-    return findings
+    try:
+        for target in targets:
+            for subject, sources in memory_sources:
+                artifacts: list[MemoryArtifact] = []
+                # Optional citations must never expose content from a failed recall.
+                with suppress(Exception):
+                    artifacts = defended_recall(
+                        store, subject, target.name, sources, memo=memo
+                    )
+                for artifact in artifacts:
+                    if artifact.stale:
+                        continue
+                    findings.append(_format_memory_citation(target, subject, artifact))
+                    used.append(
+                        memory_receipt(
+                            artifact.id,
+                            artifact.artifact_version,
+                            artifact.source,
+                            "recall",
+                        )
+                    )
+    finally:
+        store.close()
+    return findings, used
 
 
 def _extract_review_config(
@@ -193,11 +235,9 @@ class ReviewTool(ToolFn):
 
     @property
     def mcp_description(self) -> str:
-        return (
-            "Review code at <path> for size, TODO density, missing docstrings, "
-            "naming, complexity. Returns {status, findings[], summary}. "
-            "Default: heuristic. Pass use_llm=true to call configured model."
-        )
+        from rush.catalog import TOOL_SPECS
+
+        return TOOL_SPECS["review"].mcp_description
 
     def __call__(
         self,
@@ -233,6 +273,14 @@ class ReviewTool(ToolFn):
             targets, scope = collect_reviewable_files(path, changed_files=changed_files)
         except ValueError as error:
             return build_error_review_result(str(error), start)
+        scope = review_scope_v1(
+            scope,
+            root=root,
+            targets=targets,
+            requested_file_count=len(targets)
+            if changed_files is None
+            else len(changed_files),
+        )
 
         if not targets:
             return build_empty_review_result(path, scope, start)
@@ -240,7 +288,8 @@ class ReviewTool(ToolFn):
         findings = _evaluate_target_heuristics(
             targets, root, max_lines, markers, exclude
         )
-        findings.extend(_recall_memory_citations(targets, root))
+        citations, used = _recall_memory_citations(targets, _memory_root(path))
+        findings.extend(citations)
 
         graft_findings, graft_state = _resolve_graft_findings(
             path, use_graft, graft_provider
@@ -250,13 +299,16 @@ class ReviewTool(ToolFn):
         review_kind, review_provider, llm_findings = apply_llm_review(findings, use_llm)
         findings.extend(llm_findings)
 
-        return assemble_review_result(
-            findings,
-            start_ms=start,
-            scope=scope,
-            graft_state=graft_state,
-            review_kind=review_kind,
-            review_provider=review_provider,
+        return attach_memory_attribution(
+            assemble_review_result(
+                findings,
+                start_ms=start,
+                scope=scope,
+                graft_state=graft_state,
+                review_kind=review_kind,
+                review_provider=review_provider,
+            ),
+            memory_block(used=used),
         )
 
 
