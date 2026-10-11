@@ -309,6 +309,19 @@ def test_is_test_runner_counts_npm_test_runners_not_aislop():
     assert not _is_aislop_npm_spawn(["npx", "vitest"])
 
 
+@pytest.fixture
+def _no_cached_aislop(tmp_path, monkeypatch):
+    """An empty npm cache for this test only. With the session cache
+    (conftest `_shared_download_cache`) holding aislop, aislop 0.16.1's
+    unbound pip-audit reports the host Python environment's vulnerable
+    packages at `error` (aislop.py `external_environment`), so the slop step
+    and the check would `fail` depending on earlier tests and the machine.
+    Offline npm with no cached package keeps the slop step out of the result
+    these tests assert."""
+    monkeypatch.setenv("npm_config_cache", str(tmp_path / "npm-cache"))
+
+
+@pytest.mark.usefixtures("_no_cached_aislop")
 def test_check_tool_skips_test_step_subprocess_without_allow_build(
     monkeypatch, tmp_path
 ):
@@ -678,6 +691,7 @@ def _child(result, tool):
     return next(child for child in children if child["tool"] == tool)
 
 
+@pytest.mark.usefixtures("_no_cached_aislop")
 @pytest.mark.parametrize("profile", ["core", "full"])
 def test_check_example_warns_with_denied_test_step_and_runs_it_when_granted(
     profile, tmp_path, monkeypatch
