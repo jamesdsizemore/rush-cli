@@ -221,15 +221,26 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
         "request",
     ),
     ("preference", {"request": {"action": "resolve", "key": "k"}}, "request"),
+    # 72-T06: the two strict schema-version-2 operations (their only request model).
+    ("history", {"request": {"schema_version": 2, "artifact_id": "a1"}}, "request"),
+    ("explain", {"request": {"schema_version": 2, "artifact_id": "a1"}}, "request"),
 ]
-assert len(MEMORY_OPERATIONS) == 23
+assert len(MEMORY_OPERATIONS) == 25
 
 
 def test_t06_memory_operations_table_matches_valid_operations():
-    """72-T05 D11: the table covers exactly the 23 `VALID_OPERATIONS`, `preference`
-    included. A test, not a module assert, so a missing operation fails this id and
-    leaves every other id of the file collectable."""
-    assert len(_MEMORY_VALID_OPERATIONS) == 23
+    """72-T05 D11: the table covers exactly the `VALID_OPERATIONS`, `preference`
+    included (25 with 72-T06's `history` and `explain`). A test, not a module assert,
+    so a missing operation fails this id and leaves every other id of the file
+    collectable."""
+    assert len(_MEMORY_VALID_OPERATIONS) == 25
+    assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
+
+
+def test_t06_memory_operations_fixture_covers_every_valid_operation() -> None:
+    """72-T06: the fixture lists exactly the operations `MemoryTool` accepts. This was a
+    module-level assert; as a test it keeps the module collectable before the two new
+    operations exist, so the unrelated guards in this file still run."""
     assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
 
 

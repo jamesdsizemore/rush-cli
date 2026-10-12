@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Callable, Collection, Iterable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -305,6 +305,7 @@ def add_relation(
     access: MemoryAccess | None = None,
     now: float | None = None,
     memo: SourceValidationMemo | None = None,
+    receipt_writer: Callable[[sqlite3.Connection, dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """MC03 §6.3: atomically inserts one versioned evidence edge. Returns `{"code": ...}`
     (never raises for a business-rule rejection) with `"OK"` plus the new row's `sequence` on
@@ -321,6 +322,9 @@ def add_relation(
     to its declared owner). Every endpoint check runs inside one `BEGIN IMMEDIATE`
     transaction before the INSERT, and the access is rechecked before the commit, so a
     rejected edge never leaves a row.
+
+    72-T06 D29: `receipt_writer` records the v2 `link` receipt inside that same
+    transaction, after the insert and before commit.
     """
     refused = relation_input_error(
         source_id=source_id,
@@ -363,6 +367,7 @@ def add_relation(
                     access=access,
                     moment=moment,
                     memo=memo,
+                    receipt_writer=receipt_writer,
                 )
             except BaseException:
                 conn.rollback()
@@ -382,6 +387,7 @@ def _insert_relation(
     access: MemoryAccess | None,
     moment: float,
     memo: SourceValidationMemo,
+    receipt_writer: Callable[[sqlite3.Connection, dict[str, Any]], Any] | None = None,
 ) -> dict[str, Any]:
     """B4 inside the open transaction: rows, shared eligibility, legacy owner rule,
     versions, cycle, INSERT, recheck. The caller rolls back any non-`OK` result."""
@@ -442,7 +448,21 @@ def _insert_relation(
     failure = recheck_failure(decide_with)
     if failure is not None:
         return _refusal(*failure)
-    return {"code": "OK", "sequence": cur.lastrowid}
+    sequence = cur.lastrowid
+    if receipt_writer is not None:
+        receipt_writer(
+            conn,
+            {
+                "artifact_id": source_id,
+                "artifact_version": source_version,
+                "result_refs": [
+                    {"artifact_id": source_id, "artifact_version": source_version},
+                    {"artifact_id": target_id, "artifact_version": target_version},
+                ],
+                "result": {"code": "OK", "sequence": sequence},
+            },
+        )
+    return {"code": "OK", "sequence": sequence}
 
 
 def _measure_related(items: list[dict[str, Any]], encoding: str) -> tuple[int, int]:

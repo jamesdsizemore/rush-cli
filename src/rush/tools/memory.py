@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import functools
+import hashlib
 import json
+import os
 import sqlite3
 import time
 import unicodedata
@@ -46,6 +49,8 @@ from ..memory.retrieval import (
     MemoryAccess,
     RouteDenial,
     SourceValidationMemo,
+    _access_allows,
+    _count_tokens,
     _fit_optional,
     _measure_page,
     evaluate_artifact_visibility,
@@ -58,6 +63,7 @@ from ..memory.retrieval import (
     recall_page,
     recheck_failure,
     route_access,
+    v2_reference,
 )
 from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
 from ..memory.retrieval import _expand as _expand_body
@@ -88,8 +94,9 @@ from ..memory.store import (
     readonly_view_reason,
     sqlite_integer_in_range,
     store_generation,
+    v2_operation_id,
 )
-from ..memory.trust import default_entry_tier
+from ..memory.trust import default_entry_tier, evaluate_conflict
 from ..permissions import ExecutionPermissions, check_permissions
 from ..token_economy.telemetry import TelemetryStore
 from .base import ToolFn, ToolResult
@@ -119,6 +126,8 @@ MemoryOperation = Literal[
     "edit",
     "archive",
     "preference",
+    "history",
+    "explain",
 ]
 SourceKind = Literal["local_tool", "cross_tool_handoff", "human_derived"]
 
@@ -146,6 +155,8 @@ VALID_OPERATIONS = {
     "edit",
     "archive",
     "preference",
+    "history",
+    "explain",
 }
 # 72-T05 §3.11: the task context of the `run` in progress. Every access a handler
 # builds reads it (`task_id=_TASK_ID.get()`); `run` sets and resets it.
@@ -373,6 +384,127 @@ _READ_STATE_CODES = {
 }
 
 
+# --- 72-T06: schema_version 2 constants ----------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True, repr=False)
+class _Unset:
+    """A legacy `run`/`__call__` parameter the caller did not supply. Presence, not
+    value, decides a mixed v2 form: an explicit `query=""` beside `schema_version` is
+    still a legacy field. (A field-less dataclass, so a signature-derived schema can
+    serialize it as a default.)"""
+
+    def __repr__(self) -> str:
+        return "<unset>"
+
+    # A schema builder deep-copies defaults; the sentinel stays one object.
+    def __copy__(self) -> _Unset:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> _Unset:
+        return self
+
+
+_UNSET: Any = _Unset()
+# The public (and legacy-branch) default of every sentinel-defaulted parameter.
+_LEGACY_DEFAULTS: dict[str, Any] = {
+    "subject": None,
+    "query": "",
+    "session_allowlist": None,
+    "content": None,
+    "source": "",
+    "symbol_ref": None,
+    "source_kind": "local_tool",
+    "user_stated": False,
+    "candidate_sources": None,
+    "task": None,
+    "batch_size": 500,
+    "include_archived": False,
+    "owner_scope": None,
+}
+_V2_READ_OPERATIONS = frozenset({"ask", "recall", "list"})
+_V2_MUTATIONS = frozenset(
+    {"write", "edit", "archive", "delete", "promote", "maintain", "link"}
+)
+_V2_OPERATIONS = (
+    _V2_READ_OPERATIONS
+    | _V2_MUTATIONS
+    | {
+        "expand",
+        "related",
+        "history",
+        "explain",
+    }
+)
+# 72-T05 decision: overlay content changes go through the preference route.
+_OVERLAY_PREFERENCE_ONLY = frozenset({"write", "edit", "promote", "link", "maintain"})
+# D22: the operations a restricted memory-session bridge may forward.
+_BRIDGE_OPERATIONS = frozenset({"receive", "expand", "related", "resume"})
+# D38 explain buckets.
+_SUPPORTING_KINDS = frozenset(
+    {"validated_by", "implements", "depends_on", "caused_by", "fixed_by"}
+)
+_ATTEMPT_SUBJECTS = frozenset({"failure", "episodic"})
+
+
+def _is_v2_call(operation: Any, request: Any) -> bool:
+    """72-T06: a schema_version 2 call (`history`/`explain` exist only in v2)."""
+    if not isinstance(operation, str):
+        return False
+    if operation in ("history", "explain"):
+        return True
+    return (
+        operation in _V2_OPERATIONS
+        and isinstance(request, dict)
+        and "schema_version" in request
+    )
+
+
+def _v2_raw(
+    operation: str,
+    code: str,
+    *,
+    items: Any = (),
+    next_cursor: str | None = None,
+    complete: bool = False,
+    unknowns: Any = (),
+    data: dict[str, Any] | None = None,
+    **named: Any,
+) -> dict[str, Any]:
+    """The schema_version 2 result envelope (`ToolResult.raw`)."""
+    return {
+        "schema_version": 2,
+        "operation": operation,
+        "code": code,
+        "items": list(items),
+        "next_cursor": next_cursor,
+        "complete": complete,
+        "unknowns": sorted(set(unknowns)),
+        "data": dict(data or {}),
+        **named,
+    }
+
+
+@dataclasses.dataclass(frozen=True)
+class _V2Call:
+    """One validated schema_version 2 call."""
+
+    started: float
+    root: Path
+    operation: str
+    req: Any
+    granted: ExecutionPermissions
+    task_id: str | None
+    attribution: dict[str, Any]
+
+    @property
+    def echo(self) -> dict[str, Any]:
+        """The caller's reviewed request, returned unchanged on a refusal."""
+        return cast(
+            dict[str, Any], self.req.model_dump(mode="json", exclude_unset=True)
+        )
+
+
 class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
@@ -394,20 +526,22 @@ class MemoryTool(ToolFn):
         self,
         path: Path,
         operation: MemoryOperation = "ask",
-        subject: MemorySubject | None = None,
-        query: str = "",
-        session_allowlist: list[str] | None = None,
-        content: dict[str, Any] | None = None,
-        source: str = "",
-        symbol_ref: str | None = None,
-        source_kind: SourceKind = "local_tool",
-        user_stated: bool = False,
-        candidate_sources: list[str] | None = None,
-        task: MaintenanceTask | None = None,
-        batch_size: int = 500,
-        include_archived: bool = False,
-        owner_scope: dict[str, str] | OwnerScope | None = None,
-        sources: list[str] | None = None,
+        # 72-T06: legacy parameters default to a presence sentinel (public defaults:
+        # `_LEGACY_DEFAULTS`); only supplied ones reach `run`.
+        subject: MemorySubject | None = _UNSET,
+        query: str = _UNSET,
+        session_allowlist: list[str] | None = _UNSET,
+        content: dict[str, Any] | None = _UNSET,
+        source: str = _UNSET,
+        symbol_ref: str | None = _UNSET,
+        source_kind: SourceKind = _UNSET,
+        user_stated: bool = _UNSET,
+        candidate_sources: list[str] | None = _UNSET,
+        task: MaintenanceTask | None = _UNSET,
+        batch_size: int = _UNSET,
+        include_archived: bool = _UNSET,
+        owner_scope: dict[str, str] | OwnerScope | None = _UNSET,
+        sources: list[str] | None = _UNSET,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
         allow_build: bool = False,
@@ -474,6 +608,160 @@ class MemoryTool(ToolFn):
         path: Path,
         *,
         operation: MemoryOperation = "ask",
+        subject: MemorySubject | None = _UNSET,
+        query: str = _UNSET,
+        session_allowlist: list[str] | None = _UNSET,
+        content: dict[str, Any] | None = _UNSET,
+        source: str = _UNSET,
+        symbol_ref: str | None = _UNSET,
+        source_kind: SourceKind = _UNSET,
+        user_stated: bool = _UNSET,
+        candidate_sources: list[str] | None = _UNSET,
+        task: MaintenanceTask | None = _UNSET,
+        batch_size: int = _UNSET,
+        include_archived: bool = _UNSET,
+        owner_scope: dict[str, str] | OwnerScope | None = _UNSET,
+        sources: list[str] | None = _UNSET,
+        permissions: ExecutionPermissions | None = None,
+        request: dict[str, Any] | None = None,
+        receipt_operation_ids: dict[str, str] | None = None,
+        invocation_id: str | None = None,
+        project_id: str | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+        trust_filter: str | None = None,
+        source_filter: str | None = None,
+        freshness_filter: str | None = None,
+        archived_filter: bool | None = None,
+        owner_filter: str | None = None,
+        task_id: str | None = None,
+        bridge_authority: _BridgeAuthority | None = None,
+        frame: compact.FrameContext | None = None,
+    ) -> ToolResult:
+        """The one canonical memory route (CLI, MCP, dashboard, TUI).
+
+        72-T06: a `schema_version` 2 request (and every `history`/`explain`) runs the
+        strict v2 path; a legacy parameter supplied beside it -- even at its legacy
+        default value -- is a mixed form (`E_INPUT`). Legacy calls keep their exact
+        behavior, with omitted parameters at their legacy defaults.
+        `bridge_authority` is internal (D22): the restricted session bridge's resolved
+        access and the session's selected ids."""
+        supplied: dict[str, Any] = {
+            name: value
+            for name, value in (
+                ("subject", subject),
+                ("query", query),
+                ("session_allowlist", session_allowlist),
+                ("content", content),
+                ("source", source),
+                ("symbol_ref", symbol_ref),
+                ("source_kind", source_kind),
+                ("user_stated", user_stated),
+                ("candidate_sources", candidate_sources),
+                ("task", task),
+                ("batch_size", batch_size),
+                ("include_archived", include_archived),
+                ("owner_scope", owner_scope),
+                ("sources", sources),
+            )
+            if not isinstance(value, _Unset)
+        }
+        filters: dict[str, Any] = {
+            "trust_filter": trust_filter,
+            "source_filter": source_filter,
+            "freshness_filter": freshness_filter,
+            "archived_filter": archived_filter,
+            "owner_filter": owner_filter,
+        }
+        attribution: dict[str, Any] = {
+            "invocation_id": invocation_id,
+            "project_id": project_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "session_id": session_id,
+        }
+        if not isinstance(operation, str):
+            # An unhashable or non-string operation is an unsupported operation.
+            return self._result(
+                time.monotonic(),
+                "error",
+                f"Unsupported memory operation: {operation!r}.",
+                operation=str(operation),
+            )
+        carries_version = isinstance(request, dict) and "schema_version" in request
+        if bridge_authority is not None and carries_version:
+            return self._v2_wrap(
+                time.monotonic(),
+                str(operation),
+                _v2_raw(
+                    str(operation),
+                    "E_INPUT",
+                    data={
+                        "field": "schema_version",
+                        "message": "the restricted memory session takes legacy "
+                        "requests only",
+                    },
+                ),
+            )
+        if (
+            carries_version
+            and operation in VALID_OPERATIONS
+            and operation not in _V2_OPERATIONS
+        ):
+            return self._v2_wrap(
+                time.monotonic(), str(operation), _non_v2_rejection(str(operation))
+            )
+        if _is_v2_call(operation, request):
+            started = time.monotonic()
+            if bridge_authority is not None:
+                return self._v2_wrap(
+                    started,
+                    str(operation),
+                    _v2_raw(
+                        str(operation),
+                        "E_INPUT",
+                        data={
+                            "field": "schema_version",
+                            "message": "the restricted memory session takes legacy "
+                            "requests only",
+                        },
+                    ),
+                )
+            top_level: dict[str, Any] = dict(supplied)
+            if receipt_operation_ids is not None:
+                top_level["receipt_operation_ids"] = receipt_operation_ids
+            top_level.update({k: v for k, v in filters.items() if v is not None})
+            if task_id is not None:
+                top_level["task_id"] = task_id
+            return self._v2_dispatch(
+                started,
+                path,
+                str(operation),
+                request,
+                top_level,
+                permissions or ExecutionPermissions(),
+                task_id=task_id,
+                attribution=attribution,
+            )
+        return self._run_legacy(
+            path,
+            operation=operation,
+            **supplied,
+            permissions=permissions,
+            request=request,
+            receipt_operation_ids=receipt_operation_ids,
+            **attribution,
+            **filters,
+            bridge=bridge_authority,
+            frame=frame,
+        )
+
+    def _run_legacy(
+        self,
+        path: Path,
+        *,
+        operation: MemoryOperation = "ask",
         subject: MemorySubject | None = None,
         query: str = "",
         session_allowlist: list[str] | None = None,
@@ -517,7 +805,7 @@ class MemoryTool(ToolFn):
         # 72-T01 D22: internal-only (never on `__call__`, never read from a request):
         # the restricted bridge's `(sender access, selected ids)`. `expand`, `related`
         # and `resume` then read under that access, limited to the selected ids.
-        bridge_authority: _BridgeAuthority | None = None,
+        bridge: _BridgeAuthority | None = None,
         # 72-T02 D35: the response's transport frame; omitted, the frame a transport
         # adapter published (`compact.MEMORY_FRAME`), else payload measurement.
         frame: compact.FrameContext | None = None,
@@ -587,6 +875,22 @@ class MemoryTool(ToolFn):
         filter_error = self._list_filter_error(operation, request, list_filters)
         if filter_error:
             return self._result(started, "error", filter_error, operation=operation)
+        reserved = _reserved_receipt_field(operation, request, receipt_operation_ids)
+        if reserved is not None:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {
+                    "field": reserved,
+                    "reason": "reserved_receipt_namespace",
+                    "message": f"{reserved} values starting 'v2:' are reserved.",
+                },
+            )
+        if bridge is not None and operation not in _BRIDGE_OPERATIONS:
+            return self._denied(
+                started, operation, RouteDenial("E_PERMISSION", "operation_not_granted")
+            )
 
         dispatch_table = {
             "ask": lambda: (
@@ -705,7 +1009,7 @@ class MemoryTool(ToolFn):
                 agent_id=agent_id,
                 session_id=session_id,
                 owner_scope=owner_scope,
-                bridge=bridge_authority,
+                bridge=bridge,
                 frame=frame,
             ),
             "write": lambda: self._run_write(
@@ -748,12 +1052,7 @@ class MemoryTool(ToolFn):
             ),
             "link": lambda: self._link(started, root, granted, request, owner_scope),
             "related": lambda: self._related(
-                started,
-                root,
-                session_allowlist,
-                request,
-                owner_scope,
-                bridge=bridge_authority,
+                started, root, session_allowlist, request, owner_scope, bridge=bridge
             ),
             "consolidate": lambda: self._consolidate(
                 started, root, session_allowlist, granted, request, owner_scope
@@ -771,7 +1070,7 @@ class MemoryTool(ToolFn):
                 request,
                 "resume",
                 owner_scope,
-                bridge=bridge_authority,
+                bridge=bridge,
             ),
             "intent": lambda: self._intent(
                 started, root, granted, request, owner_scope
@@ -827,6 +1126,1128 @@ class MemoryTool(ToolFn):
                 metadata["scope"] = _frame_scope(frame)
                 result["metadata"] = metadata
         return result
+
+    # --- 72-T06: schema_version 2 -------------------------------------------------
+
+    def _v2_wrap(
+        self, started: float, operation: str, raw: dict[str, Any]
+    ) -> ToolResult:
+        code = str(raw.get("code"))
+        return ToolResult(
+            tool=self.name,
+            engine=None,
+            engine_version=None,
+            status=_CODE_STATUS.get(code, "error"),  # type: ignore[typeddict-item]
+            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+            summary=f"memory {operation} returned {code}.",
+            findings=[],
+            raw=raw,
+            metadata={"operation": operation},
+        )
+
+    def _v2_out(self, call: _V2Call, code: str, **fields: Any) -> ToolResult:
+        """A v2 result. A mutation refusal or conflict returns the reviewed request."""
+        data = dict(fields.pop("data", None) or {})
+        if code != "OK" and call.operation in _V2_MUTATIONS:
+            data["request"] = call.echo
+        return self._v2_wrap(
+            call.started,
+            call.operation,
+            _v2_raw(call.operation, code, data=data, **fields),
+        )
+
+    def _v2_dispatch(
+        self,
+        started: float,
+        path: Any,
+        operation: str,
+        request: Any,
+        top_level: dict[str, Any],
+        granted: ExecutionPermissions,
+        *,
+        task_id: str | None,
+        attribution: dict[str, Any],
+    ) -> ToolResult:
+        """Strict validation (the MCP model), path, then the operation."""
+        from ..mcp_support.request_models import validate_memory_v2
+
+        req, rejection = validate_memory_v2(operation, request, top_level)
+        if rejection is not None:
+            return self._v2_wrap(started, operation, rejection)
+        try:
+            root = Path(path).resolve()
+            os.fsencode(root)  # an unencodable path fails here, before any OS call
+        except (TypeError, ValueError, OSError, RuntimeError):
+            return self._v2_wrap(
+                started,
+                operation,
+                _v2_raw(
+                    operation,
+                    "E_INPUT",
+                    data={"field": "path", "message": "invalid project path"},
+                ),
+            )
+        call = _V2Call(started, root, operation, req, granted, task_id, attribution)
+        handlers: dict[str, Callable[[_V2Call], ToolResult]] = {
+            "ask": self._v2_read,
+            "recall": self._v2_read,
+            "list": self._v2_read,
+            "expand": self._v2_expand,
+            "related": self._v2_related,
+            "history": self._v2_history,
+            "explain": self._v2_explain,
+        }
+        handler = handlers.get(operation, self._v2_mutation)
+        with collect_committed_writes() as committed:
+            try:
+                result = handler(call)
+            except Exception as exc:
+                failure = _v2_failure(exc)
+                if failure is None:
+                    raise
+                result = self._v2_out(call, failure[0], data=failure[1])
+        return cast(
+            ToolResult,
+            attach_memory_attribution(
+                result, _memory_attribution(root, operation, result, committed)
+            ),
+        )
+
+    # access ----------------------------------------------------------------------
+
+    def _v2_access(self, call: _V2Call, *, apply: bool) -> MemoryAccess | ToolResult:
+        """§3.2: the one access a v2 call runs under, or its denial."""
+        from ..memory.authorization import user_overlay_owner_scope
+        from ..memory.retrieval import memory_policy_decision
+
+        req, op, root = call.req, call.operation, call.root
+        owner = (
+            OwnerScope.from_value(req.owner_scope.model_dump())
+            if getattr(req, "owner_scope", None) is not None
+            else None
+        )
+        historical = op == "history" or (
+            getattr(req, "archive_mode", "active") == "historical"
+        )
+        mode, why = memory_policy_decision(root)
+        if mode == "unavailable":
+            return self._v2_out(
+                call, "E_PERMISSION", data={"reason": why or "policy_invalid"}
+            )
+        overlay = owner is not None and owner == user_overlay_owner_scope()
+        if mode == "legacy":
+            return self._v2_legacy_access(call, owner, overlay, apply=apply)
+        if overlay and op in _OVERLAY_PREFERENCE_ONLY:
+            return self._v2_out(
+                call, "E_OWNER", data={"reason": "overlay_requires_preference_route"}
+            )
+        # 72-T05 binds the task context; omitted when the caller names none.
+        task: dict[str, Any] = {"task_id": call.task_id} if call.task_id else {}
+        access, reason = MemoryAccess.resolve_with_reason(
+            root,
+            operation=op,
+            apply=apply,
+            historical=historical,
+            overlay=overlay,
+            owner_scope=owner,
+            requested_sources=tuple(getattr(req, "sources", None) or ()),
+            **task,
+        )
+        if access is None:
+            code, data = _v2_denial(owner, reason)
+            return self._v2_out(call, code, data=data)
+        return access
+
+    def _v2_legacy_access(
+        self,
+        call: _V2Call,
+        owner: OwnerScope | None,
+        overlay: bool,
+        *,
+        apply: bool,
+    ) -> MemoryAccess | ToolResult:
+        """D1 `legacy` mode: the request's explicit sources, never an ambient grant."""
+        req, op, root = call.req, call.operation, call.root
+        if overlay:
+            return self._v2_out(
+                call, "E_PERMISSION", data={"reason": "overlay_requires_policy"}
+            )
+        sources = getattr(req, "sources", None)
+        if sources is None and op == "write":
+            sources = [req.source]
+        if sources is None:
+            # D1 `legacy` mode has no policy to grant sources: never an ambient one.
+            return self._v2_out(call, "E_PERMISSION", data={"reason": "policy_missing"})
+        if op in _V2_MUTATIONS:
+            default_owner = legacy_owner_scope(root)
+            if owner is not None and owner != default_owner:
+                return self._v2_out(
+                    call, "E_OWNER", data={"reason": "owner_not_granted"}
+                )
+            return MemoryAccess.legacy(
+                root, sources, owner_scope=default_owner, operation="write"
+            )
+        return MemoryAccess.legacy(root, sources, owner_scope=owner, operation=op)
+
+    def _v2_view(
+        self, call: _V2Call, access: MemoryAccess
+    ) -> TypedArtifactStore | ToolResult | None:
+        """A read-only view of the access's store (`None`: no store)."""
+        view, state = TypedArtifactStore.open_readonly_view(_storage_root(access))
+        if state is not None:
+            return self._v2_out(
+                call,
+                _READ_STATE_CODES[state],
+                data={"reason": state, "message": readonly_view_reason(state)},
+            )
+        return view
+
+    def _v2_admission(self, call: _V2Call) -> ToolResult | None:
+        """C05: caps below the complete canonical v2 `E_BUDGET` raw are `E_INPUT`
+        before access, any store or telemetry."""
+        req = call.req
+        try:
+            need = _v2_budget_floor(call.operation, req.encoding)
+        except (ValueError, TypeError, KeyError):
+            return self._v2_out(
+                call,
+                "E_INPUT",
+                data={"field": "encoding", "message": "unknown encoding"},
+            )
+        required = {"max_bytes": need[0], "max_tokens": need[1]}
+        for name, cap, floor in (
+            ("max_bytes", req.max_bytes, need[0]),
+            ("max_tokens", req.max_tokens, need[1]),
+        ):
+            if cap < floor:
+                return self._v2_out(
+                    call,
+                    "E_INPUT",
+                    data={
+                        "field": name,
+                        "message": f"{name} is below the smallest response",
+                        "required": required,
+                    },
+                )
+        return None
+
+    def _v2_note_read(
+        self, call: _V2Call, access: MemoryAccess, raw: dict[str, Any]
+    ) -> None:
+        """MC04: a delivered `history`/`explain` page's real token cost, recorded
+        only with `cache_write` (the same gate as every other read)."""
+        from ..memory.retrieval import _record_memory_event
+
+        telemetry = self._v2_telemetry(call, _storage_root(access))
+        if telemetry is None:
+            return
+        target = getattr(call.req, "artifact_id", None) or getattr(
+            call.req, "query", ""
+        )
+        _record_memory_event(
+            telemetry,
+            "retrieval",
+            _v2_measure(raw, call.req.encoding)[1],
+            request_id=f"{call.operation}:v2:{target}:{getattr(call.req, 'cursor', None)}",
+            event_id="retrieval",
+            invocation_id=call.attribution.get("invocation_id") or str(uuid.uuid4()),
+            project_id=call.attribution.get("project_id"),
+            run_id=call.attribution.get("run_id"),
+            agent_id=call.attribution.get("agent_id"),
+            session_id=call.attribution.get("session_id"),
+            opt_in=False,
+            cache_write=True,
+            access=access,
+        )
+
+    def _v2_telemetry(self, call: _V2Call, root: Path) -> TelemetryStore | None:
+        if not call.granted.cache_write:
+            return None
+        return cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
+
+    # reads -----------------------------------------------------------------------
+
+    def _v2_read(self, call: _V2Call) -> ToolResult:
+        """`ask`/`recall` (ordinary), `list` (inspect; empty query browses), each
+        `historical` with `archive_mode`, paged under the v2 envelope."""
+        req, op = call.req, call.operation
+        refused = self._v2_admission(call)
+        if refused is not None:
+            return refused
+        if req.retrieval == "hybrid" and req.cursor is not None:
+            return self._v2_out(
+                call,
+                "E_INPUT",
+                data={"field": "cursor", "message": "hybrid retrieval has no cursor"},
+            )
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        hybrid = req.retrieval == "hybrid"
+        if hybrid and not call.granted.network:
+            return self._v2_out(
+                call,
+                "E_PERMISSION",
+                data={
+                    "reason": "network_required",
+                    "message": f"memory {op} retrieval=hybrid requires network.",
+                },
+            )
+        root = _storage_root(access)
+        # Every v2 read is a read-only view: a read never runs a constructor
+        # migration (72-T02 owns any DDL-free writable open for embeddings).
+        opened = self._v2_view(call, access)
+        if isinstance(opened, dict):
+            return cast(ToolResult, opened)
+        store = opened
+        if store is None:
+            size = _measure_page([], None, True, req.encoding)
+            return self._v2_out(
+                call,
+                "OK",
+                complete=True,
+                data={"tokens": size[1], "bytes": size[0], "encoding": req.encoding},
+            )
+        mode = (
+            "historical"
+            if req.archive_mode == "historical"
+            else ("inspect" if op == "list" else "ordinary")
+        )
+        filters: dict[str, Any] = {
+            "subjects": list(req.subjects),
+            "mode": mode,
+            "trust_tiers": req.trust_tiers,
+            "freshness": req.freshness,
+            "archive_mode": req.archive_mode,
+            "v2_items": True,
+        }
+        overhead = _v2_overhead(op, req.encoding)
+        common: dict[str, Any] = {
+            "query": req.query,
+            "access": access,
+            "limit": req.limit,
+            "max_tokens": req.max_tokens - overhead[1],
+            "max_bytes": req.max_bytes - overhead[0],
+            "encoding": req.encoding,
+            "telemetry": self._v2_telemetry(call, root),
+            "request_id": f"{op}:v2:{','.join(sorted(req.subjects))}:{req.query}:"
+            f"{req.cursor}",
+            "event_id": "retrieval",
+            "opt_in": False,
+            "cache_write": call.granted.cache_write,
+            **call.attribution,
+        }
+        try:
+            if hybrid:
+                embed_config = None
+                if (
+                    req.embedding_endpoint
+                    and req.embedding_model
+                    and (req.embedding_model_digest)
+                ):
+                    embed_config = EmbeddingConfig(
+                        endpoint=req.embedding_endpoint,
+                        model=req.embedding_model,
+                        model_digest=req.embedding_model_digest,
+                        chunking_version=req.embedding_chunking_version or "mc12-v1",
+                    )
+                subjects = sorted(set(req.subjects))
+                page = hybrid_page(
+                    store,
+                    subject=cast(
+                        MemorySubject, subjects[0] if len(subjects) == 1 else subjects
+                    ),
+                    embed_config=embed_config,
+                    v2_filters=filters,
+                    **{**common, "cache_write": False},
+                )
+            else:
+                page = recall_page(store, cursor=req.cursor, **common, **filters)
+        finally:
+            store.close()
+        return self._v2_page(call, page)
+
+    def _v2_page(self, call: _V2Call, page: dict[str, Any]) -> ToolResult:
+        """A retrieval page (`items`, `next_cursor`, `complete`, sizes) as a v2 raw."""
+        data = dict(page)
+        code = str(data.pop("code"))
+        items = data.pop("items", None) or []
+        next_cursor = data.pop("next_cursor", None)
+        complete = bool(data.pop("complete", False))
+        if code == "E_INPUT" and "required" in data:
+            data["field"] = "max_bytes"
+        if code == "E_EMBEDDING_UNAVAILABLE":
+            # A v2 hybrid read without an engine is the lexical page, labelled as such
+            # in `data.retrieval` / `data.hybrid_unavailable_reason`.
+            code = "OK"
+        return self._v2_out(
+            call,
+            code,
+            items=items,
+            next_cursor=next_cursor,
+            complete=complete,
+            data=data,
+        )
+
+    def _v2_expand(self, call: _V2Call) -> ToolResult:
+        req = call.req
+        refused = self._v2_admission(call)
+        if refused is not None:
+            return refused
+        # C05: caps below the smallest expand envelope plus the v2 envelope are
+        # `E_INPUT` naming the cap, before access, any store or telemetry.
+        overhead = _v2_overhead(call.operation, req.encoding)
+        floor = expand_admission(
+            artifact_id=req.artifact_id,
+            version=req.artifact_version,
+            offset=req.offset,
+            max_bytes=req.max_bytes - overhead[0],
+            max_tokens=req.max_tokens - overhead[1],
+            encoding=req.encoding,
+            representation=req.representation or "utf8",
+        )
+        if (
+            floor is not None
+            and floor.get("code") == "E_INPUT"
+            and isinstance(floor.get("required"), dict)
+        ):
+            required = {
+                "max_bytes": int(floor["required"]["max_bytes"]) + overhead[0],
+                "max_tokens": int(floor["required"]["max_tokens"]) + overhead[1],
+            }
+            field = (
+                "max_bytes" if req.max_bytes < required["max_bytes"] else "max_tokens"
+            )
+            return self._v2_out(
+                call,
+                "E_INPUT",
+                data={
+                    "field": field,
+                    "message": f"{field} is below the smallest response",
+                    "required": required,
+                },
+            )
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        opened = self._v2_view(call, access)
+        if isinstance(opened, dict):
+            return cast(ToolResult, opened)
+        if opened is None:
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        store = opened
+        mode: Literal["ordinary", "historical"] = (
+            "historical" if req.archive_mode == "historical" else "ordinary"
+        )
+        try:
+            payload = expand_artifact(
+                store,
+                artifact_id=req.artifact_id,
+                version=req.artifact_version,
+                access=access,
+                mode=mode,
+                offset=req.offset,
+                max_tokens=req.max_tokens - overhead[1],
+                max_bytes=req.max_bytes - overhead[0],
+                encoding=req.encoding,
+                representation=req.representation or "utf8",
+                telemetry=self._v2_telemetry(call, _storage_root(access)),
+                request_id=f"expand:v2:{req.artifact_id}:{req.artifact_version}",
+                event_id="expansion",
+                cache_write=call.granted.cache_write,
+                **call.attribution,
+            )
+            reference: dict[str, Any] | None = None
+            if payload.get("code") == "OK":
+                decision = evaluate_artifact_visibility(
+                    store,
+                    store.get_current_row(req.artifact_id),
+                    access=access,
+                    mode=mode,
+                )
+                reference = {
+                    **v2_reference(decision),
+                    "artifact_version": req.artifact_version,
+                }
+        finally:
+            store.close()
+        code = str(payload.pop("code"))
+        if code != "OK" or reference is None:
+            return self._v2_out(call, code, data=payload)
+        complete = bool(payload.get("complete", payload.get("next_offset") is None))
+        return self._v2_out(
+            call,
+            "OK",
+            items=[{**payload, "reference": reference}],
+            complete=complete,
+            data={
+                key: payload[key]
+                for key in ("tokens", "bytes", "encoding")
+                if key in payload
+            },
+        )
+
+    def _v2_related(self, call: _V2Call) -> ToolResult:
+        req = call.req
+        refused = self._v2_admission(call)
+        if refused is not None:
+            return refused
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        opened = self._v2_view(call, access)
+        if isinstance(opened, dict):
+            return cast(ToolResult, opened)
+        if opened is None:
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        store = opened
+        overhead = _v2_overhead(call.operation, req.encoding)
+        try:
+            version = req.artifact_version
+            if version is None:
+                row = store.get_current_row(req.artifact_id)
+                version = int(row["artifact_version"]) if row is not None else 0
+            # 72-T03 owns access/mode on the traversal (pinned signature).
+            page = related_artifacts(
+                store,
+                artifact_id=req.artifact_id,
+                version=version,
+                session_allowlist=None,
+                access=access,
+                mode="historical" if req.archive_mode == "historical" else "ordinary",
+                depth=req.depth,
+                max_nodes=req.max_nodes,
+                max_tokens=req.max_tokens - overhead[1],
+                max_bytes=req.max_bytes - overhead[0],
+                encoding=req.encoding,
+            )
+        finally:
+            store.close()
+        return self._v2_page(call, page)
+
+    def _v2_history(self, call: _V2Call) -> ToolResult:
+        """D31: every version of one artifact the access may see, oldest first,
+        each decided on its own, paged under the caps."""
+        from ..memory.retrieval import _cursor_binding, _decode_cursor, _encode_cursor
+
+        req = call.req
+        refused = self._v2_admission(call)
+        if refused is not None:
+            return refused
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        opened = self._v2_view(call, access)
+        if isinstance(opened, dict):
+            return cast(ToolResult, opened)
+        if opened is None:
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        view = opened
+        try:
+            versions = view.version_history_readonly(
+                req.artifact_id,
+                access=access,
+                archive_mode=req.archive_mode,
+                representation=req.representation,
+            )
+            try:
+                key = view.cursor_key()
+            except (TypeError, sqlite3.OperationalError):
+                return self._v2_out(
+                    call, "E_MIGRATION", data={"reason": "migration_required"}
+                )
+            generation = view.current_generation()
+        finally:
+            view.close()
+        owner = access.owner_scope
+        binding = _cursor_binding(
+            namespace=f"history:{req.artifact_id}",
+            project_id=access.project_id,
+            worktree_id=access.worktree_id,
+            owner=(owner.kind, owner.id) if owner is not None else None,
+            grant_id=access.grant_id,
+            subject="history",
+            query="",
+            sources=list(access.sources),
+            v2={
+                "archive_mode": req.archive_mode,
+                "representation": req.representation,
+                "mode": "history",
+            },
+        )
+        start = 0
+        if req.cursor is not None:
+            decoded = _decode_cursor(key, req.cursor, binding, generation)
+            if decoded is None:
+                return self._v2_out(call, "E_RESTART")
+            start = decoded
+
+        def token(at: int) -> str:
+            return _encode_cursor(key, binding, generation, at)
+
+        def fits(raw: dict[str, Any]) -> tuple[bool, tuple[int, int]]:
+            size = _v2_measure(raw, req.encoding)
+            return size[0] <= req.max_bytes and size[1] <= req.max_tokens, size
+
+        page: list[dict[str, Any]] = []
+        position = start
+        while position < len(versions) and len(page) < req.limit:
+            more = position + 1 < len(versions)
+            trial = [*page, versions[position]]
+            ok, _size = fits(
+                _v2_raw(
+                    "history",
+                    "OK",
+                    next_cursor=token(position + 1) if more else None,
+                    complete=not more,
+                    versions=trial,
+                )
+            )
+            if not ok:
+                if not page:
+                    need = _v2_measure(
+                        _v2_raw(
+                            "history",
+                            "OK",
+                            next_cursor=token(position + 1) if more else None,
+                            versions=trial,
+                        ),
+                        req.encoding,
+                    )
+                    return self._v2_out(
+                        call,
+                        "E_BUDGET",
+                        data={
+                            "required": {"max_bytes": need[0], "max_tokens": need[1]}
+                        },
+                    )
+                break
+            page = trial
+            position += 1
+        next_cursor = token(position) if position < len(versions) else None
+        raw = _v2_raw(
+            "history",
+            "OK",
+            next_cursor=next_cursor,
+            complete=next_cursor is None,
+            versions=page,
+        )
+        self._v2_note_read(call, access, raw)
+        return self._v2_wrap(call.started, "history", raw)
+
+    def _v2_explain(self, call: _V2Call) -> ToolResult:
+        """D38: structured one-hop buckets over recorded relations; never generated
+        text and never a model call."""
+        req = call.req
+        refused = self._v2_admission(call)
+        if refused is not None:
+            return refused
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        opened = self._v2_view(call, access)
+        if isinstance(opened, dict):
+            return cast(ToolResult, opened)
+        query_mode = req.artifact_id is None
+        if opened is None:
+            if query_mode:
+                return self._v2_out(
+                    call,
+                    "OK",
+                    complete=True,
+                    unknowns=["no_matches", "no_recorded_rationale"],
+                    targets=[],
+                    supporting=[],
+                    contrary=[],
+                    attempted=[],
+                    affected=[],
+                )
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        view = opened
+        historical = req.archive_mode == "historical"
+        mode: Literal["inspect", "historical"] = (
+            "historical" if historical else "inspect"
+        )
+        unknowns: set[str] = set()
+        try:
+            memo = SourceValidationMemo()
+            targets: list[tuple[sqlite3.Row, Any]] = []
+            if not query_mode:
+                row = view.get_current_row(req.artifact_id)
+                decision = evaluate_artifact_visibility(
+                    view, row, access=access, mode=mode, memo=memo
+                )
+                if row is None or not decision.visible:
+                    return self._v2_out(
+                        call, "E_NOT_VISIBLE", data={"reason": "not_visible"}
+                    )
+                targets.append((row, decision))
+                if decision.freshness == "unknown":
+                    unknowns.add("freshness_unknown")
+            else:
+                subjects = sorted(set(req.subjects))
+                rows = view.search_candidates(
+                    cast(
+                        MemorySubject, subjects[0] if len(subjects) == 1 else subjects
+                    ),
+                    req.query,
+                    source_allowlist=list(access.sources),
+                    owner_scope=access.owner_scope,
+                    scan_limit=_LIST_SCAN_PAGE,
+                    include_archived=historical,
+                    include_expired=historical,
+                )
+                for candidate in rows:
+                    decision = evaluate_artifact_visibility(
+                        view, candidate, access=access, mode=mode, memo=memo
+                    )
+                    if decision.visible:
+                        targets.append((candidate, decision))
+                    if len(targets) >= req.limit:
+                        break
+                if not targets:
+                    unknowns.add("no_matches")
+            buckets = _explain_buckets(view, access, mode, targets, memo=memo)
+        finally:
+            view.close()
+        if query_mode:
+            for row, decision in targets:
+                if row["subject"] in _ATTEMPT_SUBJECTS:
+                    _bucket_add(buckets["attempted"], decision, ("matched", "none"))
+        if not buckets["supporting"]:
+            unknowns.add("no_recorded_rationale")
+        named: dict[str, Any] = {
+            name: _bucket_list(entries) for name, entries in buckets.items()
+        }
+        raw = _v2_raw(
+            "explain",
+            "OK",
+            complete=True,
+            unknowns=unknowns,
+            targets=[v2_reference(decision) for _row, decision in targets],
+            **named,
+        )
+        size = _v2_measure(raw, req.encoding)
+        if size[0] > req.max_bytes or size[1] > req.max_tokens:
+            return self._v2_out(
+                call,
+                "E_BUDGET",
+                data={"required": {"max_bytes": size[0], "max_tokens": size[1]}},
+            )
+        self._v2_note_read(call, access, raw)
+        return self._v2_wrap(call.started, "explain", raw)
+
+    # mutations -------------------------------------------------------------------
+
+    def _v2_mutation(self, call: _V2Call) -> ToolResult:
+        """D1 + D29: preview, or apply under the policy lock with one v2 receipt
+        recorded in the effect's own transaction (replayed by its ids)."""
+        req = call.req
+        if not req.apply:
+            return self._v2_preview(call)
+        if not call.granted.cache_write:
+            return self._v2_out(
+                call,
+                "E_PERMISSION",
+                data={
+                    "reason": "cache_write_required",
+                    "message": f"memory {call.operation} apply requires cache_write.",
+                },
+            )
+        missing = _missing_grants(req.required_grants or [], call.granted)
+        if missing:
+            return self._v2_out(
+                call,
+                "E_PERMISSION",
+                data={
+                    "reason": "required_grants_missing",
+                    "message": _grant_refusal_message(call.operation, missing),
+                    "required_grants": req.required_grants,
+                    "missing_grants": missing,
+                },
+            )
+        access = self._v2_access(call, apply=True)
+        if not isinstance(access, MemoryAccess):
+            return access
+        db = _storage_root(access) / ".rush" / "memory.db"
+        if call.operation != "write" and not db.exists():
+            # Nothing to change: no store is created for a mutation of absent rows.
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        digest = _v2_request_digest(call.operation, access, req)
+        if call.operation == "maintain":
+            return self._v2_maintain(call, access, digest)
+        with _policy_mutation(access) as lock_refused:
+            if lock_refused is not None:
+                return self._v2_out(
+                    call, lock_refused.code, data={"reason": lock_refused.reason}
+                )
+            store = TypedArtifactStore(_storage_root(access))
+            replay = self._v2_replay(call, store, access, digest)
+            if replay is not None:
+                return replay
+            return self._v2_effect(call, store, access, digest)
+
+    def _v2_targets(self, call: _V2Call) -> list[str]:
+        req, op = call.req, call.operation
+        if op in ("edit", "archive", "promote"):
+            return [req.artifact_id]
+        if op == "delete":
+            return list(req.artifact_ids)
+        if op == "link":
+            return [req.source_id, req.target_id]
+        if op == "maintain":
+            return list(req.candidate_ids or ())
+        return []
+
+    def _v2_effect(
+        self,
+        call: _V2Call,
+        store: TypedArtifactStore,
+        access: MemoryAccess,
+        digest: str,
+    ) -> ToolResult:
+        req, op = call.req, call.operation
+        sources: set[str] = {req.source} if op == "write" else set()
+        for artifact_id in self._v2_targets(call):
+            row = store.get_current_row(artifact_id)
+            if row is None or not _access_allows(store, row, access, "inspect"):
+                raise KeyError(artifact_id)
+            sources.add(str(row["source"]))
+        binding = _v2_binding(access, sources)
+        captured: dict[str, Any] = {}
+
+        def writer(conn: sqlite3.Connection, payload: dict[str, Any]) -> None:
+            record = _v2_record(binding, payload)
+            store._write_v2_receipt(
+                conn,
+                invocation_id=req.invocation_id,
+                effect_id=req.effect_id,
+                request_digest=digest,
+                artifact_id=payload.get("artifact_id"),
+                kind=op,
+                revision=payload.get("artifact_version"),
+                payload=record,
+            )
+            captured.clear()
+            captured.update(record)
+
+        check = _commit_check(access)
+        owner = _write_owner(None, access) or legacy_owner_scope(call.root)
+        result: Any
+        if op == "write":
+            artifact = self._build_artifact(
+                req.subject,
+                req.content,
+                req.source,
+                req.symbol_ref,
+                req.source_kind,
+                owner,
+            )
+            result = store.write(
+                artifact, access=access, receipt_writer=writer, commit_check=check
+            )
+        elif op == "edit" and req.correction is not None:
+            result = self._v2_correction(call, store, access, writer)
+        elif op == "edit":
+            result = store.edit(
+                req.artifact_id,
+                req.content,
+                expected_version=req.expected_version,
+                scope=req.subject,
+                owner_scope=owner,
+                apply=True,
+                receipt_writer=writer,
+                commit_check=check,
+            )
+        elif op == "archive":
+            result = store.archive(
+                req.artifact_id,
+                expected_version=req.expected_version,
+                scope=req.subject,
+                owner_scope=owner,
+                apply=True,
+                archived=req.archived,
+                receipt_writer=writer,
+                commit_check=check,
+            )
+        elif op == "delete":
+            result = store.delete_batch(
+                list(req.artifact_ids),
+                expected_revisions=dict(req.expected_revisions),
+                scope=req.subject,
+                owner_scope=owner,
+                apply=True,
+                receipt_writer=writer,
+                commit_check=check,
+            )
+        elif op == "promote":
+            result = store._write_and_promote_tx(
+                artifact_id=req.artifact_id,
+                expected_version=req.expected_version,
+                access=access,
+                user_stated=req.user_stated,
+                candidate_refs=[ref.model_dump() for ref in req.candidate_refs]
+                if req.candidate_refs is not None
+                else None,
+                receipt_writer=writer,
+                commit_check=check,
+            )
+        else:  # link
+            result = add_relation(
+                store,
+                source_id=req.source_id,
+                source_version=req.source_version,
+                target_id=req.target_id,
+                target_version=req.target_version,
+                kind=req.kind,
+                origin_ref=req.origin_ref,
+                access=access,
+                receipt_writer=writer,
+            )
+            if result.get("code") != "OK":
+                code = str(result.pop("code"))
+                return self._v2_out(call, code, data=result)
+        if not captured and isinstance(result, MemoryArtifact):
+            # D30 event replay: the existing row, no new effect and no new receipt.
+            refs = [
+                {"artifact_id": result.id, "artifact_version": result.artifact_version}
+            ]
+            captured.update(_v2_record(binding, {"result_refs": refs, "result": {}}))
+        record = captured or _v2_record(binding, {"result": _jsonable(result)})
+        return self._v2_mutation_result(call, record, access)
+
+    def _v2_mutation_result(
+        self, call: _V2Call, record: dict[str, Any], access: MemoryAccess
+    ) -> ToolResult:
+        req = call.req
+        raw = _v2_mutation_raw(call.operation, record, req.invocation_id, req.effect_id)
+        if call.operation == "edit" and req.correction is not None:
+            raw["data"]["affected"] = self._v2_affected(access, req.artifact_id)
+        return self._v2_wrap(call.started, call.operation, raw)
+
+    def _v2_affected(self, access: MemoryAccess, artifact_id: str) -> list[Any]:
+        """The D38 `affected` bucket of one corrected target, read after commit."""
+        view, state = TypedArtifactStore.open_readonly_view(_storage_root(access))
+        if view is None or state is not None:
+            return []
+        try:
+            row = view.get_current_row(artifact_id)
+            if row is None:
+                return []
+            memo = SourceValidationMemo()
+            decision = evaluate_artifact_visibility(
+                view, row, access=access, mode="inspect", memo=memo
+            )
+            buckets = _explain_buckets(
+                view, access, "inspect", [(row, decision)], memo=memo
+            )
+        finally:
+            view.close()
+        return _bucket_list(buckets["affected"])
+
+    def _v2_correction(
+        self,
+        call: _V2Call,
+        store: TypedArtifactStore,
+        access: MemoryAccess,
+        writer: Callable[[sqlite3.Connection, dict[str, Any]], None],
+    ) -> Any:
+        """72-T05 owns the correction transaction; T06 forwards every citation."""
+        from ..memory.store import VersionBinding  # type: ignore[attr-defined]
+
+        req = call.req
+        correction = req.correction
+        row = store.get_current_row(req.artifact_id)
+        if row is None:
+            raise KeyError(req.artifact_id)
+        binding = VersionBinding(
+            applicability=row["applicability"]
+            if "applicability" in row.keys()  # noqa: SIM118 - sqlite3.Row
+            else None,
+            task_project_id=access.project_id,
+            task_worktree_id=access.worktree_id,
+            task_id=call.task_id,
+        )
+        return store.apply_correction(  # type: ignore[attr-defined]
+            access=access,
+            kind=correction.kind,
+            artifact_id=req.artifact_id,
+            expected_version=req.expected_version,
+            target_content=json.loads(row["content"]),
+            replacement_content=req.content,
+            binding=binding,
+            supersedes=[ref.model_dump() for ref in correction.supersedes]
+            if correction.supersedes is not None
+            else None,
+            receipt_writer=writer,
+        )
+
+    def _v2_replay(
+        self,
+        call: _V2Call,
+        store: TypedArtifactStore,
+        access: MemoryAccess,
+        digest: str,
+    ) -> ToolResult | None:
+        """D29 replay: binding, then digest, then every result ref, then the
+        recorded result unchanged. `None` when these ids recorded nothing."""
+        from ..memory.authorization import source_granted
+
+        req = call.req
+        with store._connect() as conn:
+            row = store._find_v2_receipt(conn, req.invocation_id, req.effect_id)
+        if row is None:
+            return None
+        payload = row["payload"]
+        if isinstance(payload, (str, bytes)):
+            payload = json.loads(payload)
+        binding = payload.get("binding") or {}
+        owner = access.owner_scope
+        if (
+            binding.get("project_id") != access.project_id
+            or binding.get("worktree_id") != access.worktree_id
+            or (owner is not None and binding.get("owner_scope") != owner.as_dict())
+            or not all(
+                source_granted(source, access.sources)
+                for source in binding.get("sources") or ()
+            )
+        ):
+            return self._v2_out(call, "E_NOT_VISIBLE", data={"reason": "not_visible"})
+        if row["request_digest"] != digest:
+            return self._v2_out(
+                call, "E_VERSION", data={"reason": "effect_digest_conflict"}
+            )
+        for ref in payload.get("result_refs") or ():
+            if not _ref_visible(store, access, ref, deleted=call.operation == "delete"):
+                return self._v2_out(
+                    call, "E_NOT_VISIBLE", data={"reason": "not_visible"}
+                )
+        return self._v2_mutation_result(call, payload, access)
+
+    def _v2_maintain(
+        self, call: _V2Call, access: MemoryAccess, digest: str
+    ) -> ToolResult:
+        """72-T04 + D29: replay lookup under a short policy lock, the cycle with no
+        policy lock held, then the one receipt under a new short lock after an access
+        and replay recheck. Rows the cycle committed stay committed."""
+        req = call.req
+        root = _storage_root(access)
+        with _policy_mutation(access) as refused:
+            if refused is not None:
+                return self._v2_out(call, refused.code, data={"reason": refused.reason})
+            store = TypedArtifactStore(root)
+            replay = self._v2_replay(call, store, access, digest)
+            if replay is not None:
+                return replay
+            sources = {
+                str(row["source"])
+                for artifact_id in self._v2_targets(call)
+                if (row := store.get_current_row(artifact_id)) is not None
+            }
+        outcome = run_maintenance_cycle(  # type: ignore[call-arg]
+            req.task,
+            access=access,
+            batch_size=req.batch_size,
+            candidate_ids=list(req.candidate_ids)
+            if req.candidate_ids is not None
+            else None,
+            expected_revisions=dict(req.expected_revisions)
+            if req.expected_revisions is not None
+            else None,
+        )
+        record = json.loads(
+            json.dumps(
+                {
+                    "binding": _v2_binding(access, sources or set(access.sources)),
+                    "result_refs": [],
+                    "result": dataclasses.asdict(outcome),
+                },
+                default=str,
+            )
+        )
+        with _policy_mutation(access) as refused:
+            if refused is not None:
+                return self._v2_out(call, refused.code, data={"reason": refused.reason})
+            replay = self._v2_replay(call, store, access, digest)
+            if replay is not None:
+                return replay
+            with store._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                store._write_v2_receipt(
+                    conn,
+                    invocation_id=req.invocation_id,
+                    effect_id=req.effect_id,
+                    request_digest=digest,
+                    artifact_id=None,
+                    kind="maintain",
+                    revision=None,
+                    payload=record,
+                )
+                conn.commit()
+        return self._v2_mutation_result(call, record, access)
+
+    def _v2_preview(self, call: _V2Call) -> ToolResult:
+        """`apply=false`: a read-only preview; no store is created or changed."""
+        req, op = call.req, call.operation
+        access = self._v2_access(call, apply=False)
+        if not isinstance(access, MemoryAccess):
+            return access
+        root = _storage_root(access)
+        owner = _write_owner(None, access) or legacy_owner_scope(call.root)
+        preview: Any
+        if op == "write":
+            preview = _new_artifact_preview(
+                self._build_artifact(
+                    req.subject,
+                    req.content,
+                    req.source,
+                    req.symbol_ref,
+                    req.source_kind,
+                    owner,
+                ),
+                root,
+                req.required_grants,
+                call.granted,
+            )
+        elif op == "maintain":
+            preview = {
+                "apply": False,
+                "candidates": preview_maintenance_candidates(
+                    req.task,
+                    access=access,
+                    batch_size=req.batch_size,
+                    project_root=root,
+                    candidate_ids=list(req.candidate_ids)
+                    if req.candidate_ids is not None
+                    else None,
+                ),
+            }
+        else:
+            revisions = (
+                dict(req.expected_revisions)
+                if op == "delete"
+                else {req.artifact_id: req.expected_version}
+            )
+            hidden = _hidden_targets(
+                access,
+                list(revisions),
+                lambda: TypedArtifactStore.open_readonly_view(root),
+            )
+            if hidden:
+                raise KeyError(hidden[0])
+            targets = [
+                TypedArtifactStore.preview_mutation(
+                    root,
+                    artifact_id,
+                    expected_version=version,
+                    scope=req.subject,
+                    owner_scope=owner,
+                    operation="archive" if op in ("archive", "delete") else "edit",
+                )
+                for artifact_id, version in revisions.items()
+            ]
+            preview = {"apply": False, "operation": op, "targets": targets}
+        return self._v2_out(call, "OK", complete=True, data={"preview": preview})
 
     @staticmethod
     def _list_filter_error(
@@ -1984,16 +3405,18 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        resolved = self._read_access(
-            root, "related", session_allowlist, owner, task_id=_TASK_ID.get()
-        )
-        if isinstance(resolved, RouteDenial):
-            return self._denied(started, "related", resolved)
+        resolved: MemoryAccess | RouteDenial
         if bridge is not None:
             authority = self._bridge_access(started, "related", bridge, artifact_id)
             if isinstance(authority, dict):
                 return cast(ToolResult, authority)
             resolved = authority
+        else:
+            resolved = self._read_access(
+                root, "related", session_allowlist, owner, task_id=_TASK_ID.get()
+            )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "related", resolved)
         store = self._readonly_store if resolved.storage_root == root else None
         own_view = store is None
         if store is None:
@@ -5291,6 +6714,8 @@ def _read_refs(operation: str, result: ToolResult) -> list[_Ref]:
     if result.get("status") not in ("ok", "warn"):
         return []
     raw = result.get("raw")
+    if isinstance(raw, dict) and raw.get("schema_version") == 2:
+        return _refs(raw.get("items"))
     if isinstance(raw, list):
         # Legacy (`request=None`) ask/recall/list: the returned artifacts.
         return _refs(raw, version_key="artifact_version")
@@ -5388,6 +6813,363 @@ def _memory_attribution(
         for entry in committed
     ]
     return memory_block(used, written)
+
+
+# --- 72-T06: schema_version 2 helpers -----------------------------------------------
+
+
+def _storage_root(access: MemoryAccess) -> Path:
+    """D25 (72-T05 `MemoryAccess.storage_root`): the store an access reads and
+    writes -- the project store, or the user overlay store."""
+    root = getattr(access, "storage_root", None)
+    return Path(root) if root is not None else access.project_root
+
+
+def _v2_denial(owner: OwnerScope | None, reason: str) -> tuple[str, dict[str, Any]]:
+    """§3.3: a resolve or D1 denial reason as a v2 code and `data`."""
+    if owner is None and reason == "owner_required":
+        return "E_INPUT", {"field": "owner_scope", "reason": reason}
+    if owner is not None and reason == "owner_not_granted":
+        return "E_OWNER", {"reason": reason}
+    if reason == "source_not_granted":
+        return "E_SCOPE", {"reason": reason}
+    return "E_PERMISSION", {"reason": reason}
+
+
+def _non_v2_rejection(operation: str) -> dict[str, Any]:
+    """`schema_version` 2 sent to an operation that has no v2 form."""
+    msg = "schema_version 2 applies only to the v2 memory operations"
+    details: list[dict[str, Any]] = [
+        {"loc": ["request", "schema_version"], "type": "extra_forbidden", "msg": msg}
+    ]
+    message = f"invalid request: request.schema_version: {msg}"
+    return _v2_raw(operation, "E_INPUT", data={"message": message, "details": details})
+
+
+def _v2_failure(exc: BaseException) -> tuple[str, dict[str, Any]] | None:
+    """§3.3: an exception from access, a store or a reader as a v2 code and `data`
+    (`None`: not a mapped failure)."""
+    from ..memory.authorization import MemoryPolicyError
+
+    if isinstance(exc, MemoryPolicyError):
+        data: dict[str, Any] = {"message": str(exc), "reason": exc.reason}
+        if exc.reason == "representation_unavailable":
+            data["alternatives"] = ["base64"]
+        return exc.code, data
+    if isinstance(exc, (MemoryAccessChanged, MemoryWriteDenied)):
+        return exc.code, {"reason": exc.reason, "message": str(exc)}
+    if isinstance(exc, MemoryMigrationRequiredError):
+        data = {"message": str(exc)}
+        reason = getattr(exc, "reason", None)
+        refs = getattr(exc, "refs", ())
+        if reason:
+            data["reason"] = reason
+        if refs:
+            data["refs"] = [dict(ref) for ref in refs]
+        return "E_MIGRATION", data
+    if isinstance(exc, MemoryStoreUnreadableError):
+        return exc.code, {"message": str(exc)}
+    for kind, code in (
+        (OwnerScopeError, "E_OWNER"),
+        (MemoryScopeError, "E_SCOPE"),
+        (VersionConflictError, "E_VERSION"),
+        (KeyError, "E_NOT_VISIBLE"),
+    ):
+        if isinstance(exc, kind):
+            return code, {"message": str(exc)}
+    return None
+
+
+def _v2_measure(raw: dict[str, Any], encoding: str) -> tuple[int, int]:
+    """`(bytes, tokens)` of one raw as compact JSON."""
+    text = json.dumps(raw, ensure_ascii=False, separators=(",", ":"))
+    return len(text.encode("utf-8", "surrogatepass")), _count_tokens(text, encoding)
+
+
+@functools.lru_cache(maxsize=64)
+def _v2_overhead(operation: str, encoding: str) -> tuple[int, int]:
+    """What the v2 envelope adds to a retrieval page of the same items."""
+    empty = _measure_page([], None, True, encoding)
+    raw = _v2_raw(
+        operation,
+        "OK",
+        complete=True,
+        data={"tokens": empty[1], "bytes": empty[0], "encoding": encoding},
+    )
+    size = _v2_measure(raw, encoding)
+    return max(0, size[0] - empty[0]), max(0, size[1] - empty[1])
+
+
+@functools.lru_cache(maxsize=64)
+def _v2_budget_floor(operation: str, encoding: str) -> tuple[int, int]:
+    """The smallest caps admitted: the complete canonical v2 `E_BUDGET` raw (with
+    its `required` sizes) and the retrieval page's own floor plus the envelope."""
+    need = (0, 0)
+    for _ in range(8):
+        size = _v2_measure(
+            _v2_raw(
+                operation,
+                "E_BUDGET",
+                data={"required": {"max_bytes": need[0], "max_tokens": need[1]}},
+            ),
+            encoding,
+        )
+        if size[0] <= need[0] and size[1] <= need[1]:
+            break
+        need = (max(need[0], size[0]), max(need[1], size[1]))
+    overhead = _v2_overhead(operation, encoding)
+    page = recall_admission(limit=1, max_bytes=1, max_tokens=1, encoding=encoding)
+    required = (page or {}).get("required") or {"max_bytes": 0, "max_tokens": 0}
+    return (
+        max(need[0], int(required["max_bytes"]) + overhead[0]),
+        max(need[1], int(required["max_tokens"]) + overhead[1]),
+    )
+
+
+def _v2_request_digest(operation: str, access: MemoryAccess, req: Any) -> str:
+    """D29: the reviewed request (receipt ids excluded) bound to its store."""
+    body = {
+        "operation": operation,
+        "root": str(_storage_root(access)),
+        "request": req.model_dump(mode="json", exclude={"invocation_id", "effect_id"}),
+    }
+    # ASCII escapes: content may legally hold a lone surrogate.
+    text = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
+def _v2_binding(access: MemoryAccess, sources: set[str]) -> dict[str, Any]:
+    owner = access.owner_scope
+    return {
+        "project_id": access.project_id,
+        "worktree_id": access.worktree_id,
+        "owner_scope": owner.as_dict() if owner is not None else None,
+        "sources": sorted(sources),
+    }
+
+
+def _jsonable(value: Any) -> Any:
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        value = dataclasses.asdict(value)
+    return json.loads(json.dumps(value, default=str))
+
+
+def _v2_record(binding: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    """The v2 receipt payload: binding, result refs (write order) and result."""
+    return cast(
+        dict[str, Any],
+        _jsonable(
+            {
+                "binding": binding,
+                "result_refs": list(payload.get("result_refs") or ()),
+                "result": payload.get("result") or {},
+            }
+        ),
+    )
+
+
+def _v2_mutation_raw(
+    operation: str, record: dict[str, Any], invocation_id: str, effect_id: str
+) -> dict[str, Any]:
+    """One pure function for the first response and every replay of an effect."""
+    refs = [ref for ref in record.get("result_refs") or () if isinstance(ref, dict)]
+    items = [
+        {
+            "reference": {
+                "artifact_id": ref.get("artifact_id"),
+                "artifact_version": ref.get("artifact_version"),
+            }
+        }
+        for ref in refs
+    ]
+    data = {
+        "receipt": {
+            "invocation_id": invocation_id,
+            "effect_id": effect_id,
+            "operation_id": v2_operation_id(invocation_id, effect_id),
+        },
+        "result": record.get("result") or {},
+    }
+    return _v2_raw(operation, "OK", items=items, complete=True, data=data)
+
+
+def _ref_visible(
+    store: TypedArtifactStore, access: MemoryAccess, ref: Any, *, deleted: bool
+) -> bool:
+    """A recorded result ref the access may still see: its current row, or (only a
+    reviewed delete's tombstones) the recorded version's source."""
+    from ..memory.authorization import source_granted
+
+    if not isinstance(ref, dict) or not isinstance(ref.get("artifact_id"), str):
+        return False
+    current = store.get_current_row(ref["artifact_id"])
+    if current is not None:
+        return _access_allows(store, current, access, "inspect")
+    if not deleted:
+        return False
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT source FROM memory_artifact_versions "
+            "WHERE artifact_id = ? AND artifact_version = ?",
+            (ref["artifact_id"], ref.get("artifact_version")),
+        ).fetchone()
+    return row is not None and source_granted(row["source"], access.sources)
+
+
+_Bucket = dict[tuple[str, int], dict[str, Any]]
+
+
+def _bucket_add(bucket: _Bucket, decision: Any, via: tuple[str, str]) -> None:
+    reference = v2_reference(decision)
+    key = (str(reference["artifact_id"]), int(reference["artifact_version"]))
+    entry = bucket.setdefault(key, {"reference": reference, "via": set()})
+    entry["via"].add(via)
+
+
+def _bucket_list(bucket: _Bucket) -> list[dict[str, Any]]:
+    """Sorted by `(artifact_id, artifact_version)`, deduplicated, `via` merged."""
+    return [
+        {
+            "reference": entry["reference"],
+            "via": [
+                {"kind": kind, "direction": direction}
+                for kind, direction in sorted(entry["via"])
+            ],
+        }
+        for _key, entry in sorted(bucket.items())
+    ]
+
+
+def _explain_buckets(
+    view: TypedArtifactStore,
+    access: MemoryAccess,
+    mode: Literal["inspect", "historical"],
+    targets: list[tuple[sqlite3.Row, Any]],
+    *,
+    memo: SourceValidationMemo,
+) -> dict[str, _Bucket]:
+    """D38 one-hop buckets for every target. A neighbor counts only when its
+    current row is visible under the same access and mode."""
+    buckets: dict[str, _Bucket] = {
+        name: {} for name in ("supporting", "contrary", "attempted", "affected")
+    }
+    root = view.project_root
+
+    def decide(row: sqlite3.Row | None) -> Any:
+        if row is None:
+            return None
+        decision = evaluate_artifact_visibility(
+            view, row, access=access, mode=mode, memo=memo
+        )
+        return decision if decision.visible else None
+
+    with view._connect() as conn:
+        for target, _decision in targets:
+            target_id = target["id"]
+            edges = conn.execute(
+                "SELECT source_id, target_id, kind FROM memory_relations "
+                "WHERE source_id = ? OR target_id = ? ORDER BY sequence",
+                (target_id, target_id),
+            ).fetchall()
+            for edge in edges:
+                outgoing = edge["source_id"] == target_id
+                other = edge["target_id"] if outgoing else edge["source_id"]
+                if other == target_id:
+                    continue
+                neighbor = view.get_current_row(other)
+                decision = decide(neighbor)
+                if neighbor is None or decision is None:
+                    continue
+                kind = str(edge["kind"])
+                via = (kind, "outgoing" if outgoing else "incoming")
+                _bucket_add(buckets["affected"], decision, via)
+                if outgoing and kind in _SUPPORTING_KINDS:
+                    _bucket_add(buckets["supporting"], decision, via)
+                if kind == "contradicts" or (kind == "supersedes" and not outgoing):
+                    _bucket_add(buckets["contrary"], decision, via)
+                if neighbor["subject"] in _ATTEMPT_SUBJECTS:
+                    _bucket_add(buckets["attempted"], decision, via)
+            if target["symbol_ref"] is not None:
+                owner = owner_scope_for_row(target, root)
+                for other_row in conn.execute(
+                    "SELECT * FROM memory_artifacts "
+                    "WHERE subject = ? AND symbol_ref = ? AND id != ?",
+                    (target["subject"], target["symbol_ref"], target_id),
+                ).fetchall():
+                    if owner_scope_for_row(other_row, root) != owner:
+                        continue
+                    decision = decide(other_row)
+                    if decision is None:
+                        continue
+                    try:
+                        verdict = evaluate_conflict(
+                            _row_to_artifact(other_row), _row_to_artifact(target)
+                        )
+                    except (TypeError, ValueError):
+                        continue
+                    if verdict == "delete":
+                        _bucket_add(buckets["contrary"], decision, ("conflict", "none"))
+            try:
+                summaries = conn.execute(
+                    "SELECT * FROM memory_artifacts WHERE json_valid(content) "
+                    "AND json_extract(content, '$.kind') = "
+                    "'consolidated_episode_summary'"
+                ).fetchall()
+            except sqlite3.OperationalError:
+                summaries = []
+            for summary in summaries:
+                try:
+                    members = json.loads(summary["content"]).get("member_versions")
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if isinstance(members, dict) and target_id in members:
+                    decision = decide(summary)
+                    if decision is not None:
+                        _bucket_add(
+                            buckets["affected"], decision, ("summarizes", "incoming")
+                        )
+    return buckets
+
+
+def _reserved_receipt_field(
+    operation: str,
+    request: dict[str, Any] | None,
+    receipt_operation_ids: dict[str, str] | None,
+) -> str | None:
+    """D29: a legacy receipt id in the reserved `v2:` namespace (its field name)."""
+
+    def reserved(value: Any) -> bool:
+        return isinstance(value, str) and value.startswith("v2:")
+
+    if (
+        operation == "promote"
+        and isinstance(receipt_operation_ids, dict)
+        and any(reserved(v) for v in receipt_operation_ids.values())
+    ):
+        return "receipt_operation_ids"
+    if operation in ("delete", "edit", "archive") and isinstance(request, dict):
+        if reserved(request.get("receipt_operation_id")):
+            return "receipt_operation_id"
+        many = request.get("receipt_operation_ids")
+        if isinstance(many, dict) and any(reserved(v) for v in many.values()):
+            return "receipt_operation_ids"
+    return None
+
+
+def _bridge_filter(value: Any, granted: frozenset[str]) -> Any:
+    """D22: drop every artifact reference outside the session's selected ids."""
+    if isinstance(value, dict):
+        return {key: _bridge_filter(item, granted) for key, item in value.items()}
+    if isinstance(value, list):
+        kept = []
+        for item in value:
+            if isinstance(item, dict):
+                ident = item.get("id", item.get("artifact_id"))
+                if isinstance(ident, str) and ident not in granted:
+                    continue
+            kept.append(_bridge_filter(item, granted))
+        return kept
+    return value
 
 
 # --- T20: bare `rush memory` read-only overview --------------------------------------

@@ -67,6 +67,18 @@ def _nn[T](value: T | None) -> T:
     return value
 
 
+def _cur(store: TypedArtifactStore, artifact_id: str) -> MemoryArtifact:
+    artifact = store.get_current(artifact_id)
+    assert artifact is not None
+    return artifact
+
+
+def _cur_row(store: TypedArtifactStore, artifact_id: str) -> sqlite3.Row:
+    row = store.get_current_row(artifact_id)
+    assert row is not None
+    return row
+
+
 def _sha_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -1866,7 +1878,7 @@ def test_t01_artifact_freshness_matches_visibility_decision(tmp_path: Path) -> N
         ), artifact_id
     legacy = retrieval.MemoryAccess.legacy(root, ["src"])
     for artifact_id, (_, _, freshness, reasons) in rows.items():
-        artifact = store.get_current(artifact_id)
+        artifact = _cur(store, artifact_id)
         decision = retrieval.evaluate_artifact_visibility(
             store, artifact, access=legacy, mode="historical"
         )
@@ -2337,7 +2349,7 @@ def test_t01_fix1_memory_tool_wire_carries_freshness(tmp_path: Path) -> None:
     def wire(operation: MemoryOperation) -> dict[str, dict[str, Any]]:
         result = tool.run(
             root,
-            operation=operation,
+            operation=cast(MemoryOperation, operation),
             subject=SUBJECT,
             query="needle",
             session_allowlist=["src"],
@@ -12288,6 +12300,60 @@ def _overlay_calls() -> dict[str, Any]:
     }
 
 
+def _overlay_v2_cells(
+    owner: OwnerScope,
+) -> dict[str, tuple[str, dict[str, Any], list[str]]]:
+    """72-T06 R5: the schema-version-2 `history` and `explain` overlay cells."""
+    who = owner.as_dict()
+    return {
+        "history": (
+            "history",
+            {"schema_version": 2, "artifact_id": "p1", "owner_scope": who},
+            ["memory", "history", "p1", "--json"],
+        ),
+        "history_historical": (
+            "history",
+            {
+                "schema_version": 2,
+                "artifact_id": "p1",
+                "owner_scope": who,
+                "archive_mode": "historical",
+            },
+            ["memory", "history", "p1", "--historical", "--json"],
+        ),
+        "explain_id": (
+            "explain",
+            {"schema_version": 2, "artifact_id": "p1", "owner_scope": who},
+            ["memory", "explain", "p1", "--json"],
+        ),
+        "explain_query": (
+            "explain",
+            {"schema_version": 2, "query": "overlay", "owner_scope": who},
+            ["memory", "explain", "--query", "overlay", "--json"],
+        ),
+    }
+
+
+def _overlay_cli(target: Path, argv: list[str]) -> tuple[int, Any]:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    old = os.getcwd()
+    os.chdir(target)
+    try:
+        outcome = CliRunner().invoke(cli, argv)
+    finally:
+        os.chdir(old)
+    try:
+        return outcome.exit_code, json.loads(outcome.output)
+    except json.JSONDecodeError:
+        pytest.fail(
+            f"CLI leaf {argv} wrote no JSON envelope (exit {outcome.exit_code}): "
+            f"{outcome.output[:200]!r}"
+        )
+
+
 @pytest.mark.parametrize("policy", ["none", "other_project_grant"])
 @pytest.mark.parametrize(
     "root_kind",
@@ -12383,6 +12449,25 @@ def test_t01_overlay_storage_root_never_project_route(
             assert _code_of(result) == "E_PERMISSION", (cell, _dump(_rd(result)))
             assert _reason_of(result) == "overlay_storage_root", cell
             assert "p1-value" not in _dump(result.get("raw")), cell
+    # 72-T06 R5: `history` (also `archive_mode:"historical"`) and `explain` (by id and by
+    # query) over `MemoryTool.run`, full MCP `rush_memory` and the CLI leaves are denied
+    # `overlay_storage_root` with no overlay id or value, before any store is opened.
+    v2_cells = _overlay_v2_cells(overlay_owner)
+    for name, (operation, request, argv) in v2_cells.items():
+        over_run = MemoryTool().run(
+            target, operation=cast(MemoryOperation, operation), request=request
+        )
+        over_mcp = _mcp_memory(path=str(target), operation=operation, request=request)
+        _status, over_cli = _overlay_cli(target, argv)
+        for transport, outcome in (
+            ("run", over_run),
+            ("mcp", over_mcp),
+            ("cli", over_cli),
+        ):
+            assert _code_of(outcome) == "E_PERMISSION", (name, transport, outcome)
+            assert _reason_of(outcome) == "overlay_storage_root", (name, transport)
+            dumped = _dump(outcome.get("raw"))
+            assert "mk-p1" not in dumped and '"p1"' not in dumped, (name, transport)
     from rush.memory.authorization import MemoryPolicyError
 
     for user_stated in (True, False):
@@ -23355,6 +23440,43 @@ def test_t01_existing_apply_and_historical_are_real_cells(
             assert out.code == "E_PERMISSION", detail
             assert out.reason == "operation_not_granted", detail
         assert _g2_effects(route, env.root, env.data_root) == before, route.ident
+
+    # 72-T06: the schema-version-2 route-mode matrix extends the same acceptance -- every
+    # v2 `apply` and `historical` cell is a real cell (no producer-staged `E_INPUT`).
+    memory_public = importlib.import_module("tests.test_phase72_memory_public")
+
+    cells = memory_public._matrix_cells()
+    keys = {tuple(p.values[:4]) for p in cells}
+    for transport in ("inproc", "mcp"):
+        for mutation in (
+            "write",
+            "edit",
+            "archive",
+            "delete",
+            "promote",
+            "maintain",
+            "link",
+        ):
+            assert (transport, mutation, "apply", "apply") in keys, (
+                transport,
+                mutation,
+            )
+            assert (transport, mutation, "grant_ops", "missing_one") in keys
+        for read in (
+            "ask",
+            "recall",
+            "list",
+            "expand",
+            "related",
+            "history",
+            "explain",
+        ):
+            assert (transport, read, "mode", "historical_with_grant") in keys, (
+                transport,
+                read,
+            )
+            assert (transport, read, "mode", "historical_without_grant") in keys
+    assert not any("producer" in str(p.id) for p in cells)
 
     # 72-T03 R12 (72-T01 R22): the 72-T03 matrix obeys the same rule and the id grammar
     # `[<transport>.]<route>-<dimension>-<value>[-...][-producer-<task>]`.

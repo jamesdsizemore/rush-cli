@@ -706,10 +706,16 @@ def build_memory_bridge_handler(
     name) is denied identically, never routed anywhere. `expand`/`related`/`resume` always
     run with this session's own stored `session_allowlist` -- a caller-supplied allowlist
     inside `request` can never widen it, because none is ever read from `request` here.
+
+    72-T06 D22: a `schema_version` request is refused before any store open (the
+    receiver keeps its legacy shape), and every routed call runs under
+    `bridge_authority=(access, granted_ids)`: the sender grant (re-resolved, policy
+    mode) or the session allowlist (legacy mode), narrowed to the session's sources
+    and owner, and to the session's selected ids.
     """
     from rush.memory import handoff
     from rush.memory.store import TypedArtifactStore
-    from rush.tools.memory import MemoryOperation, MemoryTool
+    from rush.tools.memory import MemoryOperation, MemoryTool, _v2_raw
 
     tool = MemoryTool()
     convert = _cached(lambda: _convert_result(rush_memory_bridge, "rush_memory"))
@@ -728,6 +734,16 @@ def build_memory_bridge_handler(
                     f"{_MEMORY_BRIDGE_OPERATIONS}."
                 },
             }
+        if isinstance(request, dict) and "schema_version" in request:
+            return _v2_raw(
+                operation,
+                "E_INPUT",
+                data={
+                    "field": "schema_version",
+                    "message": "This restricted handoff receiver accepts only its "
+                    "own request shape; schema_version is not supported.",
+                },
+            )
         validated_operation = cast(MemoryOperation, operation)
         # 72-T01 D22: a read-only load before capability validation; a missing or
         # unreadable store is the same constant denial, and nothing is created.
@@ -740,9 +756,7 @@ def build_memory_bridge_handler(
             authority: Any = None
             if operation != "receive":
                 try:
-                    authority = handoff.delivery_access(
-                        cast(TypedArtifactStore, view), session
-                    )
+                    authority = _bridge_access(view, session, operation)
                 except handoff.HandoffError as exc:
                     authority = exc
         except handoff.HandoffError as exc:
@@ -776,6 +790,38 @@ def build_memory_bridge_handler(
         return result["raw"]
 
     return rush_memory_bridge
+
+
+def _bridge_access(view: Any, session: Any, operation: str) -> Any:
+    """D22 bridge authority: `legacy` mode is the session allowlist under the
+    store's legacy owner; `policy` mode re-resolves the sender grant (D21,
+    `handoff.delivery_access`) and keeps only the session's own sources. Raises
+    `HandoffError` on a denied or changed sender grant."""
+    import dataclasses
+
+    from rush.memory import handoff
+    from rush.memory.authorization import source_granted
+    from rush.memory.retrieval import MemoryAccess, memory_policy_decision
+    from rush.memory.store import legacy_owner_scope
+
+    root = view.project_root
+    mode, _reason = memory_policy_decision(root)
+    if mode == "legacy":
+        return MemoryAccess.legacy(
+            root,
+            session.session_allowlist,
+            owner_scope=legacy_owner_scope(root),
+            operation=operation,
+        )
+    access = handoff.delivery_access(view, session)
+    sources = tuple(
+        sorted(
+            source
+            for source in set(session.session_allowlist)
+            if source_granted(source, access.sources)
+        )
+    )
+    return dataclasses.replace(access, sources=sources)
 
 
 def register_memory_bridge_tool(

@@ -243,6 +243,20 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory expand --help",
             "admin",
         ),
+        "memory history": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory history --help",
+            "admin",
+        ),
+        "memory explain": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory explain --help",
+            "admin",
+        ),
         "memory link": (
             None,
             "rush.tools.memory:MemoryTool",

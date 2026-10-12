@@ -308,7 +308,13 @@ def test_all_memory_operations_in_public_manifest() -> None:
     admin operations."""
     inventory = build_operations_inventory()
     by_cli = {op.cli_command: op for op in inventory if op.cli_command}
-    for _operation, cli_name in _NEW_OPERATIONS:
+    # 72-T06: `history` and `explain` are positional leaves, not `--input` leaves, so they
+    # are listed here rather than in `_NEW_OPERATIONS` (which drives `_request_for`).
+    for _operation, cli_name in (
+        *_NEW_OPERATIONS,
+        ("history", "history"),
+        ("explain", "explain"),
+    ):
         full_name = f"memory {cli_name}"
         assert full_name in by_cli, (
             f"{full_name} missing from public operations inventory"
@@ -616,12 +622,6 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
 # memory-mutation publication refresh and owner-scope authorization -------
 
 
-def _project(ctx: DashboardContext, project_id: str) -> ProjectRecord:
-    record = ctx.projects.get(project_id)
-    assert record is not None
-    return record
-
-
 @pytest.fixture
 def _isolated_projects_data_root(tmp_path, monkeypatch):
     """Isolates the global project registry (`register_project`/
@@ -645,6 +645,12 @@ def _registered_ctx(
         bound_port=0,
     )
     return ctx, record.project_id, root
+
+
+def _project(ctx: DashboardContext, project_id: str) -> ProjectRecord:
+    record = ctx.projects.get(project_id)
+    assert record is not None
+    return record
 
 
 def test_memory_edit_immediately_updates_map_content_and_generation(

@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 195
+total_operations = 197
 
 [[operations]]
 id = "admin.agent_connect"
@@ -95,6 +95,16 @@ effect_class = "read-only"
 safe_probe = "rush memory expand --help"
 
 [[operations]]
+id = "admin.memory_explain"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory explain"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory explain --help"
+
+[[operations]]
 id = "admin.memory_handoff"
 kind = "admin"
 canonical_impl = "rush.tools.memory:MemoryTool"
@@ -103,6 +113,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory handoff --help"
+
+[[operations]]
+id = "admin.memory_history"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory history"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory history --help"
 
 [[operations]]
 id = "admin.memory_intent"

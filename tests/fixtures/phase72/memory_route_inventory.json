@@ -597,6 +597,48 @@
     },
     {
       "module": "tools/memory.py",
+      "function": "_v2_affected",
+      "route": "explain",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_history",
+      "route": "history",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_maintain",
+      "route": "maintain",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_mutation",
+      "route": "mutation_view",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_preview",
+      "route": "mutation_view",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_telemetry",
+      "route": "telemetry_readers",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_v2_view",
+      "route": "v2_read",
+      "task": "72-T06"
+    },
+    {
+      "module": "tools/memory.py",
       "function": "_with_mutation_view",
       "route": "mutation_view",
       "task": "72-T01"

@@ -318,6 +318,13 @@ jobs:
           uv run pytest tests/test_phase72_memory_correctness.py tests/test_memory_authorization.py -q -rA -m windows_only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify Windows memory import publication
+        if: ${{ !cancelled() }}
+        run: |
+          uv run pytest tests/test_phase72_memory_public.py -q -rA -m windows_only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run pytest "tests/test_phase72_memory_public.py::test_t06_import_path_containment" "tests/test_phase72_memory_public.py::test_t06_import_crash_after_link" -q -rA
+
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

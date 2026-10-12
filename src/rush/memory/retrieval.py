@@ -1784,11 +1784,16 @@ def _cursor_binding(
     query: str,
     sources: Sequence[str],
     task_id: str | None = None,
+    v2: dict[str, Any] | None = None,
 ) -> bytes:
     """72-T02: the digest a page token is bound to. Any change to the scope, the query or
     the ranking makes every earlier token fail closed (`E_RESTART`). R3: the policy
-    revision is not bound (an unrelated grant between pages keeps a cursor valid)."""
-    body = {
+    revision is not bound (an unrelated grant between pages keeps a cursor valid).
+
+    72-T06: a schema_version 2 page (`v2`) binds its subjects, trust tiers,
+    freshness, archive mode and visibility mode in place of the single v1 `subject`;
+    a v1 binding's bytes are unchanged."""
+    body: dict[str, Any] = {
         "v": 3,
         "namespace": namespace,
         "project_id": project_id,
@@ -1802,6 +1807,9 @@ def _cursor_binding(
         "archive_mode": "active",
         "ranking_version": _RANKING_VERSION,
     }
+    if v2 is not None:
+        del body["subject"]
+        body.update(v2)
     text = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).digest()
 
@@ -2018,6 +2026,44 @@ def _candidate_to_item(
     if _contested(store, row, contest):
         item["contested"] = True
     return item
+
+
+# 72-T06: the reference keys of a schema_version 2 item.
+V2_REFERENCE_KEYS = (
+    "artifact_id",
+    "artifact_version",
+    "project_id",
+    "worktree_id",
+    "owner_scope",
+    "source",
+    "subject",
+    "trust_tier",
+    "origin_kind",
+    "origin_id",
+    "freshness",
+    "integrity",
+    "payload_hash",
+)
+
+
+def v2_reference(decision: VisibilityDecision) -> dict[str, Any]:
+    """The schema_version 2 `reference` of one decided row."""
+    reference = decision.reference or {}
+    return {key: reference.get(key) for key in V2_REFERENCE_KEYS}
+
+
+def _v2_item(
+    item: dict[str, Any], row: Any, decision: VisibilityDecision
+) -> dict[str, Any]:
+    """A compact item plus its v2 reference, hashes, usability and exclusion reasons."""
+    return {
+        **item,
+        "reference": v2_reference(decision),
+        "content_hash": row["content_hash"],
+        "symbol_ref": row["symbol_ref"],
+        "usable_as_current": decision.usable_as_current,
+        "reason_codes": list(decision.reason_codes),
+    }
 
 
 def _contest_index(
@@ -2395,7 +2441,7 @@ def _budget_page(
 def recall_page(
     store: TypedArtifactStore,
     *,
-    subject: MemorySubject,
+    subject: MemorySubject | None = None,
     query: str,
     session_allowlist: Iterable[str] | None = None,
     access: MemoryAccess | None = None,
@@ -2416,6 +2462,12 @@ def recall_page(
     cache_write: bool = False,
     now: float | None = None,
     frame_bytes: FrameBytes | None = None,
+    subjects: Sequence[MemorySubject] | None = None,
+    mode: VisibilityMode = "ordinary",
+    trust_tiers: Sequence[str] | None = None,
+    freshness: Sequence[str] | None = None,
+    archive_mode: Literal["active", "historical"] = "active",
+    v2_items: bool = False,
 ) -> dict[str, Any]:
     """MC02 §9.0 bounded recall: pages `store.search_candidates()` (prefiltered by
     subject/source/owner/archive/expiry) into a token/byte-bounded result.
@@ -2451,6 +2503,34 @@ def recall_page(
     (`E_PERMISSION` with its reason wins) and the generation is re-read on a fresh
     reader (`E_RESTART` on drift). R3: the cursor does not bind the policy revision.
     """
+    # 72-T06: a v2 page scans every requested subject (in place of the v1 `subject`),
+    # keeps rows by its visibility `mode` (`ordinary`: usable as current; `inspect`
+    # and `historical`: visible) and its freshness filter, prefilters trust tiers, and
+    # binds all of it into the cursor.
+    v2 = subjects is not None
+    scope_subjects = sorted(set(subjects)) if subjects is not None else [subject]
+    subject_arg: Any = scope_subjects[0] if len(scope_subjects) == 1 else scope_subjects
+    historical = archive_mode == "historical"
+    v2_binding = (
+        {
+            "subjects": scope_subjects,
+            "trust_tiers": sorted(trust_tiers) if trust_tiers is not None else None,
+            "freshness": sorted(freshness) if freshness is not None else None,
+            "archive_mode": archive_mode,
+            "mode": mode,
+        }
+        if v2
+        else None
+    )
+    scan_filters: dict[str, Any] = (
+        {
+            "trust_tiers": list(trust_tiers) if trust_tiers is not None else None,
+            "include_archived": historical,
+            "include_expired": historical,
+        }
+        if v2
+        else {}
+    )
     # R6: admission (a malformed cursor, caps) precedes policy resolution.
     refused = recall_admission(
         limit=limit,
@@ -2496,10 +2576,11 @@ def recall_page(
         worktree_id=access.worktree_id,
         owner=(owner.kind, owner.id) if owner is not None else None,
         grant_id=access.grant_id,
-        subject=subject,
+        subject=str(subject),
         query=query,
         sources=allowed_sources,
         task_id=access.task_id,
+        v2=v2_binding,
     )
     if cursor is None:
         scan_offset = 0
@@ -2514,13 +2595,15 @@ def recall_page(
 
     def eligible_item(row: Any, contest: _ContestIndex) -> dict[str, Any] | None:
         decision = evaluate_artifact_visibility(
-            store, row, access=access, now=moment, memo=memo
+            store, row, access=access, mode=mode, now=moment, memo=memo
         )
-        if not decision.usable_as_current:
+        keep = decision.usable_as_current if mode == "ordinary" else decision.visible
+        if not keep or (freshness is not None and decision.freshness not in freshness):
             return None
-        return _candidate_to_item(
+        item = _candidate_to_item(
             row, store, access, decision, contest=contest, now=moment, memo=memo
         )
+        return _v2_item(item, row, decision) if v2_items and item is not None else item
 
     def page_fit(
         page_items: list[dict[str, Any]], next_cursor: str | None, complete: bool
@@ -2571,12 +2654,13 @@ def recall_page(
         batch_limit = min(_BATCH_SIZE, _SCAN_CAP - scanned)
         batch = (
             store.search_candidates(
-                subject,
+                subject_arg,
                 query,
                 source_allowlist=allowed_sources,
                 scan_offset=position,
                 scan_limit=batch_limit,
                 owner_scope=access.owner_scope,
+                **scan_filters,
                 # 72-T02 fix1: no `now=` here. An SQL expiry filter under LIMIT/OFFSET
                 # shrinks the rank set when a row expires between pages and skips a
                 # row; expiry is decided per row by `evaluate_artifact_visibility`.
@@ -2585,11 +2669,12 @@ def recall_page(
             # 72-T01 R5: an unqueried (compact `list`) page browses the subject's
             # rows in ID order through the same per-row decision.
             else store.scope_artifacts(
-                subject,
+                subject_arg,
                 source_allowlist=allowed_sources,
                 scan_offset=position,
                 scan_limit=batch_limit,
                 owner_scope=access.owner_scope,
+                **scan_filters,
             )
         )
         contest = _contest_index(store, batch, access, now=moment, memo=memo)
@@ -3607,6 +3692,7 @@ def hybrid_page(
     opt_in: bool = False,
     now: float | None = None,
     frame_bytes: FrameBytes | None = None,
+    v2_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """MC12 §6.7 hybrid retrieval page: `hybrid_candidates()`'s RRF-fused ranking, applying
     the same compact-item budget rules `recall_page()` uses. No cursor/continuation in this
@@ -3665,7 +3751,8 @@ def hybrid_page(
     if not fused["available"]:
         fallback = recall_page(
             store,
-            subject=subject,
+            # 72-T06: a v2 call's lexical fallback pages its own filters.
+            subject=subject if v2_filters is None else None,
             query=query,
             access=access,
             limit=limit,
@@ -3686,6 +3773,7 @@ def hybrid_page(
             opt_in=opt_in,
             cache_write=cache_write,
             now=moment,
+            **(v2_filters or {}),
         )
         if fallback["code"] in ("E_PERMISSION", "E_RESTART"):
             return fallback

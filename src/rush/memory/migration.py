@@ -161,6 +161,28 @@ def replace_origin_content(
     identical import stays a no-op, never advancing `artifact_version`. 72-T05: one
     `BEGIN IMMEDIATE` around `replace_origin_content_tx`.
     """
+    try:
+        return _replace_origin_content_tx(
+            store, origin_kind, origin_id, content, created_at=created_at
+        )
+    except sqlite3.IntegrityError as exc:
+        # 72-T06 D30: the `memory_event_identity_immutable` trigger aborted the
+        # UPDATE; the transaction is already rolled back.
+        if str(exc) != "event_identity_immutable":
+            raise
+        from rush.memory.authorization import MemoryPolicyError
+
+        raise MemoryPolicyError("E_INPUT", "event_identity_immutable") from exc
+
+
+def _replace_origin_content_tx(
+    store: TypedArtifactStore,
+    origin_kind: str,
+    origin_id: str,
+    content: dict[str, Any],
+    *,
+    created_at: float | None,
+) -> bool:
     with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
         conn.text_factory = sqlite_text  # 72-T02 D32
@@ -231,12 +253,12 @@ def replace_origin_content_tx(
             if project_root is not None
             else _connection_project_root(conn),
             row["id"],
-            {"content": new_text, "trust_tier": _LOCAL_TIER, "content_hash": None},
+            {"content": new_text, "trust_tier": _LOCAL_TIER},
         )
         conn.execute(
             "UPDATE memory_artifacts SET content = ?, trust_tier = ?, created_at = ?, "
             "signature = NULL, promoted_at = NULL, corroboration_count = 0, "
-            "stale = 0, content_hash = NULL, expires_at = NULL, expired_at = NULL, "
+            "stale = 0, expires_at = NULL, expired_at = NULL, "
             "expired_by = NULL, artifact_version = ?, row_mac = ? "
             "WHERE origin_kind = ? AND origin_id = ?",
             (

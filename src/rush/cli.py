@@ -14,7 +14,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import click
 from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
@@ -3555,6 +3555,62 @@ def memory_list_cmd(
     _render_session_result(dict(result), as_json)
 
 
+def _run_memory_v2(
+    operation: Literal["history", "explain"],
+    request: dict[str, Any],
+    task_id: str | None,
+    as_json: bool,
+) -> None:
+    """72-T06: run one schema-2 read through the shared `MemoryTool` path; `task_id`
+    is forwarded as the top-level task context only when given."""
+    from .tools.memory import MemoryTool
+
+    extra: dict[str, Any] = {} if task_id is None else {"task_id": task_id}
+    result = MemoryTool().run(
+        _memory_logical_root(), operation=operation, request=request, **extra
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@memory_group.command(name="history")
+@click.argument("artifact_id")
+@click.option(
+    "--historical",
+    is_flag=True,
+    help="Include archived and expired versions (needs the history grant).",
+)
+@click.option("--task-id", "task_id", default=None, help="Task context for this read.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_history_cmd(
+    artifact_id: str, historical: bool, task_id: str | None, as_json: bool
+) -> None:
+    """Show the immutable versions of one memory artifact, oldest first."""
+    request: dict[str, Any] = {"schema_version": 2, "artifact_id": artifact_id}
+    if historical:
+        request["archive_mode"] = "historical"
+    _run_memory_v2("history", request, task_id, as_json)
+
+
+@memory_group.command(name="explain")
+@click.argument("artifact_id", required=False)
+@click.option("--query", default=None, help="Explain the artifacts this query selects.")
+@click.option("--task-id", "task_id", default=None, help="Task context for this read.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_explain_cmd(
+    artifact_id: str | None, query: str | None, task_id: str | None, as_json: bool
+) -> None:
+    """Show recorded supporting, contrary and attempted evidence for one artifact or
+    query; never generated rationale."""
+    if (artifact_id is None) == (query is None):
+        raise click.UsageError("give exactly one of ARTIFACT_ID or --query")
+    request: dict[str, Any] = {"schema_version": 2}
+    if artifact_id is not None:
+        request["artifact_id"] = artifact_id
+    else:
+        request["query"] = query
+    _run_memory_v2("explain", request, task_id, as_json)
+
+
 @memory_group.command(name="write")
 @click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("source")
@@ -3853,6 +3909,9 @@ def _memory_input_request(input_file: Path) -> dict[str, Any]:
         raise click.ClickException(f"--input must be UTF-8 JSON: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise click.ClickException(f"--input must be valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # 72-T06 G15: untrusted nesting is a controlled error, never a traceback.
+        raise click.ClickException("--input JSON is nested too deeply.") from exc
     if not isinstance(data, dict):
         raise click.ClickException("--input JSON must decode to an object.")
     return data
@@ -3900,11 +3959,11 @@ def _build_memory_operation_command(operation: str):
         owner: dict[str, str] | None = None,
     ) -> None:
         request = _memory_input_request(input_file)
-        extra: dict[str, Any] = {
-            "operation": operation,
-            "request": request,
-            "session_allowlist": list(session_allowlist) or None,
-        }
+        extra: dict[str, Any] = {"operation": operation, "request": request}
+        # 72-T06: `session_allowlist` is passed only when `--session` is given, so
+        # a schema-2 request body is not refused as a mixed legacy form.
+        if session_allowlist:
+            extra["session_allowlist"] = list(session_allowlist)
         if owner is not None:
             extra["owner_scope"] = owner
         if task_id is not None:

@@ -19,10 +19,12 @@ import copy
 import functools
 import inspect
 import json
+import math
 import operator
+import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, Literal, cast, get_args
 
 from pydantic import (
     AfterValidator,
@@ -48,11 +50,27 @@ from pydantic.json_schema import models_json_schema
 
 from rush.delivery import compact
 from rush.mcp_support.tool_registry import _PROJECT_DESCRIPTION
+from rush.memory.relations import RELATION_KINDS
+from rush.memory.retrieval import (
+    DEFAULT_ENCODING,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_TOKENS,
+)
 from rush.safety.redactor import sanitize_value
 
 # Via `rush.tools.memory` (not `rush.memory.*` directly): importing
 # `rush.memory.maintenance` first is a circular import through `rush.tools`.
-from rush.tools.memory import MaintenanceTask, MemorySubject, MemoryTool, SourceKind
+from rush.tools.memory import (
+    _LEGACY_DEFAULTS,
+    _V2_OPERATIONS,
+    MaintenanceTask,
+    MemorySubject,
+    MemoryTool,
+    SourceKind,
+    _is_v2_call,
+    _non_v2_rejection,
+    _v2_raw,
+)
 
 REQUEST_MODEL_TOOLS = frozenset({"rush_project", "rush_scan", "rush_memory"})
 
@@ -128,6 +146,27 @@ def _memory_source(value: str) -> str:
 
 MemorySource = Annotated[StrictStr, AfterValidator(_memory_source)]
 MemorySourceList = list[MemorySource]
+
+
+def _not_v2_receipt(value: str) -> str:
+    # 72-T06 D29: the `v2:` operation-id namespace belongs to v2 receipts only.
+    if value.startswith("v2:"):
+        raise ValueError("receipt operation ids starting 'v2:' are reserved")
+    return value
+
+
+LegacyReceiptId = Annotated[StrictStr, AfterValidator(_not_v2_receipt)]
+
+
+def _no_v2_receipt_values(value: dict[str, str]) -> dict[str, str]:
+    for receipt_id in value.values():
+        _not_v2_receipt(receipt_id)
+    return value
+
+
+LegacyReceiptIds = Annotated[
+    dict[str, StrictStr], AfterValidator(_no_v2_receipt_values)
+]
 
 _GRANT_FIELDS = (
     "allow_network",
@@ -329,8 +368,8 @@ class MemoryDeleteRequest(BaseModel):
     scope: MemorySubject
     owner_scope: MemoryOwnerScope | None = None
     apply: StrictBool = False
-    receipt_operation_id: StrictStr | None = None
-    receipt_operation_ids: dict[str, StrictStr] | None = None
+    receipt_operation_id: LegacyReceiptId | None = None
+    receipt_operation_ids: LegacyReceiptIds | None = None
     required_grants: list[StrictStr] | None = None
 
     @model_validator(mode="after")
@@ -435,7 +474,7 @@ _MUTATION = {
     "expected_version": (StrictInt, _REQUIRED),
     "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
     "apply": (StrictBool, _OPTIONAL),
-    "receipt_operation_id": (StrictStr | None, _OPTIONAL),
+    "receipt_operation_id": (LegacyReceiptId | None, _OPTIONAL),
     "required_grants": (list[StrictStr] | None, _OPTIONAL),
 }
 
@@ -673,6 +712,348 @@ _NESTED_ACTIONS = {
     "preference": frozenset(_PREFERENCE_REQUIRED),
 }
 
+# --- rush_memory schema_version 2 `request` models (72-T06) ------------------------
+# One strict model per v2 operation. Every identifier rejects NUL/Cc/Cf/Cs, every
+# integer that reaches SQLite stays inside its signed 64-bit range, and no float in
+# the request is NaN or infinite.
+
+_SQLITE_MAX = 2**63 - 1
+_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_ALL_SUBJECTS: tuple[Any, ...] = get_args(MemorySubject)
+
+
+def _no_unsafe_chars(value: str) -> str:
+    if any(unicodedata.category(ch) in _UNSAFE_CATEGORIES for ch in value):
+        raise ValueError("must not contain control, format or surrogate characters")
+    return value
+
+
+def _no_nul_or_surrogate(value: str) -> str:
+    if any(ch == "\x00" or unicodedata.category(ch) == "Cs" for ch in value):
+        raise ValueError("must not contain NUL or surrogate characters")
+    return value
+
+
+def _unique(values: list[Any]) -> list[Any]:
+    seen: list[Any] = []
+    for value in values:
+        if value in seen:
+            raise ValueError("entries must be unique")
+        seen.append(value)
+    return values
+
+
+V2Id = Annotated[
+    StrictStr,
+    Field(min_length=1),
+    AfterValidator(_no_path_separators),
+    AfterValidator(_no_unsafe_chars),
+]
+# An opaque label (receipt ids): stored verbatim, so path-like text is allowed.
+V2Label = Annotated[StrictStr, Field(min_length=1), AfterValidator(_no_unsafe_chars)]
+V2Text = Annotated[StrictStr, AfterValidator(_no_nul_or_surrogate)]
+V2Query = Annotated[
+    StrictStr, Field(min_length=1), AfterValidator(_no_nul_or_surrogate)
+]
+SqliteVersion = Annotated[StrictInt, Field(ge=1, le=_SQLITE_MAX)]
+SqliteOffset = Annotated[StrictInt, Field(ge=0, le=_SQLITE_MAX)]
+PositiveBudget = Annotated[StrictInt, Field(ge=1)]
+V2Limit = Annotated[StrictInt, Field(ge=1, le=100)]
+V2Subjects = Annotated[
+    list[MemorySubject], Field(min_length=1), AfterValidator(_unique)
+]
+V2Sources = Annotated[list[MemorySource], Field(min_length=1), AfterValidator(_unique)]
+V2TrustTiers = Annotated[
+    list[Literal["IMPORTED", "EXTERNAL_WRITE", "DERIVED", "STATED"]],
+    Field(min_length=1),
+    AfterValidator(_unique),
+]
+V2Freshness = Annotated[
+    list[Literal["current", "stale", "unknown", "not_applicable"]],
+    Field(min_length=1),
+    AfterValidator(_unique),
+]
+V2Reason = Annotated[StrictStr, Field(min_length=1), AfterValidator(_no_unsafe_chars)]
+
+
+def _absent() -> Any:
+    """An optional field that cannot be null: omitted means unset."""
+    return Field(default=None, json_schema_extra=_drop_default)
+
+
+_MAX_REQUEST_DEPTH = 256
+
+
+def _untrusted_data_problem(value: Any) -> str | None:
+    """Why `value` cannot be a request: nesting deeper than `_MAX_REQUEST_DEPTH`, a
+    cycle, or a NaN/infinite float (iterative, so untrusted depth never recurses)."""
+    stack: list[tuple[str, Any, int, frozenset[int]]] = [("", value, 0, frozenset())]
+    while stack:
+        path, node, depth, ancestors = stack.pop()
+        where = path or "request"
+        if isinstance(node, float) and not math.isfinite(node):
+            return f"{where}: numbers must be finite"
+        if not isinstance(node, (dict, list, tuple)):
+            continue
+        if id(node) in ancestors:
+            return f"{where}: data must not be cyclic"
+        if depth >= _MAX_REQUEST_DEPTH:
+            return f"{where}: data is nested too deeply"
+        inner = ancestors | {id(node)}
+        items = node.items() if isinstance(node, dict) else enumerate(node)
+        stack.extend(
+            (f"{path}.{key}" if path else str(key), item, depth + 1, inner)
+            for key, item in items
+        )
+    return None
+
+
+class MemoryV2OwnerScope(BaseModel):
+    """`OwnerScope.from_value` with identifier-safe text."""
+
+    model_config = _STRICT
+
+    kind: Literal["user", "project", "session", "agent"]
+    id: Annotated[StrictStr, Field(pattern=r"\S"), AfterValidator(_no_unsafe_chars)]
+
+
+class MemoryV2VersionRef(BaseModel):
+    model_config = _STRICT
+
+    artifact_id: V2Id
+    artifact_version: SqliteVersion
+
+
+class MemoryV2CandidateRef(BaseModel):
+    model_config = _STRICT
+
+    id: V2Id
+    version: SqliteVersion
+    source: MemorySource
+
+
+class _V2Request(BaseModel):
+    model_config = _STRICT
+
+    schema_version: Annotated[StrictInt, Field(ge=2, le=2)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _finite(cls, value: Any) -> Any:
+        problem = _untrusted_data_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
+        return value
+
+
+class _V2Scoped(_V2Request):
+    owner_scope: MemoryV2OwnerScope = _absent()
+    sources: V2Sources = _absent()
+    archive_mode: Literal["active", "historical"] = "active"
+
+
+class _V2Budget(_V2Scoped):
+    max_tokens: PositiveBudget = DEFAULT_MAX_TOKENS
+    max_bytes: PositiveBudget = DEFAULT_MAX_BYTES
+    encoding: V2Text = DEFAULT_ENCODING
+
+
+class MemoryV2ReadRequest(_V2Budget):
+    """`ask`/`recall`: a nonempty query over one or more subjects."""
+
+    subjects: V2Subjects
+    query: V2Query
+    trust_tiers: V2TrustTiers = _absent()
+    freshness: V2Freshness = _absent()
+    limit: V2Limit = 20
+    cursor: V2Query | None = None
+    retrieval: Literal["lexical", "hybrid"] = "lexical"
+    # 72-T06 declares these; 72-T08 owns their semantic validation.
+    embedding_endpoint: V2Text = _absent()
+    embedding_model: V2Text = _absent()
+    embedding_model_digest: V2Text = _absent()
+    embedding_chunking_version: V2Text = _absent()
+
+
+class MemoryV2ListRequest(MemoryV2ReadRequest):
+    """`list`: an empty (or omitted) query browses in artifact-id order."""
+
+    query: V2Text = ""  # type: ignore[assignment]
+
+
+class MemoryV2ExpandRequest(_V2Budget):
+    artifact_id: V2Id
+    artifact_version: SqliteVersion
+    offset: SqliteOffset = 0
+    representation: Literal["base64", "utf8"] = _absent()
+
+
+class MemoryV2RelatedRequest(_V2Budget):
+    artifact_id: V2Id
+    artifact_version: SqliteVersion = _absent()
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    max_nodes: Annotated[StrictInt, Field(ge=1, le=32)] = 32
+
+
+class MemoryV2HistoryRequest(_V2Budget):
+    artifact_id: V2Id
+    representation: Literal["base64", "utf8"] = "utf8"
+    limit: V2Limit = 20
+    cursor: V2Query | None = None
+
+
+class MemoryV2ExplainRequest(_V2Budget):
+    artifact_id: V2Id = _absent()
+    query: V2Query = _absent()
+    subjects: V2Subjects = list(_ALL_SUBJECTS)
+    limit: V2Limit = 20
+
+    @model_validator(mode="after")
+    def _one_form(self) -> MemoryV2ExplainRequest:
+        if (self.artifact_id is None) == (self.query is None):
+            raise ValueError("explain takes exactly one of artifact_id or query")
+        return self
+
+
+class _V2Mutation(_V2Request):
+    apply: StrictBool = False
+    invocation_id: V2Label = _absent()
+    effect_id: V2Label = _absent()
+    required_grants: list[StrictStr] = _absent()
+    owner_scope: MemoryV2OwnerScope = _absent()
+    # D1 `legacy` mode only: the explicit source allowlist of a mutation.
+    sources: V2Sources = _absent()
+
+    @model_validator(mode="after")
+    def _receipt_ids(self) -> _V2Mutation:
+        if (self.invocation_id is None) != (self.effect_id is None):
+            raise ValueError("invocation_id and effect_id are given together")
+        if self.apply and self.invocation_id is None:
+            raise ValueError("apply requires invocation_id and effect_id")
+        return self
+
+
+class MemoryV2WriteRequest(_V2Mutation):
+    subject: MemorySubject
+    content: AnyDict
+    source: MemorySource
+    symbol_ref: StrictStr = _absent()
+    source_kind: SourceKind = "local_tool"
+
+
+class MemoryEditCorrection(BaseModel):
+    """72-T06 owns the correction request; 72-T05 owns its transaction."""
+
+    model_config = _STRICT
+
+    kind: Literal["correct", "reject", "supersede"]
+    reason: V2Reason
+    supersedes: Annotated[
+        list[MemoryV2VersionRef],
+        Field(min_length=1, max_length=64),
+        AfterValidator(_unique),
+    ] = _absent()
+
+
+class MemoryV2EditRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    content: AnyDict = _absent()
+    correction: MemoryEditCorrection = _absent()
+
+    @model_validator(mode="after")
+    def _content_rules(self) -> MemoryV2EditRequest:
+        if self.correction is None and self.content is None:
+            raise ValueError("edit requires content or a correction")
+        if (
+            self.correction is not None
+            and self.correction.kind == "reject"
+            and self.content is not None
+        ):
+            raise ValueError("a reject correction takes no content")
+        return self
+
+
+class MemoryV2ArchiveRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    archived: StrictBool = True
+
+
+class MemoryV2DeleteRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_ids: Annotated[
+        list[V2Id], Field(min_length=1, max_length=100), AfterValidator(_unique)
+    ]
+    expected_revisions: dict[V2Id, SqliteVersion]
+
+    @model_validator(mode="after")
+    def _revisions_match(self) -> MemoryV2DeleteRequest:
+        if set(self.expected_revisions) != set(self.artifact_ids):
+            raise ValueError("expected_revisions must map exactly the artifact_ids")
+        return self
+
+
+class MemoryV2PromoteRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    user_stated: StrictBool = False
+    candidate_refs: Annotated[
+        list[MemoryV2CandidateRef], Field(min_length=1, max_length=64)
+    ] = _absent()
+
+
+class MemoryV2MaintainRequest(_V2Mutation):
+    task: MaintenanceTask
+    batch_size: Annotated[StrictInt, Field(ge=1, le=1000)] = 500
+    candidate_ids: Annotated[list[V2Id], AfterValidator(_unique)] = _absent()
+    expected_revisions: dict[V2Id, SqliteVersion] = _absent()
+
+    @model_validator(mode="after")
+    def _reviewed_revisions(self) -> MemoryV2MaintainRequest:
+        if (self.candidate_ids is None) != (self.expected_revisions is None) or (
+            self.expected_revisions is not None
+            and set(self.expected_revisions) != set(self.candidate_ids or ())
+        ):
+            raise ValueError("expected_revisions must map exactly the candidate_ids")
+        return self
+
+
+class MemoryV2LinkRequest(_V2Mutation):
+    source_id: V2Id
+    source_version: SqliteVersion
+    target_id: V2Id
+    target_version: SqliteVersion
+    kind: Literal[tuple(sorted(RELATION_KINDS))]  # type: ignore[valid-type]
+    origin_ref: V2Text = _absent()
+
+    @model_validator(mode="after")
+    def _apply_only(self) -> MemoryV2LinkRequest:
+        if not self.apply:
+            raise ValueError("link has no preview: apply must be true")
+        return self
+
+
+_V2_REQUEST_MODELS: dict[str, Any] = {
+    "ask": MemoryV2ReadRequest,
+    "recall": MemoryV2ReadRequest,
+    "list": MemoryV2ListRequest,
+    "expand": MemoryV2ExpandRequest,
+    "related": MemoryV2RelatedRequest,
+    "history": MemoryV2HistoryRequest,
+    "explain": MemoryV2ExplainRequest,
+    "write": MemoryV2WriteRequest,
+    "edit": MemoryV2EditRequest,
+    "archive": MemoryV2ArchiveRequest,
+    "delete": MemoryV2DeleteRequest,
+    "promote": MemoryV2PromoteRequest,
+    "maintain": MemoryV2MaintainRequest,
+    "link": MemoryV2LinkRequest,
+}
+
 # --- rush_memory top-level operation fields -------------------------------------
 # Common to every operation: `MemoryTool.__call__`'s path, grants, and attribution
 # (`project_id` doubles as the T8 declared root). Everything else is consumed only
@@ -812,6 +1193,17 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
             "archive",
         )
     },
+    # 72-T06: the schema_version 2 form of each v2 operation (`history` and
+    # `explain` have no other form). Top-level `limit`/`max_bytes` and every legacy
+    # field are absent, so a mixed form is `extra_forbidden`.
+    **{
+        f"{op}:v2": (op, {"request": (_V2_REQUEST_MODELS[op], _REQUIRED)})
+        for op in sorted(_V2_OPERATIONS)
+    },
+}
+_V2_COMMON: dict[str, Any] = {
+    **{k: v for k, v in _MEMORY_COMMON.items() if k not in ("limit", "max_bytes")},
+    "task_id": (StrictStr | None, _OPTIONAL),
 }
 
 
@@ -893,6 +1285,10 @@ def _memory_tag(value: Any) -> Any:
     if not isinstance(value, dict):
         return None
     operation = value.get("operation", "ask")
+    if not isinstance(operation, str):
+        return None
+    if _is_v2_call(operation, value.get("request")):
+        return f"{operation}:v2"
     if operation == "list" and value.get("request") is not None:
         return "list:compact"
     return operation
@@ -900,8 +1296,10 @@ def _memory_tag(value: Any) -> Any:
 
 def _memory_spec() -> _ToolSpec:
     # Plan: memory models keep `MemoryTool.__call__`'s public signature defaults.
+    # 72-T06: a legacy parameter's signature default is a presence sentinel; its
+    # public default stays the legacy value.
     defaults = {
-        name: parameter.default
+        name: _LEGACY_DEFAULTS.get(name, parameter.default)
         for name, parameter in inspect.signature(MemoryTool.__call__).parameters.items()
         if parameter.default is not inspect.Parameter.empty
     }
@@ -910,7 +1308,7 @@ def _memory_spec() -> _ToolSpec:
             "Memory",
             op,
             fields,
-            extra=_MEMORY_COMMON,
+            extra=_V2_COMMON if tag.endswith(":v2") else _MEMORY_COMMON,
             tag=tag,
             defaults=defaults,
             validators=_MEMORY_VALIDATORS.get(tag),
@@ -1006,8 +1404,8 @@ def _usage_text(usage: Mapping[str, str], total: int) -> str:
         return f"{next(iter(groups)).capitalize()} for every operation."
     labels = {
         "required": "Required for operation(s)",
-        # Only memory `list` has two forms: plain needs `query`, compact `request`.
-        "conditional": "Required by one form (plain: query; compact: request) of "
+        # Memory operations have a legacy and a schema_version 2 form.
+        "conditional": "Required by one form (legacy or schema_version 2) of "
         "operation(s)",
         "optional": "Optional for operation(s)",
     }
@@ -1201,11 +1599,49 @@ def _message(details: list[Any]) -> str:
     )
 
 
-def _reject(spec: _ToolSpec, operation: Any, details: list[Any]) -> ValidationOutcome:
+def _memory_v2_rejection(operation: str, details: list[Any]) -> dict[str, Any]:
+    """72-T06: the v2 `E_INPUT` raw of a strict-validation failure (both transports)."""
+    raw = _v2_raw(
+        operation, "E_INPUT", data={"message": _message(details), "details": details}
+    )
+    return cast(dict[str, Any], sanitize_value(raw).value)
+
+
+def validate_memory_v2(
+    operation: str, request: Any, top_level: Mapping[str, Any]
+) -> tuple[Any, dict[str, Any] | None]:
+    """72-T06: the in-process (CLI, dashboard, `MemoryTool.run`) strict validation of
+    one v2 call, through the same adapter MCP uses: `(request model, None)`, or
+    `(None, E_INPUT raw)` whose bytes equal MCP's for the same arguments."""
+    spec = _SPECS["rush_memory"]
+    payload = {"path": ".", "operation": operation, "request": request, **top_level}
+    try:
+        model = spec.named_adapter.validate_python(payload)
+    except ValidationError as exc:
+        return None, _memory_v2_rejection(operation, _details(spec, exc, []))
+    return model.request, None
+
+
+def _reject(
+    spec: _ToolSpec,
+    operation: Any,
+    details: list[Any],
+    *,
+    v2: bool = False,
+    v2_raw: dict[str, Any] | None = None,
+) -> ValidationOutcome:
     op = str(operation)
     message = _message(details)
     raw: dict[str, Any]
-    if spec.tool == "memory":
+    if spec.tool == "memory" and v2_raw is not None:
+        raw = v2_raw
+        summary = f"memory {op} returned E_INPUT."
+        extra: dict[str, Any] = {"metadata": {"operation": op}}
+    elif spec.tool == "memory" and v2:
+        raw = _memory_v2_rejection(op, details)
+        summary = f"memory {op} returned E_INPUT."
+        extra = {"metadata": {"operation": op}}
+    elif spec.tool == "memory":
         raw = {
             "schema_version": 1,
             "operation": op,
@@ -1213,7 +1649,7 @@ def _reject(spec: _ToolSpec, operation: Any, details: list[Any]) -> ValidationOu
             "data": {"message": message, "details": details},
         }
         summary = f"memory {op} returned E_INPUT."
-        extra: dict[str, Any] = {"metadata": {"operation": op}}
+        extra = {"metadata": {"operation": op}}
     else:
         raw = {
             "schema_version": 1,
@@ -1292,10 +1728,26 @@ def validate_and_normalize(
         if isinstance(payload, dict)
         else default_op
     )
+    request = payload.get("request") if isinstance(payload, dict) else None
+    if (
+        spec.tool == "memory"
+        and isinstance(request, dict)
+        and "schema_version" in request
+        and isinstance(operation, str)
+        and operation in set(spec.tag_operation.values()) - _V2_OPERATIONS
+    ):
+        # 72-T06: schema_version 2 sent to an operation without a v2 form (the
+        # same body `MemoryTool.run` returns in process).
+        raw = _non_v2_rejection(str(operation))
+        return _reject(spec, operation, raw["data"]["details"], v2_raw=raw)
     try:
         model = adapter.validate_python(payload)
     except ValidationError as exc:
-        return _reject(spec, operation, _details(spec, exc, prefix))
+        v2 = spec.tool == "memory" and (
+            _is_v2_call(operation, request)
+            or (isinstance(request, dict) and "schema_version" in request)
+        )
+        return _reject(spec, operation, _details(spec, exc, prefix), v2=v2)
     fields = model.model_dump(exclude_unset=True)
     if spec.tool == "memory":
         return ValidationOutcome(arguments=fields)
@@ -1315,4 +1767,5 @@ __all__ = [
     "published_schema",
     "scan_model_tags",
     "validate_and_normalize",
+    "validate_memory_v2",
 ]
