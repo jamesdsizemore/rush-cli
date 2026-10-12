@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+import stat
 import time
 import uuid
 from pathlib import Path
@@ -14,13 +16,16 @@ import pytest
 import rush.hook  # noqa: F401 -- resolves pre-existing order-dependent circular import (T010 precedent)
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
+    MemoryAccessChanged,
     MemoryArtifact,
     SignatureMismatchError,
     TrojanSourceFoundError,
     TrustTierError,
     TypedArtifactStore,
     compute_content_signature,
+    ensure_store_key,
 )
+from rush.setup.provision import default_data_root
 
 
 def _artifact(**overrides) -> MemoryArtifact:
@@ -222,3 +227,60 @@ def test_fts5_query_matches_indexed_content(tmp_path: Path):
 
     matched_beta = {a.id for a in store.search("domain_knowledge", "ftsbeta")}
     assert matched_beta == {id1}
+
+
+def _embedding_count(store: TypedArtifactStore) -> int:
+    with sqlite3.connect(store.db_path) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0])
+
+
+def test_put_embedding_commit_check_failure_persists_nothing(tmp_path: Path):
+    """72-T01 brief §2.2: `put_embedding` takes keyword-only `commit_check`, called
+    after the effect immediately before commit; a failure rolls back and raises
+    `MemoryAccessChanged(code, reason)`."""
+    store = TypedArtifactStore(project_root=tmp_path)
+    key: dict[str, Any] = {
+        "artifact_id": "A1",
+        "artifact_version": 1,
+        "content_hash": "h",
+        "model_digest": "d",
+        "chunking_version": "c",
+    }
+    with pytest.raises(MemoryAccessChanged) as exc:
+        store.put_embedding(
+            **key,
+            vector=[1.0, 0.0],
+            commit_check=lambda: ("E_PERMISSION", "grant_revoked"),
+        )
+    assert (exc.value.code, exc.value.reason) == ("E_PERMISSION", "grant_revoked")
+    assert store.get_embedding(**key) is None
+    assert _embedding_count(store) == 0
+
+    store.put_embedding(**key, vector=[1.0, 0.0], commit_check=lambda: None)
+    assert store.get_embedding(**key) == [1.0, 0.0]
+
+
+@pytest.mark.posix_only
+def test_store_key_creates_every_missing_parent_owner_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """72-T01 D41 (addendum: "POSIX uses 0o700 parents"): a fresh data root gets every
+    missing parent of the key file created 0o700, not only the leaf directory."""
+    home = tmp_path / "fresh-home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / "xdg"))
+    key_dir = default_data_root() / "user" / ".rush"
+    created: list[Path] = []
+    probe = key_dir
+    while not os.path.lexists(probe):
+        created.append(probe)
+        probe = probe.parent
+    assert home in created and len(created) >= 3
+
+    previous = os.umask(0o022)
+    try:
+        assert ensure_store_key() is not None
+    finally:
+        os.umask(previous)
+    modes = {str(d): oct(stat.S_IMODE(d.stat().st_mode)) for d in created}
+    assert modes == {str(d): oct(0o700) for d in created}

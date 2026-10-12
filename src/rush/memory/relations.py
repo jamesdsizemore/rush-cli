@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from typing import Any
 
 import tiktoken
@@ -163,6 +163,7 @@ def related_artifacts(
     artifact_id: str,
     version: int,
     session_allowlist: Iterable[str] | None,
+    selected_ids: Collection[str] | None = None,
     depth: int = DEFAULT_DEPTH,
     max_nodes: int = _MAX_NODES,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -179,6 +180,8 @@ def related_artifacts(
     precedent (§9.0). `complete=False` means the node cap or the shared token/byte budget
     stopped traversal before every reachable neighbor within `depth` was included — never that
     something was denied or invalidated, which is indistinguishable from "not linked at all".
+    72-T01 D22: with `selected_ids` (the restricted bridge), a node outside it is never
+    returned, counted against the cap, or traversed.
     """
     allowed_sources = set(session_allowlist or ())
     depth = max(1, min(depth, _MAX_DEPTH))
@@ -221,6 +224,8 @@ def related_artifacts(
                         neighbor_version = edge["source_version"]
                         direction = "incoming"
                     if neighbor_id in visited:
+                        continue
+                    if selected_ids is not None and neighbor_id not in selected_ids:
                         continue
                     if len(visited) >= max_nodes:
                         truncated = True

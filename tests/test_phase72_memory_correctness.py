@@ -501,12 +501,9 @@ def test_t01_denied_current_routes_and_authority(tmp_path: Path) -> None:
     for mode, access in (("ordinary", ask), ("inspect", ask), ("historical", history)):
         _assert_not(
             evaluate_artifact_visibility(
-                store,
-                store.get_current("row-b1"),
-                access=access,
-                mode=cast(VisibilityMode, mode),
+                store, store.get_current("row-b1"), access=access, mode=mode  # type: ignore[arg-type]  # G9 protected: baseline AST
             )
-        )
+        )  # fmt: skip
 
 
 # --- 2 ----------------------------------------------------------------------
@@ -1252,6 +1249,7 @@ def test_t01_legacy_allowlist_route_retained(tmp_path: Path) -> None:
     store = TypedArtifactStore(root)
     _row(store, "row-alice", ALICE, "mk-alice", source="s")
     _row(store, "row-bob", BOB, "mk-bob", source="s")
+    assert retrieval.memory_policy_mode(root) == "legacy"
 
     page = recall_page(store, subject=SUBJECT, query="needle", session_allowlist=["s"])
     assert set(_ids(page)) == {"row-alice", "row-bob"}
@@ -2539,9 +2537,9 @@ def test_t01_fix2_j1_noncanonical_backfill_survives_rewrite(
         store, "j1", "backfill", visible=path not in ("expiry", "staleness")
     )
     if path == "promote_stated":
-        assert _nn(store.get_current("j1")).trust_tier == "STATED"
+        assert store.get_current("j1").trust_tier == "STATED"  # type: ignore[union-attr]  # G9 protected: baseline AST
     if path == "expiry":
-        assert _nn(store.get_current_row("j1"))["expired_at"] is not None
+        assert store.get_current_row("j1")["expired_at"] is not None  # type: ignore[index]  # G9 protected: baseline AST
 
 
 def test_t01_fix2_j1_canonical_write_row_archive_keeps_write_binding(
@@ -2762,13 +2760,13 @@ def test_t01_fix2_blob_content_never_rebound(
         store, store.get_current_row("b2"), access=access
     )
     assert first.usable_as_current is True, first.reason_codes
-    assert _nn(first.reference)["integrity"] == "unbound"
+    assert first.reference["integrity"] == "unbound"  # type: ignore[index]  # G9 protected: baseline AST
     _pm_archive_unarchive(store, "b2")
     after = evaluate_artifact_visibility(
         store, store.get_current_row("b2"), access=access
     )
     assert after.visible is True and after.usable_as_current is True, after.reason_codes
-    assert _nn(after.reference)["integrity"] == "unbound"
+    assert after.reference["integrity"] == "unbound"  # type: ignore[index]  # G9 protected: baseline AST
     assert _payload_row(db, "b2") == (None, None)
 
 
@@ -13234,6 +13232,53 @@ def _g2_bridge_policy(
         route.check_ok(env, cell, out, _g2_snapshot(env))
 
 
+def _g2_bridge_session(env: _G2Env, ids: tuple[str, ...]) -> None:
+    """A handoff session selecting exactly `ids` (none when the prepare is refused)."""
+    prepared = _prepare_handoff(env.root, ids=ids)
+    if _code_of(prepared) == "OK":
+        env.extra["session"] = _session_of(prepared)
+
+
+def _g2_bridge_unselected(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """D22: an unselected id is refused at the bridge authority boundary; the refusal
+    names no fixture id and reveals nothing."""
+    data = _dump(_rd(out.body)["data"])
+    assert out.reason == "not_selected", (out.code, out.reason, data)
+    assert not re.search(r"\b(a1|a2|x1)\b", data), data
+    assert out.committed == 0
+
+
+def _g2_receive_only_selected(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert [change["id"] for change in data["changes"]] == ["a2"], data
+    assert out.committed == 0
+
+
+def _g2_bridge_selection(spec: _G2Spec) -> dict[str, _G2Expect]:
+    """D22 capability-selected ids: the session selects `a1` (`selected`) or only `a2`
+    (`unselected`) while the request names `a1`. Expanding or relating an unselected id
+    is `E_PERMISSION`; receive and resume deliver only selected ids."""
+    refused = _ex("E_PERMISSION", exact=(), check=_g2_bridge_unselected)
+    if spec.operation == "expand":
+        return {
+            "selected": _ex("OK", check=_g2_ok_expand),
+            "unselected": refused,
+        }
+    if spec.operation == "related":
+        return {"selected": _ex("OK", check=_g2_related_check), "unselected": refused}
+    if spec.operation == "receive":
+        return {
+            "selected": _ex("OK", check=_g2_receive_check),
+            "unselected": _ex("OK", exact=(), check=_g2_receive_only_selected),
+        }
+    return {
+        "selected": _ex("OK", check=spec.check_ok),
+        "unselected": _ex("OK", exact=(), check=spec.check_ok),
+    }
+
+
 def _g2_bridge(spec: _G2Spec) -> _G2Route:
     """`spec`'s operation over the restricted bridge: one prepared handoff session
     (`session_id` + `capability`) fixes the allowlist and the sender, so the request
@@ -13250,7 +13295,16 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
     def setup(env: _G2Env) -> None:
         if spec.setup is not None:
             spec.setup(env)
-        if "session" not in env.extra:
+        cell = env.extra.get("cell")
+        if cell is not None and cell.capability_ids == "unselected":
+            # D22: the session selects only `a2`; the request still names `a1`.
+            env.extra.pop("session", None)
+            _g2_bridge_session(env, ("a2",))
+        elif spec.operation == "related":
+            # the related oracle's neighbour `a2` is part of the selection
+            target = cell.target if cell is not None else "a1"
+            _g2_bridge_session(env, (target, "a2"))
+        elif "session" not in env.extra:
             _g2_setup_receive(env)
 
     def send(env: _G2Env, request: dict[str, Any]) -> _G2Out:
@@ -13273,6 +13327,7 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
         "absent": _ex("E_PERMISSION", absent=(".rush/memory.db",)),
         "old_schema": _ex("E_PERMISSION"),
     }
+    supports["capability_ids"] = _g2_bridge_selection(spec)
     return _G2Route(
         transport="bridge",
         key=spec.key,
@@ -14947,6 +15002,8 @@ def _g2_registry(function: str, *, with_access: bool = False):
         from rush.workflows import projects
 
         reader = getattr(projects, function)
+        if function == "list_project_artifacts":
+            return reader(env.root, data_root=env.data_root)
         if function == "_readonly_memory_counts":
             return reader(env.root, include_internal=False)
         if function == "_readonly_telemetry_scope":
@@ -15015,6 +15072,7 @@ def _g2_dashboard_routes() -> list[_G2Route]:
         independent_of_store: bool = False,
         pre_setup: Any = _g2_pre_events,
         op: str = "list",
+        overlay_setup: Any = None,
     ) -> None:
         route = _g2_reader(
             key,
@@ -15029,7 +15087,9 @@ def _g2_dashboard_routes() -> list[_G2Route]:
             old_schema_reads=old_schema_reads,
             independent_of_store=independent_of_store,
         )
-        routes.append(dataclasses.replace(route, transport=transport))
+        routes.append(
+            dataclasses.replace(route, transport=transport, overlay_setup=overlay_setup)
+        )
 
     add(
         "dashboard_readers",
@@ -15098,6 +15158,14 @@ def _g2_dashboard_routes() -> list[_G2Route]:
     )
     for function, shows, expected, legacy, with_access, store_dim in (
         (
+            "list_project_artifacts",
+            _g2_ids("art"),
+            {"art:a1", "art:a2", "art:arch", "art:exp", "art:tam"},
+            {"art:a1", "art:a2", "art:x1", "art:arch", "art:exp", "art:tam"},
+            False,
+            {"old_schema_reads": True},
+        ),
+        (
             "_readonly_memory_refs",
             _g2_ids("ref"),
             {"ref:a1", "ref:a2", "ref:arch", "ref:exp", "ref:tam"},
@@ -15147,6 +15215,11 @@ def _g2_dashboard_routes() -> list[_G2Route]:
             legacy,
             (("workflows/projects.py", function),),
             transport="internal",
+            # `list_project_artifacts` addresses a registered project: registering
+            # the overlay storage root is fixture setup, taken before the baseline
+            overlay_setup=_g2_project_id
+            if function == "list_project_artifacts"
+            else None,
             **cast("dict[str, Any]", store_dim),
         )
     return routes
@@ -15322,6 +15395,11 @@ _G2_EXTRA_REQUIRED = frozenset(
         ("memory/migration.py", "write_if_new"),
         ("dashboard/server.py", "_fetch_memory_browse_items"),
         ("dashboard/server.py", "_dispatch_memory_promote"),
+        ("dashboard/server.py", "_dispatch_memory_edit"),
+        ("dashboard/server.py", "_dispatch_memory_archive"),
+        ("dashboard/server.py", "_dispatch_memory_delete"),
+        ("dashboard/server.py", "_dispatch_memory_maintain"),
+        ("workflows/projects.py", "list_project_artifacts"),
     }
 )
 
@@ -15681,6 +15759,82 @@ def _g2_dashboard_promote_check(
     assert out.committed == 1, (out.committed, out.body)
 
 
+#: dashboard POST operation -> its dispatcher (`_handle_action` routes `memory_<op>`)
+_G2_DASHBOARD_MUTATIONS = {
+    "edit": "_dispatch_memory_edit",
+    "archive": "_dispatch_memory_archive",
+    "delete": "_dispatch_memory_delete",
+    "maintain": "_dispatch_memory_maintain",
+}
+
+
+def _g2_dashboard_mutation(spec: _G2Spec) -> _G2Route:
+    """`spec`'s operation as the dashboard POST `memory_<operation>`: the arguments
+    `_handle_action` hands the dispatcher (its `owner_scope` already normalized; the
+    dispatcher keeps only the keys it forwards) and the dashboard's grants. `maintain`
+    sends no `request`, so it has no preview form. A missing `cache_write` grant on an
+    apply is the dashboard's own 403 `grant_denied`, before the tool runs."""
+    dispatcher = _G2_DASHBOARD_MUTATIONS[spec.operation]
+    apply = spec.cell.endswith("-apply")
+
+    def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        from rush.dashboard import server
+
+        kwargs = spec.kwargs(env, cell)
+        if spec.operation == "maintain":
+            arguments = {"task": kwargs["task"], "owner_scope": kwargs["owner_scope"]}
+        else:
+            arguments = dict(kwargs["request"])
+        perms = _g2_permissions(cell, default_cache_write=spec.default_cache_write)
+        grants = {
+            "cache_write": perms.cache_write,
+            "artifact_write": perms.artifact_write,
+            "build": perms.build,
+            "network": perms.network,
+        }
+        project_id, ctx = _g2_dashboard_context(env)
+        try:
+            _status, body = getattr(server, dispatcher)(
+                ctx, project_id, arguments, grants
+            )
+        except server._ActionDenied as exc:
+            return _G2Out(exc.code, exc.code, frozenset(), 0, str(exc), "error")
+        return _g2_out_from_tool(body)
+
+    supports = dict(spec.supports)
+    if apply:
+        supports["cache_write"] = {
+            **spec.supports["cache_write"],
+            "off": _ex("grant_denied", status="error", committed=0),
+        }
+    server_py = "dashboard/server.py"
+    refresh = (
+        "_refresh_project_memories"
+        if spec.operation == "maintain"
+        else "_refresh_project_memories_if_store_exists"
+    )
+    return _G2Route(
+        transport="dashboard",
+        key="dashboard_mutations",
+        cell=f"dashboard_mutations-memory_{spec.operation}-{spec.cell.rsplit('-', 1)[1]}",
+        op=spec.op,
+        call=call,
+        supports=supports,
+        missing_ops=spec.missing_ops,
+        setup=spec.setup,
+        ok_codes=spec.ok_codes,
+        owner_required=spec.owner_required,
+        writer_family=spec.writer_family,
+        check_ok=spec.check_ok,
+        check_legacy=spec.check_legacy,
+        ungranted=spec.ungranted,
+        idempotent=spec.idempotent,
+        covers=((server_py, dispatcher), (server_py, refresh)),
+        intrinsic_apply=spec.intrinsic_apply,
+        ignore_data=_G2_DASHBOARD_DATA,
+    )
+
+
 def _g2_dashboard_post_routes() -> list[_G2Route]:
     server_py = "dashboard/server.py"
     promote = dataclasses.replace(
@@ -15714,9 +15868,16 @@ def _g2_dashboard_post_routes() -> list[_G2Route]:
         ),
         op="list",
     )
+    mutations = [
+        _g2_dashboard_mutation(spec)
+        for spec in _g2_all_specs()
+        if spec.operation in _G2_DASHBOARD_MUTATIONS
+        and not (spec.operation == "maintain" and spec.cell.endswith("-preview"))
+    ]
     return [
         _g2_as("dashboard", promote, ignore_data=_G2_DASHBOARD_DATA),
         _g2_as("dashboard", sync, ignore_data=_G2_DASHBOARD_DATA),
+        *mutations,
     ]
 
 
@@ -17048,6 +17209,90 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'tion.", "tool": "memory"}]'
         ),
     ),
+    "dashboard.dashboard_mutations-memory_edit-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=("OK", None, "ok", (), 0),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "a1", "operation": "edit", "revision": 2, "sourc'
+            'e": "source-a"}]}, "operation": "edit"}, "raw": {"code": "OK", "'
+            'data": {"applied": true, "changed": {"a1": {"kind": "edit", "rev'
+            'ision": 2}}, "id": "a1", "readback": {"a1": {"archived": false, '
+            '"present": true, "revision": 2, "source": "source-a", "subject":'
+            ' "domain_knowledge", "trust_tier": "DERIVED"}}, "revision": 2, "'
+            'trust_tier": "DERIVED"}, "operation": "edit", "schema_version": '
+            '1}, "status": "ok", "summary": "memory edit returned OK.", "tool'
+            '": "memory"}'
+        ),
+    ),
+    "dashboard.dashboard_mutations-memory_archive-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=("OK", None, "ok", (), 0),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "a1", "operation": "archive", "revision": 2, "so'
+            'urce": "source-a"}]}, "operation": "archive"}, "raw": {"code": "'
+            'OK", "data": {"applied": true, "archived": true, "changed": {"a1'
+            '": {"kind": "archive", "revision": 2}}, "id": "a1", "readback": '
+            '{"a1": {"archived": true, "present": true, "revision": 2, "sourc'
+            'e": "source-a", "subject": "domain_knowledge", "trust_tier": "DE'
+            'RIVED"}}, "revision": 2}, "operation": "archive", "schema_versio'
+            'n": 1}, "status": "ok", "summary": "memory archive returned OK."'
+            ', "tool": "memory"}'
+        ),
+    ),
+    "dashboard.dashboard_mutations-memory_delete-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=("OK", None, "ok", (), -1),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "a2", "operation": "delete", "revision": 2, "sou'
+            'rce": "source-a"}]}, "operation": "delete"}, "raw": {"code": "OK'
+            '", "data": {"affected": [{"family": "memory", "id": "a2", "refer'
+            'ences": 0, "revision": 1}], "applied": true, "changed": {"a2": {'
+            '"kind": "delete", "revision": 2}}, "readback": {"a2": {"present"'
+            ': false}}}, "operation": "delete", "schema_version": 1}, "status'
+            '": "ok", "summary": "memory delete returned OK.", "tool": "memor'
+            'y"}'
+        ),
+    ),
+    "dashboard.dashboard_mutations-memory_maintain-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "root:.rush/locks",
+            }
+        ),
+        out=(None, None, "ok", (), 0),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
+            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
+            'y"}'
+        ),
+    ),
     "dashboard.scan_handoff-build_handoff": _G2Exact(
         effects=frozenset(
             {
@@ -17260,6 +17505,116 @@ def test_t01_fix_matrix_success_oracles_reject_injected_results(
             test_t01_fix_policy_mode_matrix(
                 fake, cells[fake.ident], injected, monkeypatch
             )
+
+
+_T01_EXISTING_OPERATIONS = frozenset(
+    {
+        "ask",
+        "recall",
+        "list",
+        "expand",
+        "related",
+        "link",
+        "consolidate",
+        "write",
+        "promote",
+        "maintain",
+        "verify_attempt",
+        "prepare",
+        "resume",
+        "intent",
+        "recipe",
+        "plan_checks",
+        "last_success_diagnose",
+        "handoff",
+        "receive",
+        "delete",
+        "edit",
+        "archive",
+    }
+)
+
+
+def test_t01_existing_apply_and_historical_are_real_cells(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R22/G2a: every `apply` and `historical` cell of an existing operation is a real
+    cell that reaches authorization; none is a producer-staged `E_INPUT`."""
+    apply_ops = {
+        r.key
+        for r in _G2_ROUTES
+        if r.cell.endswith("-apply-apply") or r.cell == "write-apply-apply"
+    }
+    assert {"write", "edit", "archive", "delete", "promote", "maintain"} <= apply_ops
+    historical = [r for r in _G2_ROUTES if r.cell.endswith("-mode-historical")]
+    assert {r.cell for r in historical} == {"list-mode-historical"}
+    existing = [r for r in _G2_ROUTES if r.key in _T01_EXISTING_OPERATIONS]
+    assert all(r.rows_only is None for r in existing)
+    assert {r.key for r in _G2_ROUTES} >= _T01_EXISTING_OPERATIONS, (
+        "all 22 operations are matrix routes"
+    )
+    # No cell id of an existing operation is a producer-staged cell.
+    ids = [r.ident for r in _G2_ROUTES]
+    assert len(ids) == len(set(ids))
+    assert not any("producer" in r.ident for r in existing)
+    # Each such cell reaches authorization: a grant lacking exactly its operation (for
+    # `list-mode-historical`, `history`) is denied `operation_not_granted`, zero effects.
+    row = "access-policy-policy_state-ok-grant_ops-missing_one"
+    real = [
+        r
+        for r in _G2_ROUTES
+        if r.cell.endswith("-mode-historical")
+        or r.cell.endswith("-apply-apply")
+        or r.cell == "write-apply-apply"
+    ]
+    assert {r.key for r in real} >= {"write", "edit", "archive", "delete", "promote"}
+    for index, route in enumerate(real):
+        cell_root = tmp_path / f"cell-{index}"
+        cell_root.mkdir()
+        env = _g2_env(cell_root, monkeypatch, route, row)
+        before = _g2_effects(route, env.root, env.data_root)
+        out = _g2_call(route, env, _g2_parse_row(row))
+        detail = (route.ident, out.code, out.reason, out.status)
+        assert _g2_denied(route, out), detail
+        if route.coded:
+            assert out.code == "E_PERMISSION", detail
+            assert out.reason == "operation_not_granted", detail
+        assert _g2_effects(route, env.root, env.data_root) == before, route.ident
+
+
+def test_t01_g2a_producer_staged_cells() -> None:
+    """G2a: dimensions whose producer is a later packet are one strict-model `E_INPUT`
+    cell naming the absent field or operation; the absent producers are unchanged here."""
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    base: dict[str, Any] = {
+        "path": ".",
+        "operation": "ask",
+        "subject": "episodic",
+        "query": "q",
+        "session_allowlist": ["s1"],
+    }
+    cells: dict[str, dict[str, Any]] = {
+        "overlay-72-T05": {**base, "overlay": True},
+        "schema_version-72-T06": {**base, "schema_version": 2},
+        "history-op-72-T06": {
+            "path": ".",
+            "operation": "history",
+            "request": {"id": "a1"},
+        },
+        "explain-op-72-T06": {
+            "path": ".",
+            "operation": "explain",
+            "request": {"id": "a1"},
+        },
+        "preference-op-72-T05": {"path": ".", "operation": "preference", "request": {}},
+        "capsule-op-73-T09": {"path": ".", "operation": "capsule", "request": {}},
+        "import-op-73-T09": {"path": ".", "operation": "import", "request": {}},
+    }
+    for ident, arguments in cells.items():
+        outcome = validate_and_normalize("rush_memory", arguments)
+        assert outcome.rejected and outcome.error is not None, ident
+        assert outcome.error["data"]["details"], ident
 
 
 # --- G4: shared trust-boundary inputs -------------------------------------------------
@@ -17523,6 +17878,142 @@ def test_t01_restricted_bridge_readonly(tmp_path: Path) -> None:
         root=root, session_id=session.session_id, capability="nope"
     )("receive", {})
     assert wrong == denial
+
+
+def test_t01_bridge_authority_selected_ids_and_sender_grant(tmp_path: Path) -> None:
+    """D22: the bridge reads under sender grant ∩ session sources ∩ session owner ∩
+    the session's selected ids. An unselected id is `E_PERMISSION` (`not_selected`)
+    on `expand` and as a `related` seed; an unselected neighbour is neither returned,
+    counted (no truncation) nor traversed; a selected row that is no longer visible is
+    `E_NOT_VISIBLE`; a re-issued grant (same owner, new grant id) no longer carries the
+    sender's authority; a fabricated request acquires no cache permission or field."""
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+    from rush.memory import authorization as auth
+    from rush.memory.relations import add_relation
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    for artifact_id in ("a1", "a2", "a3"):
+        _row(store, artifact_id, ALICE, f"mk-{artifact_id}")
+    # a2 -> a1 -> a3: a3 is selected but reachable only through unselected a1.
+    for source_id, target_id in (("a2", "a1"), ("a1", "a3")):
+        assert (
+            add_relation(
+                store,
+                source_id=source_id,
+                source_version=1,
+                target_id=target_id,
+                target_version=1,
+                kind="depends_on",
+            )["code"]
+            == "OK"
+        )
+    grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    session_id, capability = _session_of(_prepare_handoff(root, ids=("a2", "a3")))
+    bridge = build_memory_bridge_handler(
+        root=root, session_id=session_id, capability=capability
+    )
+    before = _effects(root, data_root)
+
+    for operation, request in (
+        ("expand", {"id": "a1", "version": 1}),
+        ("related", {"id": "a1", "version": 1}),
+    ):
+        out = bridge(operation, request)
+        assert out["code"] == "E_PERMISSION", (operation, out)
+        assert out["data"]["reason"] == "not_selected", (operation, out)
+        assert "a1" not in _dump(out["data"]) and "mk-a1" not in _dump(out)
+
+    assert bridge("expand", {"id": "a2", "version": 1})["code"] == "OK"
+    for request in (
+        {"id": "a2", "version": 1, "depth": 2},
+        {"id": "a2", "version": 1, "max_nodes": 1},
+    ):
+        related = bridge("related", request)
+        assert related["code"] == "OK", related
+        assert related["data"]["items"] == [], related
+        assert related["data"]["complete"] is True, related
+
+    # A fabricated request: an injected allowlist is ignored, an injected permission
+    # or parameter is a strict-model error; none of it writes telemetry or anything.
+    injected = bridge("expand", {"id": "a2", "version": 1, "session_allowlist": ["*"]})
+    assert injected["code"] == "OK"
+    for extra in ({"allow_cache_write": True}, {"owner_scope": {"kind": "user"}}):
+        refused = bridge("expand", {"id": "a2", "version": 1, **extra})
+        assert refused["code"] == "E_INPUT", (extra, refused)
+    assert _effects(root, data_root) == before
+
+    # A grant re-issued to the same owner is a different grant: the receiver's own
+    # route gate still passes, the sender's authority does not.
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    calls: tuple[tuple[str, dict[str, Any]], ...] = (
+        ("expand", {"id": "a2", "version": 1}),
+        ("related", {"id": "a2", "version": 1}),
+        ("resume", {"task": "t", "conditions": {}}),
+    )
+    for operation, request in calls:
+        out = bridge(operation, request)
+        assert out["code"] == "E_PERMISSION", (operation, out)
+        assert out["data"]["reason"] == "grant_changed", (operation, out)
+        assert "mk-a2" not in _dump(out)
+
+    # Selected, then archived: invisible after an authorized selection.
+    fresh = _session_of(_prepare_handoff(root, ids=("a2", "a3")))
+    store.archive(
+        "a3", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    hidden = build_memory_bridge_handler(
+        root=root, session_id=fresh[0], capability=fresh[1]
+    )("expand", {"id": "a3", "version": 1})
+    assert hidden["code"] == "E_NOT_VISIBLE", hidden
+
+
+def test_t01_bridge_resume_delivers_selected_ids_only(tmp_path: Path) -> None:
+    """D22: `resume` over the bridge enumerates only the session's selected ids; an
+    unselected repair episode of the same source is never returned or referenced."""
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+    from rush.memory.experience import record_attempt
+    from rush.memory.handoff import prepare_handoff
+
+    root = tmp_path / "project"
+    root.mkdir()
+    picked, other = (
+        record_attempt(
+            project_root=root,
+            symptom="boom",
+            hypothesis=hypothesis,
+            patch_hash=None,
+            conditions={},
+            receipt_ref=None,
+            behavior_ids=[],
+            outcome="untested",
+        )
+        for hypothesis in ("h-picked", "h-other")
+    )
+    store = TypedArtifactStore(root)
+    session, capability, _delta = prepare_handoff(
+        store,
+        root=root,
+        audience="codex_cli",
+        granted_ids=[picked.id],
+        session_allowlist=["repair_attempt:boom"],
+    )
+    bridge = build_memory_bridge_handler(
+        root=root, session_id=session.session_id, capability=capability
+    )
+    out = bridge("resume", {"task": "boom", "conditions": {}})
+    assert out["code"] == "OK", out
+    data = out["data"]
+    assert [e["id"] for e in data["untested_hypotheses"]] == [picked.id], data
+    assert data["evidence_refs"] == [{"id": picked.id, "version": 1}], data
+    assert other.id not in _dump(out) and "h-other" not in _dump(out)
 
 
 @pytest.mark.parametrize(

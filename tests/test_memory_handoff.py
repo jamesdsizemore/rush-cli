@@ -313,7 +313,11 @@ def test_bridge_denies_unrelated_tools_and_scope_widening(tmp_path: Path) -> Non
     tool_names, denied_write, denied_widen = _run_sync(_run)
     assert tool_names == ["rush_memory"]
     assert denied_write["code"] == "E_PERMISSION"
-    assert denied_widen["code"] == "E_NOT_VISIBLE"
+    # 72-T01 D22: a guessed id the session never selected is refused at the bridge
+    # authority boundary, before any read, and the refusal reveals nothing of it.
+    assert denied_widen["code"] == "E_PERMISSION"
+    assert denied_widen["data"]["reason"] == "not_selected"
+    assert "S1" not in str(denied_widen["data"])
 
 
 def _run_sync(coro_fn):

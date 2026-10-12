@@ -19,6 +19,7 @@ unavailable in this sandbox, proven via a real `apply_provision_plan`
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -33,13 +34,16 @@ _NAMING = "naming"
 @pytest.fixture(scope="module")
 def journey(
     tmp_path_factory: pytest.TempPathFactory, hermetic_engine_path_module: None
-) -> dict[str, Any]:
+) -> Iterator[dict[str, Any]]:
     """Runs the whole real pipeline exactly once; every test below asserts
     a different facet of this single, shared execution. Engines resolve
     only from this venv (`hermetic_engine_path_module`, conftest.py), never
-    the host's PATH."""
+    the host's PATH. A module fixture runs before the per-test temporary HOME
+    (conftest `_isolated_home`), so it holds its own for the whole module."""
     tmp_root = tmp_path_factory.mktemp("project-journey")
-    return run_project_journey(tmp_root)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(tmp_path_factory.mktemp("journey-home")))
+        yield run_project_journey(tmp_root)
 
 
 def test_install_produces_a_verified_binary_and_activates_memory(

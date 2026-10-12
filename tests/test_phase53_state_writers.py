@@ -64,7 +64,7 @@ def test_patch_memory_store_sanitizes_db_writes(tmp_path: Path) -> None:
         row = (
             conn.execute(
                 "SELECT diff_patch FROM patch_memory WHERE error_signature = ?",
-                (store._init_db(),),
+                (store._init_db(),),  # type: ignore[func-returns-value]
             ).fetchone()
             or conn.execute("SELECT diff_patch FROM patch_memory").fetchone()
         )
@@ -159,20 +159,22 @@ def test_memory_patch_plugin_release_artifacts_are_sanitized_on_success_and_abor
         {"secret_key": fresh_secret, "info": f"auth={fresh_secret}"},
         [f"file_{fresh_secret}.py"],
     )
-    assert dest.exists()
+    assert dest is not None and dest.exists()
     assert_no_sentinel_in_dir(cj_dir / ".rush")
     # Abort test: forced write failure cleans up
     abort_cj = CheckpointJournal(tmp_path / "cj_abort")
     from rush.io.atomic_file import AtomicFile
 
-    monkeypatch.setattr(
-        AtomicFile,
-        "write_json",
-        lambda *a, **k: (_ for _ in ()).throw(OSError("Disk write abort")),
-    )
-    with pytest.raises(OSError):
-        abort_cj.save_checkpoint("abort_chk", {"secret": fresh_secret}, [])
-    monkeypatch.undo()
+    # A scoped patch: `monkeypatch.undo()` would also undo the autouse temporary HOME,
+    # so every later store would publish its key under the real data root.
+    with monkeypatch.context() as patched:
+        patched.setattr(
+            AtomicFile,
+            "write_json",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("Disk write abort")),
+        )
+        with pytest.raises(OSError):
+            abort_cj.save_checkpoint("abort_chk", {"secret": fresh_secret}, [])
 
     # 2. FailureLedger (Success & Abort)
     fl_dir = tmp_path / "fl_case"
@@ -183,7 +185,7 @@ def test_memory_patch_plugin_release_artifacts_are_sanitized_on_success_and_abor
     )
     receipt = fl.get_receipt(fp)
     assert receipt is not None
-    assert fresh_secret not in receipt["redacted_error"]
+    assert fresh_secret not in str(receipt["redacted_error"])
     with sqlite3.connect(fl.db_path) as conn:
         for row in conn.execute(
             "SELECT error_message, failed_patch FROM failure_ledgers"

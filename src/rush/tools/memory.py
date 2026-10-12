@@ -218,6 +218,12 @@ _RELATED_REQUEST_KEYS = {
 }
 _CONSOLIDATE_REQUEST_KEYS = {"symptom"}
 _PREPARE_REQUEST_KEYS = {"task", "conditions", "behavior_ids", "query"}
+_PREPARE_ENTRY_KEYS = (
+    "failures",
+    "verified_repairs",
+    "untested_hypotheses",
+    "intent_evidence",
+)
 _INTENT_REQUEST_KEYS = {
     "action",
     "intent_id",
@@ -337,6 +343,11 @@ def _family_for_subject(subject: MemorySubject) -> MemoryFamily:
     return _SUBJECT_FAMILY.get(subject, "memory")
 
 
+# 72-T01 D22: the restricted bridge's refusal of an id its session never selected.
+_NOT_SELECTED = RouteDenial("E_PERMISSION", "not_selected")
+#: 72-T01 D22: the restricted bridge's `(sender access or its delivery denial,
+#: selected ids)`.
+_BridgeAuthority = tuple[MemoryAccess | HandoffError, tuple[str, ...]]
 # 72-T01: `open_readonly_view()` states -> compact/expand envelope codes.
 _READ_STATE_CODES = {
     "migration_required": "E_MIGRATION",
@@ -468,6 +479,10 @@ class MemoryTool(ToolFn):
         freshness_filter: str | None = None,
         archived_filter: bool | None = None,
         owner_filter: str | None = None,
+        # 72-T01 D22: internal-only (never on `__call__`, never read from a request):
+        # the restricted bridge's `(sender access, selected ids)`. `expand`, `related`
+        # and `resume` then read under that access, limited to the selected ids.
+        bridge_authority: _BridgeAuthority | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         try:
@@ -614,6 +629,7 @@ class MemoryTool(ToolFn):
                 agent_id=agent_id,
                 session_id=session_id,
                 owner_scope=owner_scope,
+                bridge=bridge_authority,
             ),
             "write": lambda: self._run_write(
                 started,
@@ -647,7 +663,12 @@ class MemoryTool(ToolFn):
             ),
             "link": lambda: self._link(started, root, granted, request, owner_scope),
             "related": lambda: self._related(
-                started, root, session_allowlist, request, owner_scope
+                started,
+                root,
+                session_allowlist,
+                request,
+                owner_scope,
+                bridge=bridge_authority,
             ),
             "consolidate": lambda: self._consolidate(
                 started, root, session_allowlist, granted, request, owner_scope
@@ -659,7 +680,13 @@ class MemoryTool(ToolFn):
                 started, root, session_allowlist, request, "prepare", owner_scope
             ),
             "resume": lambda: self._prepare(
-                started, root, session_allowlist, request, "resume", owner_scope
+                started,
+                root,
+                session_allowlist,
+                request,
+                "resume",
+                owner_scope,
+                bridge=bridge_authority,
             ),
             "intent": lambda: self._intent(
                 started, root, granted, request, owner_scope
@@ -1365,6 +1392,7 @@ class MemoryTool(ToolFn):
         agent_id: str | None = None,
         session_id: str | None = None,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        bridge: _BridgeAuthority | None = None,
     ) -> ToolResult:
         """MC02 §9.0 `expand` operation: exact-byte expansion of one artifact version.
 
@@ -1448,6 +1476,11 @@ class MemoryTool(ToolFn):
         resolved = self._read_access(root, "expand", session_allowlist, owner)
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "expand", resolved)
+        if bridge is not None:
+            authority = self._bridge_access(started, "expand", bridge, artifact_id)
+            if isinstance(authority, dict):
+                return cast(ToolResult, authority)
+            resolved = authority
         access: MemoryAccess | None = resolved if resolved.sources else None
         not_visible = _expand_body(
             "E_NOT_VISIBLE",
@@ -1643,6 +1676,8 @@ class MemoryTool(ToolFn):
         session_allowlist: list[str] | None,
         request: dict[str, Any] | None,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        *,
+        bridge: _BridgeAuthority | None = None,
     ) -> ToolResult:
         """MC03 §6.3 `related` operation: bounded, authorized traversal from one seed.
         72-T01: D1 `ask` access first; reads a read-only view, so a missing store
@@ -1710,6 +1745,11 @@ class MemoryTool(ToolFn):
         resolved = self._read_access(root, "related", session_allowlist, owner)
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "related", resolved)
+        if bridge is not None:
+            authority = self._bridge_access(started, "related", bridge, artifact_id)
+            if isinstance(authority, dict):
+                return cast(ToolResult, authority)
+            resolved = authority
         allowlist = list(resolved.sources)
         store = self._readonly_store
         own_view = store is None
@@ -1741,6 +1781,7 @@ class MemoryTool(ToolFn):
                 artifact_id=artifact_id,
                 version=version,
                 session_allowlist=allowlist,
+                selected_ids=bridge[1] if bridge is not None else None,
                 depth=depth,
                 max_nodes=max_nodes,
                 max_tokens=max_tokens,
@@ -1837,6 +1878,8 @@ class MemoryTool(ToolFn):
         request: dict[str, Any] | None,
         operation: str,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        *,
+        bridge: _BridgeAuthority | None = None,
     ) -> ToolResult:
         """MC06.3 `prepare`/`resume`: read-only repair-episode recall. Executes no
         commands and never withholds or prohibits a patch -- it only surfaces recorded
@@ -1879,13 +1922,28 @@ class MemoryTool(ToolFn):
         )
         if isinstance(gated, dict):
             return cast(ToolResult, gated)
+        allowlist = session_allowlist
+        if bridge is not None:
+            authority = self._bridge_access(started, operation, bridge)
+            if isinstance(authority, dict):
+                return cast(ToolResult, authority)
+            allowlist = list(authority.sources)
         result = prepare_memory(
             project_root=root,
             symptom=query or task,
             conditions=conditions,
             behavior_ids=behavior_ids,
-            session_allowlist=session_allowlist,
+            session_allowlist=allowlist,
         )
+        if bridge is not None:
+            # D22: only the session's selected ids are enumerated.
+            for key in _PREPARE_ENTRY_KEYS:
+                result[key] = [e for e in result[key] if e["id"] in bridge[1]]
+            result["evidence_refs"] = [
+                {"id": e["id"], "version": e["version"]}
+                for key in _PREPARE_ENTRY_KEYS
+                for e in result[key]
+            ]
         code = result.pop("code")
         return self._envelope_result(started, operation, code, result)
 
@@ -1965,6 +2023,25 @@ class MemoryTool(ToolFn):
         if isinstance(resolved, RouteDenial):
             return self._denied(started, operation, resolved)
         return resolved
+
+    def _bridge_access(
+        self,
+        started: float,
+        operation: str,
+        bridge: _BridgeAuthority,
+        artifact_id: str | None = None,
+    ) -> MemoryAccess | ToolResult:
+        """72-T01 D22, after the route's own gate passed: the sender's authority
+        (or its delivery denial), then the selection -- an id the session never
+        selected is refused before any read."""
+        authority, selected = bridge
+        if isinstance(authority, HandoffError):
+            return self._envelope_result(
+                started, operation, authority.code, authority.data()
+            )
+        if artifact_id is not None and artifact_id not in selected:
+            return self._denied(started, operation, _NOT_SELECTED)
+        return authority
 
     def _denied(
         self, started: float, operation: str, denial: RouteDenial

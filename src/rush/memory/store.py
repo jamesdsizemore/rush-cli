@@ -839,6 +839,20 @@ def _unlink_temp(path: Path) -> None:
             return
 
 
+def _makedirs_owner_only(path: Path) -> None:
+    """D41 POSIX: create every missing directory of `path`, parents included, 0o700
+    (`os.makedirs` applies `mode` to the leaf only)."""
+    missing: list[Path] = []
+    while not os.path.lexists(path):
+        missing.append(path)
+        path = path.parent
+    for directory in reversed(missing):
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            pass
+
+
 def ensure_store_key() -> bytes | None:
     """D41: read the store key, publishing a new one when absent; `None` when it
     cannot be read or created."""
@@ -855,7 +869,7 @@ def ensure_store_key() -> bytes | None:
         return None  # present but unusable: never replaced
     temp = key_dir / (_STORE_KEY_TMP_PREFIX + uuid.uuid4().hex)
     try:
-        os.makedirs(key_dir, mode=0o700, exist_ok=True)
+        _makedirs_owner_only(key_dir)
         fd = os.open(
             temp,
             os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
@@ -2529,49 +2543,68 @@ class TypedArtifactStore:
     def contest_peers(
         self,
         subject: str,
-        symbol_ref: str | None,
-        owner_scope: OwnerScope,
+        keys: Iterable[tuple[str, str, str | None]],
         sources: Sequence[str],
-        *,
-        exclude: str,
-    ) -> list[sqlite3.Row]:
-        """D34: rows sharing `subject`, `symbol_ref` (NULL-equal) and owner with a
-        granted source, other than `exclude` (callers still decide each one)."""
-        if not sources:
-            return []
+    ) -> dict[tuple[str, str, str | None], list[sqlite3.Row]]:
+        """D34: one untruncated scan for the rows of `subject` whose `(owner kind,
+        owner id, symbol_ref)` -- owner NULL-defaulted, `symbol_ref` NULL-equal -- is
+        one of `keys` and whose source passes the D40 predicate over `sources`,
+        grouped by that key in ID order (callers exclude the row itself and still
+        decide each peer)."""
+        wanted = sorted(set(keys), key=repr)
+        if not sources or not wanted:
+            return {}
         default = self._owner_scope_default
-        source_clause, source_params = source_predicate_sql("source", sources)
+        source_clause, source_params = source_predicate_sql("a.source", sources)
         with self._connect() as conn:
-            return conn.execute(
-                "SELECT * FROM memory_artifacts WHERE subject = ? AND id != ? "
-                "AND symbol_ref IS ? AND COALESCE(owner_scope_kind, ?) = ? "
-                f"AND COALESCE(owner_scope_id, ?) = ? AND {source_clause} "
-                "ORDER BY id LIMIT 64",
-                (
-                    subject,
-                    exclude,
-                    symbol_ref,
-                    default.kind,
-                    owner_scope.kind,
-                    default.id,
-                    owner_scope.id,
-                    *source_params,
-                ),
+            rows = conn.execute(
+                "SELECT a.* FROM memory_artifacts AS a WHERE a.subject = ? "
+                "AND EXISTS (SELECT 1 FROM json_each(?) AS k "
+                "WHERE COALESCE(a.owner_scope_kind, ?) = json_extract(k.value, '$[0]') "
+                "AND COALESCE(a.owner_scope_id, ?) = json_extract(k.value, '$[1]') "
+                "AND a.symbol_ref IS json_extract(k.value, '$[2]')) "
+                f"AND {source_clause} ORDER BY a.id",
+                (subject, json.dumps(wanted), default.kind, default.id, *source_params),
             ).fetchall()
+        grouped: dict[tuple[str, str, str | None], list[sqlite3.Row]] = {}
+        for row in rows:
+            kind = row["owner_scope_kind"]
+            identifier = row["owner_scope_id"]
+            key = (
+                default.kind if kind is None else kind,
+                default.id if identifier is None else identifier,
+                row["symbol_ref"],
+            )
+            grouped.setdefault(key, []).append(row)
+        return grouped
 
-    def has_contradiction(self, left: tuple[str, int], right: tuple[str, int]) -> bool:
-        """D34: a `contradicts` relation joins these two exact versions."""
+    def contradiction_pairs(
+        self, versions: Iterable[tuple[str, int]]
+    ) -> set[tuple[tuple[str, int], tuple[str, int]]]:
+        """D34: every `contradicts` relation touching one of these exact versions,
+        as `((id, version), (id, version))` in both orientations (one scan)."""
+        wanted = sorted(set(versions))
+        if not wanted:
+            return set()
         with self._connect() as conn:
             if not sqlite_has_table(conn, "memory_relations"):
-                return False
-            found = conn.execute(
-                "SELECT 1 FROM memory_relations WHERE kind = 'contradicts' AND ("
-                "(source_id = ? AND source_version = ? AND target_id = ? "
-                "AND target_version = ?) OR (source_id = ? AND source_version = ? "
-                "AND target_id = ? AND target_version = ?)) LIMIT 1",
-                (*left, *right, *right, *left),
-            ).fetchone()
-        return found is not None
+                return set()
+            rows = conn.execute(
+                "SELECT r.source_id, r.source_version, r.target_id, r.target_version "
+                "FROM memory_relations AS r WHERE r.kind = 'contradicts' AND EXISTS ("
+                "SELECT 1 FROM json_each(?) AS v WHERE "
+                "(r.source_id = json_extract(v.value, '$[0]') "
+                "AND r.source_version = json_extract(v.value, '$[1]')) OR "
+                "(r.target_id = json_extract(v.value, '$[0]') "
+                "AND r.target_version = json_extract(v.value, '$[1]')))",
+                (json.dumps(wanted),),
+            ).fetchall()
+        pairs: set[tuple[tuple[str, int], tuple[str, int]]] = set()
+        for source_id, source_version, target_id, target_version in rows:
+            left, right = (source_id, source_version), (target_id, target_version)
+            pairs.add((left, right))
+            pairs.add((right, left))
+        return pairs
 
     def get_current_row(self, artifact_id: str) -> sqlite3.Row | None:
         """72-T01: the raw current row for one ID (what `evaluate_artifact_visibility`
@@ -2979,10 +3012,12 @@ class TypedArtifactStore:
         model_digest: str,
         chunking_version: str,
         vector: list[float],
+        commit_check: CommitCheck | None = None,
     ) -> None:
         """MC12 §6.7: persists one vector. Always writes -- the caller (`hybrid_candidates()`)
         only calls this when the caller-granted `cache_write` permits it, so a read-only
-        hybrid request never reaches this method."""
+        hybrid request never reaches this method. 72-T01: `commit_check` runs after
+        the write, immediately before commit (`run_commit_check`)."""
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO memory_embeddings (namespace, artifact_id, "
@@ -3000,6 +3035,7 @@ class TypedArtifactStore:
                     time.time(),
                 ),
             )
+            run_commit_check(conn, commit_check)
             conn.commit()
 
     def get_current(self, artifact_id: str) -> MemoryArtifact | None:

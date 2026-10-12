@@ -49,6 +49,7 @@ from rush.memory.embeddings import (
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
     BindingVerifier,
+    MemoryAccessChanged,
     MemoryArtifact,
     MemorySubject,
     OwnerScope,
@@ -1763,12 +1764,22 @@ def _item_relations(
     return kept
 
 
+# D34: `(subject, owner kind, owner id, symbol_ref)`, and a page's visible peers per
+# key plus the `contradicts` version pairs touching its rows (`_contest_index`).
+_ContestKey = tuple[str, str, str, str | None]
+_ContestIndex = tuple[
+    dict[_ContestKey, list[tuple[str, int, MemoryArtifact]]],
+    set[tuple[tuple[str, int], tuple[str, int]]],
+]
+
+
 def _candidate_to_item(
     row: Any,
     store: TypedArtifactStore,
     access: MemoryAccess,
     decision: VisibilityDecision,
     *,
+    contest: _ContestIndex,
     now: float | None = None,
     memo: SourceValidationMemo | None = None,
 ) -> dict[str, Any] | None:
@@ -1794,52 +1805,80 @@ def _candidate_to_item(
     }
     if (decision.reference or {}).get("store_binding") == "unbound":
         item["store_binding"] = "unbound"
-    if _contested(store, row, access, now=now, memo=memo):
+    if _contested(store, row, contest):
         item["contested"] = True
     return item
 
 
-def _contested(
+def _contest_index(
     store: TypedArtifactStore,
-    row: Any,
+    rows: Iterable[Any],
     access: MemoryAccess,
     *,
     now: float | None,
     memo: SourceValidationMemo | None,
-) -> bool:
+) -> _ContestIndex:
+    """D34: the visible peers of `rows` from one untruncated SQL scan per subject
+    (a page has one) limited to the rows' distinct `(owner, subject, symbol_ref)`
+    keys and the D40 predicate over `access.sources`, keyed `(subject, owner kind,
+    owner id, symbol_ref)`, plus every `contradicts` relation joining one of the
+    rows' versions."""
+    default_owner = legacy_owner_scope(store.project_root)
+    keys: dict[str, set[tuple[str, str, str | None]]] = {}
+    versions: list[tuple[str, int]] = []
+    for row in rows:
+        owner = _row_owner(row, store.project_root)
+        if owner is None:
+            continue
+        keys.setdefault(row["subject"], set()).add(
+            (owner.kind, owner.id, row["symbol_ref"])
+        )
+        versions.append((row["id"], row["artifact_version"]))
+    peers: dict[_ContestKey, list[tuple[str, int, MemoryArtifact]]] = {}
+    for subject, subject_keys in keys.items():
+        grouped = store.contest_peers(subject, subject_keys, access.sources)
+        for (kind, owner_id, symbol_ref), group in grouped.items():
+            visible: list[tuple[str, int, MemoryArtifact]] = []
+            for peer in group:
+                if not evaluate_artifact_visibility(
+                    store, peer, access=access, now=now, memo=memo
+                ).visible:
+                    continue
+                try:
+                    other = _row_to_artifact(peer, default_owner_scope=default_owner)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(other.content, dict):
+                    visible.append((peer["id"], peer["artifact_version"], other))
+            peers[(subject, kind, owner_id, symbol_ref)] = visible
+    return peers, store.contradiction_pairs(versions)
+
+
+def _contested(store: TypedArtifactStore, row: Any, contest: _ContestIndex) -> bool:
     """D34: a visible peer with the same owner, subject and anchor contradicts this
     row (either direction of `trust.evaluate_conflict`), or a versioned
-    `contradicts` relation joins the two."""
+    `contradicts` relation joins the two. Peers come from `_contest_index`."""
     from rush.memory.trust import evaluate_conflict
 
-    default_owner = legacy_owner_scope(store.project_root)
     owner = _row_owner(row, store.project_root)
     if owner is None:
         return False
     try:
-        mine = _row_to_artifact(row, default_owner_scope=default_owner)
+        mine = _row_to_artifact(
+            row, default_owner_scope=legacy_owner_scope(store.project_root)
+        )
     except (TypeError, ValueError):
         return False
-    for peer in store.contest_peers(
-        row["subject"], row["symbol_ref"], owner, access.sources, exclude=row["id"]
-    ):
-        if not evaluate_artifact_visibility(
-            store, peer, access=access, now=now, memo=memo
-        ).visible:
-            continue
-        try:
-            other = _row_to_artifact(peer, default_owner_scope=default_owner)
-        except (TypeError, ValueError):
-            continue
-        if not isinstance(other.content, dict):
+    peers, contradictions = contest
+    me = (row["id"], row["artifact_version"])
+    key = (row["subject"], owner.kind, owner.id, row["symbol_ref"])
+    for peer_id, peer_version, other in peers.get(key, ()):
+        if peer_id == row["id"]:
             continue
         if (
             evaluate_conflict(mine, other) == "delete"
             or evaluate_conflict(other, mine) == "delete"
-            or store.has_contradiction(
-                (row["id"], row["artifact_version"]),
-                (peer["id"], peer["artifact_version"]),
-            )
+            or (me, (peer_id, peer_version)) in contradictions
         ):
             return True
     return False
@@ -2137,13 +2176,15 @@ def recall_page(
     def token(at: int) -> str:
         return _encode_cursor(key, binding, generation, at)
 
-    def eligible_item(row: Any) -> dict[str, Any] | None:
+    def eligible_item(row: Any, contest: _ContestIndex) -> dict[str, Any] | None:
         decision = evaluate_artifact_visibility(
             store, row, access=access, now=moment, memo=memo
         )
         if not decision.usable_as_current:
             return None
-        return _candidate_to_item(row, store, access, decision, now=moment, memo=memo)
+        return _candidate_to_item(
+            row, store, access, decision, contest=contest, now=moment, memo=memo
+        )
 
     items: list[dict[str, Any]] = []
     base_bytes = _page_bytes([], None, True, encoding)
@@ -2178,8 +2219,9 @@ def recall_page(
                 owner_scope=access.owner_scope,
             )
         )
+        contest = _contest_index(store, batch, access, now=moment, memo=memo)
         for row in batch:
-            item = eligible_item(row)
+            item = eligible_item(row, contest)
             if item is not None and (pending is not None or len(items) >= limit):
                 more = True  # an eligible row is left, not consumed
                 break
@@ -2997,8 +3039,11 @@ def hybrid_candidates(
                         model_digest=embed_config.model_digest,
                         chunking_version=embed_config.chunking_version,
                         vector=vector,
+                        commit_check=lambda: recheck_failure(access),
                     )
         (query_vector,) = embed_fn(embed_config, [query])
+    except MemoryAccessChanged as exc:
+        return {"available": False, "code": exc.code, "reason": exc.reason}
     except EmbeddingEngineUnavailable as exc:
         return {"available": False, "reason": str(exc)}
     except EmbeddingResponseError as exc:
@@ -3135,13 +3180,16 @@ def hybrid_page(
 
     items: list[dict[str, Any]] = []
     items_bytes, _tokens = _measure_page([], None, True, encoding)
+    contest = _contest_index(store, fused["rows"], access, now=moment, memo=memo)
     for row in fused["rows"]:
         decision = evaluate_artifact_visibility(
             store, row, access=access, now=moment, memo=memo
         )
         if not decision.usable_as_current:
             continue
-        item = _candidate_to_item(row, store, access, decision, now=moment, memo=memo)
+        item = _candidate_to_item(
+            row, store, access, decision, contest=contest, now=moment, memo=memo
+        )
         if item is None:
             continue
         trial_bytes = _trial_page_bytes(

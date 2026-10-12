@@ -5,14 +5,25 @@ from __future__ import annotations
 import base64
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import tiktoken
 
-from rush.memory.retrieval import expand_artifact, recall_page
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory import authorization as auth
+from rush.memory.embeddings import EmbeddingConfig
+from rush.memory.retrieval import (
+    MemoryAccess,
+    expand_artifact,
+    hybrid_candidates,
+    recall_page,
+)
+from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
+from rush.setup.provision import default_data_root
 from rush.tools.memory import MemoryTool
+from rush.workflows.projects import register_project
 
 
 def _write(
@@ -216,7 +227,9 @@ def test_unicode_expansion_reconstructs_exact_original(tmp_path: Path) -> None:
             created_at=1.0,
         )
     )
-    stored_bytes = store.get_version_content("u1", 1).encode("utf-8")
+    stored = store.get_version_content("u1", 1)
+    assert stored is not None
+    stored_bytes = stored.encode("utf-8")
 
     chunks: list[bytes] = []
     offset = 0
@@ -392,10 +405,12 @@ def test_legacy_memory_response_remains_compatible(tmp_path: Path) -> None:
         session_allowlist=["allowed"],
         request={"view": "compact"},
     )
-    assert compact["raw"]["schema_version"] == 1
-    assert compact["raw"]["operation"] == "ask"
-    assert compact["raw"]["code"] == "OK"
-    assert "items" in compact["raw"]["data"]
+    raw = compact["raw"]
+    assert raw is not None
+    assert raw["schema_version"] == 1
+    assert raw["operation"] == "ask"
+    assert raw["code"] == "OK"
+    assert "items" in raw["data"]
 
 
 # --- M11: MemoryTool's public invocation boundary / attribution -----------
@@ -418,7 +433,7 @@ def test_two_identical_distinct_calls_are_counted_twice_and_one_retry_is_counted
         source="allowed",
         permissions=ExecutionPermissions(cache_write=True),
     )
-    common = {
+    common: dict[str, Any] = {
         "operation": "ask",
         "subject": "domain_knowledge",
         "query": "needle",
@@ -466,10 +481,12 @@ def test_persisted_attribution_columns_match_the_public_invocation_id_on_every_s
         source="allowed",
         permissions=ExecutionPermissions(cache_write=True),
     )
-    artifact_id = write_result["raw"]["id"]
+    written = write_result["raw"]
+    assert written is not None
+    artifact_id = written["id"]
 
     granted = ExecutionPermissions(cache_write=True, network=True)
-    attribution = {
+    attribution: dict[str, Any] = {
         "project_id": "proj-uuid-123",
         "run_id": "run-1",
         "agent_id": "agent-1",
@@ -527,3 +544,116 @@ def test_persisted_attribution_columns_match_the_public_invocation_id_on_every_s
     assert by_invocation["inv-lexical"][1] == "retrieval"
     assert by_invocation["inv-hybrid-fallback"][1] == "retrieval"
     assert by_invocation["inv-expand"][1] == "expansion"
+
+
+def test_hybrid_embedding_write_rechecks_access_before_commit(tmp_path: Path) -> None:
+    """72-T01 brief §2.2: the `cache_write` embedding fill calls `put_embedding` with
+    the commit-time access recheck. A grant revoked between candidate selection and
+    the embedding write persists nothing and denies the hybrid result."""
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, data_root=data_root)
+    root = root.resolve()
+    owner = OwnerScope("user", "alice")
+    store = TypedArtifactStore(root)
+    store.write(
+        MemoryArtifact(
+            id="A1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="IMPORTED",
+            content={"text": "needle alpha"},
+            source="source-a",
+            created_at=1.0,
+            owner_scope=owner,
+        )
+    )
+    grant = auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=["source-a"],
+        allowed_operations=["ask", "expand", "list", "write"],
+        expected_policy_revision=0,
+        consent=True,
+        data_root=data_root,
+    )
+    access = MemoryAccess.resolve(
+        root,
+        operation="ask",
+        owner_scope=owner,
+        requested_sources=["source-a"],
+        data_root=data_root,
+    )
+    assert access is not None
+
+    revoked: list[bool] = []
+
+    def embed(config: EmbeddingConfig, chunks: Sequence[str]) -> list[list[float]]:
+        if not revoked:
+            auth.revoke_memory_scope(
+                grant_id=grant["grant_id"],
+                expected_policy_revision=int(
+                    auth.load_policy_readonly(data_root=data_root)["policy_revision"]
+                ),
+                consent=True,
+                data_root=data_root,
+            )
+            revoked.append(True)
+        return [[1.0, 0.0] for _ in chunks]
+
+    result = hybrid_candidates(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        access=access,
+        embed_config=EmbeddingConfig(
+            endpoint="http://fake-embed.invalid", model="m", model_digest="d"
+        ),
+        cache_write=True,
+        embed_fn=embed,
+    )
+
+    assert revoked == [True]
+    assert result["available"] is False
+    assert result["code"] == "E_PERMISSION"
+    with sqlite3.connect(store.db_path) as conn:
+        persisted = conn.execute("SELECT COUNT(*) FROM memory_embeddings").fetchone()[0]
+    assert persisted == 0
+
+
+def test_contested_detects_conflicting_peer_after_64_others(tmp_path: Path) -> None:
+    """72-T01 D34 (brief §3.12): peers come from one untruncated scan over the page's
+    `(owner, subject, symbol_ref)` keys, so a contradicting peer that sorts after 64
+    other same-key peers still marks the emitted item contested."""
+    store = TypedArtifactStore(tmp_path)
+
+    def put(artifact_id: str, content: dict[str, object]) -> None:
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="IMPORTED",
+                content=content,
+                source="allowed",
+                created_at=1.0,
+            )
+        )
+
+    put("a0", {"text": "needle", "flag": True})
+    for i in range(64):
+        put(f"p{i:03d}", {"text": f"other {i}"})
+    put("zz", {"text": "other last", "flag": False})
+
+    page = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        limit=1,
+    )
+
+    assert page["code"] == "OK"
+    assert [item["id"] for item in page["items"]] == ["a0"]
+    assert page["items"][0].get("contested") is True

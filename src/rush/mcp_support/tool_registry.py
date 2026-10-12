@@ -638,6 +638,17 @@ def build_memory_bridge_handler(
         view, _state = TypedArtifactStore.open_readonly_view(root)
         try:
             session = handoff.load_session(view, session_id, capability)
+            # D22: every other operation reads under the sender's authority (D21,
+            # re-resolved now; its denial is reported after the receiver's own route
+            # gate); `receive` resolves it itself.
+            authority: Any = None
+            if operation != "receive":
+                try:
+                    authority = handoff.delivery_access(
+                        cast(TypedArtifactStore, view), session
+                    )
+                except handoff.HandoffError as exc:
+                    authority = exc
         except handoff.HandoffError as exc:
             return {
                 "schema_version": 1,
@@ -655,11 +666,13 @@ def build_memory_bridge_handler(
             result = tool(path=root, operation="receive", request=req)
         else:
             req.pop("session_allowlist", None)
-            result = tool(
-                path=root,
+            # Internal-only `run` keyword: no execution permission is ever granted here.
+            result = tool.run(
+                root,
                 operation=validated_operation,
                 request=req,
                 session_allowlist=list(session.session_allowlist),
+                bridge_authority=(authority, session.granted_ids),
             )
         return result["raw"]
 
