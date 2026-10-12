@@ -22,14 +22,26 @@ def test_every_click_leaf_and_advertised_mcp_route_has_one_operation() -> None:
     op_by_cli = {op.cli_command: op for op in inventory if op.cli_command}
     op_by_mcp = {op.mcp_tool: op for op in inventory if op.mcp_tool}
 
-    # Verify Click root commands and leaf subcommands are represented
-    for name, cmd in cli.commands.items():
-        if hasattr(cmd, "commands") and cmd.commands:
-            for sub_name in cmd.commands:
-                full_cmd = f"{name} {sub_name}"
+    # Verify Click root commands and leaf subcommands are represented. A nested
+    # group (73-T09/CODEC: `memory capsule`, `memory capsule mapping`) is itself an
+    # operation only when it is invokable; its leaves are always operations.
+    def check_group(prefix: str, group) -> None:
+        for sub_name, sub in group.commands.items():
+            full_cmd = f"{prefix} {sub_name}"
+            if hasattr(sub, "commands") and sub.commands:
+                if getattr(sub, "invoke_without_command", False):
+                    assert full_cmd in op_by_cli, (
+                        f"Click group '{full_cmd}' must be in operations inventory"
+                    )
+                check_group(full_cmd, sub)
+            else:
                 assert full_cmd in op_by_cli, (
                     f"Click subcommand '{full_cmd}' must be in operations inventory"
                 )
+
+    for name, cmd in cli.commands.items():
+        if hasattr(cmd, "commands") and cmd.commands:
+            check_group(name, cmd)
         else:
             assert name in op_by_cli, (
                 f"Click command '{name}' must be in operations inventory"

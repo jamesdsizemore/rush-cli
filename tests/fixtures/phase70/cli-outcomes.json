@@ -4338,6 +4338,413 @@
     "blocker": null
   },
   {
+    "id": "memory.capsule.bridge",
+    "argv": [
+      "memory",
+      "capsule",
+      "bridge",
+      "--input",
+      "<fixture-file>",
+      "--json"
+    ],
+    "canonical": "rush memory capsule bridge",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "error",
+        "raw.code": "E_INPUT",
+        "raw.data.reason": "bridge_not_available"
+      },
+      "human_contains": [
+        "memory error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "bridge",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "error",
+        "raw.code": "E_INPUT",
+        "raw.data.reason": "bridge_not_available"
+      },
+      "human_contains": [
+        "memory error"
+      ],
+      "exit": 2
+    },
+    "failure": {"argv": ["memory", "capsule", "bridge", "--input", "<fixture-file>", "--task-ref", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule bridge", "--task-ref"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.export",
+    "argv": [
+      "memory",
+      "capsule",
+      "export",
+      "--output",
+      "capsule.json",
+      "--invocation-id",
+      "00000000-0000-4000-8000-000000000001",
+      "--expected-digest",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory capsule export",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "export",
+        "--output",
+        "capsule.json",
+        "--invocation-id",
+        "00000000-0000-4000-8000-000000000001",
+        "--expected-digest",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {"argv": ["memory", "capsule", "export", "--output", "capsule.json", "--invocation-id", "00000000-0000-4000-8000-000000000001", "--expected-digest", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--allow-artifact-write", "--task-ref", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule export", "--task-ref"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.import",
+    "argv": [
+      "memory",
+      "capsule",
+      "import",
+      "--input",
+      "capsule.json",
+      "--apply",
+      "--invocation-id",
+      "00000000-0000-4000-8000-000000000001",
+      "--expected-digest",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--expected-store-revision",
+      "0",
+      "--allow-cache-write",
+      "--json"
+    ],
+    "canonical": "rush memory capsule import",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "mapping_required"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1,
+      "setup": {
+        "capsule.json": "{\"capsule_id\":\"7f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f\",\"created_at\":1760000000.5,\"evidence\":[{\"artifact_id\":\"ev-a\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence alpha\"},\"body_sha256\":\"178fe5fb18b0761ce9d618d7b2fc21bde17557f18f6fcf1c000d5ecea99878cc\",\"content_hash\":null,\"freshness\":\"not_applicable\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":null,\"source_revision\":null,\"subject\":\"domain_knowledge\",\"symbol_ref\":null,\"version\":1},{\"artifact_id\":\"ev-b\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence bravo\"},\"body_sha256\":\"ee5773a693a8e3187382ea072640a85061395d4ff48d637f49fa846d05d57c09\",\"content_hash\":\"e81d3b0e9d82feaaf5f6e55bdff24731d7eee08632ffa63801e6397290c5d20a\",\"freshness\":\"current\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":\"pkg/mod.py\",\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"subject\":\"domain_knowledge\",\"symbol_ref\":\"pkg/mod.py::helper\",\"version\":1}],\"format\":\"rush_v1\",\"manifest\":{\"encoding\":\"cl100k_base\",\"evidence_bytes\":1122,\"evidence_tokens\":401,\"local_only_refs\":[],\"mapping_requirement\":\"origin_pair_mismatch_requires_local_approval\",\"omitted\":[],\"omitted_bytes\":0,\"omitted_tokens\":0,\"redactions\":[],\"required_body_coverage\":\"complete\",\"selected\":[{\"artifact_id\":\"cp-origin\",\"version\":1},{\"artifact_id\":\"ev-a\",\"version\":1},{\"artifact_id\":\"ev-b\",\"version\":1}],\"source_paths\":[\"pkg/mod.py\"]},\"origin\":{\"git\":{\"branch\":\"main\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"dirty\":false},\"project_id\":\"6f1e0c52-3a7b-4d5e-9c11-2b8a9d4e7f01\",\"rush_version\":\"0.3.0\",\"store_revision\":7,\"worktree_id\":\"bae7758a9c9a3a3faed066d533cd8da5726f42988e95bab5d1f9ce75718f6f05\"},\"payload_sha256\":\"a5ffbd0abd1965e02cf92b180c5d982dc412f03ff49a4d655e7fec8bb81ca2be\",\"schema_version\":1,\"scope\":{\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"personal_owner\":null,\"sources\":[\"origin-src\"]},\"task\":{\"blockers\":[{\"origin_ref\":\"b1\",\"text\":\"awaiting review\"}],\"completed\":[\"wrote codec\",\"wrote fixtures\"],\"constraints\":[{\"constraint_id\":\"c1\",\"origin_ref\":\"user:turn-1\",\"text\":\"Never rewrite published history\"},{\"constraint_id\":\"c2\",\"origin_ref\":\"user:turn-2\",\"text\":\"Keep the suite green ✓ ünï\"}],\"decisions\":[{\"origin_ref\":\"d1\",\"text\":\"use canonical json\"}],\"description\":\"Fixture capsule task\",\"discoveries\":[{\"origin_ref\":\"x1\",\"text\":\"cap is 64 KiB\"}],\"failed_approaches\":[{\"origin_ref\":\"attempt-1\",\"text\":\"regex parsing is unsafe\"}],\"last_verified_checkpoint\":{\"command\":[\"pytest\",\"-q\"],\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"status\":\"passed\"},\"next_action\":\"Wire the CLI flag and rerun the suite\",\"objective\":\"Carry a task offline\",\"remaining\":[\"wire the CLI flag\"]}}"
+      }
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "import",
+        "--input",
+        "<fixture-file>",
+        "--apply",
+        "--invocation-id",
+        "00000000-0000-4000-8000-000000000001",
+        "--expected-digest",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--expected-store-revision",
+        "0"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {"argv": ["memory", "capsule", "import", "--input", "<fixture-file>", "--apply", "--invocation-id", "00000000-0000-4000-8000-000000000001", "--expected-digest", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--expected-store-revision", "nonsense", "--allow-cache-write"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule import", "--expected-store-revision"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.mapping.create",
+    "argv": [
+      "memory",
+      "capsule",
+      "mapping",
+      "create",
+      "--input",
+      "<fixture-file>",
+      "--expected-policy-revision",
+      "0",
+      "--json"
+    ],
+    "canonical": "rush memory capsule mapping create",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "error",
+        "raw.code": "E_INPUT",
+        "raw.data.reason": "capsule_invalid",
+        "raw.operation": "capsule_mapping"
+      },
+      "human_contains": [
+        "memory error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "mapping",
+        "create",
+        "--input",
+        "<fixture-file>",
+        "--expected-policy-revision",
+        "0",
+        "--approve"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {"argv": ["memory", "capsule", "mapping", "create", "--input", "<fixture-file>", "--expected-policy-revision", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule mapping create", "--expected-policy-revision"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.mapping.revoke",
+    "argv": [
+      "memory",
+      "capsule",
+      "mapping",
+      "revoke",
+      "--mapping-id",
+      "not-a-uuid",
+      "--expected-policy-revision",
+      "0",
+      "--json"
+    ],
+    "canonical": "rush memory capsule mapping revoke",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "error",
+        "raw.code": "E_INPUT",
+        "raw.data.reason": "mapping_id",
+        "raw.operation": "capsule_mapping"
+      },
+      "human_contains": [
+        "memory error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "mapping",
+        "revoke",
+        "--mapping-id",
+        "not-a-uuid",
+        "--expected-policy-revision",
+        "0",
+        "--approve"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {"argv": ["memory", "capsule", "mapping", "revoke", "--mapping-id", "00000000-0000-4000-8000-000000000001", "--expected-policy-revision", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule mapping revoke", "--expected-policy-revision"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.preview-export",
+    "argv": [
+      "memory",
+      "capsule",
+      "preview-export",
+      "--output",
+      "capsule.json",
+      "--json"
+    ],
+    "canonical": "rush memory capsule preview-export",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "preview-export",
+        "--output",
+        "capsule.json"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1
+    },
+    "failure": {"argv": ["memory", "capsule", "preview-export", "--output", "capsule.json", "--task-ref", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule preview-export", "--task-ref"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.capsule.preview-import",
+    "argv": [
+      "memory",
+      "capsule",
+      "preview-import",
+      "--input",
+      "capsule.json",
+      "--json"
+    ],
+    "canonical": "rush memory capsule preview-import",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "mapping_required"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1,
+      "setup": {
+        "capsule.json": "{\"capsule_id\":\"7f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f\",\"created_at\":1760000000.5,\"evidence\":[{\"artifact_id\":\"ev-a\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence alpha\"},\"body_sha256\":\"178fe5fb18b0761ce9d618d7b2fc21bde17557f18f6fcf1c000d5ecea99878cc\",\"content_hash\":null,\"freshness\":\"not_applicable\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":null,\"source_revision\":null,\"subject\":\"domain_knowledge\",\"symbol_ref\":null,\"version\":1},{\"artifact_id\":\"ev-b\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence bravo\"},\"body_sha256\":\"ee5773a693a8e3187382ea072640a85061395d4ff48d637f49fa846d05d57c09\",\"content_hash\":\"e81d3b0e9d82feaaf5f6e55bdff24731d7eee08632ffa63801e6397290c5d20a\",\"freshness\":\"current\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":\"pkg/mod.py\",\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"subject\":\"domain_knowledge\",\"symbol_ref\":\"pkg/mod.py::helper\",\"version\":1}],\"format\":\"rush_v1\",\"manifest\":{\"encoding\":\"cl100k_base\",\"evidence_bytes\":1122,\"evidence_tokens\":401,\"local_only_refs\":[],\"mapping_requirement\":\"origin_pair_mismatch_requires_local_approval\",\"omitted\":[],\"omitted_bytes\":0,\"omitted_tokens\":0,\"redactions\":[],\"required_body_coverage\":\"complete\",\"selected\":[{\"artifact_id\":\"cp-origin\",\"version\":1},{\"artifact_id\":\"ev-a\",\"version\":1},{\"artifact_id\":\"ev-b\",\"version\":1}],\"source_paths\":[\"pkg/mod.py\"]},\"origin\":{\"git\":{\"branch\":\"main\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"dirty\":false},\"project_id\":\"6f1e0c52-3a7b-4d5e-9c11-2b8a9d4e7f01\",\"rush_version\":\"0.3.0\",\"store_revision\":7,\"worktree_id\":\"bae7758a9c9a3a3faed066d533cd8da5726f42988e95bab5d1f9ce75718f6f05\"},\"payload_sha256\":\"a5ffbd0abd1965e02cf92b180c5d982dc412f03ff49a4d655e7fec8bb81ca2be\",\"schema_version\":1,\"scope\":{\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"personal_owner\":null,\"sources\":[\"origin-src\"]},\"task\":{\"blockers\":[{\"origin_ref\":\"b1\",\"text\":\"awaiting review\"}],\"completed\":[\"wrote codec\",\"wrote fixtures\"],\"constraints\":[{\"constraint_id\":\"c1\",\"origin_ref\":\"user:turn-1\",\"text\":\"Never rewrite published history\"},{\"constraint_id\":\"c2\",\"origin_ref\":\"user:turn-2\",\"text\":\"Keep the suite green ✓ ünï\"}],\"decisions\":[{\"origin_ref\":\"d1\",\"text\":\"use canonical json\"}],\"description\":\"Fixture capsule task\",\"discoveries\":[{\"origin_ref\":\"x1\",\"text\":\"cap is 64 KiB\"}],\"failed_approaches\":[{\"origin_ref\":\"attempt-1\",\"text\":\"regex parsing is unsafe\"}],\"last_verified_checkpoint\":{\"command\":[\"pytest\",\"-q\"],\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"status\":\"passed\"},\"next_action\":\"Wire the CLI flag and rerun the suite\",\"objective\":\"Carry a task offline\",\"remaining\":[\"wire the CLI flag\"]}}"
+      }
+    },
+    "empty": {
+      "not_applicable": "capsule route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "capsule",
+        "preview-import",
+        "--input",
+        "capsule.json"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "mapping_required"
+      },
+      "human_contains": [
+        "memory fail"
+      ],
+      "exit": 1,
+      "setup": {
+        "capsule.json": "{\"capsule_id\":\"7f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f\",\"created_at\":1760000000.5,\"evidence\":[{\"artifact_id\":\"ev-a\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence alpha\"},\"body_sha256\":\"178fe5fb18b0761ce9d618d7b2fc21bde17557f18f6fcf1c000d5ecea99878cc\",\"content_hash\":null,\"freshness\":\"not_applicable\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":null,\"source_revision\":null,\"subject\":\"domain_knowledge\",\"symbol_ref\":null,\"version\":1},{\"artifact_id\":\"ev-b\",\"body\":{\"note\":\"Ünïcode ✓\",\"text\":\"evidence bravo\"},\"body_sha256\":\"ee5773a693a8e3187382ea072640a85061395d4ff48d637f49fa846d05d57c09\",\"content_hash\":\"e81d3b0e9d82feaaf5f6e55bdff24731d7eee08632ffa63801e6397290c5d20a\",\"freshness\":\"current\",\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"provenance\":{\"origin_id\":null,\"origin_kind\":null,\"trust_tier\":\"DERIVED\"},\"source\":\"origin-src\",\"source_path\":\"pkg/mod.py\",\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"subject\":\"domain_knowledge\",\"symbol_ref\":\"pkg/mod.py::helper\",\"version\":1}],\"format\":\"rush_v1\",\"manifest\":{\"encoding\":\"cl100k_base\",\"evidence_bytes\":1122,\"evidence_tokens\":401,\"local_only_refs\":[],\"mapping_requirement\":\"origin_pair_mismatch_requires_local_approval\",\"omitted\":[],\"omitted_bytes\":0,\"omitted_tokens\":0,\"redactions\":[],\"required_body_coverage\":\"complete\",\"selected\":[{\"artifact_id\":\"cp-origin\",\"version\":1},{\"artifact_id\":\"ev-a\",\"version\":1},{\"artifact_id\":\"ev-b\",\"version\":1}],\"source_paths\":[\"pkg/mod.py\"]},\"origin\":{\"git\":{\"branch\":\"main\",\"commit\":\"cccccccccccccccccccccccccccccccccccccccc\",\"dirty\":false},\"project_id\":\"6f1e0c52-3a7b-4d5e-9c11-2b8a9d4e7f01\",\"rush_version\":\"0.3.0\",\"store_revision\":7,\"worktree_id\":\"bae7758a9c9a3a3faed066d533cd8da5726f42988e95bab5d1f9ce75718f6f05\"},\"payload_sha256\":\"a5ffbd0abd1965e02cf92b180c5d982dc412f03ff49a4d655e7fec8bb81ca2be\",\"schema_version\":1,\"scope\":{\"owner\":{\"id\":\"defa94e412974cd8c7858816d92fc96c528e59e5f48ff4e1ef7fe2d4d8960d49\",\"kind\":\"user\"},\"personal_owner\":null,\"sources\":[\"origin-src\"]},\"task\":{\"blockers\":[{\"origin_ref\":\"b1\",\"text\":\"awaiting review\"}],\"completed\":[\"wrote codec\",\"wrote fixtures\"],\"constraints\":[{\"constraint_id\":\"c1\",\"origin_ref\":\"user:turn-1\",\"text\":\"Never rewrite published history\"},{\"constraint_id\":\"c2\",\"origin_ref\":\"user:turn-2\",\"text\":\"Keep the suite green ✓ ünï\"}],\"decisions\":[{\"origin_ref\":\"d1\",\"text\":\"use canonical json\"}],\"description\":\"Fixture capsule task\",\"discoveries\":[{\"origin_ref\":\"x1\",\"text\":\"cap is 64 KiB\"}],\"failed_approaches\":[{\"origin_ref\":\"attempt-1\",\"text\":\"regex parsing is unsafe\"}],\"last_verified_checkpoint\":{\"command\":[\"pytest\",\"-q\"],\"source_revision\":\"cccccccccccccccccccccccccccccccccccccccc\",\"status\":\"passed\"},\"next_action\":\"Wire the CLI flag and rerun the suite\",\"objective\":\"Carry a task offline\",\"remaining\":[\"wire the CLI flag\"]}}"
+      }
+    },
+    "failure": {"argv": ["memory", "capsule", "preview-import", "--input", "capsule.json", "--expected-store-revision", "nonsense"], "json_paths": {}, "human_contains": ["Usage: cli memory capsule preview-import", "--expected-store-revision"], "exit": 2},
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
     "id": "memory.consolidate",
     "argv": [
       "memory",

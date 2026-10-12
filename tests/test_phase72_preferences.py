@@ -6807,3 +6807,25 @@ def test_t05_mcp_task_id_field_validation() -> None:
         },
     }
     assert not validate_and_normalize("rush_memory", end_task).rejected
+
+
+def _t05_flip_cells() -> list[Any]:
+    import importlib
+
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    return cap.flip_params("t05")
+
+
+@pytest.mark.parametrize("cell", _t05_flip_cells())
+def test_t05_codec_route_mode_matrix(cell: Any, tmp_path: Path) -> None:
+    """G2a, 73-T09/CODEC: the capsule/import cells of this matrix (access,
+    cache_write) are the real `preview_export`/`export`/`preview_import`/`import`/
+    `bridge`/mapping cells of the CODEC G2 table, never producer-staged `E_INPUT`
+    placeholders."""
+    import importlib
+
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    assert "producer" not in cell.id
+    cap.run_cell(cell, tmp_path)

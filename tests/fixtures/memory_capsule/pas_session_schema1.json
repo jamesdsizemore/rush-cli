@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "id": "0b9a3c5e-1d2f-4a6b-8c7d-9e0f1a2b3c4d",
+  "project_name": "fixture-project ✓",
+  "created_at": "2026-01-02T03:04:05Z",
+  "updated_at": "2026-01-02T03:14:05.250Z",
+  "task": {
+    "description": "Fixture capsule task",
+    "objective": "Carry a task offline",
+    "completed": [
+      "wrote codec",
+      "wrote fixtures"
+    ],
+    "remaining": [
+      "wire the CLI flag"
+    ],
+    "next_action": "Wire the CLI flag and rerun the suite",
+    "blockers": [
+      "awaiting review"
+    ],
+    "decisions": [
+      "use canonical json"
+    ],
+    "constraints": [
+      "Never rewrite published history",
+      "Keep the suite green ✓ ünï"
+    ],
+    "discoveries": [
+      "cap is 64 KiB"
+    ]
+  },
+  "git": {
+    "branch": "main",
+    "commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "dirty": false
+  },
+  "checkpoints": [
+    {
+      "id": "5d6e7f80-9a1b-4c2d-8e3f-405162738495",
+      "timestamp": "2026-01-02T03:10:00.123456Z",
+      "message": "codec ✓ checkpoint",
+      "task_snapshot": {
+        "description": "Fixture capsule task",
+        "objective": "Carry a task offline",
+        "completed": [
+          "wrote codec"
+        ],
+        "remaining": [
+          "wire the CLI flag"
+        ],
+        "next_action": "Wire the CLI flag and rerun the suite",
+        "blockers": [
+          "awaiting review"
+        ],
+        "decisions": [
+          "use canonical json"
+        ],
+        "constraints": [
+          "Never rewrite published history",
+          "Keep the suite green ✓ ünï"
+        ],
+        "discoveries": [
+          "cap is 64 KiB"
+        ]
+      },
+      "git": {
+        "branch": "main",
+        "commit": "cccccccccccccccccccccccccccccccccccccccc",
+        "dirty": true
+      },
+      "files_changed": [
+        {
+          "path": "src/rush/memory/capsule.py",
+          "status": "Added"
+        },
+        {
+          "path": "docs/über.md",
+          "status": "Modified"
+        },
+        {
+          "path": "old/name.py",
+          "status": {
+            "Renamed": {
+              "from": "older/name.py"
+            }
+          }
+        },
+        {
+          "path": "gone.txt",
+          "status": "Deleted"
+        },
+        {
+          "path": "scratch.tmp",
+          "status": "Untracked"
+        }
+      ]
+    }
+  ]
+}

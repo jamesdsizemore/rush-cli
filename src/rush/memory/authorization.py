@@ -32,7 +32,7 @@ import sys
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -86,6 +86,24 @@ _BINDING_KEYS = frozenset(
         "revoked",
     }
 )
+_MAPPING_KEYS = frozenset(
+    {
+        "mapping_id",
+        "purpose",
+        "origin_project_id",
+        "origin_worktree_id",
+        "target_project_id",
+        "target_worktree_id",
+        "target_root_hex",
+        "target_owner_scope",
+        "grant_id",
+        "created_revision",
+        "approved_at",
+        "revoked",
+        "revoked_revision",
+    }
+)
+_MAPPING_PURPOSE = "capsule_import"
 _OWNER_KINDS = frozenset({"user", "project", "session", "agent"})
 _PRINCIPAL_RE = re.compile(r"uid:\d+|sid:S-1(-\d+)+")
 _HEX64_RE = re.compile(r"[0-9a-f]{64}")
@@ -575,6 +593,84 @@ def _binding_view(binding_id: Any, record: Any, revision: int) -> dict[str, Any]
     }
 
 
+def _mapping_label(value: Any) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or any(unicodedata.category(ch) in ("Cc", "Cf", "Cs") for ch in value)
+    ):
+        raise _Invalid("record_invalid")
+    return value
+
+
+def _mapping_hex64(value: Any) -> str:
+    if not isinstance(value, str) or not _HEX64_RE.fullmatch(value):
+        raise _Invalid("record_invalid")
+    return value
+
+
+def _mapping_view(
+    mapping_id: Any, record: Any, revision: int, grants: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate one stored capsule mapping and decode it (73-T09/CODEC)."""
+    if not isinstance(record, dict) or set(record) != _MAPPING_KEYS:
+        raise _Invalid("record_invalid")
+    if not _is_uuid(mapping_id) or record["mapping_id"] != mapping_id:
+        raise _Invalid("record_invalid")
+    if record["purpose"] != _MAPPING_PURPOSE:
+        raise _Invalid("record_invalid")
+    origin_project_id = _mapping_label(record["origin_project_id"])
+    target_project_id = _mapping_label(record["target_project_id"])
+    origin_worktree_id = _mapping_hex64(record["origin_worktree_id"])
+    target_worktree_id = _mapping_hex64(record["target_worktree_id"])
+    target_root = _unhex(record["target_root_hex"])
+    owner = record["target_owner_scope"]
+    if (
+        not isinstance(owner, dict)
+        or set(owner) != {"kind", "id_hex"}
+        or not isinstance(owner["kind"], str)
+        or owner["kind"] not in _OWNER_KINDS
+    ):
+        raise _Invalid("record_invalid")
+    owner_id = _unhex(owner["id_hex"])
+    grant_id = record["grant_id"]
+    if not _is_uuid(grant_id):
+        raise _Invalid("record_invalid")
+    if grant_id not in grants:
+        raise _Invalid("dangling_mapping")
+    created = record["created_revision"]
+    if not _is_int(created) or not 1 <= created <= revision:
+        raise _Invalid("record_invalid")
+    if not _is_number(record["approved_at"]):
+        raise _Invalid("record_invalid")
+    revoked = record["revoked"]
+    revoked_revision = record["revoked_revision"]
+    if not isinstance(revoked, bool):
+        raise _Invalid("record_invalid")
+    if revoked:
+        if not _is_int(revoked_revision) or not (
+            created < revoked_revision <= revision
+        ):
+            raise _Invalid("record_invalid")
+    elif revoked_revision is not None:
+        raise _Invalid("record_invalid")
+    return {
+        "mapping_id": mapping_id,
+        "purpose": _MAPPING_PURPOSE,
+        "origin_project_id": origin_project_id,
+        "origin_worktree_id": origin_worktree_id,
+        "target_project_id": target_project_id,
+        "target_worktree_id": target_worktree_id,
+        "target_root": target_root,
+        "target_owner_scope": {"kind": owner["kind"], "id": owner_id},
+        "grant_id": grant_id,
+        "created_revision": created,
+        "approved_at": record["approved_at"],
+        "revoked": revoked,
+        "revoked_revision": revoked_revision,
+    }
+
+
 def _scope_key(record: dict[str, Any]) -> tuple[str, ...]:
     owner = record["owner_scope"]
     return (
@@ -598,10 +694,10 @@ def _validate(
     bindings = {
         bid: _binding_view(bid, rec, revision) for bid, rec in data["bindings"].items()
     }
-    mappings = data["mappings"]
-    for key, value in mappings.items():
-        if not _is_uuid(key) or not isinstance(value, dict):
-            raise _Invalid("record_invalid")
+    mappings = {
+        mid: _mapping_view(mid, rec, revision, grants)
+        for mid, rec in data["mappings"].items()
+    }
     if any(view["grant_id"] not in grants for view in bindings.values()):
         raise _Invalid("dangling_binding")
     seen: set[tuple[str, ...]] = set()
@@ -612,7 +708,7 @@ def _validate(
         if key in seen:
             raise _Invalid("duplicate_active_grant")
         seen.add(key)
-    return grants, bindings, copy.deepcopy(mappings)
+    return grants, bindings, mappings
 
 
 def _load(data_root: Path | None) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1512,6 +1608,227 @@ def resolve_memory_scope(
         )
     except Exception:  # noqa: BLE001 - resolve never raises
         return _denied("policy_invalid", operation, 0)
+
+
+# --- capsule import mappings (73-T09/CODEC) ----------------------------------
+
+
+def project_identity(
+    project_root: Any, *, data_root: Path | None = None
+) -> dict[str, str | None]:
+    """`{canonical_root, project_id, worktree_id}` of `project_root`. Read-only.
+
+    A root that is not a UTF-8 directory gives all `None`; a directory that is
+    not registered (or an unreadable registry or data root) keeps its
+    `canonical_root` with both ids `None`. Nothing is created.
+    """
+    identity: dict[str, str | None] = {
+        "canonical_root": None,
+        "project_id": None,
+        "worktree_id": None,
+    }
+    try:
+        canonical = Path(project_root).resolve()
+        if not canonical.is_dir() or _not_utf8(str(canonical)):
+            return identity
+    except (TypeError, OSError, RuntimeError, ValueError):
+        return identity
+    identity["canonical_root"] = str(canonical)
+    try:
+        state, project_id = _registry_lookup(_data_root(data_root), canonical)
+        if state != "ok" or project_id is None:
+            return identity
+        worktree_id = _worktree_id(canonical)
+    except (DataRootUnavailableError, OSError, RuntimeError, ValueError, TypeError):
+        return identity
+    identity["project_id"] = project_id
+    identity["worktree_id"] = worktree_id
+    return identity
+
+
+def _resolve_denial(reason: str, *, explicit_owner: bool) -> MemoryPolicyError:
+    """The G8-T10 code for a resolve denial `reason`."""
+    if reason == "owner_not_granted" and explicit_owner:
+        return MemoryPolicyError("E_OWNER", reason)
+    if reason == "source_not_granted":
+        return MemoryPolicyError("E_SCOPE", reason)
+    if reason == "owner_required":
+        return MemoryPolicyError("E_INPUT", reason)
+    return MemoryPolicyError("E_PERMISSION", reason)
+
+
+def _require_origin(value: Any) -> tuple[str, str]:
+    if not isinstance(value, Mapping) or set(value) != {"project_id", "worktree_id"}:
+        raise MemoryPolicyError("E_INPUT", "capsule_origin")
+    project_id = _require_label(value["project_id"], "capsule_origin")
+    worktree_id = value["worktree_id"]
+    if not isinstance(worktree_id, str) or not _HEX64_RE.fullmatch(worktree_id):
+        raise MemoryPolicyError("E_INPUT", "capsule_origin")
+    return project_id, worktree_id
+
+
+def approve_capsule_mapping(
+    *,
+    capsule_origin: Mapping[str, Any],
+    project_root: Path,
+    owner_scope: OwnerScope | None = None,
+    expected_policy_revision: int,
+    consent: bool,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Approve importing capsules from `capsule_origin` into this project.
+
+    The mapping binds the origin pair to this project's `write` grant for
+    `owner_scope` (never inferred among several owners). An identical active
+    mapping is returned without a write, before the revision check.
+    """
+    _require_consent(consent)
+    expected = _require_revision(expected_policy_revision)
+    origin_project_id, origin_worktree_id = _require_origin(capsule_origin)
+    if owner_scope is not None and _owner_tuple(owner_scope) is None:
+        raise MemoryPolicyError("E_INPUT", "owner_scope")
+    # an unencodable path is refused before any OS call; a missing or ungranted
+    # directory is decided by the resolve below
+    if not isinstance(project_root, (str, os.PathLike)):
+        raise MemoryPolicyError("E_INPUT", "project_missing")
+    root_text = os.fspath(project_root)
+    if not isinstance(root_text, str) or not root_text or _not_utf8(root_text):
+        raise MemoryPolicyError("E_INPUT", "project_missing")
+    root = _writer_root(data_root)
+    _writer_principal()
+
+    with _locked(root):
+        current, loaded, data = _reload(root)
+        # resolve binds the grant to this principal, project and worktree
+        res = resolve_memory_scope(
+            project_root=project_root,
+            operation="write",
+            owner_scope=owner_scope,
+            data_root=root,
+        )
+        if res["access"] != "write":
+            raise _resolve_denial(res["reason"], explicit_owner=owner_scope is not None)
+        owner = res["owner_scope"]
+        record: dict[str, Any] = {
+            "purpose": _MAPPING_PURPOSE,
+            "origin_project_id": origin_project_id,
+            "origin_worktree_id": origin_worktree_id,
+            "target_project_id": res["project_id"],
+            "target_worktree_id": res["worktree_id"],
+            "target_root_hex": _hex(res["project_root"]),
+            "target_owner_scope": {"kind": owner["kind"], "id_hex": _hex(owner["id"])},
+            "grant_id": res["grant_id"],
+        }
+        for mid, stored in data["mappings"].items():
+            if not stored["revoked"] and all(
+                stored[key] == value for key, value in record.items()
+            ):
+                return dict(loaded["mappings"][mid])
+        _check_version(expected, current)
+        revision = current + 1
+        mapping_id = str(uuid.uuid4())
+        record.update(
+            mapping_id=mapping_id,
+            created_revision=revision,
+            approved_at=_now(),
+            revoked=False,
+            revoked_revision=None,
+        )
+        data["mappings"][mapping_id] = record
+        data["policy_revision"] = revision
+        _commit(root, current, data)
+        return _mapping_view(mapping_id, record, revision, loaded["grants"])
+
+
+def revoke_capsule_mapping(
+    *,
+    mapping_id: str,
+    expected_policy_revision: int,
+    consent: bool,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Revoke one capsule mapping. Revoking twice is a no-op."""
+    _require_consent(consent)
+    expected = _require_revision(expected_policy_revision)
+    if not _is_uuid(mapping_id):
+        raise MemoryPolicyError("E_INPUT", "mapping_id")
+    root = _writer_root(data_root)
+    principal = _writer_principal()
+
+    with _locked(root):
+        try:
+            current, loaded, data = _reload(root)
+        except MemoryPolicyError as exc:
+            # a policy file owned by another OS user holds no grant of this caller
+            if exc.reason == "foreign_owner":
+                raise MemoryPolicyError("E_PRINCIPAL", "principal_mismatch") from None
+            raise
+        record = data["mappings"].get(mapping_id)
+        if record is None:
+            raise MemoryPolicyError("E_PERMISSION", "mapping_unknown")
+        if data["grants"][record["grant_id"]]["principal"] != principal:
+            raise MemoryPolicyError("E_PRINCIPAL", "principal_mismatch")
+        if record["revoked"]:
+            return dict(loaded["mappings"][mapping_id])
+        _check_version(expected, current)
+        revision = current + 1
+        record.update(revoked=True, revoked_revision=revision)
+        data["policy_revision"] = revision
+        _commit(root, current, data)
+        return _mapping_view(mapping_id, record, revision, loaded["grants"])
+
+
+def resolve_capsule_mapping(
+    *,
+    mapping_id: str,
+    origin_project_id: str | None,
+    origin_worktree_id: str | None,
+    project_root: Path,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Check an approved mapping for this origin and project. Read-only.
+
+    Returns `{mapping, grant_id, policy_revision}`; every refusal raises
+    `MemoryPolicyError("E_PERMISSION", reason)`.
+    """
+    from rush.memory.store import OwnerScope
+
+    loaded = load_policy_readonly(data_root=data_root)
+    if loaded["state"] != "ok":
+        raise MemoryPolicyError("E_PERMISSION", loaded["reason"])
+    view = loaded["mappings"].get(mapping_id) if isinstance(mapping_id, str) else None
+    if view is None:
+        raise MemoryPolicyError("E_PERMISSION", "mapping_unknown")
+    if view["revoked"]:
+        raise MemoryPolicyError("E_PERMISSION", "mapping_revoked")
+    if (origin_project_id, origin_worktree_id) != (
+        view["origin_project_id"],
+        view["origin_worktree_id"],
+    ):
+        raise MemoryPolicyError("E_PERMISSION", "mapping_mismatch")
+    ident = project_identity(project_root, data_root=data_root)
+    if (ident["project_id"], ident["worktree_id"], ident["canonical_root"]) != (
+        view["target_project_id"],
+        view["target_worktree_id"],
+        view["target_root"],
+    ):
+        raise MemoryPolicyError("E_PERMISSION", "mapping_mismatch")
+    owner = view["target_owner_scope"]
+    res = resolve_memory_scope(
+        project_root=project_root,
+        operation="write",
+        owner_scope=OwnerScope(owner["kind"], owner["id"]),
+        data_root=data_root,
+    )
+    if res["access"] != "write":
+        raise MemoryPolicyError("E_PERMISSION", res["reason"])
+    if res["grant_id"] != view["grant_id"]:
+        raise MemoryPolicyError("E_PERMISSION", "mapping_mismatch")
+    return {
+        "mapping": dict(view),
+        "grant_id": view["grant_id"],
+        "policy_revision": loaded["policy_revision"],
+    }
 
 
 def _resolve(

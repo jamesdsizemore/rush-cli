@@ -44,7 +44,8 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
     """T-58.21 (R-011 Governance Test): Probes all 153 operations from public-operations.toml with malformed payloads."""
     registry = get_operation_registry()
     assert isinstance(registry, OperationRegistry)
-    assert len(registry._adapters) == 197
+    # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
+    assert len(registry._adapters) == 204
 
     # Verify adapter registration and boundary validation across all operations
     tool_count = 0
@@ -150,9 +151,10 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
 
     # Phase 70 T17: tool 79->80, admin 95->94 (rush_check added; finding 13).
     assert tool_count == 81
-    assert admin_count == 98  # 72-T05 memory preference, 72-T06 history and explain
+    # 72-T05 memory preference, 72-T06 history and explain, 73-T09/CODEC +7 capsule
+    assert admin_count == 105
     assert service_count == 18
-    assert tool_count + admin_count + service_count == 197
+    assert tool_count + admin_count + service_count == 204
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +249,8 @@ def test_admin_boundaries_emit_unwrapped_exit_codes() -> None:
     registry = get_operation_registry()
     admin_adapters = [a for a in registry._adapters.values() if a.kind == "admin"]
     # Phase 70 T17: 95->94 (cli.check became tool.check; finding 13).
-    assert len(admin_adapters) == 98
+    # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
+    assert len(admin_adapters) == 105
 
     sample_tr = ToolResultV1(
         schema_version="1.0.0",

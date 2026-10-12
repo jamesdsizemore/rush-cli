@@ -49,19 +49,26 @@ def build_operations_inventory() -> list[PublicOperation]:
         for tool in ALL_TOOLS
     }
 
-    # 1. Discover all Click leaf commands
+    # 1. Discover all Click leaf commands, at every depth: a nested group
+    # (`memory capsule`, `memory capsule mapping`) contributes `<path> <leaf>`
+    # for each of its leaves.
     click_leaves: list[str] = []
+
+    def _discover(path: str, cmd: object) -> None:
+        subcommands = getattr(cmd, "commands", None)
+        if not subcommands:
+            click_leaves.append(path)
+            return
+        for sub_name, sub in subcommands.items():
+            _discover(f"{path} {sub_name}", sub)
+        # A group invocable bare (invoke_without_command=True, e.g. `rush
+        # scan --full`) is also its own callable leaf -- don't let having
+        # subcommands hide that route.
+        if getattr(cmd, "invoke_without_command", False):
+            click_leaves.append(path)
+
     for name, cmd in cli.commands.items():
-        if hasattr(cmd, "commands") and cmd.commands:
-            for sub_name in cmd.commands:
-                click_leaves.append(f"{name} {sub_name}")
-            # A group invocable bare (invoke_without_command=True, e.g. `rush
-            # scan --full`) is also its own callable leaf -- don't let having
-            # subcommands hide that route.
-            if getattr(cmd, "invoke_without_command", False):
-                click_leaves.append(name)
-        else:
-            click_leaves.append(name)
+        _discover(name, cmd)
 
     # 2. Discover all FastMCP registered tools (the module-level server
     # `rush mcp serve` runs; building a second one costs about a second).
@@ -230,6 +237,56 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush.tools.memory:MemoryTool",
             "stateful-mutation",
             "rush memory maintain --help",
+            "admin",
+        ),
+        # 73-T09/CODEC: the non-invokable `memory capsule` group's leaves.
+        "memory capsule preview-export": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory capsule preview-export --help",
+            "admin",
+        ),
+        "memory capsule export": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule export --help",
+            "admin",
+        ),
+        "memory capsule preview-import": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory capsule preview-import --help",
+            "admin",
+        ),
+        "memory capsule import": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule import --help",
+            "admin",
+        ),
+        "memory capsule bridge": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule bridge --help",
+            "admin",
+        ),
+        "memory capsule mapping create": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule mapping create --help",
+            "admin",
+        ),
+        "memory capsule mapping revoke": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule mapping revoke --help",
             "admin",
         ),
         # MC14 (Phase 63 §9.1): the 13 new memory operations. None of them claim the

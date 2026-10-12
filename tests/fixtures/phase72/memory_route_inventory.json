@@ -98,6 +98,36 @@
       "task": "72-T01"
     },
     {
+      "module": "memory/capsule.py",
+      "function": "<module>",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
+      "module": "memory/capsule.py",
+      "function": "_open_view",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
+      "module": "memory/capsule.py",
+      "function": "_seam_apply",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
+      "module": "memory/capsule.py",
+      "function": "_seam_preview",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
+      "module": "memory/capsule.py",
+      "function": "_seam_replay",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
       "module": "memory/checkpoint_journal.py",
       "function": "_list_checkpoints",
       "route": "checkpoint_journal",

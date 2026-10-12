@@ -317,6 +317,43 @@ class MemoryOwnerScope(BaseModel):
     id: Annotated[StrictStr, Field(pattern=r"\S")]
 
 
+# 73-T09/CODEC: a canonical lowercase hyphenated UUID (`invocation_id`, `mapping_id`).
+_CapsuleUuid = Annotated[
+    StrictStr,
+    Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+]
+# No upper bound here: the handler reports `budget_above_hard_cap` itself.
+_CapsuleLimit = Annotated[StrictInt, Field(ge=1)]
+# An omitted optional capsule key stays absent; an explicit `null` is rejected.
+_ABSENT: Any = Field(default=None, json_schema_extra=_drop_default)
+
+
+class MemoryCapsuleTaskRef(BaseModel):
+    """`capsule` `selectors.task_ref`: one checkpoint row at an exact version."""
+
+    model_config = _STRICT
+
+    artifact_id: NonEmptyStr
+    version: Annotated[StrictInt, Field(ge=1)]
+
+
+class MemoryCapsuleSelectors(BaseModel):
+    """`capsule` `selectors`: the export task, owner and source narrowing."""
+
+    model_config = _STRICT
+
+    task_ref: MemoryCapsuleTaskRef = _ABSENT
+    owner_scope: MemoryOwnerScope = _ABSENT
+    sources: MemorySourceList = _ABSENT
+    include_personal: StrictBool = _ABSENT
+
+    @model_validator(mode="after")
+    def _unique_sources(self) -> MemoryCapsuleSelectors:
+        if self.sources is not None and len(set(self.sources)) != len(self.sources):
+            raise ValueError("sources must be unique")
+        return self
+
+
 class MemoryCheckRef(BaseModel):
     """`_plan_checks`: an object with a non-empty string `id` (other keys kept)."""
 
@@ -702,6 +739,36 @@ _REQUEST_MODELS: dict[str, Any] = {
     "edit": _model("MemoryEditRequest", {**_MUTATION, "content": (AnyDict, _REQUIRED)}),
     "archive": _model(
         "MemoryArchiveRequest", {**_MUTATION, "archived": (StrictBool, _OPTIONAL)}
+    ),
+    # 73-T09/CODEC: key set equals `rush.tools.memory._CAPSULE_REQUEST_KEYS`.
+    "capsule": _model(
+        "MemoryCapsuleRequest",
+        {
+            "action": (
+                Literal[
+                    "preview_export", "export", "preview_import", "import", "bridge"
+                ],
+                _REQUIRED,
+            ),
+            "format": (Literal["rush_v1", "pas_v1"], _OPTIONAL),
+            "input": (NonEmptyStr, _OPTIONAL),
+            "output": (NonEmptyStr, _OPTIONAL),
+            "max_bytes": (_CapsuleLimit, _OPTIONAL),
+            "max_tokens": (_CapsuleLimit, _OPTIONAL),
+            "mapping_id": (_CapsuleUuid, _OPTIONAL),
+            "invocation_id": (_CapsuleUuid, _OPTIONAL),
+            "expected_digest": (
+                Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")],
+                _OPTIONAL,
+            ),
+            "expected_store_revision": (
+                Annotated[StrictInt, Field(ge=0, le=2**63 - 1)],
+                _OPTIONAL,
+            ),
+            "confirm_constraint_ids": (list[NonEmptyStr], _OPTIONAL),
+            "apply": (StrictBool, _OPTIONAL),
+            "selectors": (MemoryCapsuleSelectors, _OPTIONAL),
+        },
     ),
 }
 _REQUEST_MODELS["resume"] = _REQUEST_MODELS["prepare"]
@@ -1193,6 +1260,8 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
             "archive",
         )
     },
+    # 73-T09/CODEC: no `session_allowlist`; authority comes from the policy only.
+    "capsule": ("capsule", _request_field("capsule")),
     # 72-T06: the schema_version 2 form of each v2 operation (`history` and
     # `explain` have no other form). Top-level `limit`/`max_bytes` and every legacy
     # field are absent, so a mixed form is `extra_forbidden`.

@@ -115,16 +115,17 @@ def test_every_manifest_operation_has_one_adapter() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 197
+    # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
+    assert len(operations) == 204
 
     registry = OperationRegistry()
     report = registry.reconcile_manifest(MANIFEST_PATH)
 
-    assert report["total"] == 197
+    assert report["total"] == 204
     # Phase 70 T17: tool 79->80, admin 95->94 (rush_check added; finding 13).
     # 72-T05: admin 95->96 (memory preference added).
     assert report["tool_count"] == 81
-    assert report["admin_count"] == 98
+    assert report["admin_count"] == 105
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
     assert len(report["errors"]) == 0

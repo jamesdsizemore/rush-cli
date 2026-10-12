@@ -12274,7 +12274,43 @@ def _overlay_calls() -> dict[str, Any]:
             permissions=permissions,
         )
 
+    def capsule(action: str, transport: str) -> Any:
+        """73-T09/CODEC: the four capsule actions through MCP and the CLI. The mode
+        gate refuses before the request's files are read, so the output and input
+        named here need not exist."""
+
+        def drive(root: Path, owner: OwnerScope) -> Any:
+            import uuid
+
+            cap = importlib.import_module("tests.test_memory_capsule")
+
+            out_dir = default_data_root().parent / "capsule-out"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            request: dict[str, Any] = {
+                "action": action,
+                "invocation_id": str(uuid.uuid4()),
+            }
+            if action in ("preview_export", "export"):
+                request["output"] = str(out_dir / "o.json")
+            else:
+                request["input"] = str(out_dir / "i.json")
+            if action in ("export", "import"):
+                request["expected_digest"] = "a" * 64
+            if action == "import":
+                request.update(apply=True, expected_store_revision=0)
+            call = cap.call_mcp if transport == "mcp" else cap.call_cli
+            res = call(root, request)
+            return {"status": res.status, "raw": res.raw}
+
+        return drive
+
+    capsule_routes = {
+        f"capsule_{action}_{transport}": capsule(action, transport)
+        for action in ("preview_export", "export", "preview_import", "import")
+        for transport in ("mcp", "cli")
+    }
     return {
+        **capsule_routes,
         "ask": compact("ask"),
         "recall": compact("recall"),
         "list": compact("list"),
@@ -12479,6 +12515,13 @@ def test_t01_overlay_storage_root_never_project_route(
         )
     assert _sha_file(db) == before_sha
     assert _tree(overlay_root) == before_tree
+    out_dir = data_root.parent / "capsule-out"
+    assert not any(out_dir.iterdir()), "a capsule route wrote an output file"
+    assert {
+        f"capsule_{action}_{transport}"
+        for action in ("preview_export", "export", "preview_import", "import")
+        for transport in ("mcp", "cli")
+    } <= set(_overlay_calls())
     assert (
         _nn(TypedArtifactStore(overlay_root).get_current("p1")).trust_tier == "DERIVED"
     )
@@ -23510,6 +23553,37 @@ def test_t01_existing_apply_and_historical_are_real_cells(
             assert f"{transport}.{family}-apply-apply" in t04_ids
     assert not [i for i in t04_ids if "-apply-" in i and "producer" in i]
 
+    # 73-T09/CODEC's matrix is part of the same guarantee: its import/apply cells
+    # invoke the real public capsule route and canonical import transaction, and its
+    # unsupported historical fields are exact `E_INPUT` cells, never staged ones.
+    import ast
+
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    cell_ids = {c.id for c in cap.CODEC_CELLS}
+    assert not any("producer" in i for i in cell_ids)
+    for transport in cap.TRANSPORTS:
+        for cell in (
+            "import-apply-apply",
+            "export-apply-apply",
+            "preview_import-mode-historical",
+            "preview_export-mode-historical",
+        ):
+            assert f"{transport}.{cell}" in cell_ids, (transport, cell)
+    assert cap.__file__ is not None
+    functions = {
+        node.name: ast.unparse(node)
+        for node in ast.walk(ast.parse(Path(cap.__file__).read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert "imported_rows" in functions["_h_apply"], (
+        "the import transaction is observed"
+    )
+    assert "producer" not in functions["_h_apply"]
+    assert "archive_mode" in functions["_h_mode"], "historical is an exact field cell"
+    assert "rejected_field" in functions["_h_mode"]
+    assert "run_cell" in functions["test_codec_route_mode_matrix"]
+
 
 def test_t01_g2a_producer_staged_cells(tmp_path: Path) -> None:
     """G2a: dimensions whose producer is a later packet are one strict-model `E_INPUT`
@@ -23539,11 +23613,19 @@ def test_t01_g2a_producer_staged_cells(tmp_path: Path) -> None:
             "operation": "explain",
             "request": {"id": "a1"},
         },
-        "capsule-op-73-T09": {"path": ".", "operation": "capsule", "request": {}},
-        "import-op-73-T09": {"path": ".", "operation": "import", "request": {}},
         "preference-empty-request_malformed": {
             "path": ".",
             "operation": "preference",
+            "request": {},
+        },
+        "capsule-without-action": {
+            "path": ".",
+            "operation": "capsule",
+            "request": {},
+        },
+        "import-is-not-an-operation": {
+            "path": ".",
+            "operation": "import",
             "request": {},
         },
     }
@@ -23562,6 +23644,41 @@ def test_t01_g2a_producer_staged_cells(tmp_path: Path) -> None:
     }
     for ident, arguments in positives.items():
         assert validate_and_normalize("rush_memory", arguments).rejected is False, ident
+
+    # 73-T09/CODEC delivered the capsule producer: its four actions are real requests
+    # of the strict model, no longer staged `E_INPUT` cells
+    invocation = "00000000-0000-4000-8000-000000000001"
+    for action, extra in (
+        ("preview_export", {"output": "o.json"}),
+        (
+            "export",
+            {
+                "output": "o.json",
+                "invocation_id": invocation,
+                "expected_digest": "a" * 64,
+            },
+        ),
+        ("preview_import", {"input": "c.json"}),
+        (
+            "import",
+            {
+                "input": "c.json",
+                "apply": True,
+                "invocation_id": invocation,
+                "expected_digest": "a" * 64,
+                "expected_store_revision": 0,
+            },
+        ),
+    ):
+        outcome = validate_and_normalize(
+            "rush_memory",
+            {
+                "path": ".",
+                "operation": "capsule",
+                "request": {"action": action, **extra},
+            },
+        )
+        assert not outcome.rejected, (action, outcome)
 
 
 # --- G4: shared trust-boundary inputs -------------------------------------------------
@@ -37604,3 +37721,54 @@ def test_t04_g8_access_form_predicates(row: str, tmp_path: Path) -> None:
             env, "promotion_sweep", sources=["source-a"], request={"apply": False}
         )
         assert sorted(_rd(named)["candidate_ids"]) == ["x1"]
+
+
+def _t02_flip_cells() -> list[Any]:
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    return cap.flip_params("t02")
+
+
+@pytest.mark.parametrize("cell", _t02_flip_cells())
+def test_t02_codec_route_mode_matrix(cell: Any, tmp_path: Path) -> None:
+    """G2a, 73-T09/CODEC: the capsule/import cells of this matrix (representation, retrieval, ack, mode) are
+    the real `preview_export`/`export`/`preview_import`/`import`/`bridge`/mapping
+    cells of the CODEC G2 table, never producer-staged `E_INPUT` placeholders."""
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    assert "producer" not in cell.id
+    cap.run_cell(cell, tmp_path)
+
+
+def _t03_flip_cells() -> list[Any]:
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    return cap.flip_params("t03")
+
+
+@pytest.mark.parametrize("cell", _t03_flip_cells())
+def test_t03_codec_route_mode_matrix(cell: Any, tmp_path: Path) -> None:
+    """G2a, 73-T09/CODEC: the capsule/import cells of this matrix (capability_ids, row_state) are
+    the real `preview_export`/`export`/`preview_import`/`import`/`bridge`/mapping
+    cells of the CODEC G2 table, never producer-staged `E_INPUT` placeholders."""
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    assert "producer" not in cell.id
+    cap.run_cell(cell, tmp_path)
+
+
+def _t04_flip_cells() -> list[Any]:
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    return cap.flip_params("t04")
+
+
+@pytest.mark.parametrize("cell", _t04_flip_cells())
+def test_t04_codec_route_mode_matrix(cell: Any, tmp_path: Path) -> None:
+    """G2a, 73-T09/CODEC: the capsule/import cells of this matrix (apply, grant_ops, store) are
+    the real `preview_export`/`export`/`preview_import`/`import`/`bridge`/mapping
+    cells of the CODEC G2 table, never producer-staged `E_INPUT` placeholders."""
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    assert "producer" not in cell.id
+    cap.run_cell(cell, tmp_path)

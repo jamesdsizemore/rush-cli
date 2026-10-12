@@ -5588,21 +5588,6 @@ def _cell_non_v2(operation: str, transport: str, tmp_path: Path) -> None:
     only_zero_effects(env, before, operation)
 
 
-def _cell_capsule(transport: str, tmp_path: Path) -> None:
-    """73-T09/CODEC owns `capsule`; until it lands the operation name itself is rejected."""
-    env = make_env(tmp_path)
-    before = snapshot(env)
-    if transport == "inproc":
-        result = call(env, "capsule", {"schema_version": 2}, perms=PERM_W)
-        assert result["status"] == "error"
-        assert "capsule" in result["summary"]
-    else:
-        result = mcp_call(env, "capsule", {"schema_version": 2}, cache_write=True)
-        assert code(result) == "E_INPUT"
-        assert raw(result)["data"]["details"][0]["loc"][-1] == "operation"
-    only_zero_effects(env, before, "capsule")
-
-
 # --- C: restricted bridge cells in the matrix grammar ------------------------------
 
 
@@ -7278,7 +7263,6 @@ def _all_cells() -> list[Any]:
     for transport in ("inproc", "mcp"):
         for operation in NON_V2_OPERATIONS:
             add(transport, operation, "schema_version", "2")
-        add(transport, "capsule", "operation", "producer_73_T09")
     for operation in ("receive", "expand", "related", "resume", *ADMIN_OPS):
         add("bridge", operation, "access", "restricted")
     for name in NO_FIELD:
@@ -7322,8 +7306,6 @@ def test_t06_route_mode_matrix(
             _cell_cli_baseline(route, tmp_path)
     elif dim == "schema_version":
         _cell_non_v2(route, transport, tmp_path)
-    elif dim == "operation":
-        _cell_capsule(transport, tmp_path)
     elif dim == "access" and value == "policy_no_field":
         _cell_no_field(route, tmp_path)
     else:
@@ -8910,3 +8892,25 @@ def test_t06_preservation_oracle_unreadable_file_raises(tmp_path: Path) -> None:
             digest_tree(tmp_path)
     finally:
         secret.chmod(0o600)
+
+
+def _t06_flip_cells() -> list[Any]:
+    import importlib
+
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    return cap.flip_params("t06")
+
+
+@pytest.mark.parametrize("cell", _t06_flip_cells())
+def test_t06_codec_route_mode_matrix(cell: Any, tmp_path: Path) -> None:
+    """G2a, 73-T09/CODEC: the capsule/import cells of this matrix (policy_state,
+    intersection) are the real `preview_export`/`export`/`preview_import`/`import`/
+    `bridge`/mapping cells of the CODEC G2 table, never producer-staged `E_INPUT`
+    placeholders."""
+    import importlib
+
+    cap = importlib.import_module("tests.test_memory_capsule")
+
+    assert "producer" not in cell.id
+    cap.run_cell(cell, tmp_path)

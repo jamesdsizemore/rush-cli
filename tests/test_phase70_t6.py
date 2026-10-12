@@ -224,16 +224,22 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
     # 72-T06: the two strict schema-version-2 operations (their only request model).
     ("history", {"request": {"schema_version": 2, "artifact_id": "a1"}}, "request"),
     ("explain", {"request": {"schema_version": 2, "artifact_id": "a1"}}, "request"),
+    (
+        "capsule",
+        {"request": {"action": "preview_import", "input": "c.json"}},
+        "request",
+    ),
 ]
-assert len(MEMORY_OPERATIONS) == 25
+assert len(MEMORY_OPERATIONS) == 26
 
 
 def test_t06_memory_operations_table_matches_valid_operations():
     """72-T05 D11: the table covers exactly the `VALID_OPERATIONS`, `preference`
-    included (25 with 72-T06's `history` and `explain`). A test, not a module assert,
+    included (26 with 72-T06's `history` and `explain` and 73-T09/CODEC's
+    `capsule`). A test, not a module assert,
     so a missing operation fails this id and leaves every other id of the file
     collectable."""
-    assert len(_MEMORY_VALID_OPERATIONS) == 25
+    assert len(_MEMORY_VALID_OPERATIONS) == 26
     assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
 
 
@@ -559,8 +565,8 @@ def test_t06_scan_missing_required_field_rejects_with_zero_effects(
 def test_t06_memory_minimum_valid_request_validates_and_dispatches(
     operation, fields, _dropped, tmp_path
 ):
-    """Brief section 6, memory half: minimum valid request for each of the 22
-    memory operations validates against the published schema and dispatches."""
+    """Brief section 6, memory half: minimum valid request for each memory
+    operation validates against the published schema and dispatches."""
     named = {"path": str(tmp_path), "operation": operation, **fields}
     schema = _published_schema("rush_memory")
     jsonschema.validate(named, schema)
@@ -843,6 +849,7 @@ def test_t06_parity_sets_operation_enum_matches_every_source_of_truth():
         ("delete", "_DELETE_REQUEST_KEYS"),
         ("edit", "_EDIT_REQUEST_KEYS"),
         ("archive", "_ARCHIVE_REQUEST_KEYS"),
+        ("capsule", "_CAPSULE_REQUEST_KEYS"),
     ],
 )
 def test_t06_parity_memory_request_model_keys_match_constant(operation, constant_name):

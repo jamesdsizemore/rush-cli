@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
+import time
 import warnings
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import nullcontext
@@ -4056,6 +4058,576 @@ for _memory_op, _memory_cli_name in (
         _build_memory_operation_command(_memory_op)
     )
 del _memory_op, _memory_cli_name
+
+
+# 73-T09/CODEC: `rush memory capsule` -- portable capsule preview/export/import over
+# `MemoryTool` operation `capsule`, plus the CLI-only mapping consent subgroup.
+
+
+def _owner_kind_id(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+) -> dict[str, str] | None:
+    """`--owner KIND:ID`: split on the first `:` and keep the rest as the ID. A
+    missing separator or an invalid `OwnerScope` is a Click parameter error."""
+    if value is None:
+        return None
+    kind, separator, owner_id = value.partition(":")
+    if not separator:
+        raise click.BadParameter("expected KIND:ID", ctx=ctx, param=param)
+    try:
+        OwnerScope.from_value({"kind": kind, "id": owner_id})
+    except (TypeError, ValueError):
+        raise click.BadParameter(
+            "not a valid owner scope", ctx=ctx, param=param
+        ) from None
+    return {"kind": kind, "id": owner_id}
+
+
+def _capsule_task_ref(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+) -> dict[str, Any] | None:
+    """`--task-ref ID:VERSION`: split on the last `:`; VERSION must parse as int."""
+    if value is None:
+        return None
+    artifact_id, separator, version = value.rpartition(":")
+    if not separator:
+        raise click.BadParameter("expected ID:VERSION", ctx=ctx, param=param)
+    try:
+        number = int(version)
+    except ValueError:
+        raise click.BadParameter(
+            "VERSION must be an integer", ctx=ctx, param=param
+        ) from None
+    return {"artifact_id": artifact_id, "version": number}
+
+
+def _capsule_root(project: Path) -> Path:
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(project, anchor=Path(os.path.abspath(Path.cwd())))
+
+
+@memory_group.group(name="capsule")
+def memory_capsule_group() -> None:
+    """Preview, export and import portable memory capsules (rush_v1, pas_v1)."""
+
+
+_CAPSULE_LEAVES: dict[str, tuple[str, str]] = {
+    "preview-export": (
+        "preview_export",
+        "Preview a capsule export of this project's open task (read-only).",
+    ),
+    "export": (
+        "export",
+        (
+            "Write a previewed capsule export (--expected-digest). Requires "
+            "--allow-artifact-write."
+        ),
+    ),
+    "preview-import": ("preview_import", "Preview a capsule import (read-only)."),
+    "import": (
+        "import",
+        (
+            "Import a previewed capsule (--apply, --expected-digest, "
+            "--expected-store-revision). Requires --allow-cache-write."
+        ),
+    ),
+    "bridge": ("bridge", "Reserved capsule bridge action; not available."),
+}
+
+
+def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
+    """One `rush memory capsule <leaf>`: builds the same `request` an MCP call sends
+    (omitted options stay absent) and runs `MemoryTool` operation `capsule`."""
+
+    def _cmd(
+        project: Path,
+        input_path: str | None,
+        output_path: str | None,
+        capsule_format: str | None,
+        max_bytes: int | None,
+        max_tokens: int | None,
+        mapping_id: str | None,
+        expected_digest: str | None,
+        expected_store_revision: int | None,
+        confirm_constraint_ids: tuple[str, ...],
+        invocation_id: str | None,
+        task_ref: dict[str, Any] | None,
+        owner: dict[str, str] | None,
+        sources: tuple[str, ...],
+        include_personal: bool,
+        apply: bool,
+        allow_network: bool,
+        allow_download: bool,
+        allow_cache_write: bool,
+        allow_build: bool,
+        allow_slow: bool,
+        allow_artifact_write: bool,
+        allow_browser: bool,
+        as_json: bool,
+    ) -> None:
+        from .tools.memory import MemoryTool
+
+        request: dict[str, Any] = {"action": action}
+        for key, value in (
+            ("format", capsule_format),
+            ("input", None if input_path is None else os.path.abspath(input_path)),
+            ("output", None if output_path is None else os.path.abspath(output_path)),
+            ("max_bytes", max_bytes),
+            ("max_tokens", max_tokens),
+            ("mapping_id", mapping_id),
+            ("expected_digest", expected_digest),
+            ("expected_store_revision", expected_store_revision),
+            ("invocation_id", invocation_id),
+        ):
+            if value is not None:
+                request[key] = value
+        if confirm_constraint_ids:
+            request["confirm_constraint_ids"] = list(confirm_constraint_ids)
+        if apply:
+            request["apply"] = True
+        selectors: dict[str, Any] = {}
+        if task_ref is not None:
+            selectors["task_ref"] = task_ref
+        if owner is not None:
+            selectors["owner_scope"] = owner
+        if sources:
+            selectors["sources"] = list(sources)
+        if include_personal:
+            selectors["include_personal"] = True
+        if selectors:
+            request["selectors"] = selectors
+        result = MemoryTool().run(
+            _capsule_root(project),
+            operation="capsule",
+            request=request,
+            permissions=_extract_permissions(
+                allow_network=allow_network,
+                allow_download=allow_download,
+                allow_cache_write=allow_cache_write,
+                allow_build=allow_build,
+                allow_slow=allow_slow,
+                allow_artifact_write=allow_artifact_write,
+                allow_browser=allow_browser,
+            ),
+        )
+        _render_session_result(dict(result), as_json)
+
+    _cmd.__name__ = f"memory_capsule_{action}_cmd"
+    _cmd.__doc__ = help_text
+    command: Callable[..., None] = click.option(
+        "--json", "as_json", is_flag=True, help="Print raw ToolResult JSON."
+    )(_cmd)
+    command = permission_options(command)
+    for decorator in (
+        click.option("--apply", is_flag=True, help="Apply the reviewed import."),
+        click.option(
+            "--include-personal",
+            is_flag=True,
+            help="Export: also read evidence from the personal overlay store.",
+        ),
+        click.option(
+            "--source",
+            "sources",
+            multiple=True,
+            help="Export: narrow to this granted source; repeat for multiple.",
+        ),
+        click.option(
+            "--owner",
+            default=None,
+            callback=_owner_kind_id,
+            help="Owner scope as KIND:ID (split on the first ':').",
+        ),
+        click.option(
+            "--task-ref",
+            default=None,
+            callback=_capsule_task_ref,
+            help="Export: the checkpoint artifact as ID:VERSION.",
+        ),
+        click.option(
+            "--invocation-id",
+            default=None,
+            help="Canonical lowercase UUID binding a preview to its apply.",
+        ),
+        click.option(
+            "--confirm-constraint-id",
+            "confirm_constraint_ids",
+            multiple=True,
+            help="Import: confirm one previewed constraint id; repeat for multiple.",
+        ),
+        click.option(
+            "--expected-store-revision",
+            type=int,
+            default=None,
+            help="Import: the store revision the preview reported.",
+        ),
+        click.option(
+            "--expected-digest",
+            default=None,
+            help="Export/import: the digest the preview reported.",
+        ),
+        click.option(
+            "--mapping-id",
+            default=None,
+            help="Import: an approved capsule origin mapping id.",
+        ),
+        click.option("--max-tokens", type=int, default=None, help="Token budget."),
+        click.option("--max-bytes", type=int, default=None, help="Byte budget."),
+        click.option(
+            "--format",
+            "capsule_format",
+            default=None,
+            help="Capsule format: rush_v1 (default) or pas_v1.",
+        ),
+        click.option(
+            "--output", "output_path", default=None, help="Export: output file."
+        ),
+        click.option(
+            "--input", "input_path", default=None, help="Import: capsule file."
+        ),
+        click.option(
+            "--project",
+            type=click.Path(file_okay=False, path_type=Path),
+            default=Path("."),
+            help="Project directory (default: the current directory).",
+        ),
+    ):
+        command = decorator(command)
+    return command
+
+
+for _capsule_leaf, (_capsule_action, _capsule_help) in _CAPSULE_LEAVES.items():
+    memory_capsule_group.command(name=_capsule_leaf)(
+        _build_capsule_command(_capsule_action, _capsule_help)
+    )
+del _capsule_leaf, _capsule_action, _capsule_help
+
+
+@memory_capsule_group.group(name="mapping")
+def memory_capsule_mapping_group() -> None:
+    """Approve or revoke a capsule origin mapping (CLI-only consent)."""
+
+
+_CAPSULE_FILE_MAX = 1 << 20  # the capsule codec's hard input cap (1 MiB)
+_CAPSULE_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+_MAPPING_INPUT_FIELDS = frozenset(
+    {"capsule_origin", "expected_policy_revision", "mapping_id", "owner_scope"}
+)
+
+
+def _capsule_json(path: Path) -> Any:
+    with open(path, "rb") as handle:
+        data = handle.read(_CAPSULE_FILE_MAX + 1)
+    if len(data) > _CAPSULE_FILE_MAX:
+        raise ValueError("capsule file exceeds the hard cap")
+    return json.loads(data.decode("utf-8"))
+
+
+def _capsule_origin_pair(path: Path) -> dict[str, Any] | None:
+    """The `{project_id, worktree_id}` pair a capsule file claims: a `rush_v1` file's
+    `origin`, else a `pas_v1` file's sidecar capsule `origin`. None when unreadable or
+    when the file carries no Rush origin (a standalone `pas_v1` file)."""
+    try:
+        value = _capsule_json(path)
+        if isinstance(value, dict) and value.get("format") == "rush_v1":
+            origin = value.get("origin")
+        else:
+            sidecar = _capsule_json(Path(str(path) + ".rush-manifest.json"))
+            capsule = sidecar.get("capsule") if isinstance(sidecar, dict) else None
+            origin = capsule.get("origin") if isinstance(capsule, dict) else None
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(origin, dict):
+        return None
+    return {
+        "project_id": origin.get("project_id"),
+        "worktree_id": origin.get("worktree_id"),
+    }
+
+
+def _capsule_mapping_result(
+    started: float, sub: str, code: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    from .tools.memory import _CODE_STATUS
+
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": _CODE_STATUS.get(code, "error"),
+        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+        "summary": f"memory capsule mapping {sub} returned {code}.",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": "capsule_mapping",
+            "code": code,
+            "data": data,
+        },
+        "metadata": {"operation": "capsule_mapping"},
+    }
+
+
+def _capsule_mapping_error(
+    started: float, sub: str, code: str, reason: str | None, field: str | None = None
+) -> dict[str, Any]:
+    data: dict[str, Any] = {"reason": reason}
+    if field is None and code == "E_INPUT" and reason in _MAPPING_INPUT_FIELDS:
+        field = reason
+    if field is not None:
+        data["field"] = field
+    data["message"] = f"memory capsule mapping {sub} refused: {reason}."
+    return _capsule_mapping_result(started, sub, code, data)
+
+
+def _capsule_mapping_skipped(
+    started: float, sub: str, granted: ExecutionPermissions
+) -> dict[str, Any] | None:
+    from .permissions import check_permissions
+
+    allowed, missing = check_permissions(
+        ExecutionPermissions(cache_write=True), granted
+    )
+    if allowed:
+        return None
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": "skipped",
+        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+        "summary": f"memory capsule mapping {sub} requires {', '.join(missing)}.",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": "capsule_mapping",
+            "missing_permissions": missing,
+        },
+        "metadata": {"operation": "capsule_mapping"},
+    }
+
+
+def _mapping_denial_code(reason: str, owner_given: bool) -> tuple[str, str | None]:
+    """The capsule denial mapping (G8-T10) for a `resolve_memory_scope` reason."""
+    if reason == "owner_not_granted":
+        return ("E_OWNER" if owner_given else "E_PERMISSION"), None
+    if reason == "source_not_granted":
+        return "E_SCOPE", None
+    if reason == "owner_required" and not owner_given:
+        return "E_INPUT", "owner_scope"
+    return "E_PERMISSION", None
+
+
+def _capsule_mapping_create_preview(
+    started: float,
+    root: Path,
+    origin: dict[str, Any],
+    owner: OwnerScope | None,
+) -> dict[str, Any]:
+    """The exact pair, target and scope `--approve` would record; writes nothing."""
+    from .memory import authorization as auth
+
+    project_id, worktree_id = origin["project_id"], origin["worktree_id"]
+    if not (
+        isinstance(project_id, str)
+        and project_id
+        and isinstance(worktree_id, str)
+        and re.fullmatch(r"[0-9a-f]{64}", worktree_id)
+    ):
+        return _capsule_mapping_error(started, "create", "E_INPUT", "capsule_origin")
+    loaded = auth.load_policy_readonly()
+    if loaded["state"] == "invalid":
+        return _capsule_mapping_error(
+            started, "create", "E_POLICY_INVALID", loaded["reason"]
+        )
+    resolved = auth.resolve_memory_scope(
+        project_root=root, operation="write", owner_scope=owner
+    )
+    if resolved["access"] != "write":
+        code, field = _mapping_denial_code(resolved["reason"], owner is not None)
+        return _capsule_mapping_error(
+            started, "create", code, resolved["reason"], field
+        )
+    return _capsule_mapping_result(
+        started,
+        "create",
+        "OK",
+        {
+            "origin": {"project_id": project_id, "worktree_id": worktree_id},
+            "target": auth.project_identity(root),
+            "target_owner_scope": resolved["owner_scope"],
+            "grant_id": resolved["grant_id"],
+            "policy_revision": loaded["policy_revision"],
+        },
+    )
+
+
+@memory_capsule_mapping_group.command(name="create")
+@click.option(
+    "--input",
+    "input_path",
+    required=True,
+    help="The capsule file whose origin pair to map onto this project.",
+)
+@click.option(
+    "--project",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("."),
+    help="Destination project directory (default: the current directory).",
+)
+@click.option(
+    "--owner",
+    default=None,
+    callback=_owner_kind_id,
+    help="Destination owner scope as KIND:ID (split on the first ':').",
+)
+@click.option(
+    "--expected-policy-revision",
+    type=int,
+    required=True,
+    help="The memory policy revision this approval is based on.",
+)
+@click.option("--approve", is_flag=True, help="Record the mapping (else preview).")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_capsule_mapping_create_cmd(
+    input_path: str,
+    project: Path,
+    owner: dict[str, str] | None,
+    expected_policy_revision: int,
+    approve: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Map a capsule's origin pair onto this project and owner. Preview by default;
+    --approve records it and requires --allow-cache-write."""
+    from .memory import authorization as auth
+
+    started = time.monotonic()
+    granted = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = _capsule_mapping_skipped(started, "create", granted) if approve else None
+    if result is None:
+        origin = _capsule_origin_pair(Path(os.path.abspath(input_path)))
+        owner_scope = None if owner is None else OwnerScope.from_value(owner)
+        root = _capsule_root(project)
+        if origin is None:
+            result = _capsule_mapping_error(
+                started, "create", "E_INPUT", "capsule_invalid", "input"
+            )
+        elif not approve:
+            result = _capsule_mapping_create_preview(started, root, origin, owner_scope)
+        else:
+            try:
+                view = auth.approve_capsule_mapping(
+                    capsule_origin=origin,
+                    project_root=root,
+                    owner_scope=owner_scope,
+                    expected_policy_revision=expected_policy_revision,
+                    consent=True,
+                )
+            except auth.MemoryPolicyError as exc:
+                result = _capsule_mapping_error(started, "create", exc.code, exc.reason)
+            else:
+                result = _capsule_mapping_result(
+                    started, "create", "OK", {"mapping": view}
+                )
+    _render_session_result(result, as_json)
+
+
+@memory_capsule_mapping_group.command(name="revoke")
+@click.option("--mapping-id", required=True, help="The capsule mapping id to revoke.")
+@click.option(
+    "--expected-policy-revision",
+    type=int,
+    required=True,
+    help="The memory policy revision this revocation is based on.",
+)
+@click.option("--approve", is_flag=True, help="Revoke the mapping (else preview).")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_capsule_mapping_revoke_cmd(
+    mapping_id: str,
+    expected_policy_revision: int,
+    approve: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Revoke an approved capsule mapping. Preview by default; --approve revokes it
+    and requires --allow-cache-write."""
+    from .memory import authorization as auth
+
+    started = time.monotonic()
+    granted = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = _capsule_mapping_skipped(started, "revoke", granted) if approve else None
+    if result is None and approve:
+        try:
+            view = auth.revoke_capsule_mapping(
+                mapping_id=mapping_id,
+                expected_policy_revision=expected_policy_revision,
+                consent=True,
+            )
+        except auth.MemoryPolicyError as exc:
+            result = _capsule_mapping_error(started, "revoke", exc.code, exc.reason)
+        else:
+            result = _capsule_mapping_result(started, "revoke", "OK", {"mapping": view})
+    elif result is None:
+        loaded = auth.load_policy_readonly()
+        mappings = loaded.get("mappings") or {}
+        if not _CAPSULE_UUID_RE.fullmatch(mapping_id):
+            result = _capsule_mapping_error(started, "revoke", "E_INPUT", "mapping_id")
+        elif loaded["state"] == "invalid":
+            result = _capsule_mapping_error(
+                started, "revoke", "E_POLICY_INVALID", loaded["reason"]
+            )
+        elif loaded["state"] != "ok":
+            result = _capsule_mapping_error(
+                started, "revoke", "E_PERMISSION", loaded["reason"]
+            )
+        elif mapping_id not in mappings:
+            result = _capsule_mapping_error(
+                started, "revoke", "E_PERMISSION", "mapping_unknown"
+            )
+        else:
+            result = _capsule_mapping_result(
+                started,
+                "revoke",
+                "OK",
+                {
+                    "mapping": mappings[mapping_id],
+                    "policy_revision": loaded["policy_revision"],
+                },
+            )
+    _render_session_result(result, as_json)
 
 
 # P65-03.3 CONNECT (Phase 65 §3.2): CLI surface over `rush.workflows.projects` via

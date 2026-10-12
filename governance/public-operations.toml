@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 197
+total_operations = 204
 
 [[operations]]
 id = "admin.agent_connect"
@@ -53,6 +53,76 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory archive --help"
+
+[[operations]]
+id = "admin.memory_capsule_bridge"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule bridge"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule bridge --help"
+
+[[operations]]
+id = "admin.memory_capsule_export"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule export"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule export --help"
+
+[[operations]]
+id = "admin.memory_capsule_import"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule import"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule import --help"
+
+[[operations]]
+id = "admin.memory_capsule_mapping_create"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule mapping create"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule mapping create --help"
+
+[[operations]]
+id = "admin.memory_capsule_mapping_revoke"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule mapping revoke"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule mapping revoke --help"
+
+[[operations]]
+id = "admin.memory_capsule_preview_export"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule preview-export"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory capsule preview-export --help"
+
+[[operations]]
+id = "admin.memory_capsule_preview_import"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule preview-import"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory capsule preview-import --help"
 
 [[operations]]
 id = "admin.memory_consolidate"

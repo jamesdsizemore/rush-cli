@@ -1058,13 +1058,23 @@ def test_t27_route_set_includes_live_operation_enums_and_gain_alias() -> None:
     for group_name in ("memory", "project", "scan", "agent", "context", "session"):
         group = cli.commands[group_name]
         assert isinstance(group, click.Group)
-        for op_name in group.commands:
+        for op_name, op_command in group.commands.items():
             route_id = f"{group_name}.{op_name}"
-            assert route_id in _ALL_ROUTE_IDS, (
-                f"operation enum route {route_id!r} (derived live from the "
-                f"{group_name!r} group's real Click subcommands) is missing "
-                "from the walked route set"
-            )
+            # 73-T09/CODEC: a nested group (`memory capsule`) is not a route; each
+            # of its walked descendants is.
+            if isinstance(op_command, click.Group):
+                walked = [
+                    ".".join(path)
+                    for path, _ in _walk(op_command, (group_name, op_name))
+                ]
+            else:
+                walked = [route_id]
+            for walked_id in walked:
+                assert walked_id in _ALL_ROUTE_IDS, (
+                    f"operation enum route {walked_id!r} (derived live from the "
+                    f"{group_name!r} group's real Click subcommands) is missing "
+                    "from the walked route set"
+                )
     # `subject` is itself a live Click Choice enum on the memory verbs; assert
     # against the choices Click actually declared, never a hand-typed list.
     subject_param = next(

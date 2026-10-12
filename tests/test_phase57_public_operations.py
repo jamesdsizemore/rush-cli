@@ -201,8 +201,9 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 197
-    assert manifest_data.get("manifest", {}).get("total_operations") == 197
+    # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
+    assert len(operations) == 204
+    assert manifest_data.get("manifest", {}).get("total_operations") == 204
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -239,18 +240,19 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
     # Phase 70 T25: cli.help added (cli-only admin). Governance generator fix:
     # `gain` is a cli-only alias of `context gain`. 72-T05 adds the cli-only
     # `memory preference`; Phase 72 T06 adds the cli-only admin `memory history` and
-    # `memory explain`. Total 197: 63 dual-transport, 116 cli-only, 18 mcp-only.
-    assert len(declared_transports) == 197
+    # `memory explain`; 73-T09/CODEC adds the 7 cli-only admin `memory capsule`
+    # leaves. Total 204: 63 dual-transport, 123 cli-only, 18 mcp-only.
+    assert len(declared_transports) == 204
     assert sum(1 for t in declared_transports.values() if t == "both") == 63
-    assert sum(1 for t in declared_transports.values() if t == "cli") == 116
+    assert sum(1 for t in declared_transports.values() if t == "cli") == 123
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 197
+    assert report["total"] == 204
     assert report["tool_count"] == 81
-    assert report["admin_count"] == 98
+    assert report["admin_count"] == 105
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
     assert len(report["errors"]) == 0
@@ -425,7 +427,8 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     admin_ops = [op for op in operations if op["kind"] == "admin"]
     # Phase 70 T25: 94->95 (cli.help added, kind=admin). 72-T05: 95->96.
     # 72-T06: 96->98 (memory history and memory explain).
-    assert len(admin_ops) == 98
+    # 73-T09/CODEC: 98->105 (+7 `memory capsule` leaves, admin, cli-only).
+    assert len(admin_ops) == 105
     _dual_transport_admin_ids = {"admin.memory_promote", "admin.memory_write"}
     for op in admin_ops:
         if op["id"] not in _dual_transport_admin_ids:
@@ -526,7 +529,9 @@ def test_unprobed_route_is_not_advertised() -> None:
             f"Advertised MCP tool '{tool_name}' is unprobed / unmanifested in governance/public-operations.toml"
         )
 
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 178
+    # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only). 179->186 (the
+    # non-invokable `memory capsule` groups are not routes).
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 186
     # Phase 70 T17: MCP tools 79->80 (rush_check added; finding 13).
     assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 81
 

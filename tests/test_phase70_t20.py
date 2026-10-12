@@ -867,10 +867,11 @@ def test_ask_without_session_allowlist_fails_closed(tmp_path: Path) -> None:
 def test_rush_memory_schema_operation_count_at_23(tmp_path: Path) -> None:
     from rush.tools.memory import VALID_OPERATIONS
 
-    # 72-T05 adds `preference` and 72-T06 adds `history` and `explain` to the 22
-    # operations of Phase 70.
-    assert len(VALID_OPERATIONS) == 25
+    # 72-T05 adds `preference`, 72-T06 adds `history` and `explain` and
+    # 73-T09/CODEC adds `capsule` to the 22 operations of Phase 70.
+    assert len(VALID_OPERATIONS) == 26
     assert "preference" in VALID_OPERATIONS
+    assert "capsule" in VALID_OPERATIONS
     assert "overview" not in VALID_OPERATIONS
 
 

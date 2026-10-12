@@ -2736,3 +2736,724 @@ def test_requested_sources_reject_family_patterns(tmp_path: Path) -> None:
         None,
     ):
         assert auth.literal_source_is_valid(bad_source) is False, bad_source  # type: ignore[arg-type]
+
+
+# =============================================================================
+# 73-T09/CODEC: capsule mapping consent (`approve_capsule_mapping`,
+# `revoke_capsule_mapping`, `resolve_capsule_mapping`, `project_identity`)
+# =============================================================================
+
+ALICE = OwnerScope("agent", "alice")
+BOB = OwnerScope("agent", "bob")
+MAPPING_VIEW_KEYS = {
+    "mapping_id",
+    "purpose",
+    "origin_project_id",
+    "origin_worktree_id",
+    "target_project_id",
+    "target_worktree_id",
+    "target_root",
+    "target_owner_scope",
+    "grant_id",
+    "created_revision",
+    "approved_at",
+    "revoked",
+    "revoked_revision",
+}
+MAPPING_RECORD_KEYS = (MAPPING_VIEW_KEYS - {"target_root"}) | {"target_root_hex"}
+ORIGIN_WORKTREE = hashlib.sha256(b"origin-worktree").hexdigest()
+
+
+def _origin(project: str = "origin-project") -> dict[str, str]:
+    return {"project_id": project, "worktree_id": ORIGIN_WORKTREE}
+
+
+def _revision(auth: Any, d: Path) -> int:
+    return int(auth.load_policy_readonly(data_root=d)["policy_revision"] or 0)
+
+
+def _mapped(
+    tmp_path: Path, *, ops: tuple[str, ...] = ("ask", "write")
+) -> tuple[Any, Path, Path, dict[str, Any]]:
+    """A registered project with one consented `agent:alice` grant holding `ops`."""
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "dest", d)
+    grant = _grant(auth, root, ALICE, d, sources=("source-a",), ops=ops)
+    return auth, d, root, grant
+
+
+def _approve(auth: Any, root: Path, d: Path, **extra: Any) -> dict[str, Any]:
+    params: dict[str, Any] = {
+        "capsule_origin": _origin(),
+        "project_root": root,
+        "expected_policy_revision": _revision(auth, d),
+        "consent": True,
+        "data_root": d,
+    }
+    params.update(extra)
+    return auth.approve_capsule_mapping(**params)
+
+
+def test_capsule_mapping_record_schema_and_cas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, record = _project(tmp_path, "dest", d)
+    stranger = tmp_path / "unregistered"
+    stranger.mkdir()
+    not_a_directory = tmp_path / "example.txt"
+    not_a_directory.write_text("not a directory", encoding="utf-8")
+
+    # --- project_identity: read-only, shared with BOOTSTRAP-CONSENT ---
+    before = _snapshot(tmp_path)
+    identity = auth.project_identity(root, data_root=d)
+    assert set(identity) == {"canonical_root", "project_id", "worktree_id"}
+    assert identity == {
+        "canonical_root": str(root),
+        "project_id": record.project_id,
+        "worktree_id": _worktree_id(root),
+    }
+    unregistered = auth.project_identity(stranger, data_root=d)
+    assert unregistered == {
+        "canonical_root": str(stranger.resolve()),
+        "project_id": None,
+        "worktree_id": None,
+    }
+    for unusable in (tmp_path / "missing", not_a_directory, "a\x00b", "\ud800"):
+        found = auth.project_identity(unusable, data_root=d)
+        assert set(found) == {"canonical_root", "project_id", "worktree_id"}, unusable
+        assert found["project_id"] is None and found["worktree_id"] is None, unusable
+    assert _snapshot(tmp_path) == before, "project_identity is read-only"
+    assert not _policy_file(d).exists(), "project_identity creates no policy"
+    assert not (stranger / ".rush").exists()
+
+    # --- approve: the record shape, hex path storage, one revision step ---
+    grant = _grant(auth, root, ALICE, d, sources=("source-a",), ops=("ask", "write"))
+    monkeypatch.setattr(auth, "_now", lambda: 1_760_000_000.25)
+    revision = _revision(auth, d)
+    view = auth.approve_capsule_mapping(
+        capsule_origin=_origin(),
+        project_root=root,
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=d,
+    )
+    assert set(view) == MAPPING_VIEW_KEYS
+    assert _is_uuid4(view["mapping_id"])
+    assert view["purpose"] == "capsule_import"
+    assert (view["origin_project_id"], view["origin_worktree_id"]) == (
+        "origin-project",
+        ORIGIN_WORKTREE,
+    )
+    assert (view["target_project_id"], view["target_worktree_id"]) == (
+        record.project_id,
+        _worktree_id(root),
+    )
+    assert view["target_root"] == str(root)
+    assert view["target_owner_scope"] == {"kind": "agent", "id": "alice"}
+    assert view["grant_id"] == grant["grant_id"]
+    assert view["created_revision"] == revision + 1
+    assert view["approved_at"] == 1_760_000_000.25
+    assert view["revoked"] is False and view["revoked_revision"] is None
+    stored = _raw(d)["data"]
+    assert stored["policy_revision"] == revision + 1
+    mapping = stored["mappings"][view["mapping_id"]]
+    assert set(mapping) == MAPPING_RECORD_KEYS
+    grant_record = stored["grants"][grant["grant_id"]]
+    assert mapping["target_root_hex"] == grant_record["project_root_hex"]
+    assert mapping["target_root_hex"] == str(root).encode("utf-8").hex()
+    assert mapping["target_owner_scope"] == {
+        "kind": "agent",
+        "id_hex": b"alice".hex(),
+    }
+    assert auth.load_policy_readonly(data_root=d)["mappings"] == {
+        view["mapping_id"]: view
+    }
+    after_approve = _sha(_policy_file(d))
+
+    # an identical active mapping is returned unchanged, before the revision check
+    for expected in (revision, revision + 1):
+        again = auth.approve_capsule_mapping(
+            capsule_origin=_origin(),
+            project_root=root,
+            expected_policy_revision=expected,
+            consent=True,
+            data_root=d,
+        )
+        assert again == view
+    assert _sha(_policy_file(d)) == after_approve
+
+    # a different origin is a new mapping and obeys the compare-and-set
+    _expect(
+        auth,
+        "E_VERSION",
+        f"expected revision {revision}, found {revision + 1}",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin("other-origin"),
+        project_root=root,
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=d,
+    )
+    _expect(
+        auth,
+        "E_CONSENT",
+        "consent_required",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin("other-origin"),
+        project_root=root,
+        expected_policy_revision=revision + 1,
+        consent=False,
+        data_root=d,
+    )
+    assert _sha(_policy_file(d)) == after_approve
+    second = _approve(auth, root, d, capsule_origin=_origin("other-origin"))
+    assert second["mapping_id"] != view["mapping_id"]
+    assert second["created_revision"] == revision + 2
+
+    # --- revoke: unknown, stale, principal, success, repeat ---
+    current = _revision(auth, d)
+    _expect(
+        auth,
+        "E_INPUT",
+        "mapping_id",
+        auth.revoke_capsule_mapping,
+        mapping_id="not-a-uuid",
+        expected_policy_revision=current,
+        consent=True,
+        data_root=d,
+    )
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "mapping_unknown",
+        auth.revoke_capsule_mapping,
+        mapping_id=str(uuid.uuid4()),
+        expected_policy_revision=current,
+        consent=True,
+        data_root=d,
+    )
+    sha_before = _sha(_policy_file(d))
+    real_principal = auth._current_os_principal
+    monkeypatch.setattr(auth, "_current_os_principal", lambda: "uid:99999999")
+    _expect(
+        auth,
+        "E_PRINCIPAL",
+        "principal_mismatch",
+        auth.revoke_capsule_mapping,
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=current,
+        consent=True,
+        data_root=d,
+    )
+    monkeypatch.setattr(auth, "_current_os_principal", real_principal)
+    _expect(
+        auth,
+        "E_VERSION",
+        f"expected revision {current - 1}, found {current}",
+        auth.revoke_capsule_mapping,
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=current - 1,
+        consent=True,
+        data_root=d,
+    )
+    assert _sha(_policy_file(d)) == sha_before
+    revoked = auth.revoke_capsule_mapping(
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=current,
+        consent=True,
+        data_root=d,
+    )
+    assert set(revoked) == MAPPING_VIEW_KEYS
+    assert revoked["revoked"] is True and revoked["revoked_revision"] == current + 1
+    assert _revision(auth, d) == current + 1
+    after_revoke = _sha(_policy_file(d))
+    twice = auth.revoke_capsule_mapping(
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=current + 1,
+        consent=True,
+        data_root=d,
+    )
+    assert twice == revoked and _sha(_policy_file(d)) == after_revoke
+
+    # --- the loader validates every stored record (`_mapping_view`) ---
+    base = _raw(d)
+    good_id = second["mapping_id"]
+    grant_ids = list(base["data"]["grants"])
+    corruptions: dict[str, tuple[Any, str]] = {
+        "missing_key": (lambda r: r.pop("purpose"), "record_invalid"),
+        "extra_key": (lambda r: r.__setitem__("extra", 1), "record_invalid"),
+        "wrong_purpose": (
+            lambda r: r.__setitem__("purpose", "other"),
+            "record_invalid",
+        ),
+        "id_mismatch": (
+            lambda r: r.__setitem__("mapping_id", str(uuid.uuid4())),
+            "record_invalid",
+        ),
+        "empty_origin_project": (
+            lambda r: r.__setitem__("origin_project_id", ""),
+            "record_invalid",
+        ),
+        "nul_origin_project": (
+            lambda r: r.__setitem__("origin_project_id", "a\x00b"),
+            "record_invalid",
+        ),
+        "int_origin_project": (
+            lambda r: r.__setitem__("origin_project_id", 5),
+            "record_invalid",
+        ),
+        "origin_worktree_not_hex": (
+            lambda r: r.__setitem__("origin_worktree_id", "xyz"),
+            "record_invalid",
+        ),
+        "target_worktree_uppercase": (
+            lambda r: r.__setitem__(
+                "target_worktree_id", r["target_worktree_id"].upper()
+            ),
+            "record_invalid",
+        ),
+        "target_root_odd_hex": (
+            lambda r: r.__setitem__("target_root_hex", "abc"),
+            "record_invalid",
+        ),
+        "target_root_not_hex": (
+            lambda r: r.__setitem__("target_root_hex", "zz"),
+            "record_invalid",
+        ),
+        "owner_not_dict": (
+            lambda r: r.__setitem__("target_owner_scope", "alice"),
+            "record_invalid",
+        ),
+        "owner_extra_key": (
+            lambda r: r["target_owner_scope"].__setitem__("x", 1),
+            "record_invalid",
+        ),
+        "owner_kind_unknown": (
+            lambda r: r["target_owner_scope"].__setitem__("kind", "robot"),
+            "record_invalid",
+        ),
+        "owner_id_odd_hex": (
+            lambda r: r["target_owner_scope"].__setitem__("id_hex", "abc"),
+            "record_invalid",
+        ),
+        "grant_id_not_uuid": (
+            lambda r: r.__setitem__("grant_id", "g1"),
+            "record_invalid",
+        ),
+        "purpose_list": (
+            lambda r: r.__setitem__("purpose", ["capsule_import"]),
+            "record_invalid",
+        ),
+        "purpose_dict": (
+            lambda r: r.__setitem__("purpose", {"capsule_import": 1}),
+            "record_invalid",
+        ),
+        "owner_kind_list": (
+            lambda r: r["target_owner_scope"].__setitem__("kind", ["agent"]),
+            "record_invalid",
+        ),
+        "owner_kind_dict": (
+            lambda r: r["target_owner_scope"].__setitem__("kind", {"a": 1}),
+            "record_invalid",
+        ),
+        "owner_id_hex_list": (
+            lambda r: r["target_owner_scope"].__setitem__("id_hex", ["61"]),
+            "record_invalid",
+        ),
+        "grant_id_list": (
+            lambda r: r.__setitem__("grant_id", [r["grant_id"]]),
+            "record_invalid",
+        ),
+        "grant_id_dict": (lambda r: r.__setitem__("grant_id", {}), "record_invalid"),
+        "mapping_id_list": (
+            lambda r: r.__setitem__("mapping_id", [r["mapping_id"]]),
+            "record_invalid",
+        ),
+        "origin_project_list": (
+            lambda r: r.__setitem__("origin_project_id", ["p"]),
+            "record_invalid",
+        ),
+        "origin_worktree_dict": (
+            lambda r: r.__setitem__("origin_worktree_id", {}),
+            "record_invalid",
+        ),
+        "revoked_list": (lambda r: r.__setitem__("revoked", []), "record_invalid"),
+        "revoked_revision_list": (
+            lambda r: r.__setitem__("revoked_revision", []),
+            "record_invalid",
+        ),
+        "target_root_invalid_utf8": (
+            lambda r: r.__setitem__("target_root_hex", "eda080"),
+            "record_invalid",
+        ),
+        "target_root_list": (
+            lambda r: r.__setitem__("target_root_hex", ["61"]),
+            "record_invalid",
+        ),
+        "grant_id_dangling": (
+            lambda r: r.__setitem__("grant_id", str(uuid.uuid4())),
+            "dangling_mapping",
+        ),
+        "created_revision_zero": (
+            lambda r: r.__setitem__("created_revision", 0),
+            "record_invalid",
+        ),
+        "created_revision_future": (
+            lambda r: r.__setitem__("created_revision", 999),
+            "record_invalid",
+        ),
+        "created_revision_bool": (
+            lambda r: r.__setitem__("created_revision", True),
+            "record_invalid",
+        ),
+        "created_revision_float": (
+            lambda r: r.__setitem__("created_revision", 2.0),
+            "record_invalid",
+        ),
+        "approved_at_bool": (
+            lambda r: r.__setitem__("approved_at", True),
+            "record_invalid",
+        ),
+        "approved_at_string": (
+            lambda r: r.__setitem__("approved_at", "now"),
+            "record_invalid",
+        ),
+        "revoked_not_bool": (lambda r: r.__setitem__("revoked", 0), "record_invalid"),
+        "revoked_without_revision": (
+            lambda r: r.__setitem__("revoked", True),
+            "record_invalid",
+        ),
+        "active_with_revision": (
+            lambda r: r.__setitem__("revoked_revision", 3),
+            "record_invalid",
+        ),
+    }
+    assert len(grant_ids) == 1
+    for name, (mutate, reason) in corruptions.items():
+        data = json.loads(json.dumps(base))
+        mutate(data["data"]["mappings"][good_id])
+        _write_raw(d, data)
+        loaded = auth.load_policy_readonly(data_root=d)
+        assert (loaded["state"], loaded["reason"]) == ("invalid", reason), name
+        assert loaded["mappings"] == {}, name
+        _assert_denied(
+            _resolve(auth, root, d, "write", owner_scope=ALICE), "policy_invalid"
+        )
+    revoked_bad = json.loads(json.dumps(base))
+    revoked_bad["data"]["mappings"][view["mapping_id"]]["revoked_revision"] = revoked[
+        "created_revision"
+    ]
+    _write_raw(d, revoked_bad)
+    loaded = auth.load_policy_readonly(data_root=d)
+    assert (loaded["state"], loaded["reason"]) == ("invalid", "record_invalid")
+    bad_key = json.loads(json.dumps(base))
+    bad_key["data"]["mappings"]["not-a-uuid"] = bad_key["data"]["mappings"].pop(good_id)
+    _write_raw(d, bad_key)
+    assert auth.load_policy_readonly(data_root=d)["state"] == "invalid"
+
+
+def test_capsule_mapping_forged_or_revoked_grant_rejected(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "dest", d)
+    grant_alice = _grant(
+        auth, root, ALICE, d, sources=("source-a",), ops=("ask", "write")
+    )
+    grant_bob = _grant(
+        auth, root, BOB, d, sources=("source-a",), ops=("ask", "write"), expected=1
+    )
+    view = _approve(auth, root, d, owner_scope=ALICE)
+    mapping_id = view["mapping_id"]
+    sha_before = _sha(_policy_file(d))
+
+    def resolve(**extra: Any) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "mapping_id": mapping_id,
+            "origin_project_id": "origin-project",
+            "origin_worktree_id": ORIGIN_WORKTREE,
+            "project_root": root,
+            "data_root": d,
+        }
+        params.update(extra)
+        return auth.resolve_capsule_mapping(**params)
+
+    ok = resolve()
+    assert set(ok) == {"mapping", "grant_id", "policy_revision"}
+    assert ok["mapping"] == view and ok["grant_id"] == grant_alice["grant_id"]
+    assert ok["policy_revision"] == _revision(auth, d)
+    assert _sha(_policy_file(d)) == sha_before, "resolve is read-only"
+
+    # forged ids, origins and projects
+    _expect(
+        auth, "E_PERMISSION", "mapping_unknown", resolve, mapping_id=str(uuid.uuid4())
+    )
+    _expect(
+        auth, "E_PERMISSION", "mapping_mismatch", resolve, origin_project_id="elsewhere"
+    )
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "mapping_mismatch",
+        resolve,
+        origin_worktree_id=hashlib.sha256(b"other").hexdigest(),
+    )
+    other_root, _ = _project(tmp_path, "other", d)
+    _grant(
+        auth,
+        other_root,
+        ALICE,
+        d,
+        sources=("source-a",),
+        ops=("ask", "write"),
+        expected=_revision(auth, d),
+    )
+    sha_before = _sha(_policy_file(d))
+    _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve, project_root=other_root)
+
+    # a forged record naming another owner's grant for alice's owner scope
+    forged = _raw(d)
+    forged["data"]["mappings"][mapping_id]["grant_id"] = grant_bob["grant_id"]
+    _write_raw(d, forged)
+    _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)
+    forged["data"]["mappings"][mapping_id]["grant_id"] = grant_alice["grant_id"]
+    _write_raw(d, forged)
+    assert resolve()["grant_id"] == grant_alice["grant_id"]
+
+    # revoked underlying grant: the resolve reason decides
+    auth.revoke_memory_scope(
+        grant_id=grant_alice["grant_id"],
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+    denied = _resolve(auth, root, d, "write", owner_scope=ALICE)
+    assert denied["access"] == "denied"
+    _expect(auth, "E_PERMISSION", denied["reason"], resolve)
+    sha_after_grant_revoke = _sha(_policy_file(d))
+
+    # a revoked mapping
+    auth2_view = _approve(auth, root, d, owner_scope=BOB, capsule_origin=_origin("o2"))
+    auth.revoke_capsule_mapping(
+        mapping_id=auth2_view["mapping_id"],
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "mapping_revoked",
+        resolve,
+        mapping_id=auth2_view["mapping_id"],
+        origin_project_id="o2",
+    )
+    assert sha_after_grant_revoke != _sha(_policy_file(d))
+
+    # no policy / an invalid policy
+    missing = tmp_path / "no-data-root"
+    _expect(auth, "E_PERMISSION", "policy_missing", resolve, data_root=missing)
+    _policy_file(d).write_bytes(b"{")
+    invalid = auth.load_policy_readonly(data_root=d)
+    assert invalid["state"] == "invalid"
+    _expect(auth, "E_PERMISSION", invalid["reason"], resolve)
+
+
+def test_capsule_mapping_unauthorized_worktree_remap_rejected(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    granted, _r1 = _project(tmp_path, "granted", d)
+    ask_only, _r2 = _project(tmp_path, "ask-only", d)
+    ungranted, _r3 = _project(tmp_path, "ungranted", d)
+    _grant(auth, granted, ALICE, d, sources=("source-a",), ops=("ask", "write"))
+    _grant(
+        auth,
+        ask_only,
+        ALICE,
+        d,
+        sources=("source-a",),
+        ops=("ask", "list"),
+        expected=_revision(auth, d),
+    )
+    unregistered = tmp_path / "unregistered"
+    unregistered.mkdir()
+    sha_before = _sha(_policy_file(d))
+    before = _snapshot(tmp_path)
+
+    for label, target in (
+        ("no grant", ungranted),
+        ("no write operation", ask_only),
+        ("unregistered project", unregistered),
+        ("missing directory", tmp_path / "gone"),
+    ):
+        resolved = auth.resolve_memory_scope(
+            project_root=target, operation="write", data_root=d
+        )
+        assert resolved["access"] == "denied", label
+        error = _expect(
+            auth,
+            "E_PERMISSION",
+            resolved["reason"],
+            auth.approve_capsule_mapping,
+            capsule_origin=_origin(),
+            project_root=target,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+        assert error.code == "E_PERMISSION"
+    assert _sha(_policy_file(d)) == sha_before
+    assert _snapshot(tmp_path) == before, "a refused mapping writes nothing"
+
+    # a mapping approved for one worktree never authorizes another
+    view = _approve(auth, granted, d)
+    other_granted, _r4 = _project(tmp_path, "second-granted", d)
+    _grant(
+        auth,
+        other_granted,
+        ALICE,
+        d,
+        sources=("source-a",),
+        ops=("ask", "write"),
+        expected=_revision(auth, d),
+    )
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "mapping_mismatch",
+        auth.resolve_capsule_mapping,
+        mapping_id=view["mapping_id"],
+        origin_project_id="origin-project",
+        origin_worktree_id=ORIGIN_WORKTREE,
+        project_root=other_granted,
+        data_root=d,
+    )
+
+
+def test_capsule_mapping_two_write_owners_no_inference(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    # two write-owner grants: an omitted owner is never inferred
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "dest", d)
+    grant_a = _grant(auth, root, ALICE, d, sources=("source-a",), ops=("ask", "write"))
+    grant_b = _grant(
+        auth, root, BOB, d, sources=("source-a",), ops=("ask", "write"), expected=1
+    )
+    sha_before = _sha(_policy_file(d))
+    error = _expect(
+        auth,
+        "E_INPUT",
+        "owner_required",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin(),
+        project_root=root,
+        owner_scope=None,
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+    assert error.code == "E_INPUT"
+    assert _sha(_policy_file(d)) == sha_before
+    chosen = _approve(auth, root, d, owner_scope=BOB)
+    assert chosen["target_owner_scope"] == {"kind": "agent", "id": "bob"}
+    assert chosen["grant_id"] == grant_b["grant_id"] != grant_a["grant_id"]
+
+    # one write-owner grant plus one ask-only owner grant: still no inference
+    d2 = tmp_path / "second-data"
+    root2, _record2 = _project(tmp_path, "dest2", d2)
+    writer = _grant(auth, root2, ALICE, d2, sources=("source-a",), ops=("ask", "write"))
+    _grant(auth, root2, BOB, d2, sources=("source-a",), ops=("ask",), expected=1)
+    sha_two = _sha(_policy_file(d2))
+    _expect(
+        auth,
+        "E_INPUT",
+        "owner_required",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin(),
+        project_root=root2,
+        expected_policy_revision=_revision(auth, d2),
+        consent=True,
+        data_root=d2,
+    )
+    assert _sha(_policy_file(d2)) == sha_two
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "operation_not_granted",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin(),
+        project_root=root2,
+        owner_scope=BOB,
+        expected_policy_revision=_revision(auth, d2),
+        consent=True,
+        data_root=d2,
+    )
+    explicit = _approve(auth, root2, d2, owner_scope=ALICE)
+    assert explicit["grant_id"] == writer["grant_id"]
+    assert explicit["target_owner_scope"] == {"kind": "agent", "id": "alice"}
+    # an explicit ungranted owner is E_OWNER
+    _expect(
+        auth,
+        "E_OWNER",
+        "owner_not_granted",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin("p3"),
+        project_root=root2,
+        owner_scope=OwnerScope("agent", "mallory"),
+        expected_policy_revision=_revision(auth, d2),
+        consent=True,
+        data_root=d2,
+    )
+
+
+def test_capsule_mapping_owner_change_requires_new_approval(tmp_path: Path) -> None:
+    auth, d, root, grant = _mapped(tmp_path)
+    view = _approve(auth, root, d, owner_scope=ALICE)
+
+    def resolve() -> dict[str, Any]:
+        return auth.resolve_capsule_mapping(
+            mapping_id=view["mapping_id"],
+            origin_project_id="origin-project",
+            origin_worktree_id=ORIGIN_WORKTREE,
+            project_root=root,
+            data_root=d,
+        )
+
+    assert resolve()["grant_id"] == grant["grant_id"]
+    # superseding the mapped owner's grant changes its id: the mapping no longer holds
+    newer = _grant(
+        auth,
+        root,
+        ALICE,
+        d,
+        sources=("source-a", "source-b"),
+        ops=("ask", "write"),
+        expected=_revision(auth, d),
+    )
+    assert newer["grant_id"] != grant["grant_id"]
+    sha_before = _sha(_policy_file(d))
+    _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)
+    assert _sha(_policy_file(d)) == sha_before, "refusing writes nothing"
+    # a new approval is a new mapping bound to the new grant
+    renewed = _approve(auth, root, d, owner_scope=ALICE)
+    assert renewed["mapping_id"] != view["mapping_id"]
+    assert renewed["grant_id"] == newer["grant_id"]
+    assert (
+        auth.resolve_capsule_mapping(
+            mapping_id=renewed["mapping_id"],
+            origin_project_id="origin-project",
+            origin_worktree_id=ORIGIN_WORKTREE,
+            project_root=root,
+            data_root=d,
+        )["grant_id"]
+        == newer["grant_id"]
+    )
+    # the superseded mapping stays refused
+    _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)

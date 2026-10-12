@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Literal, cast, get_args
+from typing import Any, ClassVar, Literal, cast, get_args
 
 from ..delivery import compact
 from ..invocation.models import InvocationContext
@@ -128,6 +128,7 @@ MemoryOperation = Literal[
     "preference",
     "history",
     "explain",
+    "capsule",
 ]
 SourceKind = Literal["local_tool", "cross_tool_handoff", "human_derived"]
 
@@ -157,12 +158,32 @@ VALID_OPERATIONS = {
     "preference",
     "history",
     "explain",
+    "capsule",
 }
 # 72-T05 §3.11: the task context of the `run` in progress. Every access a handler
 # builds reads it (`task_id=_TASK_ID.get()`); `run` sets and resets it.
 _TASK_ID: ContextVar[str | None] = ContextVar("rush_memory_task_id", default=None)
 _OVERLAY_REFUSED_OPERATIONS = frozenset(
     {"write", "promote", "edit", "link", "consolidate", "maintain"}
+)
+# 73-T09/CODEC: the handler-side `capsule` request keys (the CLI and in-process
+# paths validate against these; `rush.memory.capsule` reads this one definition).
+_CAPSULE_REQUEST_KEYS = frozenset(
+    {
+        "action",
+        "format",
+        "input",
+        "output",
+        "max_bytes",
+        "max_tokens",
+        "mapping_id",
+        "expected_digest",
+        "expected_store_revision",
+        "confirm_constraint_ids",
+        "apply",
+        "invocation_id",
+        "selectors",
+    }
 )
 _VERIFY_ATTEMPT_REQUEST_KEYS = {
     "attempt_id",
@@ -509,6 +530,9 @@ class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
     name = "memory"
+    # 73-T09/CODEC: the caller's transport is bound by the invocation, never by a
+    # request field, and is not published in the MCP schema.
+    internal_parameters: ClassVar[frozenset[str]] = frozenset({"transport"})
 
     def __init__(self, readonly_store: TypedArtifactStore | None = None) -> None:
         # R20.G8: a local read surface (dashboard GET) passes an
@@ -557,6 +581,7 @@ class MemoryTool(ToolFn):
         session_id: str | None = None,
         context: InvocationContext | None = None,
         task_id: str | None = None,
+        transport: Literal["cli", "mcp"] = "cli",
     ) -> ToolResult:
         # 72-T02 D35: the transport frame a memory response leaves through (set by
         # the transport adapter), carrying this call's InvocationContext so its
@@ -601,6 +626,7 @@ class MemoryTool(ToolFn):
             session_id=session_id,
             frame=frame,
             task_id=task_id,
+            transport=transport,
         )
 
     def run(
@@ -638,6 +664,7 @@ class MemoryTool(ToolFn):
         task_id: str | None = None,
         bridge_authority: _BridgeAuthority | None = None,
         frame: compact.FrameContext | None = None,
+        transport: Literal["cli", "mcp"] = "cli",
     ) -> ToolResult:
         """The one canonical memory route (CLI, MCP, dashboard, TUI).
 
@@ -755,6 +782,7 @@ class MemoryTool(ToolFn):
             **filters,
             bridge=bridge_authority,
             frame=frame,
+            transport=transport,
         )
 
     def _run_legacy(
@@ -810,6 +838,7 @@ class MemoryTool(ToolFn):
         # adapter published (`compact.MEMORY_FRAME`), else payload measurement.
         frame: compact.FrameContext | None = None,
         task_id: str | None = None,
+        transport: Literal["cli", "mcp"] = "cli",
     ) -> ToolResult:
         started = time.monotonic()
         if frame is None:
@@ -1099,6 +1128,9 @@ class MemoryTool(ToolFn):
             ),
             "preference": lambda: self._preference(
                 started, root, granted, request, session_allowlist
+            ),
+            "capsule": lambda: self._capsule(
+                started, root, granted, request, transport
             ),
         }
         token = _TASK_ID.set(task_id)
@@ -3938,6 +3970,74 @@ class MemoryTool(ToolFn):
         return self._envelope_result(
             started, "preference", str(result.get("code", "OK")), data
         )
+
+    def _capsule(
+        self,
+        started: float,
+        root: Path,
+        granted: ExecutionPermissions,
+        request: dict[str, Any] | None,
+        transport: Literal["cli", "mcp"],
+    ) -> ToolResult:
+        """73-T09/CODEC: portable capsule export/import (`rush.memory.capsule`)."""
+        from ..memory import capsule
+
+        if request is None:
+            return self._envelope_result(
+                started,
+                "capsule",
+                "E_INPUT",
+                {"field": "request", "message": "memory capsule requires a request."},
+            )
+        if not isinstance(request, dict):
+            return self._envelope_result(
+                started,
+                "capsule",
+                "E_INPUT",
+                {
+                    "field": "request",
+                    "message": "memory capsule request must be an object.",
+                },
+            )
+        unknown = sorted(str(k) for k in request if k not in _CAPSULE_REQUEST_KEYS)
+        if unknown:
+            return self._envelope_result(
+                started,
+                "capsule",
+                "E_INPUT",
+                {
+                    "field": unknown[0],
+                    "message": f"unknown capsule request field {unknown[0]!r}.",
+                },
+            )
+        outcome = capsule.run_capsule(
+            root, request, permissions=granted, transport=transport
+        )
+        if outcome.get("skipped"):
+            action = str(outcome["action"])
+            missing = list(outcome["missing"])
+            return self._result(
+                started,
+                "skipped",
+                f"memory capsule {action} requires {', '.join(missing)}.",
+                operation="capsule",
+                raw={
+                    "schema_version": 1,
+                    "operation": "capsule",
+                    "action": action,
+                    "missing_permissions": missing,
+                },
+            )
+        data = dict(outcome)
+        code = str(data.pop("code"))
+        if data.pop("denial", False):
+            # A policy denial goes through the one 72-T01 denial site.
+            result = self._denied(
+                started, "capsule", RouteDenial(code, str(data.pop("reason")))
+            )
+            cast(dict[str, Any], result["raw"])["data"].update(data)
+            return result
+        return self._envelope_result(started, "capsule", code, data)
 
     def _envelope_result(
         self,
