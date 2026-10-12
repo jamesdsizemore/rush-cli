@@ -35,7 +35,7 @@ import hashlib
 import sqlite3
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, get_args
 
@@ -49,6 +49,7 @@ from rush.memory.store import (
     MemoryArtifact,
     MemorySubject,
     OwnerScope,
+    OwnerScopeKind,
     TypedArtifactStore,
     VersionConflictError,
     legacy_owner_scope,
@@ -134,6 +135,127 @@ def _actions(memory_run: _MemoryRunSpy) -> ScanActions:
         memory_run=memory_run,
         run_check_suite=None,
     )
+
+
+def _v2_item(
+    artifact_id: str,
+    version: int = 1,
+    *,
+    source: str = "fixture-source",
+    owner: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """One schema-2 list item: the canonical `reference` plus the compact keys."""
+    return {
+        "reference": {
+            "artifact_id": artifact_id,
+            "artifact_version": version,
+            "source": source,
+            "owner_scope": owner,
+            "subject": "domain_knowledge",
+            "trust_tier": "EXTERNAL_WRITE",
+            "freshness": "current",
+            "integrity": "verified",
+            "payload_hash": "0" * 64,
+            "reason_codes": [],
+        },
+        "id": artifact_id,
+        "version": version,
+        "excerpt": f"{artifact_id} excerpt",
+        "source": source,
+        "trust": "EXTERNAL_WRITE",
+        "freshness": "current",
+        "relations": [],
+    }
+
+
+def _v2_page(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """A schema-2 `list` ToolResult over `items`."""
+    return {
+        "status": "ok",
+        "raw": {
+            "schema_version": 2,
+            "operation": "list",
+            "code": "OK",
+            "items": items,
+            "next_cursor": None,
+            "complete": True,
+            "unknowns": [],
+            "data": {},
+        },
+    }
+
+
+def _raw(result: Mapping[str, Any]) -> Any:
+    raw = result["raw"]
+    assert raw is not None
+    return raw
+
+
+def _ident(item: dict[str, Any]) -> tuple[str, int]:
+    """(id, version) of a list row, from the canonical reference when present."""
+    ref = item.get("reference")
+    if isinstance(ref, dict) and "artifact_id" in ref:
+        return ref["artifact_id"], ref["artifact_version"]
+    return item["id"], cast(int, item.get("artifact_version", item.get("version")))
+
+
+def _replay_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *requests: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Wire contract: replays requests the TUI recorded through the real MemoryTool.
+
+    The spy accepts any request, so on its own it cannot show that the request the TUI
+    builds is one the backend accepts. This replays each over one real store (one Alice
+    row `a1`, source `fixture-source`, trust EXTERNAL_WRITE) under a real Alice grant,
+    with HOME, XDG_DATA_HOME and LOCALAPPDATA inside `tmp_path`, and returns the
+    schema-2 `raw` of each OK result (`items[].reference`, `next_cursor`, `complete`)."""
+    from rush.memory import authorization as auth
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import register_project
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    data_root = default_data_root()
+    root = tmp_path / "replay-world"
+    root.mkdir(parents=True, exist_ok=True)
+    root = root.resolve()
+    register_project(root, data_root=data_root)
+    alice = OwnerScope("user", "alice")
+    TypedArtifactStore(root).write(
+        MemoryArtifact(
+            id="a1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "x"},
+            source="fixture-source",
+            created_at=time.time(),
+            owner_scope=alice,
+        )
+    )
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=alice,
+        approved_sources=["fixture-source", "cli"],
+        allowed_operations=["ask", "expand", "list", "history", "write"],
+        expected_policy_revision=int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        ),
+        consent=True,
+        data_root=data_root,
+    )
+    raws: list[dict[str, Any]] = []
+    for request in requests:
+        raw = _raw(MemoryTool().run(root, operation="list", request=request))
+        assert raw["code"] == "OK", (
+            f"the backend refused the request the TUI sent: {raw!r} (request {request!r})"
+        )
+        assert isinstance(raw["items"], list) and all(
+            isinstance(item.get("reference"), dict) for item in raw["items"]
+        ), raw
+        assert isinstance(raw["complete"], bool) and "next_cursor" in raw, raw
+        raws.append(raw)
+    return raws
 
 
 def _drain(state: TuiState, actions: ScanActions) -> None:
@@ -232,12 +354,12 @@ def _seed_promote_row(
         MemoryArtifact(
             id=item["id"],
             family="memory",
-            subject=cast("MemorySubject", state.memory_subject),
+            subject=cast(MemorySubject, state.memory_subject),
             trust_tier="EXTERNAL_WRITE",
             content=item["content"],
             source=item["source"],
             created_at=time.time(),
-            owner_scope=OwnerScope(cast("Any", scope["kind"]), scope["id"]),
+            owner_scope=OwnerScope(cast(OwnerScopeKind, scope["kind"]), scope["id"]),
         )
     )
 
@@ -255,12 +377,28 @@ def test_t28d_browse_on_entry_shows_items_without_a_query(
     `_memory_refresh` itself still requires `state.memory_query_buffer` to
     be non-empty ("type a query, then Enter"). RED: memory_items stays
     empty on entry alone."""
-    spy = _MemoryRunSpy({"list": [{"status": "ok", "raw": [{"id": "a1"}]}]})
+    spy = _MemoryRunSpy({"list": [_v2_page([_v2_item("a1")])]})
     state = _run(tmp_path, ["M"], spy, monkeypatch=monkeypatch)
     assert state.memory_items, (
         "T28-D requires memory admin to browse on entry with no typed query; "
         f"got memory_items={state.memory_items!r}, message={state.memory_message!r}"
     )
+    assert [_ident(item) for item in state.memory_items] == [("a1", 1)]
+    first = spy.calls[0]
+    assert first["operation"] == "list"
+    # One schema-2 request: no query typed, the active subject, a page-sized limit and
+    # the project's known sources (legacy mode); no legacy keyword reaches the tool.
+    assert first["request"] == {
+        "schema_version": 2,
+        "subjects": ["domain_knowledge"],
+        "query": "",
+        "limit": 20,
+        "sources": ["fixture-source"],
+    }
+    assert "subject" not in first and "session_allowlist" not in first
+    # The backend accepts that exact request and lists the stored row it names.
+    (raw,) = _replay_list(tmp_path, monkeypatch, first["request"])
+    assert [_ident(item) for item in raw["items"]] == [("a1", 1)], raw
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +419,11 @@ def test_t28d_subject_is_selectable_without_restart(
         "T28-D requires the memory subject to be switchable in-session; "
         f"still stuck at the fixed default {state.memory_subject!r}"
     )
+    assert spy.calls[-1]["request"]["subjects"] == [state.memory_subject], (
+        "the new subject must reach the schema-2 list request"
+    )
+    (raw,) = _replay_list(tmp_path, monkeypatch, spy.calls[-1]["request"])
+    assert raw["items"] == [], "the stored row is domain_knowledge, not the new subject"
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +431,9 @@ def test_t28d_subject_is_selectable_without_restart(
 # ---------------------------------------------------------------------------
 
 
-def test_t28d_query_includes_trust_filter(tmp_path: Path) -> None:
+def test_t28d_query_includes_trust_filter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`_memory_refresh` must forward a trust filter to `memory_run` when one
     is set. No such state field or forwarding exists today: `_memory_refresh`
     calls `memory_run` with only `subject`/`query`/`session_allowlist`. RED
@@ -296,8 +441,8 @@ def test_t28d_query_includes_trust_filter(tmp_path: Path) -> None:
     never an `AttributeError` crash."""
     state, project = _state_and_project(tmp_path)
     state.memory_query_buffer = "anything"
-    state.memory_filter_trust = "verified"
-    spy = _MemoryRunSpy({"list": [{"status": "ok", "raw": []}]})
+    state.memory_filter_trust = "IMPORTED"
+    spy = _MemoryRunSpy({"list": [_v2_page([])]})
     actions = _actions(spy)
 
     original = tui_mod._memory_sources_and_state
@@ -310,14 +455,27 @@ def test_t28d_query_includes_trust_filter(tmp_path: Path) -> None:
     finally:
         tui_mod._memory_sources_and_state = original
     assert spy.calls, "memory_run was never called"
-    assert spy.calls[-1].get("trust_filter") == "verified", (
-        "T28-D requires the trust filter to reach memory_run; "
-        f"call kwargs were {spy.calls[-1]!r}"
+    request = spy.calls[-1]["request"]
+    assert request["trust_tiers"] == ["IMPORTED"], (
+        "T28-D requires the trust filter (a canonical trust tier) to reach memory_run; "
+        f"request was {request!r}"
     )
+    assert request["query"] == "anything"
+    assert "trust_filter" not in spy.calls[-1]
+    # Through the real backend the same request filters by trust tier: the stored
+    # EXTERNAL_WRITE row is excluded by IMPORTED and listed by its own tier.
+    excluded, own = _replay_list(
+        tmp_path,
+        monkeypatch,
+        {**request, "query": ""},
+        {**request, "query": "", "trust_tiers": ["EXTERNAL_WRITE"]},
+    )
+    assert excluded["items"] == [], excluded
+    assert [_ident(item) for item in own["items"]] == [("a1", 1)], own
 
 
 def test_t28d_query_includes_owner_source_freshness_archived_filters(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Same requirement for owner scope, source, freshness, and archived --
     grouped into one test since they are the same gap (no filter state, no
@@ -327,7 +485,8 @@ def test_t28d_query_includes_owner_source_freshness_archived_filters(
     state.memory_filter_source = "cli"
     state.memory_filter_freshness = "stale"
     state.memory_filter_archived = True
-    spy = _MemoryRunSpy({"list": [{"status": "ok", "raw": []}]})
+    state.memory_filter_owner = "user:alice"
+    spy = _MemoryRunSpy({"list": [_v2_page([])]})
     actions = _actions(spy)
 
     original = tui_mod._memory_sources_and_state
@@ -340,20 +499,39 @@ def test_t28d_query_includes_owner_source_freshness_archived_filters(
     finally:
         tui_mod._memory_sources_and_state = original
     assert spy.calls, "memory_run was never called"
-    call = spy.calls[-1]
+    request = spy.calls[-1]["request"]
     missing = [
         key
         for key, expected in (
-            ("source_filter", "cli"),
-            ("freshness_filter", "stale"),
-            ("archived_filter", True),
+            ("sources", ["cli"]),
+            ("freshness", ["stale"]),
+            ("archive_mode", "historical"),
+            ("owner_scope", {"kind": "user", "id": "alice"}),
         )
-        if call.get(key) != expected
+        if request.get(key) != expected
     ]
     assert not missing, (
-        "T28-D requires source/freshness/archived filters to reach "
-        f"memory_run; missing/mismatched: {missing!r}, call was {call!r}"
+        "T28-D requires owner/source/freshness/archived filters to reach "
+        f"memory_run; missing/mismatched: {missing!r}, request was {request!r}"
     )
+    for legacy in ("source_filter", "freshness_filter", "archived_filter"):
+        assert legacy not in spy.calls[-1]
+    # Through the real backend each filter narrows the page: source `cli`, freshness
+    # `stale` and the Alice owner exclude the stored current `fixture-source` row, and
+    # the same request with the stored row's own source and freshness lists it.
+    narrowed, matching = _replay_list(
+        tmp_path,
+        monkeypatch,
+        {**request, "query": ""},
+        {
+            **{k: v for k, v in request.items() if k != "archive_mode"},
+            "query": "",
+            "sources": ["fixture-source"],
+            "freshness": ["current"],
+        },
+    )
+    assert narrowed["items"] == [], narrowed
+    assert [_ident(item) for item in matching["items"]] == [("a1", 1)], matching
 
 
 # ---------------------------------------------------------------------------
@@ -471,8 +649,10 @@ def _preview_missing_fields(call: dict[str, Any]) -> list[str]:
     `call["request"]` first (the shape `delete`/`edit` already use), then
     falls back to the call's own top-level kwargs (the shape `promote`
     uses today)."""
-    request = call.get("request") if isinstance(call.get("request"), dict) else call
-    payload = request
+    request: dict[str, Any] = (
+        call["request"] if isinstance(call.get("request"), dict) else call
+    )
+    payload: dict[str, Any] = request
     if call.get("operation") in ("write", "promote"):
         # write/promote requests carry only apply + required_grants; the preview
         # names the affected ids/versions/owner in its response (memory.py:2941).
@@ -1096,24 +1276,14 @@ def test_t28d_edit_conflict_offers_refresh_and_rereview(
     state.memory_items = [item]
     state.memory_selected_index = 0
     state.memory_edit_buffer = "in-flight-edit"
+    correction = {"kind": "correct", "reason": "typed reason", "content": "typed body"}
+    state.memory_correction_buffer = dict(correction)
     spy = _MemoryRunSpy(
         {
             "edit": [{"raw": {"code": "E_VERSION"}}],
             # A refresh/re-review re-fetches the row; its current version has
             # moved on from the stale `3` this edit started against.
-            "list": [
-                {
-                    "status": "ok",
-                    "raw": [
-                        {
-                            "id": "a1",
-                            "artifact_version": 4,
-                            "source": "fixture-source",
-                            "owner_scope": owner,
-                        }
-                    ],
-                }
-            ],
+            "list": [_v2_page([_v2_item("a1", 4, owner=owner)])],
         }
     )
     actions = _actions(spy)
@@ -1122,17 +1292,26 @@ def test_t28d_edit_conflict_offers_refresh_and_rereview(
         "T28-D requires a conflict to offer refresh/re-review, not just a "
         "message; no conflict/re-review state was set"
     )
+    # 72-T07 conflict rule: both entered buffers stay byte-identical and the message
+    # names the conflicting record, its stale version and the refresh key.
+    assert state.memory_edit_buffer == "in-flight-edit"
+    assert state.memory_correction_buffer == correction
+    assert state.memory_message == "edit conflict on a1 v3 -- [r] refresh and re-review"
     refresh = getattr(tui_mod, "_memory_edit_refresh_and_rereview", None)
     assert callable(refresh), (
         "T28-D requires a refresh/re-review action for a mutation conflict; "
         "no such function exists on rush.tui"
     )
     refresh(state, project, actions)
-    refreshed = next((i for i in state.memory_items if i.get("id") == "a1"), None)
-    assert refreshed is not None and refreshed["artifact_version"] == 4, (
+    refreshed = next((i for i in state.memory_items if _ident(i)[0] == "a1"), None)
+    assert refreshed is not None and _ident(refreshed)[1] == 4, (
         "T28-D requires a re-review after refresh to show the new version; "
         f"got {refreshed!r}"
     )
+    # The refresh asks the real backend for the row (one schema-2 list request).
+    refresh_request = [c for c in spy.calls if c["operation"] == "list"][-1]["request"]
+    assert refresh_request["schema_version"] == 2
+    _replay_list(tmp_path, monkeypatch, refresh_request)
 
 
 # ---------------------------------------------------------------------------
@@ -1313,27 +1492,15 @@ def test_t28d_r_key_refreshes_recorded_conflict(
     ]
     state.memory_selected_index = 0
     state.memory_edit_conflict = {"id": "a1", "expected_version": 3}
-    spy = _MemoryRunSpy(
-        {
-            "list": [
-                {
-                    "status": "ok",
-                    "raw": [
-                        {
-                            "id": "a1",
-                            "artifact_version": 4,
-                            "source": "fixture-source",
-                            "owner_scope": owner,
-                        }
-                    ],
-                }
-            ]
-        }
-    )
+    spy = _MemoryRunSpy({"list": [_v2_page([_v2_item("a1", 4, owner=owner)])]})
     _memory_key(state, "r", _actions(spy))
     assert state.mode == "memory_edit"
-    assert state.memory_items[0]["artifact_version"] == 4
+    assert _ident(state.memory_items[0]) == ("a1", 4)
     assert state.memory_edit_conflict is None
+    # [r] sends exactly one schema-2 list request, and the real backend accepts it.
+    lists = [call for call in spy.calls if call["operation"] == "list"]
+    assert len(lists) == 1 and lists[0]["request"]["schema_version"] == 2, spy.calls
+    _replay_list(tmp_path, monkeypatch, lists[0]["request"])
 
 
 def test_t28d_e_key_resets_edit_field_and_conflict(tmp_path: Path) -> None:
@@ -1490,7 +1657,7 @@ def test_memory_detail_decodes_exact_version_and_real_receipts(tmp_path: Path) -
             },
             permissions=ExecutionPermissions(cache_write=True),
         )
-        assert _nn(linked["raw"])["code"] == "OK"
+        assert _raw(linked)["code"] == "OK"
     telemetry = TelemetryStore(root)
     for index in range(6):
         assert telemetry.record_memory_event(
@@ -1601,11 +1768,10 @@ def test_memory_promote_uses_two_real_current_sources_and_rejects_stale(
         apply=True,
         archived=False,
     )
+    current = store.get_current(records[0].id)
+    assert current is not None
     state.memory_items = [
-        {
-            **state.memory_items[0],
-            "artifact_version": _nn(store.get_current(records[0].id)).artifact_version,
-        }
+        {**state.memory_items[0], "artifact_version": current.artifact_version}
     ]
     tui._memory_promote_selected(state, project, actions)
     assert state.memory_pending_mutation is not None

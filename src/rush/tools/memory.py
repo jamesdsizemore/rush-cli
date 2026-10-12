@@ -12,7 +12,7 @@ import sqlite3
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -227,6 +227,286 @@ _CODE_STATUS: dict[str, str] = {
     # 72-T02: an expand offset that is negative, past the end or inside a scalar.
     "E_OFFSET": "error",
 }
+
+# 72-T07: the one presentation state every memory surface (CLI, TUI, dashboard) shows
+# for a result, in the order the classifier reports them.
+MEMORY_UI_STATES: tuple[str, ...] = (
+    "server_error",
+    "absent",
+    "migration_required",
+    "corrupt",
+    "busy",
+    "conflict",
+    "restart",
+    "partial",
+    "not_visible",
+    "invalid",
+    "revoked",
+    "expired",
+    "denied",
+    "digest_mismatch",
+    "empty",
+    "ok",
+)
+_UI_ACTIONS: dict[str, str] = {
+    "server_error": "retry the request; if it fails again run rush doctor",
+    "absent": (
+        "no memory store yet: record one with rush memory write SUBJECT SOURCE "
+        "--content JSON --allow-cache-write"
+    ),
+    "migration_required": (
+        "run any rush memory write command to migrate the store, then refresh"
+    ),
+    "corrupt": "move .rush/memory.db aside or restore it from a backup, then refresh",
+    "busy": "a writer holds the store; retry in a moment",
+    "conflict": (
+        "the record changed since you reviewed it; refresh, review the current "
+        "version, then apply again"
+    ),
+    "restart": "access changed during the request; refresh to restart from the first page",
+    "partial": "more results exist: open the next page",
+    "not_visible": (
+        "the record is not visible to your grant (deleted, archived, expired or "
+        "another owner); refresh the list"
+    ),
+    "invalid": "fix the field named in the reason and retry",
+    "revoked": (
+        "the grant was revoked; ask the project owner to grant memory access again "
+        "(rush memory grant)"
+    ),
+    "expired": "the grant expired; renew it with rush memory grant --expires-at TIME",
+    "denied": "request access with rush memory grant",
+    "digest_mismatch": (
+        "content bytes do not match the recorded payload hash; content withheld; "
+        "refresh and expand again"
+    ),
+    "empty": "no records match; change the subject, query or filters",
+    "ok": "select a record to inspect, see history or correct it",
+}
+_UI_SKIPPED_ACTION = "name a source: rerun with --source SOURCE"
+_UI_BUDGET_ACTION = (
+    "raise --max-bytes/--max-tokens to the reported minimum or request a smaller page"
+)
+# `complete: false` on these is a committed receipt, never a partial page.
+_UI_MUTATIONS = frozenset(
+    {
+        "write",
+        "promote",
+        "maintain",
+        "link",
+        "consolidate",
+        "handoff",
+        "receive",
+        "delete",
+        "edit",
+        "archive",
+        "verify_attempt",
+    }
+)
+_UI_STORE_STATES = ("absent", "migration_required", "corrupt", "busy")
+_UI_COLLECTIONS = frozenset({"ask", "list", "recall", "related", "history", "overview"})
+
+
+def _ui_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    ref = item.get("reference")
+    ref = ref if isinstance(ref, Mapping) else {}
+    badges: list[str] = []
+    freshness = ref.get("freshness", item.get("freshness"))
+    if freshness in ("stale", "unknown"):
+        badges.append(str(freshness))
+    elif item.get("stale") is True:
+        badges.append("stale")
+    integrity = ref.get("integrity")
+    if integrity in ("backfilled", "unbound", "mismatch"):
+        badges.append(f"integrity:{integrity}")
+    applicability = item.get("applicability", ref.get("applicability"))
+    if applicability in ("pending", "rejected", "superseded"):
+        badges.append(str(applicability))
+    reason_codes = item.get("reason_codes")
+    if item.get("expired") is True or (
+        isinstance(reason_codes, list | tuple) and "expired" in reason_codes
+    ):
+        badges.append("expired")
+    if item.get("archived") is True or item.get("archived_at"):
+        badges.append("archived")
+    return {
+        "artifact_id": ref.get("artifact_id", item.get("id")),
+        "artifact_version": ref.get(
+            "artifact_version", item.get("artifact_version", item.get("version"))
+        ),
+        "badges": badges,
+    }
+
+
+def memory_ui_state(
+    result: Mapping[str, Any] | None,
+    *,
+    store_state: str | None = None,
+    http_status: int | None = None,
+    error: BaseException | None = None,
+    observed_payload_sha256: str | None = None,
+) -> dict[str, Any]:
+    """72-T07: classify a memory result (or a store state, an HTTP status, an
+    exception) into one of `MEMORY_UI_STATES` with its reason, the one action the
+    user can take, the producer's `next_action` (D16) and per-row badges. A denial
+    in `result` wins over `store_state`: a refused read is never shown as absent."""
+    result_map: Mapping[str, Any] = result if isinstance(result, Mapping) else {}
+    raw = result_map.get("raw")
+    raw_map: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    code = raw_map.get("code")
+    data = raw_map.get("data")
+    data_map: Mapping[str, Any] = data if isinstance(data, Mapping) else {}
+    status = result_map.get("status")
+    operation = raw_map.get("operation")
+    reason_value = (
+        raw_map.get("reason")
+        or data_map.get("reason")
+        or data_map.get("message")
+        or result_map.get("summary")
+    )
+    reason = "" if reason_value is None else str(reason_value)
+    items: list[Any] = []
+    # Only a listing read can be `empty`; a single-record read or a receipt with no
+    # rows (a legacy expand, a mutation) is judged by its data, not its row count.
+    collection = not isinstance(operation, str) or operation in _UI_COLLECTIONS
+    if isinstance(raw_map.get("versions"), list):
+        items = list(raw_map["versions"])
+    elif isinstance(raw_map.get("items"), list):
+        items = list(raw_map["items"])
+    elif isinstance(data_map.get("items"), list):
+        items = list(data_map["items"])
+    elif isinstance(raw, list):
+        items = list(raw)
+    else:
+        collection = False
+    complete = raw_map.get("complete", data_map.get("complete"))
+    guidance = raw_map.get("next_action")
+    next_action = dict(guidance) if isinstance(guidance, Mapping) else None
+
+    def classify() -> tuple[str, str]:
+        if error is not None:
+            return "server_error", f"{type(error).__name__}: {error}"
+        # A denial precedes any store state: a refused read never reads as absent.
+        if code == "E_PERMISSION" and reason in ("revoked", "expired"):
+            return reason, reason
+        if code in ("E_PERMISSION", "E_OWNER", "E_SCOPE"):
+            return "denied", reason
+        if result is None and store_state is None:
+            return "server_error", "no result"
+        if store_state in _UI_STORE_STATES:
+            if store_state == "absent":
+                return "absent", "no memory store exists for this project"
+            return store_state, readonly_view_reason(store_state)  # type: ignore[arg-type]
+        if code in ("E_MIGRATION", "E_SCHEMA_UNSUPPORTED"):
+            return "migration_required", reason
+        if code == "E_STORE_CORRUPT":
+            return "corrupt", reason
+        if code == "E_STORE_BUSY":
+            return "busy", reason
+        if code == "E_VERSION" or (code is None and http_status == 409):
+            return "conflict", reason
+        if code == "E_RESTART":
+            return "restart", reason
+        if code in ("E_BUDGET", "E_EMBEDDING_UNAVAILABLE", "UNRESOLVED"):
+            return "partial", reason
+        if code == "E_NOT_VISIBLE" or (code is None and http_status == 404):
+            return "not_visible", reason
+        if code in ("E_INPUT", "E_OFFSET") or (code is None and http_status == 400):
+            return "invalid", reason
+        if code is None and http_status in (401, 403):
+            return "denied", reason
+        if (code is not None and code != "OK") or (
+            code is None
+            and http_status is not None
+            and http_status >= 500
+            and status != "skipped"
+        ):
+            return "server_error", reason
+        if code is None and status == "skipped":
+            return "denied", reason
+        if code is None and status == "error":
+            return "invalid", reason
+        if code is None and status == "warn":
+            return "partial", reason
+        if code is None and status == "fail":
+            return "denied", reason
+        # OK: the digest, then emptiness, then page completeness. A v2 expansion
+        # carries its page and recorded hash in raw.items[0]; legacy in raw.data.
+        recorded = data_map.get("payload_hash")
+        integrity = data_map.get("integrity")
+        if operation == "expand" and items and isinstance(items[0], Mapping):
+            page = items[0]
+            ref = page.get("reference")
+            ref_map: Mapping[str, Any] = ref if isinstance(ref, Mapping) else {}
+            recorded = ref_map.get("payload_hash", recorded)
+            integrity = page.get("integrity", ref_map.get("integrity", integrity))
+        if (
+            observed_payload_sha256 is not None and observed_payload_sha256 != recorded
+        ) or integrity == "mismatch":
+            return "digest_mismatch", reason
+        if collection and not items and complete is not False:
+            return "empty", reason
+        if complete is False and operation not in _UI_MUTATIONS:
+            return "partial", reason
+        return "ok", reason
+
+    state, reason = classify()
+    action = _UI_ACTIONS[state]
+    if state == "denied" and code is None and status == "skipped":
+        action = _UI_SKIPPED_ACTION
+    elif state == "partial" and code == "E_BUDGET":
+        required = data_map.get("required")
+        action = _UI_BUDGET_ACTION + (
+            f" (required {json.dumps(required, sort_keys=True)})"
+            if required is not None
+            else ""
+        )
+    if (
+        state in ("revoked", "expired", "denied")
+        and next_action is not None
+        and isinstance(next_action.get("text"), str)
+        and next_action["text"]
+    ):
+        action = next_action["text"]
+    return {
+        "state": state,
+        "reason": reason,
+        "action": action,
+        "next_action": next_action,
+        "rows": [_ui_row(item) for item in items if isinstance(item, Mapping)],
+    }
+
+
+def memory_view_authority(
+    access: MemoryAccess | None, generation: int | None
+) -> dict[str, Any]:
+    """72-T07: the authority a memory view was produced under (D37): the grant
+    fields, the owner, the sorted sources and the store generation. A denied or
+    unavailable route has every field `None`."""
+    if access is None:
+        return dict.fromkeys(
+            (
+                "policy_revision",
+                "grant_id",
+                "project_id",
+                "worktree_id",
+                "owner_scope",
+                "sources",
+                "store_generation",
+            )
+        )
+    owner = access.owner_scope
+    return {
+        "policy_revision": access.policy_revision,
+        "grant_id": access.grant_id,
+        "project_id": access.project_id,
+        "worktree_id": access.worktree_id,
+        "owner_scope": None if owner is None else {"kind": owner.kind, "id": owner.id},
+        "sources": sorted(access.sources),
+        "store_generation": generation,
+    }
+
+
 _COMPACT_REQUEST_KEYS = {
     "view",
     "limit",

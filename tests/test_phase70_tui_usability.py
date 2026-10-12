@@ -22,7 +22,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from rich.console import Console
@@ -32,7 +32,7 @@ from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tools import setup_wizard
 from rush.tools.base import ToolResult
-from rush.tools.memory import MemoryTool
+from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.review import ReviewTool
 from rush.tui import (
     SECTION_LABELS,
@@ -61,8 +61,15 @@ from rush.workflows.projects import (
 )
 
 
-def test_t28d_memory_workflows(tmp_path: Path, home: Path) -> None:
-    """Plan-named real-key Memory journey: exact content, relation, use/write receipts."""
+def test_t28d_memory_workflows(
+    tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan-named real-key Memory journey: exact content, relation, use/write receipts.
+
+    72-T07 (R5) extends it with the same journey under a policy grant: every subject,
+    search, paging, exact-version expansion, history, correction, a concurrent edit,
+    Escape in every form and the focus cycle, all through real key events against the
+    real `MemoryTool`."""
     root = tmp_path / "memory-project"
     root.mkdir()
     data_root = default_data_root()
@@ -108,7 +115,7 @@ def test_t28d_memory_workflows(tmp_path: Path, home: Path) -> None:
         },
         permissions=ExecutionPermissions(cache_write=True),
     )
-    assert linked["raw"]["code"] == "OK"
+    assert _raw(linked)["code"] == "OK"
     assert TelemetryStore(root).record_memory_event(
         "expansion",
         7,
@@ -130,8 +137,10 @@ def test_t28d_memory_workflows(tmp_path: Path, home: Path) -> None:
     frames = []
     for _ in range(12):
         frames.append(_render(state, 60, 20))
+        assert state.memory_expanded is not None
         before = state.memory_expanded["scroll"]
         _keys(state, actions, "]")
+        assert state.memory_expanded is not None
         if state.memory_expanded["scroll"] == before:
             break
     visible = "\n".join(frames)
@@ -145,6 +154,281 @@ def test_t28d_memory_workflows(tmp_path: Path, home: Path) -> None:
     ):
         needle = "".join(char for char in marker if char.isalnum() or char == "-")
         assert needle in compact, (marker, visible)
+
+    # --- 72-T07 R5: the policy-mode journey ------------------------------------------
+    import dataclasses
+    from typing import get_args
+
+    from rush.memory import authorization as auth
+    from rush.memory.store import MemorySubject
+    from rush.permissions import ExecutionPermissions
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    data_root = default_data_root()
+    policy_root = tmp_path / "policy-project"
+    policy_root.mkdir()
+    policy_root = policy_root.resolve()
+    policy_record = register_project(policy_root, data_root=data_root)
+    policy_store = TypedArtifactStore(policy_root)
+    alice, bob = OwnerScope("user", "alice"), OwnerScope("user", "bob")
+    families = {
+        "active_context": "handoff",
+        "episodic": "experience",
+        "skill_pattern": "skill",
+    }
+    subjects = list(get_args(MemorySubject))
+    for subject in subjects:
+        for label, owner in (("alice", alice), ("bob", bob)):
+            policy_store.write(
+                MemoryArtifact(
+                    id=f"{label}-{subject}",
+                    family=families.get(subject, "memory"),  # type: ignore[arg-type]
+                    subject=subject,
+                    trust_tier="EXTERNAL_WRITE",
+                    content={"text": f"needle {subject} {label}"},
+                    source="journey-src",
+                    created_at=time.time(),
+                    owner_scope=owner,
+                )
+            )
+    for index in range(24):
+        policy_store.write(
+            MemoryArtifact(
+                id=f"alice-dk-{index:02d}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="EXTERNAL_WRITE",
+                content={"text": f"needle extra {index}"},
+                source="journey-src",
+                created_at=time.time(),
+                owner_scope=alice,
+            )
+        )
+    revision = int(
+        auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+    )
+    auth.grant_memory_scope(
+        project_root=policy_root,
+        owner_scope=alice,
+        approved_sources=["journey-src"],
+        allowed_operations=["ask", "expand", "list", "history", "write"],
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=data_root,
+    )
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def __call__(self, root: Path, **kwargs: Any) -> Any:
+            self.calls.append({"root": root, **kwargs})
+            return MemoryTool().run(root, **kwargs)
+
+        def applies(self) -> list[dict[str, Any]]:
+            return [
+                c
+                for c in self.calls
+                if isinstance(c.get("request"), dict)
+                and c["request"].get("apply") is True
+            ]
+
+    def readback(subject: str, query: str = "", **extra: Any) -> dict[str, Any]:
+        result = MemoryTool().run(
+            policy_root,
+            operation="list",
+            request={
+                "schema_version": 2,
+                "subjects": [subject],
+                "query": query,
+                **extra,
+            },
+        )
+        raw = _raw(result)
+        assert raw["code"] == "OK", raw
+        return cast(dict[str, Any], raw)
+
+    def pairs(items: list[dict[str, Any]]) -> list[tuple[str, int]]:
+        return [
+            (i["reference"]["artifact_id"], i["reference"]["artifact_version"])
+            for i in items
+        ]
+
+    def tui_pairs() -> list[tuple[str, int]]:
+        out: list[tuple[Any, Any]] = []
+        for item in state2.memory_items:
+            ref = item.get("reference") or {}
+            out.append(
+                (
+                    ref.get("artifact_id", item.get("id")),
+                    ref.get("artifact_version", item.get("artifact_version")),
+                )
+            )
+        return out
+
+    def db_sha() -> str:
+        return hashlib.sha256(
+            (policy_root / ".rush" / "memory.db").read_bytes()
+        ).hexdigest()
+
+    recorder = _Recorder()
+    actions2 = dataclasses.replace(default_scan_actions(), memory_run=recorder)
+    state2 = TuiState(
+        projects=[
+            ProjectState(
+                name="policy-project",
+                root=policy_root,
+                project_id=policy_record.project_id,
+            )
+        ],
+        data_root=data_root,
+    )
+    state2.memory_owner_scope_kind, state2.memory_owner_scope_id = "user", "alice"
+    _keys(state2, actions2, "f3", "4")
+    assert state2.mode == "memory"
+    seen = set()
+    for _ in range(len(subjects)):
+        assert tui_pairs() == pairs(readback(state2.memory_subject)["items"])[:20], (
+            state2.memory_subject
+        )
+        assert not any(i[0].startswith("bob-") for i in tui_pairs())
+        seen.add(state2.memory_subject)
+        _keys(state2, actions2, "S")
+    assert seen == set(subjects), "S must reach all seven subjects"
+    assert state2.memory_subject == "domain_knowledge"
+
+    # Search: `/`, the needle, Enter.
+    _keys(state2, actions2, "/", *"extra", "enter")
+    assert tui_pairs() == pairs(readback("domain_knowledge", "extra")["items"])
+    _keys(state2, actions2, "/", "enter")
+    page_one = readback("domain_knowledge")
+    assert tui_pairs() == pairs(page_one["items"])
+    assert page_one["next_cursor"] is not None
+
+    # `]` fetches the next v2 page by cursor, `[` returns to the first.
+    _keys(state2, actions2, "]")
+    page_two = readback("domain_knowledge", cursor=page_one["next_cursor"])
+    assert tui_pairs() == pairs(page_two["items"])
+    assert set(tui_pairs()).isdisjoint(pairs(page_one["items"]))
+    _keys(state2, actions2, "[")
+    assert tui_pairs() == pairs(page_one["items"])
+
+    # `x` expands the selected exact version; `v` shows its history.
+    target_id, target_version = tui_pairs()[0]
+    _keys(state2, actions2, "x")
+    assert state2.memory_expanded is not None
+    assert (state2.memory_expanded["id"], state2.memory_expanded["version"]) == (
+        target_id,
+        target_version,
+    )
+    assert "needle extra 0" in state2.memory_expanded["content"]
+    _keys(state2, actions2, "-", "v")
+    assert state2.memory_history is not None
+    history = _raw(
+        MemoryTool().run(
+            policy_root,
+            operation=cast(MemoryOperation, "history"),
+            request={"schema_version": 2, "artifact_id": target_id},
+        )
+    )
+    assert _raw(state2.memory_history["result"])["versions"] == history["versions"]
+    _keys(state2, actions2, "-")
+
+    # `c` + tab fields + Enter previews a correction, `y` applies it.
+    before_version = _current_row(policy_store, target_id)["artifact_version"]
+    _keys(state2, actions2, "c", "tab", *"matrix reason", "tab", *"needle corrected")
+    assert state2.memory_correction_buffer is not None
+    assert state2.memory_correction_buffer["reason"] == "matrix reason"
+    _keys(state2, actions2, "enter")
+    preview = [c for c in recorder.calls if c["operation"] == "edit"][-1]["request"]
+    assert preview["schema_version"] == 2 and preview["apply"] is False
+    assert preview["correction"]["kind"] == "correct"
+    assert preview["correction"]["reason"] == "matrix reason"
+    assert preview["correction"]["supersedes"] == [
+        {"artifact_id": target_id, "artifact_version": target_version}
+    ]
+    assert "scope" not in preview and "id" not in preview
+    assert not recorder.applies()
+    _keys(state2, actions2, "y")
+    applied = recorder.applies()
+    assert len(applied) == 1
+    assert applied[0]["request"]["invocation_id"] == preview["invocation_id"]
+    assert applied[0]["request"]["effect_id"] == preview["effect_id"]
+    after_row = _current_row(policy_store, target_id)
+    assert after_row["artifact_version"] > before_version
+    listed_now = dict(pairs(readback("domain_knowledge")["items"]))
+    assert listed_now[target_id] == after_row["artifact_version"], (
+        "TUI and MemoryTool differ"
+    )
+
+    # A concurrent edit makes the apply a conflict that keeps every typed buffer.
+    second_id = tui_pairs()[1][0] if len(tui_pairs()) > 1 else target_id
+    state2.memory_selected_index = [i for i, _v in tui_pairs()].index(second_id)
+    _keys(state2, actions2, "c", "tab", *"second reason", "tab", *"needle second")
+    _keys(state2, actions2, "enter")
+    assert state2.memory_pending_mutation is not None, state2.memory_message
+    buffer_before = dict(state2.memory_correction_buffer or {})
+    concurrent = MemoryTool().run(
+        policy_root,
+        operation="edit",
+        request={
+            "schema_version": 2,
+            "subject": "domain_knowledge",
+            "artifact_id": second_id,
+            "expected_version": _current_row(policy_store, second_id)[
+                "artifact_version"
+            ],
+            "owner_scope": alice.as_dict(),
+            "content": {"text": "needle concurrent edit"},
+            "apply": True,
+            "invocation_id": "concurrent-invocation",
+            "effect_id": "concurrent-effect",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert _raw(concurrent)["code"] == "OK", concurrent
+    _keys(state2, actions2, "y")
+    assert (state2.memory_correction_buffer or {}) == buffer_before, (
+        "the typed text was lost"
+    )
+    assert "conflict" in state2.memory_message.lower(), state2.memory_message
+    assert second_id in state2.memory_message
+
+    # Escape in every memory form: no apply call, memory.db untouched, focus returns.
+    _keys(state2, actions2, "escape")
+    state2.mode = "memory"
+    applies_before = len(recorder.applies())
+    sha_before = db_sha()
+    for key in ("/", "f", "o", "e", "n", "c", "I"):
+        index_before = state2.memory_selected_index
+        _keys(state2, actions2, key)
+        assert state2.mode != "memory", key
+        _keys(state2, actions2, "escape")
+        assert state2.mode == "memory", key
+        assert state2.memory_focus == "list", key
+        assert state2.memory_selected_index == index_before, key
+        assert len(recorder.applies()) == applies_before, key
+        assert db_sha() == sha_before, key
+    _keys(state2, actions2, "e", *"typed", "enter")
+    assert state2.memory_pending_mutation is not None
+    _keys(state2, actions2, "escape")
+    assert state2.memory_pending_mutation is None
+    assert len(recorder.applies()) == applies_before and db_sha() == sha_before
+
+    # Tab / Shift-Tab move the focus through search, filter, list, inspect, edit.
+    state2.memory_focus = "list"
+    order = ["inspect", "edit", "search", "filter", "list"]
+    walked = []
+    for _ in order:
+        _keys(state2, actions2, "tab")
+        walked.append(state2.memory_focus)
+    assert walked == order, walked
+    walked = []
+    for _ in order:
+        _keys(state2, actions2, "shift_tab")
+        walked.append(state2.memory_focus)
+    assert walked == ["filter", "search", "edit", "inspect", "list"], walked
 
 
 # -- shared journey helpers ---------------------------------------------------
@@ -191,6 +475,18 @@ def _pump_until(
         assert time.monotonic() < deadline, "background work never applied"
         _pump(state, actions)
         time.sleep(0.01)
+
+
+def _raw(result: ToolResult) -> Any:
+    raw = result["raw"]
+    assert raw is not None
+    return raw
+
+
+def _current_row(store: TypedArtifactStore, artifact_id: str) -> sqlite3.Row:
+    row = store.get_current_row(artifact_id)
+    assert row is not None
+    return row
 
 
 def _keys(state: TuiState, actions: ScanActions, *keys: str) -> None:
@@ -1705,3 +2001,45 @@ _C_CASES: dict[str, Callable[[Path, Path], None]] = {
 @pytest.mark.parametrize("case", list(_C_CASES))
 def test_t28c_results_and_relationships(case: str, tmp_path: Path, home: Path) -> None:
     _C_CASES[case](tmp_path, home)
+
+
+def test_t28d_memory_edit_persists_through_real_keys(
+    tmp_path: Path, home: Path
+) -> None:
+    """G6 guard: the Memory edit typed with real keys and confirmed with `y` is
+    written to the store, so a preview-only edit cannot pass."""
+    root = tmp_path / "edit-project"
+    root.mkdir()
+    data_root = default_data_root()
+    registered = register_project(root, data_root=data_root)
+    store = TypedArtifactStore(root)
+    store.write(
+        MemoryArtifact(
+            id="edit-journey",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="EXTERNAL_WRITE",
+            content={"note": "editable row"},
+            source="edit-journey-source",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", registered.project_id),
+        )
+    )
+    state = TuiState(
+        projects=[
+            ProjectState(
+                name="edit-project", root=root, project_id=registered.project_id
+            )
+        ],
+        data_root=data_root,
+    )
+    actions = default_scan_actions()
+    _keys(state, actions, "M", "/", *"editable", "enter")
+    assert len(state.memory_items) == 1
+    _keys(state, actions, "e")
+    assert state.mode == "memory_edit"
+    _keys(state, actions, *"hello", "enter", "y")
+    rows = store.scope_artifacts(
+        "domain_knowledge", source_allowlist=["edit-journey-source"]
+    )
+    assert [json.loads(row["content"]).get("note") for row in rows] == ["hello"]

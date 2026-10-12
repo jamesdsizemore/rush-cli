@@ -1141,7 +1141,7 @@ def test_t01_forged_identity_moved_root_and_missing_policy_create_nothing(
 def test_t01_missing_store_and_old_schema_create_nothing(tmp_path: Path) -> None:
     tool = MemoryTool()
 
-    def legacy(root: Path, operation: str) -> Any:
+    def legacy(root: Path, operation: MemoryOperation) -> Any:
         return tool.run(
             root,
             operation=operation,  # type: ignore[arg-type]
@@ -1150,7 +1150,7 @@ def test_t01_missing_store_and_old_schema_create_nothing(tmp_path: Path) -> None
             session_allowlist=["s"],
         )
 
-    def compact(root: Path, operation: str) -> Any:
+    def compact(root: Path, operation: MemoryOperation) -> Any:
         return tool.run(
             root,
             operation=operation,  # type: ignore[arg-type]
@@ -1196,12 +1196,14 @@ def test_t01_missing_store_and_old_schema_create_nothing(tmp_path: Path) -> None
     )
 
     reason = readonly_view_reason("migration_required")
-    for operation in ("ask", "list"):
+    list_ops: tuple[MemoryOperation, ...] = ("ask", "list")
+    for operation in list_ops:
         result = legacy(old, operation)
         assert result["status"] == "error", operation
         assert reason in result["summary"], operation
         assert "mk-old" not in _dump(result.get("raw"))
-    for operation in ("ask", "recall"):
+    recall_ops: tuple[MemoryOperation, ...] = ("ask", "recall")
+    for operation in recall_ops:
         result = compact(old, operation)
         assert _raw(result)["code"] == "E_MIGRATION", operation
         assert "mk-old" not in _dump(_raw(result))
@@ -2008,7 +2010,10 @@ def _fix1_assert_quarantined(
     assert historical.usable_as_current is False
     assert "integrity_payload_mismatch" in historical.reason_codes
     assert artifact_id not in {
-        a.id for a in defended_recall(store, subject, "needle", [source])
+        a.id
+        for a in defended_recall(
+            store, cast(MemorySubject, subject), "needle", [source]
+        )
     }
 
 

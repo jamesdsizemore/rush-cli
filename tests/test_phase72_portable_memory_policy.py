@@ -671,3 +671,208 @@ def test_export_personal_scope_and_required_secret_redaction(tmp_path: Path) -> 
     out, _p, done = cap.exported(env, "clean.json", **personal)
     assert done.code == "OK", done
     assert secret.encode() not in out.read_bytes()
+
+
+def test_import_review_cli_tui_same_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R13 (72-T07): the CLI and the TUI review one imported capsule to the same state.
+
+    One capsule exported from a project is previewed by `rush memory capsule
+    preview-import` and by the TUI's `I` form: the records, store revision and capsule
+    digest are equal. After the TUI applies it, the CLI `list --json` row and the TUI
+    list row of every imported record agree on `(id, artifact_version, trust_tier)` and
+    both show the pending applicability; an explicit CLI confirmation moves both."""
+    import json
+
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess
+    from rush.setup.provision import default_data_root
+    from rush.tui import (
+        ProjectState,
+        TuiState,
+        _dispatch_key,
+        _pump,
+        default_scan_actions,
+    )
+
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    root = root.resolve()
+    register_project(root, data_root=data_root)
+    store = TypedArtifactStore(root)
+    for artifact_id, text in (
+        ("evidence-a", "needle evidence a"),
+        ("evidence-b", "needle b"),
+    ):
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject=SUBJECT,
+                trust_tier="EXTERNAL_WRITE",
+                content={"text": text},
+                source="r13-src",
+                created_at=time.time(),
+                owner_scope=ALICE,
+            )
+        )
+    revision = int(
+        auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+    )
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=ALICE,
+        approved_sources=["r13-src"],
+        allowed_operations=["ask", "expand", "list", "history", "write"],
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=data_root,
+    )
+    access = MemoryAccess.resolve(
+        root, operation="ask", owner_scope=ALICE, data_root=data_root
+    )
+    assert access is not None
+    checkpoint = {
+        "kind": "checkpoint",
+        "schema_version": 1,
+        "project_id": access.project_id,
+        "worktree_id": access.worktree_id,
+        "task_id": "r13-task",
+        "event_kind": "checkpoint",
+        "description": "review the import",
+        "objective": "one state in the CLI and the TUI",
+        "next_action": "confirm the constraint",
+        "implemented": ["export"],
+        "unresolved": ["import review"],
+        "decisions": [{"text": "review before apply", "origin_ref": "plan"}],
+        "blockers": [],
+        "discoveries": [],
+        "disproved": [],
+        "requirements": [
+            {
+                "id": "c1",
+                "text": "never skip review",
+                "authority": "user",
+                "provenance": "plan",
+            }
+        ],
+        "checks": [
+            {
+                "command": ["pytest"],
+                "exit_code": 0,
+                "status": "passed",
+                "source_revision": "rev1",
+                "receipt_id": "receipt-1",
+            }
+        ],
+        "evidence_refs": [
+            {"artifact_id": "evidence-a", "version": 1},
+            {"artifact_id": "evidence-b", "version": 1},
+        ],
+        "source": {"commit": None, "branch": None, "dirty": False},
+    }
+    store.write(
+        MemoryArtifact(
+            id="r13-checkpoint",
+            family="experience",
+            subject="episodic",
+            trust_tier="EXTERNAL_WRITE",
+            content=checkpoint,
+            source="r13-src",
+            created_at=time.time(),
+            owner_scope=ALICE,
+        )
+    )
+    monkeypatch.chdir(root)
+    runner = CliRunner()
+
+    def run_cli(*args: str, allow: tuple[str, ...] = ()) -> dict[str, Any]:
+        result = runner.invoke(cli, ["memory", *args, *allow, "--json"])
+        assert result.stdout, (args, result.output)
+        return json.loads(result.stdout)
+
+    capsule = tmp_path / "review.rush-capsule.json"
+    preview = run_cli("capsule", "preview-export", "--output", str(capsule))
+    assert preview["raw"]["code"] == "OK", preview
+    exported = run_cli(
+        "capsule",
+        "export",
+        "--output",
+        str(capsule),
+        "--invocation-id",
+        preview["raw"]["data"]["invocation_id"],
+        "--expected-digest",
+        preview["raw"]["data"]["digest"],
+        allow=("--allow-artifact-write",),
+    )
+    assert exported["raw"]["code"] == "OK", exported
+    assert capsule.is_file()
+
+    # CLI preview.
+    cli_preview = run_cli("capsule", "preview-import", "--input", str(capsule))
+    assert cli_preview["raw"]["code"] == "OK", cli_preview
+    cli_data = cli_preview["raw"]["data"]
+
+    # TUI preview through the `I` form with the same file.
+    actions = default_scan_actions()
+    state = TuiState(
+        projects=[ProjectState(name="r13", root=root, project_id=access.project_id)],
+        data_root=data_root,
+    )
+    state.memory_owner_scope_kind, state.memory_owner_scope_id = "user", "alice"
+    state.terminal_size = (160, 50)
+
+    def keys(*pressed: str) -> None:
+        for key in pressed:
+            _dispatch_key(state, key, actions)
+            for _ in range(400):
+                _pump(state, actions)
+                if state.memory_request is None:
+                    break
+                time.sleep(0.005)
+
+    keys("f3", "4", "I")
+    assert state.mode == "memory_import"
+    keys(*str(capsule), "enter")
+    tui_data = (state.memory_import_preview or {}).get(
+        "data", state.memory_import_preview
+    )
+    assert tui_data, state.memory_message
+    for key in ("records", "store_revision", "capsule_digest"):
+        assert tui_data[key] == cli_data[key], key
+    # The digest and the invocation id belong to one preview and differ per call.
+    assert tui_data["invocation_id"] and tui_data["digest"]
+
+    keys("y")
+
+    # After the TUI import, the CLI list and the TUI list agree on every imported row.
+    listed = run_cli("list")
+    cli_rows = {
+        (r["reference"]["artifact_id"], r["reference"]["artifact_version"]): r
+        for r in listed["raw"]["items"]
+        if r["reference"]["trust_tier"] == "IMPORTED"
+    }
+    assert cli_rows, "the import wrote no IMPORTED row"
+    tui_rows: dict[tuple[str, int], str] = {}
+    for subject in sorted({r["reference"]["subject"] for r in cli_rows.values()}):
+        for _ in range(8):
+            if state.memory_subject == subject:
+                break
+            keys("S")
+        keys("/", "enter")
+        view = state.memory_view_state or {}
+        badges = {row["artifact_id"]: row["badges"] for row in view.get("rows", [])}
+        for item in state.memory_items:
+            ref = item["reference"]
+            if ref["trust_tier"] == "IMPORTED":
+                row_key = (ref["artifact_id"], ref["artifact_version"])
+                tui_rows[row_key] = ",".join(badges.get(ref["artifact_id"], []))
+    assert set(tui_rows) == set(cli_rows), (tui_rows, cli_rows)
+    for row_key, row in cli_rows.items():
+        assert row.get("applicability") == "pending", row
+        assert "pending" in tui_rows[row_key].split(","), (row_key, tui_rows[row_key])

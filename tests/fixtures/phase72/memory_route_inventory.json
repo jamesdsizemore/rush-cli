@@ -69,9 +69,21 @@
     },
     {
       "module": "dashboard/server.py",
+      "function": "_build_policy_memory_section",
+      "route": "dashboard_readers",
+      "task": "72-T07"
+    },
+    {
+      "module": "dashboard/server.py",
       "function": "_build_tokens_section",
       "route": "dashboard_readers",
       "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_memory_generation",
+      "route": "dashboard_readers",
+      "task": "72-T07"
     },
     {
       "module": "dashboard/server.py",
@@ -537,6 +549,12 @@
     },
     {
       "module": "tools/memory.py",
+      "function": "<module>",
+      "route": "ui_state",
+      "task": "72-T07"
+    },
+    {
+      "module": "tools/memory.py",
       "function": "_compact_page",
       "route": "ask",
       "task": "72-T01"
@@ -711,6 +729,12 @@
     },
     {
       "module": "tui.py",
+      "function": "_memory_access_key",
+      "route": "tui",
+      "task": "72-T07"
+    },
+    {
+      "module": "tui.py",
       "function": "_memory_expand_selected",
       "route": "tui",
       "task": "72-T01"
@@ -726,6 +750,18 @@
       "function": "_memory_promote_selected",
       "route": "tui",
       "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_refresh",
+      "route": "tui",
+      "task": "72-T07"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_rows",
+      "route": "tui",
+      "task": "72-T07"
     },
     {
       "module": "tui.py",

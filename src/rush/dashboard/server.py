@@ -55,6 +55,7 @@ from rush.memory.retrieval import (
     MemoryAccess,
     RouteDenial,
     evaluate_artifact_visibility,
+    recheck_failure,
     route_access,
 )
 from rush.memory.store import (
@@ -78,7 +79,12 @@ from rush.token_economy.telemetry import (
 from rush.tools import setup_wizard as setup_service
 from rush.tools.agent_connection import AgentConnectionTool
 from rush.tools.base import ToolResult
-from rush.tools.memory import MemoryOperation, MemoryTool
+from rush.tools.memory import (
+    MemoryOperation,
+    MemoryTool,
+    memory_ui_state,
+    memory_view_authority,
+)
 from rush.tools.project import ProjectTool
 from rush.workflows import projects as wp
 from rush.workflows.project_run import (
@@ -316,13 +322,48 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "handoff_status": frozenset({"handoff_id"}),
     "configure": frozenset({"settings", "expected_revision", "apply", "plan_id"}),
     "memory_edit": frozenset(
-        {"scope", "id", "expected_version", "content", "apply", "owner_scope"}
+        {
+            "scope",
+            "id",
+            "expected_version",
+            "content",
+            "apply",
+            "owner_scope",
+            "schema_version",
+            "subject",
+            "artifact_id",
+            "correction",
+            "invocation_id",
+            "effect_id",
+        }
     ),
     "memory_archive": frozenset(
-        {"scope", "id", "expected_version", "apply", "archived", "owner_scope"}
+        {
+            "scope",
+            "id",
+            "expected_version",
+            "apply",
+            "archived",
+            "owner_scope",
+            "schema_version",
+            "subject",
+            "artifact_id",
+            "invocation_id",
+            "effect_id",
+        }
     ),
     "memory_delete": frozenset(
-        {"artifact_ids", "expected_revisions", "scope", "apply", "owner_scope"}
+        {
+            "artifact_ids",
+            "expected_revisions",
+            "scope",
+            "apply",
+            "owner_scope",
+            "schema_version",
+            "subject",
+            "invocation_id",
+            "effect_id",
+        }
     ),
     "memory_promote": frozenset(
         {
@@ -335,6 +376,13 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "candidate_sources",
             "candidate_refs",
             "owner_scope",
+            "schema_version",
+            "artifact_id",
+            "expected_version",
+            "apply",
+            "required_grants",
+            "invocation_id",
+            "effect_id",
         }
     ),
     "memory_query": frozenset(
@@ -349,6 +397,13 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "max_bytes",
             "encoding",
             "cursor",
+            "schema_version",
+            "subjects",
+            "owner_scope",
+            "sources",
+            "trust_tiers",
+            "freshness",
+            "archive_mode",
         }
     ),
     "memory_expand": frozenset(
@@ -360,13 +415,44 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "max_tokens",
             "max_bytes",
             "encoding",
+            "schema_version",
+            "artifact_id",
+            "artifact_version",
             "representation",
+            "owner_scope",
+            "sources",
+            "archive_mode",
         }
     ),
     "memory_propose": frozenset(
-        {"subject", "content", "source", "source_kind", "symbol_ref", "owner_scope"}
+        {
+            "subject",
+            "content",
+            "source",
+            "source_kind",
+            "symbol_ref",
+            "owner_scope",
+            "schema_version",
+            "apply",
+            "required_grants",
+            "invocation_id",
+            "effect_id",
+        }
     ),
-    "memory_maintain": frozenset({"task", "batch_size", "owner_scope", "sources"}),
+    "memory_maintain": frozenset(
+        {
+            "task",
+            "batch_size",
+            "owner_scope",
+            "schema_version",
+            "apply",
+            "required_grants",
+            "candidate_ids",
+            "expected_revisions",
+            "invocation_id",
+            "effect_id",
+        }
+    ),
     "data_export": frozenset(),
     "artifact_export": frozenset({"artifact_id"}),
 }
@@ -397,6 +483,11 @@ _READ_ONLY_FIXED_ACTIONS = frozenset(
 )
 _APPLY_GATED_ACTIONS = frozenset(
     {"memory_edit", "memory_archive", "memory_delete", "configure"}
+)
+# 72-T07: these write immediately when a legacy request omits `apply`; an explicit
+# `apply: false`, or a schema-2 request without `apply`, is a preview.
+_PREVIEWABLE_WRITE_ACTIONS = frozenset(
+    {"memory_propose", "memory_promote", "memory_maintain"}
 )
 
 # M08: the five memory-artifact mutation forms plus owner-scoped maintenance --
@@ -445,6 +536,8 @@ def _classify_mutating(operation: str, arguments: dict[str, Any]) -> bool:
     action uses fixed-name classification."""
     if operation in _APPLY_GATED_ACTIONS:
         return bool(arguments.get("apply"))
+    if operation in _PREVIEWABLE_WRITE_ACTIONS:
+        return arguments.get("apply", arguments.get("schema_version") != 2) is True
     return operation not in _READ_ONLY_FIXED_ACTIONS
 
 
@@ -693,6 +786,9 @@ class DashboardContext:
         # (key, snapshot) of the last reusable historical map view; see
         # `_historical_map_snapshot_reused`.
         self.historical_map_memo: tuple[tuple[Any, ...], dict[str, Any]] | None = None
+        # 72-T07 (D37): project id -> the authority key `_refresh_project_memories`
+        # published that project's memory snapshot under.
+        self.memory_authority: dict[str, tuple[Any, ...]] = {}
         self.bound_host = bound_host
         self.bound_port = bound_port
         self.launch_origin = f"http://{bound_host}:{bound_port}"
@@ -1649,7 +1745,11 @@ def _sync_current_map(ctx: DashboardContext, project_id: str) -> None:
             generation = view.current_generation()
         finally:
             view.close()
-        if generation > record.memory_generation:
+        published = ctx.memory_authority.get(project_id)
+        if generation > record.memory_generation or (
+            published is not None
+            and published != _current_memory_authority(root, generation, ctx.data_root)
+        ):
             _refresh_project_memories(ctx, project_id, root)
 
 
@@ -1680,10 +1780,15 @@ def _historical_map_snapshot_reused(
     root is the same -- so paging a historical group does not reload and
     rebuild the attempt on every page. The key is taken after the build,
     which may itself persist the frozen memory/agent data into the manifest.
-    The reused snapshot is shared: map callers only read it."""
+    The reused snapshot is shared: map callers only read it.
+
+    72-T07 (D37): the memo key also carries the reader's authority, so a new grant
+    or a store write rebuilds; a denied reader gets the snapshot without memories
+    and its `memory_state`, and the memo is left as it was."""
     manifest_path = root / _MANIFEST_RELATIVE.format(
         run_id=run_id, attempt_id=attempt_id
     )
+    access = route_access(root, "list", data_root=ctx.data_root)
 
     def _key() -> tuple[Any, ...] | None:
         try:
@@ -1700,15 +1805,32 @@ def _historical_map_snapshot_reused(
         )
 
     memo = ctx.historical_map_memo
-    key = _key()
-    if memo is not None and key is not None and memo[0] == key:
+    if isinstance(access, RouteDenial):
+        base = _key()
+        snapshot = (
+            memo[1]
+            if memo is not None and base is not None and memo[0][:-1] == base
+            else _historical_map_snapshot(root, project_id, record, run_id, attempt_id)
+        )
+        if snapshot is None:
+            return None
+        return {
+            **snapshot,
+            "memories": [],
+            "memory_state": _map_memory_state(root, access),
+        }
+    authority = _memory_authority_key(
+        memory_view_authority(access, _memory_generation(access))
+    )
+    base = _key()
+    if memo is not None and base is not None and memo[0] == (*base, authority):
         return memo[1]
     snapshot, reusable = _build_historical_map_snapshot(
         root, project_id, record, run_id, attempt_id
     )
-    key = _key()
-    if snapshot is not None and reusable and key is not None:
-        ctx.historical_map_memo = (key, snapshot)
+    base = _key()
+    if snapshot is not None and reusable and base is not None:
+        ctx.historical_map_memo = ((*base, authority), snapshot)
     return snapshot
 
 
@@ -2640,6 +2762,255 @@ def _tool_result_response(result: ToolResult) -> tuple[int, dict[str, Any]]:
     return status_code, body
 
 
+# 72-T07: dashboard memory action -> the MemoryTool operation a schema-2 request
+# runs (`memory_query` runs its `mode`: ask, recall or list).
+_MEMORY_V2_ACTIONS: dict[str, str] = {
+    "memory_query": "list",
+    "memory_expand": "expand",
+    "memory_edit": "edit",
+    "memory_archive": "archive",
+    "memory_delete": "delete",
+    "memory_promote": "promote",
+    "memory_propose": "write",
+    "memory_maintain": "maintain",
+}
+_MEMORY_REFUSAL_CODES = frozenset({"E_PERMISSION", "E_OWNER", "E_SCOPE"})
+
+
+def _memory_generation(access: MemoryAccess) -> int | None:
+    """The committed generation of the store `access` reads (its `storage_root`
+    when the access carries one, the 72-T05 personal overlay; else the project's),
+    read through a read-only view that is closed again. `None` without a store."""
+    root = getattr(access, "storage_root", None) or access.project_root
+    view, _state = TypedArtifactStore.open_readonly_view(Path(root))
+    if view is None:
+        return None
+    try:
+        return view.current_generation()
+    finally:
+        view.close()
+
+
+def _memory_authority_key(authority: dict[str, Any]) -> tuple[Any, ...]:
+    """The hashable cache-key form of a `memory_view_authority` value."""
+    owner = authority["owner_scope"]
+    return (
+        authority["policy_revision"],
+        authority["grant_id"],
+        authority["project_id"],
+        authority["worktree_id"],
+        None if owner is None else (owner["kind"], owner["id"]),
+        tuple(authority["sources"] or ()),
+        authority["store_generation"],
+    )
+
+
+def _current_memory_authority(
+    root: Path, generation: int | None, data_root: Path | None
+) -> tuple[Any, ...]:
+    """The authority key a `list` reader of `root` holds now (all `None` denied)."""
+    access = route_access(root, "list", data_root=data_root)
+    if isinstance(access, RouteDenial):
+        return _memory_authority_key(memory_view_authority(None, None))
+    return _memory_authority_key(memory_view_authority(access, generation))
+
+
+def _memory_request_access(
+    root: Path,
+    operation: str,
+    request: dict[str, Any],
+    *,
+    apply: bool,
+    data_root: Path | None,
+) -> MemoryAccess | RouteDenial:
+    """The access one schema-2 request resolves to: its owner, its sources and its
+    archive mode. A malformed owner or source list resolves as if omitted here;
+    MemoryTool's strict model refuses the request itself (`E_INPUT`)."""
+    try:
+        owner = OwnerScope.from_value(request["owner_scope"])
+    except (KeyError, ValueError, TypeError):
+        owner = None
+    sources = request.get("sources")
+    allowlist = (
+        [s for s in sources if isinstance(s, str)]
+        if isinstance(sources, list)
+        else None
+    )
+    return route_access(
+        root,
+        operation,
+        apply=apply,
+        historical=request.get("archive_mode") == "historical",
+        session_allowlist=allowlist,
+        owner_scope=owner,
+        data_root=data_root,
+    )
+
+
+def _memory_refusal(
+    root: Path,
+    operation: str,
+    request: dict[str, Any],
+    failure: tuple[str, str],
+    permissions: ExecutionPermissions | None = None,
+) -> dict[str, Any]:
+    """The truthful refusal that replaces discarded content after access was
+    revoked, expired or denied (MemoryTool's own denial, which carries the
+    BOOTSTRAP-CONSENT `next_action`) or replaced (`E_RESTART` `access_changed`)."""
+    code, reason = failure
+    if code != "E_RESTART":
+        again = dict(
+            MemoryTool().run(
+                root,
+                operation=cast(MemoryOperation, operation),
+                request=request,
+                permissions=permissions,
+            )
+        )
+        raw = again.get("raw")
+        if isinstance(raw, dict) and raw.get("code") == code:
+            return again
+    result: dict[str, Any] = dict(
+        MemoryTool()._envelope_result(
+            time.monotonic(),
+            operation,
+            code,
+            {"reason": reason, "message": f"memory {operation} refused: {reason}"},
+        )
+    )
+    result["raw"] = {**result["raw"], "reason": reason}
+    return result
+
+
+def _memory_stamped(
+    result: dict[str, Any],
+    access: MemoryAccess | RouteDenial | None,
+    generation: int | None,
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    """`result` plus its `ui_state` and `memory_view_key` (the authority it was
+    computed under, all `None` when refused, and the request identity)."""
+    granted = access if isinstance(access, MemoryAccess) else None
+    authority = memory_view_authority(
+        granted, generation if granted is not None else None
+    )
+    return {
+        **result,
+        "ui_state": memory_ui_state(result),
+        "memory_view_key": {"authority": authority, "request_identity": identity},
+    }
+
+
+def _dispatch_memory_v2(
+    ctx: DashboardContext,
+    project_id: str,
+    action: str,
+    arguments: dict[str, Any],
+    grants: dict[str, Any],
+) -> tuple[int, dict[str, Any]]:
+    """72-T07: a schema-2 memory action, forwarded whole to MemoryTool's strict
+    model (`mode` is only this adapter's ask/recall/list selector). A read or an
+    `apply: false` preview is revalidated after it computes: a revoked, expired or
+    replaced access discards the computed content for the refusal. An applied
+    write keeps its committed result, stamped with the authority it ran under."""
+    operation = _MEMORY_V2_ACTIONS[action]
+    if action == "memory_query":
+        operation = arguments.get("mode", "list")
+        if operation not in ("ask", "recall", "list"):
+            raise _ActionDenied(
+                400,
+                "malformed_request",
+                "memory_query mode must be ask, recall, or list",
+            )
+    apply = _classify_mutating(action, arguments)
+    if apply:
+        _require_grants(grants, "cache_write", operation=action)
+    request = {key: value for key, value in arguments.items() if key != "mode"}
+    if request.get("retrieval") == "hybrid":
+        _require_grants(grants, "network", operation=action)
+    root = Path(resolve_project(project_id)["root"])
+    access: MemoryAccess | RouteDenial | None = _memory_request_access(
+        root, operation, request, apply=apply, data_root=ctx.data_root
+    )
+    generation = (
+        _memory_generation(access) if isinstance(access, MemoryAccess) else None
+    )
+    permissions = _permissions_from_grants(grants)
+    result = dict(
+        MemoryTool().run(
+            root,
+            operation=cast(MemoryOperation, operation),
+            request=request,
+            permissions=permissions,
+        )
+    )
+    if not apply and isinstance(access, MemoryAccess):
+        failure = recheck_failure(access)
+        if failure is not None:
+            result = _memory_refusal(root, operation, request, failure, permissions)
+            access = None
+    status_code, _body = _tool_result_response(cast(ToolResult, result))
+    if apply:
+        _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    return status_code, _memory_stamped(
+        result, access, generation, {"operation": action}
+    )
+
+
+def _dispatch_memory_legacy(
+    ctx: DashboardContext,
+    project_id: str,
+    action: str,
+    arguments: dict[str, Any],
+    grants: dict[str, Any],
+    dispatch: Callable[[], tuple[int, dict[str, Any]]],
+) -> tuple[int, dict[str, Any]]:
+    """72-T07: a legacy-shape memory action through its HEAD dispatcher, with the
+    same request-bound revalidation and stamp as a schema-2 one: a read or a
+    preview whose access changed while it computed answers with the refusal; an
+    applied write keeps its committed result and the authority it ran under."""
+    operation = _MEMORY_V2_ACTIONS[action]
+    if action == "memory_query":
+        operation = arguments.get("mode", "list")
+        if operation not in ("ask", "recall", "list"):
+            return dispatch()  # the HEAD dispatcher refuses the mode (400)
+    probe: dict[str, Any] = {}
+    if "owner_scope" in arguments:
+        probe["owner_scope"] = arguments["owner_scope"]
+    if isinstance(arguments.get("session_allowlist"), list):
+        probe["sources"] = arguments["session_allowlist"]
+    if arguments.get("include_archived") is True:
+        probe["archive_mode"] = "historical"
+    apply = _classify_mutating(action, arguments)
+    root = Path(resolve_project(project_id)["root"])
+    access: MemoryAccess | RouteDenial | None = _memory_request_access(
+        root, operation, probe, apply=apply, data_root=ctx.data_root
+    )
+    generation = (
+        _memory_generation(access) if isinstance(access, MemoryAccess) else None
+    )
+    status_code, body = dispatch()
+    if not apply and isinstance(access, MemoryAccess):
+        failure = recheck_failure(access)
+        if failure is not None:
+            request = {k: v for k, v in arguments.items() if k != "mode"}
+            body = _memory_refusal(
+                root, operation, request, failure, _permissions_from_grants(grants)
+            )
+            status_code, _body = _tool_result_response(cast(ToolResult, body))
+            access = None
+    return status_code, _memory_stamped(body, access, generation, {"operation": action})
+
+
+def _map_memory_state(root: Path, denial: RouteDenial) -> dict[str, Any]:
+    """72-T07: the `memory_state` a map view carries when its reader is refused:
+    the D19 state with the producer's `next_action`."""
+    request = {"schema_version": 2, "subjects": list(_MEMORY_SUBJECTS), "query": ""}
+    return memory_ui_state(
+        _memory_refusal(root, "list", request, (denial.code, denial.reason))
+    )
+
+
 def _dispatch_memory_edit(
     ctx: DashboardContext,
     project_id: str,
@@ -2921,28 +3292,40 @@ def _dispatch_scan_action(
             return _dispatch_handoff_status(project_id, arguments, grants)
         if operation == "configure":
             return _dispatch_configure(ctx, project_id, arguments, grants)
-        if operation == "memory_edit":
-            return _dispatch_memory_edit(ctx, project_id, arguments, grants, effect_ids)
-        if operation == "memory_archive":
-            return _dispatch_memory_archive(
-                ctx, project_id, arguments, grants, effect_ids
+        if operation in _MEMORY_V2_ACTIONS:
+            if arguments.get("schema_version") == 2:
+                return _dispatch_memory_v2(
+                    ctx, project_id, operation, arguments, grants
+                )
+            legacy: dict[str, Callable[[], tuple[int, dict[str, Any]]]] = {
+                "memory_edit": lambda: _dispatch_memory_edit(
+                    ctx, project_id, arguments, grants, effect_ids
+                ),
+                "memory_archive": lambda: _dispatch_memory_archive(
+                    ctx, project_id, arguments, grants, effect_ids
+                ),
+                "memory_delete": lambda: _dispatch_memory_delete(
+                    ctx, project_id, arguments, grants, effect_ids
+                ),
+                "memory_promote": lambda: _dispatch_memory_promote(
+                    ctx, project_id, arguments, grants, effect_ids
+                ),
+                "memory_query": lambda: _dispatch_memory_query(
+                    project_id, arguments, grants
+                ),
+                "memory_expand": lambda: _dispatch_memory_expand(
+                    project_id, arguments, grants
+                ),
+                "memory_propose": lambda: _dispatch_memory_propose(
+                    ctx, project_id, arguments, grants
+                ),
+                "memory_maintain": lambda: _dispatch_memory_maintain(
+                    ctx, project_id, arguments, grants
+                ),
+            }
+            return _dispatch_memory_legacy(
+                ctx, project_id, operation, arguments, grants, legacy[operation]
             )
-        if operation == "memory_delete":
-            return _dispatch_memory_delete(
-                ctx, project_id, arguments, grants, effect_ids
-            )
-        if operation == "memory_promote":
-            return _dispatch_memory_promote(
-                ctx, project_id, arguments, grants, effect_ids
-            )
-        if operation == "memory_query":
-            return _dispatch_memory_query(project_id, arguments, grants)
-        if operation == "memory_expand":
-            return _dispatch_memory_expand(project_id, arguments, grants)
-        if operation == "memory_propose":
-            return _dispatch_memory_propose(ctx, project_id, arguments, grants)
-        if operation == "memory_maintain":
-            return _dispatch_memory_maintain(ctx, project_id, arguments, grants)
         if operation == "data_export":
             return _dispatch_data_export(project_id, grants)
         if operation == "artifact_export":
@@ -3158,6 +3541,9 @@ def _refresh_project_memories(
     # selected publishes none of them.
     if access.recheck() != "ok":
         return
+    ctx.memory_authority[project_id] = _current_memory_authority(
+        root, generation, ctx.data_root
+    )
     ctx.projects.refresh_memories(project_id, memories, generation)
 
 
@@ -3804,8 +4190,15 @@ _MEMORY_BROWSE_BATCH = 512
 # page of a traversal. This adds no new filter/SQL logic (correctness-neutral by
 # construction), only reuses work across sequential browse-page requests against an
 # unchanged store -- the common client pattern.
-_MEMORY_BROWSE_CACHE: OrderedDict[tuple[Any, ...], list[dict[str, Any]]] = OrderedDict()
+_MEMORY_BROWSE_CACHE: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
 _MEMORY_BROWSE_CACHE_MAXSIZE = 32
+
+
+def _browse_cache_put(key: tuple[Any, ...], value: Any) -> None:
+    _MEMORY_BROWSE_CACHE[key] = value
+    _MEMORY_BROWSE_CACHE.move_to_end(key)
+    while len(_MEMORY_BROWSE_CACHE) > _MEMORY_BROWSE_CACHE_MAXSIZE:
+        _MEMORY_BROWSE_CACHE.popitem(last=False)
 
 
 def _all_known_sources(store: TypedArtifactStore) -> list[str]:
@@ -3839,8 +4232,162 @@ def _scope_artifact_row(row: Any) -> dict[str, Any]:
     }
 
 
+def _section_v2_request(
+    query: dict[str, list[str]], query_text: str, include_archived: bool
+) -> dict[str, Any]:
+    """72-T07: the schema-2 `list` request one `section=memory` GET names. Values
+    reach MemoryTool's strict model as given; it refuses a malformed one (`E_INPUT`)."""
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "subjects": _split_csv(query.get("subject", [])) or list(_MEMORY_SUBJECTS),
+        "query": query_text,
+    }
+    owner = query.get("owner", [None])[0]
+    if owner is not None:
+        kind, separator, owner_id = owner.partition(":")
+        request["owner_scope"] = {"kind": kind, "id": owner_id} if separator else owner
+    for key, field in (
+        ("source", "sources"),
+        ("trust", "trust_tiers"),
+        ("freshness", "freshness"),
+    ):
+        values = _split_csv(query.get(key, []))
+        if values:
+            request[field] = values
+    if include_archived:
+        request["archive_mode"] = "historical"
+    limit = query.get("limit", [None])[0]
+    if limit is not None:
+        request["limit"] = int(limit) if limit.isascii() and limit.isdigit() else limit
+    cursor = query.get("cursor", [None])[0]
+    if cursor is not None:
+        request["cursor"] = cursor
+    return request
+
+
+def _memory_section_refusal(
+    result: dict[str, Any], failure: tuple[str, str], identity: dict[str, Any]
+) -> dict[str, Any]:
+    """A `section=memory` answer for a refused reader: no row, the D19 state and
+    the producer's `next_action`."""
+    raw = result.get("raw")
+    return {
+        "items": [],
+        "next_cursor": None,
+        "complete": False,
+        "total": 0,
+        "subjects": list(_MEMORY_SUBJECTS),
+        "known_sources": [],
+        "code": failure[0],
+        "reason": failure[1],
+        "next_action": raw.get("next_action") if isinstance(raw, dict) else None,
+        "ui_state": memory_ui_state(result),
+        "memory_view_key": {
+            "authority": memory_view_authority(None, None),
+            "request_identity": identity,
+        },
+    }
+
+
+def _build_policy_memory_section(
+    root: Path,
+    access: MemoryAccess,
+    query: dict[str, list[str]],
+    query_text: str,
+    include_archived: bool,
+    identity: dict[str, Any],
+) -> dict[str, Any]:
+    """72-T07 `policy` mode: one schema-2 `list` under the grant, revalidated after
+    it computes (a revoked, expired or replaced grant discards it and caches
+    nothing). A browse page is cached under the authority it ran under plus the
+    whole request; a query (live staleness re-check) never is. `expand_id` and
+    `related_id` read exact versions through the same read-only view."""
+    request = _section_v2_request(query, query_text, include_archived)
+    authority = memory_view_authority(access, _memory_generation(access))
+    cache_key = (
+        _memory_authority_key(authority),
+        str(root),
+        json.dumps(request, sort_keys=True),
+    )
+    store, store_state = TypedArtifactStore.open_readonly_view(root)
+    try:
+        cached = None if query_text else _MEMORY_BROWSE_CACHE.get(cache_key)
+        if cached is not None:
+            _MEMORY_BROWSE_CACHE.move_to_end(cache_key)
+            items, result = cached
+        else:
+            items, listed = _fetch_memory_browse_items(
+                store,
+                root=root,
+                all_sources=[],
+                subjects=[],
+                trust_filter=set(),
+                include_archived=include_archived,
+                query_text=query_text,
+                access=access,
+                v2_request=request,
+            )
+            result = dict(listed or {})
+            failure = recheck_failure(access)
+            if failure is not None:
+                refusal = _memory_refusal(root, "list", request, failure)
+                return _memory_section_refusal(refusal, failure, identity)
+            if not query_text:
+                _browse_cache_put(cache_key, (list(items), result))
+        raw = result.get("raw")
+        raw = raw if isinstance(raw, dict) else {}
+        section_data: dict[str, Any] = {
+            "list": {k: v for k, v in result.items() if k != "duration_ms"},
+            "items": list(items),
+            "next_cursor": raw.get("next_cursor"),
+            "complete": raw.get("complete"),
+            "subjects": list(_MEMORY_SUBJECTS),
+            "known_sources": sorted(access.sources),
+            "ui_state": memory_ui_state(result),
+            "memory_view_key": {"authority": authority, "request_identity": identity},
+        }
+        if store_state is not None:
+            section_data["store_state"] = store_state
+            section_data["store_reason"] = readonly_view_reason(store_state)
+        for operation, id_key, version_key in (
+            ("expand", "expand_id", "expand_version"),
+            ("related", "related_id", "related_version"),
+        ):
+            target_id = query.get(id_key, [None])[0]
+            if not target_id:
+                continue
+            try:
+                target_version = int(query.get(version_key, ["0"])[0])
+            except ValueError:
+                target_version = 0
+            if store is None:
+                section_data[operation] = dict(
+                    _unreadable_memory_envelope(operation, store_state)
+                )
+                continue
+            target = dict(
+                MemoryTool(readonly_store=store).run(
+                    root,
+                    operation=cast(MemoryOperation, operation),
+                    request={"id": target_id, "version": target_version},
+                )
+            )
+            failure = recheck_failure(access)
+            if failure is not None:
+                refusal = _memory_refusal(root, "list", request, failure)
+                return _memory_section_refusal(refusal, failure, identity)
+            section_data[operation] = target
+        return section_data
+    finally:
+        if store is not None:
+            store.close()
+
+
 def _build_memory_section(
-    project_id: str, query: dict[str, list[str]]
+    project_id: str,
+    query: dict[str, list[str]],
+    *,
+    data_root: Path | None = None,
 ) -> dict[str, Any]:
     """`section=memory` (plan Sec 3.1): scope/type/trust/source/freshness
     filters, text search, and exact expansion/relationship navigation. A
@@ -3850,23 +4397,35 @@ def _build_memory_section(
     changed since it was written surfaces `stale: true` here). An empty
     `query` browses via `TypedArtifactStore.scope_artifacts()` instead
     (`dynamic_freshness_checked: false` -- only the persisted `stale`
-    column, no live re-check)."""
+    column, no live re-check).
+
+    72-T07: a `policy` reader gets MemoryTool's own schema-2 `list` result
+    (`_build_policy_memory_section`); a refused reader gets no row, its D19 state
+    and next action, before any store or view is opened. Every answer carries
+    `ui_state`."""
     root = Path(resolve_project(project_id)["root"])
     include_archived = query.get("include_archived", ["false"])[0] == "true"
+    query_text = query.get("query", [""])[0]
+    identity = {key: query[key] for key in sorted(query)}
     # 72-T01 D1: in `policy` mode the grant's owner and sources decide what is
     # listed (never every source in the store); `unavailable` or a denied grant
     # lists nothing; `legacy` keeps the whole project as before.
-    access = _dashboard_memory_access(root, historical=include_archived)
+    access = _dashboard_memory_access(
+        root, historical=include_archived, data_root=data_root
+    )
+    if isinstance(access, RouteDenial):
+        failure = (access.code, access.reason)
+        request = _section_v2_request(query, query_text, include_archived)
+        refusal = _memory_refusal(root, "list", request, failure)
+        return _memory_section_refusal(refusal, failure, identity)
+    if access is not None:
+        return _build_policy_memory_section(
+            root, access, query, query_text, include_archived, identity
+        )
     # R20.G8: a GET never creates or migrates memory.db. No DB = empty; an
     # unreadable one (old schema, corrupt, busy) is reported as `store_state`.
     store, store_state = TypedArtifactStore.open_readonly_view(root)
-    if access is None:
-        all_sources = _all_known_sources(store) if store is not None else []
-    elif isinstance(access, RouteDenial):
-        all_sources = []
-    else:
-        all_sources = sorted(access.sources)
-    policy_access = access if isinstance(access, MemoryAccess) else None
+    all_sources = _all_known_sources(store) if store is not None else []
     browse_revision = str(store.current_generation() if store is not None else 0)
 
     requested_subjects = _split_csv(query.get("subject", []))
@@ -3885,7 +4444,6 @@ def _build_memory_section(
         if include_internal
         else [s for s in all_sources if not is_internal_memory_source(s)]
     )
-    query_text = query.get("query", [""])[0]
 
     # Only the browse (empty-query) path is cache-eligible: its own docstring
     # documents it as static (`dynamic_freshness_checked: false`, persisted
@@ -3900,13 +4458,6 @@ def _build_memory_section(
         include_archived,
         tuple(sorted(browse_sources)),
         browse_revision,
-        (
-            policy_access.owner_scope,
-            policy_access.grant_id,
-            policy_access.policy_revision,
-        )
-        if policy_access is not None
-        else None,
     )
     cached_items = None if query_text else _MEMORY_BROWSE_CACHE.get(browse_cache_key)
     if cached_items is not None:
@@ -3915,7 +4466,7 @@ def _build_memory_section(
     elif store is None:
         items = []
     else:
-        items = _fetch_memory_browse_items(
+        items, _listed = _fetch_memory_browse_items(
             store,
             root=root,
             all_sources=browse_sources,
@@ -3923,13 +4474,9 @@ def _build_memory_section(
             trust_filter=trust_filter,
             include_archived=include_archived,
             query_text=query_text,
-            access=policy_access,
         )
         if not query_text:
-            _MEMORY_BROWSE_CACHE[browse_cache_key] = list(items)
-            _MEMORY_BROWSE_CACHE.move_to_end(browse_cache_key)
-            while len(_MEMORY_BROWSE_CACHE) > _MEMORY_BROWSE_CACHE_MAXSIZE:
-                _MEMORY_BROWSE_CACHE.popitem(last=False)
+            _browse_cache_put(browse_cache_key, list(items))
 
     if source_filter:
         items = [i for i in items if i.get("source") in source_filter]
@@ -3969,6 +4516,12 @@ def _build_memory_section(
     if store_state is not None:
         section_data["store_state"] = store_state
         section_data["store_reason"] = readonly_view_reason(store_state)
+    section_data["ui_state"] = memory_ui_state(
+        {"status": "ok", "raw": {"code": "OK", "items": page, "complete": True}},
+        store_state=store_state
+        if store_state is not None
+        else ("absent" if store is None else None),
+    )
 
     # R20.G8: expand/related read through the same read-only view (never a
     # writable store); R18.2: both keep the UNFILTERED `all_sources` allowlist.
@@ -4031,19 +4584,19 @@ def _unreadable_memory_envelope(operation: str, store_state: str | None) -> Tool
 
 
 def _dashboard_memory_access(
-    root: Path, *, historical: bool = False
+    root: Path, *, historical: bool = False, data_root: Path | None = None
 ) -> MemoryAccess | RouteDenial | None:
     """72-T01 D1 `list` access for a dashboard/TUI read: `None` in `legacy` mode
     (the whole project), the resolved grant in `policy` mode, a `RouteDenial`
     otherwise."""
-    access = route_access(root, "list", historical=historical)
+    access = route_access(root, "list", historical=historical, data_root=data_root)
     if isinstance(access, RouteDenial):
         return access
     return access if access.kind == "policy" else None
 
 
 def _fetch_memory_browse_items(
-    store: TypedArtifactStore,
+    store: TypedArtifactStore | None,
     *,
     root: Path,
     all_sources: list[str],
@@ -4052,16 +4605,27 @@ def _fetch_memory_browse_items(
     include_archived: bool,
     query_text: str,
     access: MemoryAccess | None = None,
-) -> list[dict[str, Any]]:
+    v2_request: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], ToolResult | None]:
     """The actual (uncached) row-fetch this section's browse/query branches
     used to run on every single page request -- factored out so
     `_build_memory_section`'s per-generation cache can skip it entirely on a
-    cache hit. Behavior is unchanged from before the cache was added. A legacy
+    cache hit. Returns the rows and, for a 72-T07 schema-2 `v2_request` (run by
+    MemoryTool over the read-only view), MemoryTool's whole result. A legacy
     browse (`access is None`) is evaluated with a legacy access over every known
     source, so the shared visibility decision applies to every row in both modes."""
+    if v2_request is not None:
+        listed = MemoryTool(readonly_store=store).run(
+            root, operation="list", request=v2_request
+        )
+        raw = listed.get("raw")
+        rows = raw.get("items") if isinstance(raw, dict) else None
+        return (list(rows) if isinstance(rows, list) else []), listed
+    items: list[dict[str, Any]] = []
+    if store is None:
+        return items, None
     if access is None:
         access = MemoryAccess.legacy(root, all_sources, operation="list")
-    items: list[dict[str, Any]] = []
     verifier = binding_verifier(store)
     if query_text and all_sources:
         for subject in subjects:
@@ -4134,7 +4698,7 @@ def _fetch_memory_browse_items(
                     break
                 subject_offset += len(batch)
 
-    return items
+    return items, None
 
 
 # --- Phase 66 P66-05: token use snapshot section -----------------------------
@@ -5291,6 +5855,20 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 )
                 if map_memories is not map_snapshot.get("memories"):
                     map_snapshot = {**map_snapshot, "memories": map_memories}
+                # 72-T07 (D37): a refused current-map reader sees no memory entry
+                # and the state saying why (the historical view sets its own).
+                if not requested_run_id and isinstance(map_root, str) and map_root:
+                    map_access = route_access(
+                        Path(map_root), "list", data_root=ctx.data_root
+                    )
+                    if isinstance(map_access, RouteDenial):
+                        map_snapshot = {
+                            **map_snapshot,
+                            "memories": [],
+                            "memory_state": _map_memory_state(
+                                Path(map_root), map_access
+                            ),
+                        }
                 node_types = tuple(
                     v
                     for entry in query.get("node_types", [])
@@ -5390,7 +5968,9 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     return
             elif section == "memory":
                 try:
-                    data = _build_memory_section(project_id, query)
+                    data = _build_memory_section(
+                        project_id, query, data_root=ctx.data_root
+                    )
                 except ProjectError as exc:
                     _send_project_error(self, exc, request_id, project_id)
                     return

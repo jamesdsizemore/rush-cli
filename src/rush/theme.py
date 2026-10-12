@@ -16,6 +16,8 @@ from the result's family projection (`FAMILY_PROJECTIONS`).
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import shlex
 import sys
@@ -73,19 +75,30 @@ def console() -> Console:
 
 
 # A CR directly before LF is a CRLF line ending, kept so verbatim CRLF
-# source stays readable; a lone CR (cursor return) is still escaped.
-_UNSAFE_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]|\r(?!\n)")
+# source stays readable; a lone CR (cursor return) is still escaped. 72-T07: the
+# bidi controls (U+061C, U+200E/F, U+202A-E, U+2066-9) are escaped too, so no
+# dynamic string can reorder what the terminal shows.
+_UNSAFE_CONTROL = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"
+    r"|\r(?!\n)"
+)
+
+
+def _escape_control(match: re.Match[str]) -> str:
+    code = ord(match.group())
+    return f"\\x{code:02x}" if code <= 0xFF else f"\\u{code:04x}"
 
 
 def safe_terminal_text(value: object) -> str:
     """X3: every C0 control except newline, tab and a CRLF's CR, plus DEL and
-    C1, as a visible `\\xNN` escape, so no dynamic string can clear the
-    screen, retitle the terminal or move the cursor. Apply after secret
+    C1, as a visible `\\xNN` escape, and every bidi control as `\\uNNNN`, so no
+    dynamic string can clear the screen, retitle the terminal, move the cursor
+    or reorder the line. Apply after secret
     redaction. Any value is accepted (None is ""); callers put the result in
     a `rich.text.Text` (never markup), so `[...]` in the value is shown
     literally."""
     text = "" if value is None else str(value)
-    return _UNSAFE_CONTROL.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    return _UNSAFE_CONTROL.sub(_escape_control, text)
 
 
 _STATUS_GLYPHS = {
@@ -375,6 +388,369 @@ def _mutation(result: Mapping[str, Any], c: Console) -> None:
         _truncation(c, ROW_CAP, len(items), "fields", str(result.get("tool")))
 
 
+# --- 72-T07 memory projections ------------------------------------------------
+
+_MEMORY_FAILED = ("error", "skipped", "fail")
+
+
+def _memory_state_lines(result: Mapping[str, Any], c: Console) -> dict[str, Any]:
+    """The classifier's state and action (not for `ok`) and the producer's
+    `next_action` command, every value as literal text."""
+    from .tools.memory import memory_ui_state
+
+    ui = memory_ui_state(result)
+    if ui["state"] != "ok":
+        c.print(_text(f"state: {ui['state']}: {ui['reason']}"))
+        c.print(_text(f"action: {ui['action']}"))
+    guidance = ui["next_action"]
+    if isinstance(guidance, Mapping) and guidance.get("command") is not None:
+        c.print(_text(f"command: {_plain(guidance['command'])}"))
+    return ui
+
+
+def _memory_raw(result: Mapping[str, Any]) -> Mapping[str, Any]:
+    raw = result.get("raw")
+    return raw if isinstance(raw, Mapping) else {}
+
+
+def _memory_field(item: Mapping[str, Any], *keys: str) -> Any:
+    """The first non-null of `keys` in the item's `reference`, then the item."""
+    ref = item.get("reference")
+    for source in (ref if isinstance(ref, Mapping) else {}, item):
+        for key in keys:
+            if source.get(key) is not None:
+                return source[key]
+    return None
+
+
+def _memory_identity(item: Mapping[str, Any]) -> tuple[Any, Any]:
+    return (
+        _memory_field(item, "artifact_id", "id"),
+        _memory_field(item, "artifact_version", "version"),
+    )
+
+
+def _memory_owner(item: Mapping[str, Any]) -> str:
+    owner = _memory_field(item, "owner_scope", "owner")
+    if isinstance(owner, Mapping):
+        return f"{_plain(owner.get('kind'))}:{_plain(owner.get('id'))}"
+    return _plain(owner)
+
+
+def _memory_freshness(item: Mapping[str, Any]) -> str:
+    freshness = _memory_field(item, "freshness")
+    if freshness is None and item.get("stale") is not None:
+        return "stale" if item.get("stale") is True else "current"
+    return _plain(freshness)
+
+
+def _memory_decode(value: str) -> str:
+    try:
+        return base64.b64decode(value).decode("utf-8", errors="backslashreplace")
+    except ValueError:
+        return value
+
+
+def _memory_excerpt(item: Mapping[str, Any]) -> str | None:
+    content = item.get("content")
+    if isinstance(item.get("excerpt"), str):
+        return str(item["excerpt"])
+    if isinstance(content, Mapping) and isinstance(content.get("text"), str):
+        return str(content["text"])
+    if isinstance(item.get("content_utf8"), str):
+        return str(item["content_utf8"])
+    if isinstance(item.get("content_base64"), str):
+        return _memory_decode(str(item["content_base64"]))
+    if content is not None:
+        return json.dumps(content, ensure_ascii=False, sort_keys=True)[:200]
+    return None
+
+
+def _memory_items(result: Mapping[str, Any], key: str = "items") -> list[Any]:
+    raw = _memory_raw(result)
+    if isinstance(raw.get(key), list) and raw[key]:
+        return list(raw[key])
+    return _rows_of(_payload(result)) or []
+
+
+def _memory_hint(label: str, leaf: str, body: Mapping[str, Any]) -> Text:
+    return _text(
+        f"{label}: rush memory {leaf} --input FILE  "
+        f"(FILE: {json.dumps(body, sort_keys=True)})"
+    )
+
+
+def _memory_count(c: Console, result: Mapping[str, Any], rows: list[Any]) -> None:
+    raw = _memory_raw(result)
+    payload = _payload(result)
+    total = raw.get("total")
+    if total is None and isinstance(payload, Mapping):
+        total = payload.get("total")
+    if not isinstance(total, int) or isinstance(total, bool) or total < len(rows):
+        total = len(rows)
+    shown = min(len(rows), ROW_CAP)
+    if shown < total:
+        _truncation(c, shown, total, "records", str(result.get("tool")))
+    else:
+        c.print(_text(f"{shown}/{total} records", "dim"))
+
+
+def _memory_none(result: Mapping[str, Any], c: Console) -> None:
+    reason = _EMPTY_REASONS.get(
+        ("memory", str(_memory_raw(result).get("operation"))),
+        _EMPTY_REASONS.get("memory", "the producer returned no records"),
+    )
+    c.print(_text(f"0 records: {reason}"))
+
+
+def _memory_collection(result: Mapping[str, Any], c: Console) -> None:
+    """ask/list/recall/related: one line per record with its exact reference, its
+    badges, a citation and an excerpt, then the next steps for the first row."""
+    ui = _memory_state_lines(result, c)
+    if result.get("status") in _MEMORY_FAILED:
+        return
+    rows = _memory_items(result)
+    if not rows:
+        _memory_none(result, c)
+        return
+    badges = {
+        (row["artifact_id"], row["artifact_version"]): row["badges"]
+        for row in ui["rows"]
+    }
+    for row in rows[:ROW_CAP]:
+        if not isinstance(row, Mapping):
+            c.print(_row_line(row))
+            continue
+        ident, version = _memory_identity(row)
+        line = (
+            f"  {_plain(ident)}@v{_plain(version)}"
+            f"  subject {_plain(_memory_field(row, 'subject'))}"
+            f"  owner {_memory_owner(row)}"
+            f"  source {_plain(_memory_field(row, 'source'))}"
+            f"  trust {_plain(_memory_field(row, 'trust_tier', 'trust'))}"
+            f"  freshness {_memory_freshness(row)}"
+        )
+        retrieval = _memory_field(row, "retrieval")
+        if retrieval is not None:
+            line += f"  retrieval {_plain(retrieval)}"
+        c.print(_text(line))
+        marks = badges.get((ident, version))
+        if marks:
+            c.print(_text(f"    badges: {', '.join(marks)}"))
+        digest = _memory_field(row, "payload_hash") or "unknown"
+        c.print(_text(f"    cite {_plain(ident)}@v{_plain(version)} sha256:{digest}"))
+        excerpt = _memory_excerpt(row)
+        if excerpt is not None:
+            c.print(_text(f"    {excerpt}"))
+    _memory_count(c, result, rows)
+    raw = _memory_raw(result)
+    if raw.get("next_cursor"):
+        c.print(_text(f"next page: rerun with --cursor {_plain(raw['next_cursor'])}"))
+    first = rows[0]
+    if not isinstance(first, Mapping):
+        return
+    ident, version = _memory_identity(first)
+    owner = _memory_field(first, "owner_scope")
+    exact = {"schema_version": 2, "artifact_id": ident, "artifact_version": version}
+    c.print(_memory_hint("inspect", "expand", {**exact, "representation": "utf8"}))
+    c.print(_text(f"history: rush memory history {_plain(ident)}"))
+    c.print(_memory_hint("related", "related", exact))
+    c.print(_text(f"explain: rush memory explain {_plain(ident)}"))
+    correction = {
+        "schema_version": 2,
+        "subject": _memory_field(first, "subject"),
+        "artifact_id": ident,
+        "expected_version": version,
+        "owner_scope": dict(owner) if isinstance(owner, Mapping) else owner,
+        "correction": {
+            "kind": "correct",
+            "reason": "REASON",
+            "supersedes": [{"artifact_id": ident, "artifact_version": version}],
+        },
+        "apply": False,
+    }
+    c.print(_memory_hint("correct", "edit", correction))
+
+
+def _memory_inspection(result: Mapping[str, Any], c: Console) -> None:
+    """expand (and the other single-record reads): the exact byte page with its
+    reference, or the generic field listing when no page is present."""
+    ui = _memory_state_lines(result, c)
+    items = _memory_raw(result).get("items")
+    page: Mapping[str, Any] | None = None
+    for candidate in (
+        items[0] if isinstance(items, list) and items else None,
+        _payload(result),
+    ):
+        if isinstance(candidate, Mapping) and (
+            "content_utf8" in candidate or "content_base64" in candidate
+        ):
+            page = candidate
+            break
+    if page is None:
+        _inspection(result, c)
+        return
+    utf8 = isinstance(page.get("content_utf8"), str)
+    body = (
+        str(page["content_utf8"])
+        if utf8
+        else _memory_decode(str(page.get("content_base64") or ""))
+    )
+    ident, version = _memory_identity(page)
+    offset = page.get("offset") or 0
+    next_offset = page.get("next_offset")
+    end: Any = "?"
+    if isinstance(next_offset, int) and not isinstance(next_offset, bool):
+        end = next_offset
+    elif isinstance(offset, int) and not isinstance(offset, bool):
+        end = offset + len(body.encode("utf-8"))
+    representation = page.get("representation") or ("utf8" if utf8 else "base64")
+    c.print(
+        _text(
+            f"  {_plain(ident)}@v{_plain(version)}"
+            f"  bytes {_plain(offset)}..{_plain(end)}"
+            f" of {_plain(page.get('total_bytes') or '?')}"
+            f"  representation {_plain(representation)}"
+            f"  integrity {_plain(_memory_field(page, 'integrity') or '?')}"
+            f"  sha256:{_plain(_memory_field(page, 'payload_hash') or 'unknown')}"
+        )
+    )
+    if ui["state"] == "digest_mismatch":
+        return
+    for segment in body.split("\n"):
+        c.print(_text(segment))
+    if next_offset is not None:
+        follow = {
+            "schema_version": 2,
+            "artifact_id": ident,
+            "artifact_version": version,
+            "offset": next_offset,
+            "representation": representation,
+        }
+        c.print(_memory_hint("next page", "expand", follow))
+
+
+def _memory_history(result: Mapping[str, Any], c: Console) -> None:
+    """history: every version oldest first with that version's own labels."""
+    _memory_state_lines(result, c)
+    if result.get("status") in _MEMORY_FAILED:
+        return
+    versions = _memory_items(result, "versions") or _memory_items(result)
+    if not versions:
+        _memory_none(result, c)
+        return
+    for version in versions[:ROW_CAP]:
+        if not isinstance(version, Mapping):
+            c.print(_row_line(version))
+            continue
+        ident, number = _memory_identity(version)
+        reason_codes = version.get("reason_codes")
+        codes = (
+            ",".join(_plain(code) for code in reason_codes)
+            if isinstance(reason_codes, list | tuple)
+            else ""
+        )
+        freshness = version.get("freshness") or _memory_freshness(version)
+        integrity = version.get("integrity") or _memory_field(version, "integrity")
+        c.print(
+            _text(
+                f"  {_plain(ident)}@v{_plain(number)}"
+                f"  trust {_plain(_memory_field(version, 'trust_tier', 'trust'))}"
+                f"  freshness {_plain(freshness)}"
+                f"  integrity {_plain(integrity)}" + (f"  {codes}" if codes else "")
+            )
+        )
+        excerpt = _memory_excerpt(version)
+        if excerpt is not None:
+            c.print(_text(f"    {excerpt}"))
+    shown = min(len(versions), ROW_CAP)
+    if shown < len(versions):
+        _truncation(c, shown, len(versions), "versions", str(result.get("tool")))
+    else:
+        c.print(_text(f"{shown}/{len(versions)} versions", "dim"))
+
+
+_EXPLAIN_BUCKETS = (
+    ("why (supporting)", "supporting"),
+    ("contrary", "contrary"),
+    ("what tried (attempted)", "attempted"),
+    ("affected code refs", "affected"),
+)
+
+
+def _memory_explain(result: Mapping[str, Any], c: Console) -> None:
+    """explain: the cited why / contrary / what-tried / affected buckets and the
+    unknowns; an absent rationale is `unknown`, never invented text."""
+    _memory_state_lines(result, c)
+    if result.get("status") in _MEMORY_FAILED:
+        return
+    raw = _memory_raw(result)
+    stale: list[str] = []
+    supporting = raw.get("supporting")
+    if not (isinstance(supporting, list) and supporting):
+        c.print(_text("  why: unknown (no recorded rationale)"))
+    for heading, key in _EXPLAIN_BUCKETS:
+        c.print(_text(f"  {heading}:"))
+        bucket = raw.get(key)
+        entries = bucket if isinstance(bucket, list) else []
+        if not entries:
+            c.print(_text("    none recorded"))
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                c.print(_text(f"    {_plain(entry)}"))
+                continue
+            ident, version = _memory_identity(entry)
+            freshness = _memory_freshness(entry)
+            line = (
+                f"    {_plain(ident)}@v{_plain(version)}"
+                f"  source {_plain(_memory_field(entry, 'source'))}"
+                f"  freshness {freshness}"
+            )
+            symbol = _memory_field(entry, "symbol_ref")
+            if key == "affected" and symbol is not None:
+                line += f"  symbol {_plain(symbol)}"
+            c.print(_text(line))
+            cited = f"{_plain(ident)}@v{_plain(version)}"
+            if freshness in ("stale", "unknown") and cited not in stale:
+                stale.append(cited)
+    c.print(_text("  unknowns:"))
+    listed = raw.get("unknowns")
+    unknowns = listed if isinstance(listed, list) else []
+    if not unknowns:
+        c.print(_text("    none recorded"))
+    for unknown in unknowns:
+        c.print(_text(f"    {_plain(unknown)}"))
+    c.print(_text(f"  stale: {', '.join(stale) if stale else 'none'}"))
+
+
+def _memory_mutation(result: Mapping[str, Any], c: Console) -> None:
+    """A memory mutation: the producer's changed/readback lines, the state when
+    not ok, then each committed exact version and where to see its history."""
+    _mutation(result, c)
+    _memory_state_lines(result, c)
+    if result.get("status") in _MEMORY_FAILED:
+        return
+    raw = _memory_raw(result)
+    payload = _payload(result)
+    committed: list[tuple[Any, Any]] = []
+    for key in ("result_refs", "items"):
+        refs = raw.get(key)
+        if isinstance(refs, list) and refs:
+            committed = [_memory_identity(r) for r in refs if isinstance(r, Mapping)]
+            break
+    if (
+        not committed
+        and isinstance(payload, Mapping)
+        and payload.get("revision") is not None
+    ):
+        committed = [(_memory_field(payload, "artifact_id", "id"), payload["revision"])]
+    for ident, version in committed:
+        if ident is None:
+            continue
+        c.print(_text(f"committed: {_plain(ident)}@v{_plain(version)}"))
+        c.print(_text(f"next: rush memory history {_plain(ident)}"))
+
+
 Projector = Callable[[Mapping[str, Any], Console], None]
 
 _PROJECTORS: dict[str, Projector] = {
@@ -382,6 +758,11 @@ _PROJECTORS: dict[str, Projector] = {
     "collection": _collection,
     "inspection": _inspection,
     "mutation": _mutation,
+    "memory_collection": _memory_collection,
+    "memory_inspection": _memory_inspection,
+    "memory_history": _memory_history,
+    "memory_explain": _memory_explain,
+    "memory_mutation": _memory_mutation,
     "service": _inspection,
     "status": _inspection,
 }
@@ -442,28 +823,32 @@ _OPERATION_FAMILIES: dict[str, dict[str | None, str]] = {
     },
     "memory": {
         "overview": "collection",
-        "ask": "collection",
-        "list": "collection",
-        "recall": "collection",
-        "related": "collection",
-        "write": "mutation",
-        "promote": "mutation",
-        "maintain": "mutation",
-        "link": "mutation",
-        "consolidate": "mutation",
-        "handoff": "mutation",
-        "receive": "mutation",
-        "delete": "mutation",
-        "edit": "mutation",
-        "archive": "mutation",
-        "verify_attempt": "mutation",
-        "expand": "inspection",
-        "prepare": "inspection",
-        "resume": "inspection",
-        "intent": "inspection",
-        "recipe": "inspection",
-        "plan_checks": "inspection",
-        "last_success_diagnose": "inspection",
+        "ask": "memory_collection",
+        "list": "memory_collection",
+        "recall": "memory_collection",
+        "related": "memory_collection",
+        "write": "memory_mutation",
+        "promote": "memory_mutation",
+        "maintain": "memory_mutation",
+        "link": "memory_mutation",
+        "consolidate": "memory_mutation",
+        "handoff": "memory_mutation",
+        "receive": "memory_mutation",
+        "delete": "memory_mutation",
+        "edit": "memory_mutation",
+        "archive": "memory_mutation",
+        "verify_attempt": "memory_mutation",
+        "expand": "memory_inspection",
+        "prepare": "memory_inspection",
+        "resume": "memory_inspection",
+        "intent": "memory_inspection",
+        "recipe": "memory_inspection",
+        "plan_checks": "memory_inspection",
+        "last_success_diagnose": "memory_inspection",
+        "preference": "memory_inspection",
+        "capsule": "memory_inspection",
+        "history": "memory_history",
+        "explain": "memory_explain",
     },
     "continuity": {
         "list": "collection",

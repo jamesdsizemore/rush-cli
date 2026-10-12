@@ -3515,14 +3515,42 @@ def memory_recall_cmd(
     _render_session_result(dict(result), as_json)
 
 
+_MEMORY_OWNER_KINDS = ("user", "project", "session", "agent")
+
+
 @memory_group.command(name="list")
-@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
-@click.argument("query")
+@click.argument(
+    "subject",
+    required=False,
+    type=click.Choice(_MEMORY_SUBJECTS),
+    metavar="[{" + "|".join(_MEMORY_SUBJECTS) + "}]",
+)
+@click.argument("query", required=False)
 @click.option(
-    "--session",
-    "session_allowlist",
+    "--subject",
+    "subjects",
     multiple=True,
-    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+    type=click.Choice(_MEMORY_SUBJECTS),
+    help="Subject to browse; repeat for several. Default: all seven subjects.",
+)
+@click.option(
+    "--query", "query_option", default=None, help="Text to search for (default: none)."
+)
+@click.option(
+    "--owner",
+    default=None,
+    metavar="KIND:ID",
+    help="Owner to browse, KIND one of user, project, session, agent.",
+)
+@click.option(
+    "--source",
+    "--session",
+    "sources",
+    multiple=True,
+    help="Source to browse; repeat for several. Default: the sources your grant names.",
+)
+@click.option(
+    "--cursor", default=None, help="Continue from the page a previous list printed."
 )
 @click.option(
     "--include-archived",
@@ -3537,24 +3565,55 @@ def memory_recall_cmd(
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_list_cmd(
-    subject: MemorySubject,
-    query: str,
-    session_allowlist: tuple[str, ...],
+    subject: MemorySubject | None,
+    query: str | None,
+    subjects: tuple[MemorySubject, ...],
+    query_option: str | None,
+    owner: str | None,
+    sources: tuple[str, ...],
+    cursor: str | None,
     include_archived: bool,
     task_id: str | None,
     as_json: bool,
 ) -> None:
-    """List defended memory artifacts scoped to explicit sessions."""
+    """Browse memory records: every subject unless SUBJECT or --subject names some.
+
+    Prints each record's exact reference, then how to open the next page, inspect,
+    see history, follow related records, explain and correct the first record."""
     from .tools.memory import MemoryTool
 
+    if subject is not None and subjects:
+        raise click.UsageError(
+            "give the subject once: the SUBJECT argument or --subject"
+        )
+    if query is not None and query_option is not None:
+        raise click.UsageError("give the query once: the QUERY argument or --query")
+    owner_scope: dict[str, str] | None = None
+    if owner is not None:
+        kind, sep, owner_id = owner.partition(":")
+        if not sep or kind not in _MEMORY_OWNER_KINDS or not owner_id.strip():
+            raise click.BadParameter(
+                "expected KIND:ID with KIND one of user, project, session, agent",
+                param_hint="--owner",
+            )
+        owner_scope = {"kind": kind, "id": owner_id}
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "subjects": list(dict.fromkeys(subjects))
+        or ([subject] if subject else list(_MEMORY_SUBJECTS)),
+        "query": query_option if query_option is not None else (query or ""),
+    }
+    if owner_scope is not None:
+        request["owner_scope"] = owner_scope
+    if sources:
+        request["sources"] = list(dict.fromkeys(sources))
+    if cursor is not None:
+        request["cursor"] = cursor
+    if include_archived:
+        request["archive_mode"] = "historical"
+    extra: dict[str, Any] = {} if task_id is None else {"task_id": task_id}
     result = MemoryTool().run(
-        _memory_logical_root(),
-        operation="list",
-        subject=subject,
-        query=query,
-        session_allowlist=list(session_allowlist) or None,
-        include_archived=include_archived,
-        task_id=task_id,
+        _memory_logical_root(), operation="list", request=request, **extra
     )
     _render_session_result(dict(result), as_json)
 

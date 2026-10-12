@@ -430,7 +430,10 @@ def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):
         ],
     )
     assert listed.exit_code == 0
-    assert json.loads(listed.output)["raw"][0]["id"] == "allowed"
+    assert (
+        json.loads(listed.output)["raw"]["items"][0]["reference"]["artifact_id"]
+        == "allowed"
+    )
 
 
 def test_tui_and_cli_maintenance_reach_the_registered_projects_uuid_owned_row_not_path_owner(

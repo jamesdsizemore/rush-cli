@@ -14,6 +14,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,12 @@ _WRITE = ExecutionPermissions(cache_write=True)
 _DAY = 86400.0
 # 72-T04 (D9): a skill row's `closure_digest` is admitted only as a 64-hex digest.
 _DIGEST = hashlib.sha256(b"demo-closure").hexdigest()
+
+
+def _raw(result: Mapping[str, Any]) -> Any:
+    raw = result["raw"]
+    assert raw is not None
+    return raw
 
 
 def _db_path(root: Path) -> Path:
@@ -269,10 +276,39 @@ def test_memory_list_filters_trust_source_freshness_archived(tmp_path: Path) -> 
         archived_filter=False,
     )
 
-    returned_ids = {item["id"] for item in _nn(result["raw"])}
+    returned_ids = {item["id"] for item in _raw(result)}
     assert returned_ids == {fresh_reviewed.id}
     assert stale_derived.id not in returned_ids
     assert archived_reviewed.id not in returned_ids
+
+
+def test_memory_list_trust_filter_keeps_only_the_named_tier(tmp_path: Path) -> None:
+    """G6 guard for the trust filter: two live, fresh rows of one source differ only
+    in trust tier, so only the trust filter can separate them."""
+    reviewed = _seed_row(
+        tmp_path,
+        artifact_id="same-reviewed",
+        trust_tier="EXTERNAL_WRITE",
+        source="alice",
+    )
+    derived = _seed_row(
+        tmp_path, artifact_id="same-derived", trust_tier="DERIVED", source="alice"
+    )
+
+    def listed(**filters: Any) -> set[str]:
+        result = MemoryTool().run(
+            tmp_path,
+            operation="list",
+            subject="domain_knowledge",
+            session_allowlist=["s1"],
+            source_filter="alice",
+            **filters,
+        )
+        return {item["id"] for item in _raw(result)}
+
+    assert listed() == {reviewed.id, derived.id}
+    assert listed(trust_filter="EXTERNAL_WRITE") == {reviewed.id}
+    assert listed(trust_filter="DERIVED") == {derived.id}
 
 
 @pytest.mark.parametrize("operation", ["write", "promote", "maintain"])
@@ -300,10 +336,8 @@ def test_promote_write_maintain_preview_writes_nothing(
             **_owner_kwarg(tmp_path),
             **_sources_kwarg(tmp_path),
         )
-        data = result["raw"]
-        assert "candidate_ids" in _nn(data), (
-            "maintain preview must return candidate_ids"
-        )
+        data = _raw(result)
+        assert "candidate_ids" in data, "maintain preview must return candidate_ids"
     else:
         result = tool.run(
             tmp_path,
@@ -315,7 +349,7 @@ def test_promote_write_maintain_preview_writes_nothing(
             permissions=_WRITE,
             **_owner_kwarg(tmp_path),
         )
-        data = result["raw"]
+        data = _raw(result)
         assert {
             "target_ids",
             "expected_revisions",
@@ -397,7 +431,7 @@ def _invoke_reviewed(
             tmp_path, operation=operation, request=request, permissions=permissions
         )
         after = _db_bytes(tmp_path)
-        data = _nn(result["raw"])["data"]
+        data = _raw(result)["data"]
     elif operation in ("write", "promote"):
         before = _db_bytes(tmp_path)
         request = {"apply": apply, "required_grants": required_grants}
@@ -412,7 +446,7 @@ def _invoke_reviewed(
             **_owner_kwarg(tmp_path),
         )
         after = _db_bytes(tmp_path)
-        data = result["raw"]
+        data = _raw(result)
     else:  # maintain
         _seed_eligible_rows(tmp_path, "expiry_sweep", ["m1"])
         before = _db_bytes(tmp_path)
@@ -427,7 +461,7 @@ def _invoke_reviewed(
             **_sources_kwarg(tmp_path),
         )
         after = _db_bytes(tmp_path)
-        data = result["raw"]
+        data = _raw(result)
     return result, data, before, after
 
 

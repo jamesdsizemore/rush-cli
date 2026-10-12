@@ -21,6 +21,7 @@ import base64
 import codecs
 import copy
 import functools
+import hashlib
 import io
 import json
 import os
@@ -723,7 +724,7 @@ class ProjectState:
     # when `map_snapshot_key` (run_id, status, memory.db mtime, handoffs
     # mtime) changes.
     map_snapshot: dict[str, Any] | None = field(default=None, repr=False, compare=False)
-    map_snapshot_key: tuple[str | None, str, int | None, int | None] | None = field(
+    map_snapshot_key: tuple[Any, ...] | None = field(
         default=None, repr=False, compare=False
     )
     # T28-C Map presentation: file paths read from `map_snapshot`'s
@@ -971,6 +972,24 @@ class TuiState:
     # project; Escape/"n", a newer request or a project switch make it stale.
     memory_request: dict[str, Any] | None = None
     memory_generation: int = 0
+    # 72-T07: schema-2 browse (cursor pages, the classified view state and the
+    # authority the page was read under), the focus cycle, history/explanation
+    # panels, the correction form and the capsule import review.
+    memory_focus: str = "list"
+    memory_cursor: str | None = None
+    memory_cursor_next: str | None = None
+    memory_cursor_stack: list[str | None] = field(default_factory=list)
+    memory_complete: bool = True
+    memory_view_state: dict[str, Any] | None = None
+    memory_history: dict[str, Any] | None = None
+    memory_explained: dict[str, Any] | None = None
+    memory_correction_buffer: dict[str, str] | None = None
+    memory_correction_field: str = "kind"
+    memory_import_buffer: str | None = None
+    memory_import_preview: dict[str, Any] | None = None
+    memory_import_selected: set[str] = field(default_factory=set)
+    memory_representation: str = "base64"
+    memory_authority: tuple[Any, ...] | None = None
     # P66-06: Git history and every generated artifact (mode == "git").
     # `git_data` is the real `project_snapshot()` result loaded by
     # `_load_git_view` below -- reset on every project switch so a stale
@@ -3191,53 +3210,89 @@ def _memory_refresh(
     *,
     announce: bool = True,
 ) -> None:
-    """(Re-)runs the last-committed search text against `state.memory_subject`,
-    scoped to every source this project's memory store has ever recorded.
-    `announce=False` (used to refresh the list after a delete/edit already
-    set its own outcome message) still updates `memory_items`/selection but
-    never overwrites that outcome message with a generic result count.
-    Every held preview, selection and edit conflict is dropped first: each was
-    built for the row set this refresh replaces."""
+    """(Re-)runs the last-committed search text against `state.memory_subject` as
+    one schema-2 `list` page (`state.memory_cursor`, None = page one). In `legacy`
+    mode the request names every source this project's store has recorded (a
+    source filter narrows it); in `policy` mode the grant supplies them.
+    `announce=False` (used to refresh the list after a delete/edit already set its
+    own outcome message) still updates `memory_items`/selection but never
+    overwrites that outcome message with a generic result count. Every held
+    preview, selection and edit conflict is dropped first: each was built for the
+    row set this refresh replaces."""
+    from rush.memory.retrieval import memory_policy_mode
+    from rush.tools.memory import memory_ui_state
+
     _memory_clear_held(state)
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
         return
+    legacy = memory_policy_mode(project.root, data_root=state.data_root) == "legacy"
     sources, store_state = _memory_sources_and_state(project)
-    if store_state is not None:
-        from rush.memory.store import readonly_view_reason
-
+    if store_state is not None or (legacy and not sources):
+        if store_state is None:
+            exists = (Path(project.root) / ".rush" / "memory.db").exists()
+            ui = (
+                memory_ui_state(
+                    {
+                        "status": "ok",
+                        "raw": {"code": "OK", "items": [], "complete": True},
+                    }
+                )
+                if exists
+                else memory_ui_state(None, store_state="absent")
+            )
+        else:
+            ui = memory_ui_state(None, store_state=store_state)
         state.memory_items = []
+        state.memory_view_state = ui
+        state.memory_cursor_next = None
         if announce:
-            state.memory_message = f"{store_state}: {readonly_view_reason(store_state)}"
-        return
-    if not sources:
-        state.memory_items = []
-        if announce:
-            state.memory_message = "no memory recorded for this project yet"
+            state.memory_message = f"{ui['state']}: {ui['reason']} -- {ui['action']}"
         return
     try:
         result = actions.memory_run(
             project.root,
             operation="list",
-            subject=state.memory_subject,
-            session_allowlist=sources,
-            **_memory_list_kwargs(state),
+            request=_memory_list_request(
+                state, state.memory_cursor, sources if legacy else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 -- injectable Phase61/63 memory
         # seam; a failure must render as a retryable message, never crash the
         # interactive loop or silently empty the list.
         state.memory_message = f"memory search failed: {exc}"
         return
-    if result.get("status") != "ok":
-        state.memory_items = []
-        state.memory_message = str(
-            result.get("summary") or "memory search returned nothing"
-        )
-        return
-    state.memory_items = list(result.get("raw") or [])
+    ui = memory_ui_state(result)
+    state.memory_view_state = ui
+    raw = result.get("raw") if isinstance(result, Mapping) else None
+    raw = raw if isinstance(raw, dict) else {}
+    listed = raw.get("items")
+    readable = ui["state"] in ("ok", "partial", "empty") and isinstance(listed, list)
+    state.memory_items = _memory_rows(
+        project, listed if readable and isinstance(listed, list) else []
+    )
     state.memory_selected_index = 0
+    cursor_next = raw.get("next_cursor") if readable else None
+    state.memory_cursor_next = cursor_next if isinstance(cursor_next, str) else None
+    state.memory_complete = raw.get("complete") is not False
     if announce:
-        state.memory_message = f"{len(state.memory_items)} result(s)"
+        state.memory_message = (
+            f"{len(state.memory_items)} result(s)"
+            if readable
+            else f"{ui['state']}: {ui['reason']} -- {ui['action']}"
+        )
+    authority = _memory_authority_key(project, state.data_root, "list")
+    if ui["state"] in ("revoked", "expired", "denied", "restart") or (
+        state.memory_authority is not None and authority != state.memory_authority
+    ):
+        # The access these pages were read under ended or changed: nothing read
+        # under it stays on screen or in a cache.
+        state.memory_expanded = None
+        state.memory_history = None
+        state.memory_explained = None
+        project.map_snapshot = None
+        project.map_snapshot_key = None
+    state.memory_authority = authority
 
 
 def _memory_clear_held(state: TuiState) -> None:
@@ -3250,6 +3305,10 @@ def _memory_clear_held(state: TuiState) -> None:
     state.memory_edit_conflict = None
     state.memory_selected_ids = set()
     state.memory_expanded = None
+    state.memory_history = None
+    state.memory_explained = None
+    state.memory_import_preview = None
+    state.memory_correction_buffer = None
 
 
 def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bool:
@@ -3275,7 +3334,7 @@ def _memory_held_for_other_project(state: TuiState, project: ProjectState) -> bo
 # worker thread against a private copy of the memory state and posts it to
 # `state.result_queue`. `_drain_results` then applies only the fields that body
 # changed, so every preview/confirm/refusal rule is the body's own, unchanged.
-_MEMORY_READS = frozenset({"list", "expand"})
+_MEMORY_READS = frozenset({"list", "expand", "history", "explain", "import preview"})
 _MEMORY_STATE_FIELDS = (
     "mode",
     *(
@@ -3391,24 +3450,127 @@ def _memory_filter_values(state: TuiState) -> dict[str, str]:
     }
 
 
-def _memory_list_kwargs(state: TuiState) -> dict[str, Any]:
-    """The `list` call's query and filters. No query is sent when none is typed,
-    so entering Memory browses every row instead of requiring a search."""
-    kwargs: dict[str, Any] = {}
-    query = state.memory_query_buffer.strip()
-    if query:
-        kwargs["query"] = query
-    for key, value in (
-        ("trust_filter", state.memory_filter_trust),
-        ("source_filter", state.memory_filter_source),
-        ("freshness_filter", state.memory_filter_freshness),
-        ("owner_filter", state.memory_filter_owner),
-    ):
-        if value is not None:
-            kwargs[key] = value
+def _memory_list_request(
+    state: TuiState, cursor: str | None, legacy_sources: list[str] | None
+) -> dict[str, Any]:
+    """The schema-2 `list` request for the active subject, query and filters. An
+    empty query browses every row. `legacy_sources` (legacy mode only) is every
+    source the store has recorded, used when no source filter narrows it."""
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "subjects": [state.memory_subject],
+        "query": state.memory_query_buffer.strip(),
+        "limit": _MEMORY_PAGE_ROWS,
+    }
+    if cursor is not None:
+        request["cursor"] = cursor
+    owner = state.memory_filter_owner
+    if owner is not None:
+        kind, sep, owner_id = owner.partition(":")
+        # No separator sends the raw text, which the strict model rejects (E_INPUT).
+        request["owner_scope"] = {"kind": kind, "id": owner_id} if sep else owner
+    if state.memory_filter_source is not None:
+        request["sources"] = [state.memory_filter_source]
+    elif legacy_sources is not None:
+        request["sources"] = list(legacy_sources)
+    if state.memory_filter_trust is not None:
+        request["trust_tiers"] = [state.memory_filter_trust]
+    if state.memory_filter_freshness is not None:
+        request["freshness"] = [state.memory_filter_freshness]
     if state.memory_filter_archived:
-        kwargs["archived_filter"] = True
-    return kwargs
+        request["archive_mode"] = "historical"
+    return request
+
+
+def _memory_row(item: dict[str, Any]) -> dict[str, Any]:
+    """A schema-2 item keeps its `reference` and gains the flat keys every TUI
+    action reads (`id`, `artifact_version`, `source`, `owner_scope`, ...)."""
+    ref = item.get("reference")
+    if not isinstance(ref, dict):
+        return item
+    row = dict(item)
+    row["id"] = ref.get("artifact_id", item.get("id"))
+    row["artifact_version"] = ref.get("artifact_version", item.get("version"))
+    for key in ("source", "owner_scope", "subject", "trust_tier", "symbol_ref"):
+        if key in ref:
+            row[key] = ref[key]
+    row.setdefault("stale", ref.get("freshness") == "stale")
+    return row
+
+
+def _memory_rows(project: ProjectState, items: list[Any]) -> list[dict[str, Any]]:
+    """`items` as TUI rows. A schema-2 page carries an excerpt, not the record;
+    each row whose exact version is current in this project's store gets its
+    stored `content` (read-only view), which edit/promote previews build on."""
+    rows = [_memory_row(item) for item in items if isinstance(item, dict)]
+    missing = [row for row in rows if "content" not in row]
+    if not missing:
+        return rows
+    from rush.memory.store import TypedArtifactStore
+
+    view, _store_state = TypedArtifactStore.open_readonly_view(project.root)
+    if view is None:
+        return rows
+    try:
+        for row in missing:
+            current = view.get_current(str(row.get("id")))
+            if current is not None and current.artifact_version == row.get(
+                "artifact_version"
+            ):
+                row["content"] = current.content
+    finally:
+        view.close()
+    return rows
+
+
+def _memory_access_key(access: Any, root: Path) -> tuple[Any, ...]:
+    """The authority key (`memory_view_authority` as a tuple) of a resolved route:
+    every grant field, the sorted sources and the store generation read from the
+    access's own storage root. A `RouteDenial` has every field `None`."""
+    from rush.memory.retrieval import RouteDenial
+    from rush.memory.store import TypedArtifactStore
+    from rush.tools.memory import memory_view_authority
+
+    if isinstance(access, RouteDenial):
+        stamp = memory_view_authority(None, None)
+    else:
+        storage_root = getattr(access, "storage_root", None) or root
+        view, _store_state = TypedArtifactStore.open_readonly_view(storage_root)
+        generation = None
+        if view is not None:
+            try:
+                generation = view.current_generation()
+            finally:
+                view.close()
+        stamp = memory_view_authority(access, generation)
+    owner = stamp["owner_scope"]
+    return (
+        stamp["policy_revision"],
+        stamp["grant_id"],
+        stamp["project_id"],
+        stamp["worktree_id"],
+        None if owner is None else (owner["kind"], owner["id"]),
+        tuple(stamp["sources"] or ()),
+        stamp["store_generation"],
+    )
+
+
+def _memory_authority_key(
+    project: ProjectState, data_root: Path | None, operation: str
+) -> tuple[Any, ...]:
+    """The authority key `operation` resolves to for `project` right now."""
+    from rush.memory.retrieval import route_access
+
+    root = Path(project.root)
+    return _memory_access_key(route_access(root, operation, data_root=data_root), root)
+
+
+def _memory_state_text(result: Any) -> str:
+    """`state: reason -- action` for a refused schema-2 result."""
+    from rush.tools.memory import memory_ui_state
+
+    ui = memory_ui_state(result)
+    return f"{ui['state']}: {ui['reason']} -- {ui['action']}"
 
 
 def _memory_targets(state: TuiState) -> list[dict[str, Any]]:
@@ -3546,11 +3708,15 @@ def _memory_expand_selected(
             else "expand refused: selected record changed"
         )
         return
+    authority = _memory_authority_key(project, state.data_root, "expand")
+    representation = state.memory_representation
     previous = state.memory_expanded or {}
     same = (
         previous.get("id") == item["id"]
         and previous.get("version") == item["artifact_version"]
         and previous.get("project_key") == project_key(project)
+        and previous.get("representation") == representation
+        and previous.get("authority") == authority
     )
     if same and previous.get("page_index", 0) + 1 < len(previous.get("pages", [])):
         state.memory_expanded = {
@@ -3566,28 +3732,36 @@ def _memory_expand_selected(
     offset = previous.get("next_offset") if same else 0
     if same and offset is None:
         offset = 0
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "artifact_id": item["id"],
+        "artifact_version": item["artifact_version"],
+        "offset": offset,
+        "max_bytes": 256,
+        "max_tokens": 256,
+        "sources": sources,
+    }
+    if representation == "utf8":
+        request["representation"] = "utf8"
     try:
-        result = actions.memory_run(
-            project.root,
-            operation="expand",
-            request={
-                "id": item["id"],
-                "version": item["artifact_version"],
-                "offset": offset,
-                "max_bytes": 256,
-                "max_tokens": 256,
-            },
-            session_allowlist=sources,
-        )
+        result = actions.memory_run(project.root, operation="expand", request=request)
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"expand failed: {exc}"
         return
     raw = result.get("raw") or {}
-    data = raw.get("data") if isinstance(raw, dict) else None
+    items = raw.get("items") if isinstance(raw, dict) else None
+    data = (
+        items[0]
+        if isinstance(items, list) and items and isinstance(items[0], dict)
+        else raw.get("data")
+        if isinstance(raw, dict)
+        else None
+    )
     if raw.get("code") != "OK" or not isinstance(data, dict):
         state.memory_expanded = None
         state.memory_message = (
             f"expand refused: {raw.get('code', result.get('summary'))}"
+            + (f" -- {_memory_state_text(result)}" if raw.get("code") else "")
         )
         return
     # Keep exact bytes across pages: UTF-8 can split between two base64 slices.
@@ -3596,11 +3770,24 @@ def _memory_expand_selected(
         if same and offset
         else b""
     )
-    page_bytes = base64.b64decode(data["content_base64"], validate=True)
+    page_bytes = (
+        base64.b64decode(data["content_base64"], validate=True)
+        if isinstance(data.get("content_base64"), str)
+        else str(data.get("content_utf8") or "").encode("utf-8")
+    )
     content_bytes = prior + page_bytes
     decoder = codecs.getincrementaldecoder("utf-8")()
     content = decoder.decode(content_bytes, final=bool(data["complete"]))
     earlier = codecs.getincrementaldecoder("utf-8")().decode(prior, final=False)
+    if representation == "utf8" and data["complete"]:
+        from rush.tools.memory import memory_ui_state
+
+        observed = hashlib.sha256(content_bytes).hexdigest()
+        checked = memory_ui_state(result, observed_payload_sha256=observed)
+        if checked["state"] == "digest_mismatch":
+            state.memory_expanded = None
+            state.memory_message = f"digest_mismatch: {checked['action']}"
+            return
     pages = list(previous.get("pages", [])) if same and offset else []
     pages.append(
         {
@@ -3614,18 +3801,34 @@ def _memory_expand_selected(
     related = actions.memory_run(
         project.root,
         operation="related",
-        request={"id": item["id"], "version": item["artifact_version"]},
-        session_allowlist=sources,
+        request={
+            "schema_version": 2,
+            "artifact_id": item["id"],
+            "artifact_version": item["artifact_version"],
+            "sources": sources,
+        },
     )
     related_raw = related.get("raw") or {}
     if related_raw.get("code") != "OK":
         state.memory_expanded = None
         state.memory_message = f"related refused: {related_raw.get('code')}"
         return
-    relations = [
-        {**row, "artifact_version": row["version"]}
-        for row in related_raw["data"]["items"]
-    ]
+    related_items = related_raw.get("items")
+    related_data = related_raw.get("data") or {}
+    if not isinstance(related_items, list):
+        related_items = related_data.get("items") or []
+    relations = []
+    for row in related_items:
+        ref = row.get("reference") if isinstance(row.get("reference"), dict) else {}
+        relations.append(
+            {
+                **row,
+                "id": ref.get("artifact_id", row.get("id")),
+                "artifact_version": ref.get("artifact_version", row.get("version")),
+                "kind": row.get("kind", ""),
+            }
+        )
+    related_complete = related_raw.get("complete", related_data.get("complete", True))
     mutation_receipts = TypedArtifactStore.read_artifact_receipts_readonly(
         project.root, item["id"], item["artifact_version"]
     )
@@ -3638,16 +3841,24 @@ def _memory_expand_selected(
         item["artifact_version"],
         access=memory_list_access(project.root),
     )
+    reference_value = data.get("reference")
+    reference = reference_value if isinstance(reference_value, dict) else {}
     state.memory_expanded = {
         **data,
+        "id": item["id"],
+        "version": item["artifact_version"],
+        "payload_hash": data.get("payload_hash", reference.get("payload_hash")),
+        "integrity": data.get("integrity", reference.get("integrity")),
         "project_key": project_key(project),
+        "representation": representation,
+        "authority": authority,
         "content_bytes_base64": base64.b64encode(content_bytes).decode("ascii"),
         "content": content,
         "pages": pages,
         "page_index": len(pages) - 1,
         "scroll": 0,
         "relationships": relations,
-        "relationships_complete": related_raw["data"]["complete"],
+        "relationships_complete": related_complete,
         "receipts": mutation_receipts + expansion_receipts,
         "receipts_bounded": len(mutation_receipts) == 8 or len(expansion_receipts) == 8,
     }
@@ -4213,6 +4424,7 @@ def _memory_edit_outcome(
     if code == "OK":
         state.memory_message = "edit applied"
         state.memory_edit_buffer = None
+        state.memory_correction_buffer = None
         state.memory_edit_conflict = None
         _memory_refresh(state, project, actions, announce=False)
         return
@@ -4406,15 +4618,24 @@ def _memory_edit_refresh_and_rereview(
         result = actions.memory_run(
             project.root,
             operation="list",
-            subject=state.memory_subject,
-            session_allowlist=sources,
-            source_filter=source,
-            owner_filter=f"{owner['kind']}:{owner['id']}",
+            request={
+                "schema_version": 2,
+                "subjects": [state.memory_subject],
+                "query": "",
+                "sources": [source],
+                "owner_scope": {"kind": owner["kind"], "id": owner["id"]},
+            },
         )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"refresh failed: {exc}"
         return
-    rows = result.get("raw") if result.get("status") == "ok" else None
+    raw = result.get("raw") or {}
+    listed = raw.get("items") if isinstance(raw, dict) else None
+    rows = (
+        _memory_rows(project, listed)
+        if raw.get("code") == "OK" and isinstance(listed, list)
+        else None
+    )
     fresh = next(
         (
             row
@@ -4492,6 +4713,19 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
                 state.memory_items
             )
         return
+    if key in ("tab", "shift_tab"):
+        position = (
+            _MEMORY_FOCUS.index(state.memory_focus)
+            if state.memory_focus in _MEMORY_FOCUS
+            else _MEMORY_FOCUS.index("list")
+        )
+        step = 1 if key == "tab" else -1
+        state.memory_focus = _MEMORY_FOCUS[(position + step) % len(_MEMORY_FOCUS)]
+        state.memory_message = f"focus: {state.memory_focus}"
+        return
+    if key == "enter":
+        _handle_memory_key(state, _MEMORY_FOCUS_KEYS[state.memory_focus], actions)
+        return
     if key in ("]", "["):
         expanded = state.memory_expanded
         if expanded is not None and expanded.get("project_key") == project_key(project):
@@ -4514,6 +4748,22 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
                     state, project, actions, "expand", _memory_expand_selected
                 )
             return
+        local_page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+        last_page = max(0, len(state.memory_items) - 1) // _MEMORY_PAGE_ROWS
+        if (
+            key == "]"
+            and state.memory_cursor_next is not None
+            and local_page == last_page
+        ):
+            # The backend's next page, by the cursor the current page returned.
+            state.memory_cursor_stack.append(state.memory_cursor)
+            state.memory_cursor = state.memory_cursor_next
+            _memory_submit(state, project, actions, "list", _memory_refresh)
+            return
+        if key == "[" and local_page == 0 and state.memory_cursor_stack:
+            state.memory_cursor = state.memory_cursor_stack.pop()
+            _memory_submit(state, project, actions, "list", _memory_refresh)
+            return
         if state.memory_items:
             page = state.memory_selected_index // _MEMORY_PAGE_ROWS
             page += 1 if key == "]" else -1
@@ -4531,7 +4781,50 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
         current = state.memory_subject
         index = subjects.index(current) if current in subjects else -1
         state.memory_subject = subjects[(index + 1) % len(subjects)]
+        _memory_reset_cursor(state)
         _memory_submit(state, project, actions, "list", _memory_refresh)
+        return
+    if key == "v":
+        if _memory_selected_item(state) is None:
+            state.memory_message = "no row selected"
+            return
+        _memory_submit(state, project, actions, "history", _memory_history_selected)
+        return
+    if key == "E":
+        if (
+            _memory_selected_item(state) is None
+            and not state.memory_query_buffer.strip()
+        ):
+            state.memory_message = "select a row or search first"
+            return
+        _memory_submit(state, project, actions, "explain", _memory_explain_selected)
+        return
+    if key == "c":
+        if _memory_selected_item(state) is not None:
+            state.mode = "memory_correct"
+            state.memory_correction_buffer = {
+                "kind": "correct",
+                "reason": "",
+                "content": "",
+            }
+            state.memory_correction_field = "kind"
+            state.memory_focus = "edit"
+            state.memory_message = (
+                "correct: [tab] field  [space] kind  [enter] preview  [esc] cancel"
+            )
+        return
+    if key == "I":
+        state.mode = "memory_import"
+        state.memory_import_buffer = ""
+        state.memory_import_preview = None
+        state.memory_import_selected = set()
+        state.memory_message = "import: capsule path, [enter] preview  [esc] cancel"
+        return
+    if key == "b":
+        state.memory_representation = (
+            "utf8" if state.memory_representation == "base64" else "base64"
+        )
+        state.memory_message = f"representation: {state.memory_representation}"
         return
     if key == "/":
         state.mode = "memory_search"
@@ -4613,6 +4906,7 @@ def _handle_memory_key(state: TuiState, key: str, actions: ScanActions) -> None:
 def _handle_memory_search_key(state: TuiState, key: str, actions: ScanActions) -> None:
     if key == "enter":
         state.mode = "memory"
+        _memory_reset_cursor(state)
         _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
         return
     if key == "escape":
@@ -4656,6 +4950,7 @@ def _handle_memory_filter_key(state: TuiState, key: str, actions: ScanActions) -
         state.memory_filter_owner = buf["owner"].strip() or None
         state.memory_filter_buffer = None
         state.mode = "memory"
+        _memory_reset_cursor(state)
         _memory_submit(state, state.active_project, actions, "list", _memory_refresh)
         return
     current = buf.get(state.memory_filter_field, "")
@@ -4736,6 +5031,301 @@ def _handle_memory_edit_key(state: TuiState, key: str, actions: ScanActions) -> 
         return
     if len(key) == 1 and key.isprintable():
         state.memory_edit_buffer = (state.memory_edit_buffer or "") + key
+
+
+_MEMORY_FOCUS = ("search", "filter", "list", "inspect", "edit")
+_MEMORY_FOCUS_KEYS = {
+    "search": "/",
+    "filter": "f",
+    "list": "x",
+    "inspect": "x",
+    "edit": "e",
+}
+_MEMORY_CORRECTION_FIELDS = ("kind", "reason", "content")
+_MEMORY_CORRECTION_KINDS = ("correct", "reject", "supersede")
+
+
+def _memory_reset_cursor(state: TuiState) -> None:
+    """A new subject, query or filter starts again at the backend's first page."""
+    state.memory_cursor = None
+    state.memory_cursor_next = None
+    state.memory_cursor_stack = []
+
+
+def _memory_history_selected(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """`v`: every recorded version of the selected record (schema-2 `history`)."""
+    item = _memory_selected_item(state)
+    if item is None or actions.memory_run is None:
+        state.memory_message = "no row selected"
+        return
+    request: dict[str, Any] = {"schema_version": 2, "artifact_id": item["id"]}
+    if state.memory_filter_archived:
+        request["archive_mode"] = "historical"
+    result = actions.memory_run(project.root, operation="history", request=request)
+    state.memory_history = {
+        "id": item["id"],
+        "project_key": project_key(project),
+        "authority": _memory_authority_key(project, state.data_root, "history"),
+        "result": result,
+    }
+    raw = result.get("raw") or {}
+    versions = raw.get("versions") if isinstance(raw, dict) else None
+    state.memory_message = (
+        f"history: {len(versions)} version(s) of {item['id']}"
+        if raw.get("code") == "OK" and isinstance(versions, list)
+        else f"history refused: {_memory_state_text(result)}"
+    )
+
+
+def _memory_explain_selected(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """`E`: why the selected record exists (or, with no row, the typed query)."""
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    item = _memory_selected_item(state)
+    query = state.memory_query_buffer.strip()
+    if item is None and not query:
+        state.memory_message = "select a row or search first"
+        return
+    request: dict[str, Any] = {"schema_version": 2}
+    if item is not None:
+        request["artifact_id"] = item["id"]
+    else:
+        request["query"] = query
+    result = actions.memory_run(project.root, operation="explain", request=request)
+    state.memory_explained = {
+        "id": item["id"] if item is not None else None,
+        "query": None if item is not None else query,
+        "project_key": project_key(project),
+        "authority": _memory_authority_key(project, state.data_root, "explain"),
+        "result": result,
+    }
+    raw = result.get("raw") or {}
+    state.memory_message = (
+        f"explained {item['id'] if item is not None else repr(query)}"
+        if raw.get("code") == "OK"
+        else f"explain refused: {_memory_state_text(result)}"
+    )
+
+
+def _memory_correction_preview(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """The correction form's Enter: a schema-2 `edit` preview (`apply: false`)
+    carrying the correction, held for `y`, which repeats it with `apply: true` and
+    the same invocation/effect pair. A refused preview keeps the typed form."""
+    item = _memory_selected_item(state)
+    buf = state.memory_correction_buffer
+    if item is None or buf is None or actions.memory_run is None:
+        state.memory_message = "no row selected"
+        return
+    kind = buf.get("kind", "correct")
+    supersedes = [
+        {"artifact_id": item["id"], "artifact_version": item["artifact_version"]}
+    ]
+    if kind == "supersede":
+        supersedes += [
+            {"artifact_id": row["id"], "artifact_version": row["artifact_version"]}
+            for row in state.memory_items
+            if row.get("id") in state.memory_selected_ids
+            and row.get("id") != item["id"]
+        ]
+    owner = item.get("owner_scope") or _memory_owner_scope(state, project)
+    grants = ["cache_write"]
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "subject": state.memory_subject,
+        "artifact_id": item["id"],
+        "expected_version": item["artifact_version"],
+        "owner_scope": owner,
+        "correction": {
+            "kind": kind,
+            "reason": buf.get("reason", ""),
+            "supersedes": supersedes,
+        },
+        "invocation_id": str(uuid.uuid4()),
+        "effect_id": str(uuid.uuid4()),
+    }
+    typed = buf.get("content", "")
+    if kind != "reject" and typed:
+        request["content"] = {
+            **(item.get("content") or {}),
+            state.memory_edit_field: typed,
+        }
+    try:
+        preview = actions.memory_run(
+            project.root, operation="edit", request={**request, "apply": False}
+        )
+    except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
+        state.memory_message = f"correction failed: {exc}"
+        return
+    code = (preview.get("raw") or {}).get("code")
+    if code != "OK":
+        state.memory_message = f"correction refused: {_memory_state_text(preview)}"
+        return
+    state.memory_pending_mutation = {
+        "operation": "edit",
+        "verb": kind,
+        "items": [item],
+        "calls": [{"operation": "edit", "request": {**request, "apply": True}}],
+        "drafts": [],
+        "consequences": [],
+        "required_grants": grants,
+        "ids": [item["id"]],
+        "versions": {item["id"]: item["artifact_version"]},
+        "owner_scope": owner,
+        "project_key": project_key(project),
+    }
+    state.mode = "memory"
+    state.memory_focus = "list"
+    state.memory_message = _memory_pending_mutation_text(state.memory_pending_mutation)
+
+
+def _handle_memory_correct_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """The `c` correction form: `tab` moves kind -> reason -> content, space on
+    kind cycles correct/reject/supersede, typed text edits reason/content, Enter
+    previews, Escape discards it with zero writes."""
+    buf = state.memory_correction_buffer or {
+        "kind": "correct",
+        "reason": "",
+        "content": "",
+    }
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_correction_buffer = None
+        state.memory_message = "correction cancelled -- 0 records written"
+        return
+    if key == "tab":
+        index = (
+            _MEMORY_CORRECTION_FIELDS.index(state.memory_correction_field)
+            if state.memory_correction_field in _MEMORY_CORRECTION_FIELDS
+            else -1
+        )
+        state.memory_correction_field = _MEMORY_CORRECTION_FIELDS[
+            (index + 1) % len(_MEMORY_CORRECTION_FIELDS)
+        ]
+        return
+    if key == "enter":
+        state.memory_correction_buffer = buf
+        _memory_submit(
+            state,
+            state.active_project,
+            actions,
+            "correction preview",
+            _memory_correction_preview,
+        )
+        return
+    field_name = state.memory_correction_field
+    if field_name == "kind":
+        if key == " ":
+            kinds = _MEMORY_CORRECTION_KINDS
+            current = buf.get("kind", "correct")
+            index = kinds.index(current) if current in kinds else -1
+            buf["kind"] = kinds[(index + 1) % len(kinds)]
+    elif key == "backspace":
+        buf[field_name] = buf.get(field_name, "")[:-1]
+    elif len(key) == 1 and key.isprintable():
+        buf[field_name] = buf.get(field_name, "") + key
+    state.memory_correction_buffer = buf
+
+
+def _memory_import_preview_body(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """`I` + Enter: the CODEC `preview_import` of the typed capsule path."""
+    if actions.memory_run is None:
+        state.memory_message = "memory operations unavailable"
+        return
+    path = (state.memory_import_buffer or "").strip()
+    result = actions.memory_run(
+        project.root,
+        operation="capsule",
+        request={"action": "preview_import", "input": path},
+    )
+    raw = result.get("raw") or {}
+    if raw.get("code") != "OK":
+        state.memory_import_preview = None
+        state.memory_message = f"import preview refused: {_memory_state_text(result)}"
+        return
+    state.memory_import_preview = raw
+    records = (raw.get("data") or {}).get("records") or []
+    state.memory_message = (
+        f"import preview: {len(records)} record(s) -- [y] import  [esc] cancel"
+    )
+
+
+def _memory_import_apply(
+    state: TuiState, project: ProjectState, actions: ScanActions
+) -> None:
+    """`y` on a reviewed import: `import` echoing that preview's digest, invocation
+    id and store revision. Constraints are confirmed only by the CLI's
+    `--confirm-constraint-id`; this review keeps them pending."""
+    preview = state.memory_import_preview
+    if preview is None or actions.memory_run is None:
+        return
+    data = preview.get("data") or {}
+    result = actions.memory_run(
+        project.root,
+        operation="capsule",
+        request={
+            "action": "import",
+            "input": (state.memory_import_buffer or "").strip(),
+            "apply": True,
+            "expected_digest": data.get("digest"),
+            "invocation_id": data.get("invocation_id"),
+            "expected_store_revision": data.get("store_revision"),
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    raw = result.get("raw") or {}
+    if raw.get("code") != "OK":
+        state.memory_message = f"import refused: {_memory_state_text(result)}"
+        return
+    records = len(data.get("records") or [])
+    state.memory_import_buffer = None
+    state.memory_import_preview = None
+    state.memory_import_selected = set()
+    state.mode = "memory"
+    state.memory_focus = "list"
+    _memory_refresh(state, project, actions, announce=False)
+    state.memory_message = f"imported {records} record(s)"
+
+
+def _handle_memory_import_key(state: TuiState, key: str, actions: ScanActions) -> None:
+    """The `I` capsule import review: type the path, Enter previews, `y` imports
+    the reviewed preview, Escape discards it with zero writes."""
+    if key == "escape":
+        state.mode = "memory"
+        state.memory_import_buffer = None
+        state.memory_import_preview = None
+        state.memory_import_selected = set()
+        state.memory_message = "import cancelled -- 0 records written"
+        return
+    if key == "enter":
+        _memory_submit(
+            state,
+            state.active_project,
+            actions,
+            "import preview",
+            _memory_import_preview_body,
+        )
+        return
+    if key == "y" and state.memory_import_preview is not None:
+        _memory_submit(
+            state, state.active_project, actions, "apply", _memory_import_apply
+        )
+        return
+    if key == "backspace":
+        state.memory_import_buffer = (state.memory_import_buffer or "")[:-1]
+    elif len(key) == 1 and key.isprintable():
+        state.memory_import_buffer = (state.memory_import_buffer or "") + key
+    else:
+        return
+    state.memory_import_preview = None  # the path changed: review it again
 
 
 def _has_running_work(project: ProjectState) -> bool:
@@ -5734,6 +6324,16 @@ def _handle_project_selector_key(
     elif key == "enter":
         if state.project_selector_index != state.active_index:
             state.active_project.invalidate()
+        outgoing = state.active_project
+        outgoing.map_snapshot = None
+        outgoing.map_snapshot_key = None
+        state.memory_cursor = None
+        state.memory_cursor_next = None
+        state.memory_cursor_stack = []
+        state.memory_import_buffer = None
+        state.memory_import_selected = set()
+        state.memory_view_state = None
+        state.memory_authority = None
         state.active_index = state.project_selector_index
         state.memory_items = []
         _memory_clear_held(state)
@@ -6502,6 +7102,14 @@ def _insert_paste(state: TuiState, text: str) -> None:
         state.memory_edit_buffer = (state.memory_edit_buffer or "") + text
     elif state.mode == "memory_owner":
         state.memory_owner_buffer = (state.memory_owner_buffer or "") + text
+    elif state.mode == "memory_correct" and state.memory_correction_field != "kind":
+        buf = state.memory_correction_buffer or {}
+        field_name = state.memory_correction_field
+        buf[field_name] = buf.get(field_name, "") + text
+        state.memory_correction_buffer = buf
+    elif state.mode == "memory_import":
+        state.memory_import_buffer = (state.memory_import_buffer or "") + text
+        state.memory_import_preview = None
 
 
 def _too_small(state: TuiState) -> bool:
@@ -6542,6 +7150,8 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
         "memory_create": _handle_memory_create_key,
         "memory_owner": _handle_memory_owner_key,
         "memory_filter": _handle_memory_filter_key,
+        "memory_correct": _handle_memory_correct_key,
+        "memory_import": _handle_memory_import_key,
         "memory": _handle_memory_key,
         "quit_confirm": _handle_quit_confirm_key,
         "project_selector": _handle_project_selector_key,
@@ -6574,10 +7184,15 @@ def _dispatch_key_inner(state: TuiState, key: str, actions: ScanActions) -> None
             if (state.memory_request or {}).get("operation") == "expand":
                 _memory_cancel_request(state)
             state.memory_expanded = None
+            state.memory_history = None
+            state.memory_explained = None
         return
     handler = modal.get(state.mode)
     if handler is not None:
+        before = state.mode
         handler(state, key, actions)
+        if key == "escape" and before.startswith("memory_") and state.mode == "memory":
+            state.memory_focus = "list"
         return
     if _handle_focus_key(state, key, actions):
         return
@@ -6605,6 +7220,17 @@ def _keymap_footer(state: TuiState) -> Text:
         ok, reason = action.enabled(state)
         label = f">{action.label}" if index == selected else action.label
         parts.append(f"{keys[0]}:{label}" + ("" if ok or narrow else f" ({reason})"))
+    if state.mode == "memory":
+        parts[:0] = [
+            "tab:Focus",
+            "]/[:Page",
+            "x:Expand",
+            "b:Repr",
+            "v:History",
+            "E:Explain",
+            "c:Correct",
+            "I:Import",
+        ]
     parts.extend(["F3:Sections", "F2:Projects", "?:Help"])
     return Text(("  " if narrow else " | ").join(parts), style="dim")
 
@@ -7313,11 +7939,23 @@ def _load_map_snapshot(
         except OSError:
             return None
 
+    from rush.memory.retrieval import RouteDenial, route_access
+
+    # 72-T07 D37: the memory the map shows is read under the current authority, so
+    # a revoked, expired or replaced grant (or a store write) misses the cache.
+    root = Path(project.root)
+    access = route_access(root, "list", data_root=data_root)
+    authority = (
+        ("denied", access.code, access.reason)
+        if isinstance(access, RouteDenial)
+        else _memory_access_key(access, root)
+    )
     key = (
         project.run_id,
         project.status,
         _mtime(".rush/memory.db"),
         _mtime(".rush/handoffs"),
+        authority,
     )
     if project.map_snapshot_key == key:
         return project.map_snapshot
@@ -7325,6 +7963,12 @@ def _load_map_snapshot(
     project.map_snapshot = None
     if project.project_id is None:
         return None
+    if isinstance(access, RouteDenial):
+        project.map_snapshot = {
+            "available": False,
+            "reason": safe_terminal_text(f"{access.code}: {access.reason}"),
+        }
+        return project.map_snapshot
     from rush.workflows.projects import (
         ProjectError,
         project_map_snapshot,
@@ -7529,6 +8173,11 @@ def _memory_detail_lines(expanded: dict[str, Any], width: int) -> list[Text]:
         f"bytes {page['offset']}..{page.get('end_offset', page['next_offset'])} "
         f"{'complete' if page['complete'] else '[x] next page'}"
     )
+    add(
+        f"representation {expanded.get('representation', 'base64')}  "
+        f"integrity {expanded.get('integrity') or '?'}  "
+        f"sha256:{expanded.get('payload_hash') or 'unknown'}"
+    )
     add("Content:")
     add(page["content"], "white")
     relations = expanded.get("relationships") or []
@@ -7568,11 +8217,15 @@ def _render_memory_admin(state: TuiState) -> Panel:
         visible.append(
             _safe(f"rows {scroll + 1}-{end}/{len(detail)}  [/] scroll  x next  - close")
         )
+        visible.extend(_memory_panels(state))
         return Panel(Group(*visible), title="Memory detail", style="magenta")
     owner = _memory_owner_scope(state, state.active_project)
     lines: list[Any] = [
         _safe(
-            f"subject={state.memory_subject}  query={state.memory_query_buffer!r}",
+            f"subject={state.memory_subject}  query={state.memory_query_buffer!r}  "
+            f"focus={state.memory_focus}  "
+            f"representation={state.memory_representation}  "
+            f"page {len(state.memory_cursor_stack) + 1}",
             "cyan",
         ),
         _safe(f"owner={owner['kind']}:{owner['id']}  [o] change scope", "cyan"),
@@ -7613,13 +8266,36 @@ def _render_memory_admin(state: TuiState) -> Panel:
         for name in ("subject", "source", "content"):
             marker = ">" if name == state.memory_create_field else " "
             lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
+    if state.mode == "memory_correct":
+        buf = state.memory_correction_buffer or {}
+        for name in _MEMORY_CORRECTION_FIELDS:
+            marker = ">" if name == state.memory_correction_field else " "
+            lines.append(_safe(f"{marker} {name}: {buf.get(name, '')}", "bold yellow"))
+        lines.append(
+            _safe(
+                "[tab] field  [space] kind  [enter] preview  [esc] cancel",
+                "bold yellow",
+            )
+        )
+    if state.mode == "memory_import":
+        lines.append(
+            _safe(f"import capsule> {state.memory_import_buffer or ''}", "bold yellow")
+        )
+    view = state.memory_view_state
+    if view is not None and view.get("state") != "ok":
+        lines.append(
+            _safe(f"state: {view.get('state')}: {view.get('reason')}", "yellow")
+        )
+        lines.append(_safe(f"action: {view.get('action')}", "yellow"))
 
     table = Table(expand=True)
     table.add_column("", width=4)
     table.add_column("id", style="cyan")
+    table.add_column("v", width=4)
+    table.add_column("owner")
     table.add_column("trust", width=14)
+    table.add_column("freshness", width=10)
     table.add_column("source")
-    table.add_column("stale", width=6)
     page = state.memory_selected_index // _MEMORY_PAGE_ROWS
     pages = max(1, -(-len(state.memory_items) // _MEMORY_PAGE_ROWS))
     start = page * _MEMORY_PAGE_ROWS
@@ -7628,12 +8304,23 @@ def _render_memory_admin(state: TuiState) -> Panel:
     ):
         cursor = ">" if idx == state.memory_selected_index else " "
         checked = "x" if item.get("id") in state.memory_selected_ids else " "
+        row_owner = item.get("owner_scope")
+        reference = item.get("reference")
+        freshness = (
+            reference.get("freshness") if isinstance(reference, dict) else None
+        ) or ("stale" if item.get("stale") else "")
         table.add_row(
             _safe(f"{cursor}[{checked}]"),
             _safe(item.get("id", "")),
+            _safe(item.get("artifact_version", "")),
+            _safe(
+                f"{row_owner.get('kind')}:{row_owner.get('id')}"
+                if isinstance(row_owner, dict)
+                else ""
+            ),
             _safe(item.get("trust_tier", "")),
+            _safe(freshness),
             _safe(item.get("source", "")),
-            "yes" if item.get("stale") else "no",
             style=_state_selection_style(state) if cursor == ">" else None,
         )
     lines.append(
@@ -7731,9 +8418,124 @@ def _render_memory_admin(state: TuiState) -> Panel:
                     "red",
                 )
             )
+    lines.extend(_memory_panels(state))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
+
+
+def _memory_text_of(entry: Mapping[str, Any]) -> str:
+    """A history version's or explain entry's own text (UTF-8 or base64 bytes)."""
+    if isinstance(entry.get("content_utf8"), str):
+        return str(entry["content_utf8"])
+    if isinstance(entry.get("content_base64"), str):
+        return base64.b64decode(entry["content_base64"]).decode(
+            "utf-8", errors="backslashreplace"
+        )
+    excerpt = entry.get("excerpt")
+    return excerpt if isinstance(excerpt, str) else ""
+
+
+def _memory_ref_line(entry: Mapping[str, Any]) -> str:
+    ref_value = entry.get("reference")
+    ref = ref_value if isinstance(ref_value, dict) else {}
+    line = (
+        f"    {ref.get('artifact_id')}@v{ref.get('artifact_version')}  "
+        f"source {ref.get('source')}  freshness {ref.get('freshness')}"
+    )
+    if ref.get("symbol_ref"):
+        line += f"  symbol {ref.get('symbol_ref')}"
+    return line
+
+
+def _memory_panels(state: TuiState) -> list[Any]:
+    """The active project's history, explanation and import-review panels.
+    Every dynamic value is shown through `_safe`."""
+    active = project_key(state.active_project)
+    panels: list[Any] = []
+    history = state.memory_history
+    if history is not None and history.get("project_key") == active:
+        result = history.get("result") or {}
+        raw = result.get("raw") or {}
+        lines: list[Any] = [_safe(f"{history['id']}", "cyan")]
+        if raw.get("code") != "OK":
+            lines.append(_safe(_memory_state_text(result), "yellow"))
+        for version in raw.get("versions") or []:
+            ref = version.get("reference") or {}
+            lines.append(
+                _safe(
+                    f"  {ref.get('artifact_id')}@v{ref.get('artifact_version')}  "
+                    f"trust {ref.get('trust_tier')}  "
+                    f"freshness {version.get('freshness')}  "
+                    f"integrity {version.get('integrity')}  "
+                    + ",".join(str(c) for c in version.get("reason_codes") or [])
+                )
+            )
+            lines.append(_safe(f"    {_memory_text_of(version)[:200]}", "white"))
+        panels.append(Panel(Group(*lines), title="Memory history", style="magenta"))
+    explained = state.memory_explained
+    if explained is not None and explained.get("project_key") == active:
+        result = explained.get("result") or {}
+        raw = result.get("raw") or {}
+        target = explained.get("id") or repr(explained.get("query"))
+        lines = [_safe(f"{target}", "cyan")]
+        if raw.get("code") != "OK":
+            lines.append(_safe(_memory_state_text(result), "yellow"))
+        else:
+            if not raw.get("supporting"):
+                lines.append(_safe("  why: unknown (no recorded rationale)"))
+            for title, bucket in (
+                ("why (supporting)", "supporting"),
+                ("contrary", "contrary"),
+                ("what tried (attempted)", "attempted"),
+                ("affected code refs", "affected"),
+            ):
+                lines.append(_safe(f"  {title}", "cyan"))
+                entries = raw.get(bucket) or []
+                if not entries:
+                    lines.append(_safe("    none recorded"))
+                for entry in entries:
+                    lines.append(_safe(_memory_ref_line(entry)))
+            unknowns = raw.get("unknowns") or []
+            lines.append(_safe("  unknowns", "cyan"))
+            lines.append(
+                _safe("    " + (", ".join(str(u) for u in unknowns) or "none recorded"))
+            )
+            stale = [
+                f"{ref.get('artifact_id')}@v{ref.get('artifact_version')}"
+                for bucket in ("supporting", "contrary", "attempted", "affected")
+                for entry in raw.get(bucket) or []
+                for ref in [entry.get("reference") or {}]
+                if ref.get("freshness") in ("stale", "unknown")
+            ]
+            lines.append(_safe(f"  stale: {', '.join(stale) or 'none'}"))
+        panels.append(Panel(Group(*lines), title="Memory explain", style="magenta"))
+    preview = state.memory_import_preview
+    if preview is not None:
+        data = preview.get("data") or {}
+        lines = [
+            _safe(
+                f"capsule {data.get('capsule_digest')}  preview digest "
+                f"{data.get('digest')}  store revision {data.get('store_revision')}",
+                "cyan",
+            )
+        ]
+        for record in data.get("records") or []:
+            if not isinstance(record, dict):
+                lines.append(_safe(f"  {record}"))
+                continue
+            marker = "x" if record.get("id") in state.memory_import_selected else " "
+            lines.append(
+                _safe(
+                    f"  [{marker}] {record.get('id')}  {record.get('subject', '')}  "
+                    f"applicability {record.get('applicability', '?')}"
+                )
+            )
+        lines.append(_safe("[y] import  [esc] cancel", "bold yellow"))
+        panels.append(
+            Panel(Group(*lines), title="Memory import review", style="magenta")
+        )
+    return panels
 
 
 def _git_expanded_lines(expanded: Mapping[str, Any] | None) -> list[Text]:

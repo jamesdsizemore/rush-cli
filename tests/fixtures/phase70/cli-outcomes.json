@@ -5357,27 +5357,33 @@
     "expect": {
       "json_paths": {
         "tool": "memory",
-        "status": "skipped"
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
       },
       "human_contains": [
-        "memory skipped"
+        "memory fail",
+        "state: denied",
+        "action:"
       ],
-      "exit": 0
+      "exit": 1
     },
     "empty": {
       "json_paths": {
         "tool": "memory",
-        "status": "skipped"
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
       },
       "human_contains": [
-        "memory skipped"
+        "memory fail",
+        "state: denied",
+        "action:"
       ],
-      "exit": 0,
+      "exit": 1,
       "argv": [
         "memory",
-        "list",
-        "active_context",
-        "phase70 fixture query"
+        "list"
       ]
     },
     "denied": {

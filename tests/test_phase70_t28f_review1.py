@@ -318,12 +318,16 @@ def _pump_until(
 
 
 class _MemoryRun:
+    """Records every request the TUI sends and serves it with the real `MemoryTool`."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def __call__(self, root: Path, **kwargs: Any) -> dict[str, Any]:
+        from rush.tools.memory import MemoryTool
+
         self.calls.append((kwargs["operation"], dict(kwargs["request"])))
-        return {"raw": {"data": {"id": "m2", "content": "second record body"}}}
+        return dict(MemoryTool().run(root, **kwargs))
 
 
 def test_plus_minus_expand_and_collapse_detail_in_git_and_memory(
@@ -383,9 +387,39 @@ def test_plus_minus_expand_and_collapse_detail_in_git_and_memory(
     # Memory: `+` is the same expand request `x` sends; `-` collapses it.
     memory_root = tmp_path / "memory"
     memory_root.mkdir()
+    # Authentic rows: m1 at version 1, m2 advanced to version 3 by real edits, so the
+    # selected version is not the first one.
+    from rush.memory.store import MemoryArtifact, TypedArtifactStore, legacy_owner_scope
+
+    owner = legacy_owner_scope(memory_root)
+    store = TypedArtifactStore(memory_root)
+    for artifact_id, text in (("m1", "first record body"), ("m2", "second v1")):
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="EXTERNAL_WRITE",
+                content={"text": text},
+                source="t28f",
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+    for version, text in ((1, "second v2"), (2, "second record body")):
+        store.edit(
+            "m2",
+            {"text": text},
+            expected_version=version,
+            scope="domain_knowledge",
+            owner_scope=owner,
+            apply=True,
+        )
+    current = store.get_current_row("m2")
+    assert current is not None and current["artifact_version"] == 3
     items = [
-        {"id": "m1", "artifact_version": 1, "content": "first"},
-        {"id": "m2", "artifact_version": 3, "content": "second"},
+        {"id": "m1", "artifact_version": 1, "source": "t28f", "content": "first"},
+        {"id": "m2", "artifact_version": 3, "source": "t28f", "content": "second"},
     ]
     expanded: list[Any] = []
     calls: list[list[tuple[str, dict[str, Any]]]] = []
@@ -407,7 +441,16 @@ def test_plus_minus_expand_and_collapse_detail_in_git_and_memory(
         states.append(mem_state)
         assert mem_state.mode == "memory"
     assert expanded[0] is not None and expanded[1] == expanded[0]
-    assert calls[1] == calls[0] == [("expand", {"id": "m2", "version": 3})]
+    assert calls[1] == calls[0]
+    # The request names the selected exact version in the schema-2 identity fields.
+    expand_requests = [request for op, request in calls[0] if op == "expand"]
+    assert len(expand_requests) == 1, calls[0]
+    request = expand_requests[0]
+    assert request["schema_version"] == 2
+    assert (request["artifact_id"], request["artifact_version"]) == ("m2", 3)
+    assert "id" not in request and "version" not in request
+    assert request["sources"] == ["t28f"]
+    assert expanded[0]["id"] == "m2" and expanded[0]["version"] == 3
     plus_state = states[1]
     assert plus_state.detail_expanded is True
     assert "second record body" in _text(plus_state)

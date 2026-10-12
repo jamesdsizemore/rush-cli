@@ -41,6 +41,7 @@ from rush.memory.store import (
     TypedArtifactStore,
 )
 from rush.token_economy.telemetry import TelemetryStore
+from rush.tools.memory import MemoryOperation
 from rush.tui import ProjectState, TuiState, _dispatch_key, _pump, default_scan_actions
 from rush.workflows import projects as projects_module
 from rush.workflows.projects import register_project
@@ -1963,3 +1964,303 @@ def test_tui_memory_edit_commits_new_content(tmp_path: Path) -> None:
         r["content"] and json.loads(r["content"]).get("note") == "hello"
         for r in refreshed
     )
+
+
+# --- 72-T07: the policy-mode server contract (D1 + the 72-T06 v2 shapes) ------------
+
+
+def _t07_policy_project(
+    tmp_path: Path,
+    *,
+    ops: tuple[str, ...] = ("ask", "expand", "list", "history", "write"),
+) -> tuple[str, Path, Path, dict[str, str], Any]:
+    """A registered project holding Alice's and Bob's rows under an Alice grant over
+    the `tool-a` source; returns (project id, root, data root, row ids, grant)."""
+    from rush.memory import authorization as auth
+    from rush.setup import provision
+
+    data_root = provision.default_data_root()
+    project_id, root = _register(tmp_path)
+    root = root.resolve()
+    alice, bob = OwnerScope("user", "alice"), OwnerScope("user", "bob")
+    store = TypedArtifactStore(root)
+    ids: dict[str, str] = {}
+    for label, owner in (("alice", alice), ("bob", bob)):
+        for subject in ("domain_knowledge", "failure", "episodic"):
+            artifact = _seed_artifact(
+                store,
+                subject=subject,
+                content={"text": f"needle {subject} {label}"},
+                source="tool-a",
+                owner_scope=owner,
+            )
+            ids[f"{label}-{subject}"] = artifact.id
+    revision = int(
+        auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+    )
+    grant = auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=alice,
+        approved_sources=["tool-a"],
+        allowed_operations=list(ops),
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=data_root,
+    )
+    return project_id, root, data_root, ids, grant
+
+
+def _t07_start(project_id: str, root: Path, data_root: Path):
+    snapshot = {
+        "schema_version": 1,
+        "project_id": project_id,
+        "source_identity": str(root),
+        "root": str(root),
+        "files": [],
+        "findings": [],
+        "memories": [],
+        "agents": [],
+    }
+    server, ctx, token = create_dashboard_server(
+        {project_id: snapshot}, data_root=data_root
+    )
+    _serve(server)
+    cookie, csrf = _bootstrap_session(ctx.launch_origin, token)
+    return server, ctx.launch_origin, cookie, csrf
+
+
+def _t07_scrub(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _t07_scrub(v) for k, v in value.items() if k != "duration_ms"}
+    if isinstance(value, list):
+        return [_t07_scrub(v) for v in value]
+    return value
+
+
+def test_t07_dashboard_policy_browse_is_v2(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.tools.memory import MemoryTool
+
+    project_id, root, data_root, ids, grant = _t07_policy_project(tmp_path)
+    subjects = [
+        "active_context",
+        "episodic",
+        "preference",
+        "failure",
+        "architectural_decision",
+        "domain_knowledge",
+        "skill_pattern",
+    ]
+
+    def oracle(request_subjects: list[str], query: str = "") -> dict[str, Any]:
+        result = MemoryTool().run(
+            root,
+            operation="list",
+            request={
+                "schema_version": 2,
+                "subjects": request_subjects,
+                "query": query,
+            },
+        )
+        return _t07_scrub(result["raw"])
+
+    server, base_url, cookie, _csrf = _t07_start(project_id, root, data_root)
+    try:
+        status, body = _snapshot(base_url, project_id, cookie, "memory")
+        assert status == 200, body
+        data = body["data"]
+        assert data["list"]["raw"]["schema_version"] == 2
+        assert _t07_scrub(data["list"]["raw"]) == oracle(subjects)
+        assert {i["reference"]["artifact_id"] for i in data["items"]} == {
+            ids["alice-domain_knowledge"],
+            ids["alice-failure"],
+            ids["alice-episodic"],
+        }
+        assert {"next_cursor", "complete"} <= set(data)
+        assert data["known_sources"] == ["tool-a"]
+        assert data["ui_state"]["state"] == "ok"
+        assert data["memory_view_key"]["authority"]["grant_id"] == grant["grant_id"]
+        assert not any(
+            v in json.dumps(data) for k, v in ids.items() if k.startswith("bob")
+        )
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "memory", subject="failure", query="needle"
+        )
+        assert _t07_scrub(body["data"]["list"]["raw"]) == oracle(["failure"], "needle")
+        status, body = _snapshot(
+            base_url, project_id, cookie, "memory", subject="failure", trust="DERIVED"
+        )
+        assert body["data"]["items"] == [], "trust is part of the request identity"
+        status, body = _snapshot(
+            base_url,
+            project_id,
+            cookie,
+            "memory",
+            expand_id=ids["alice-failure"],
+            expand_version="1",
+        )
+        assert body["data"]["expand"]["raw"]["code"] == "OK"
+
+        status, body = _snapshot(
+            base_url, project_id, cookie, "memory", subject="failure", limit="1e3"
+        )
+        assert body["data"]["ui_state"]["state"] == "invalid"
+        assert body["data"]["list"]["raw"]["code"] == "E_INPUT"
+
+        # A revoked grant: the D19 state with its next action, no row.
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=int(
+                auth.load_policy_readonly(data_root=data_root)["policy_revision"]
+            ),
+            consent=True,
+            data_root=data_root,
+        )
+        status, body = _snapshot(base_url, project_id, cookie, "memory")
+        assert body["data"]["ui_state"]["state"] == "revoked"
+        assert body["data"]["items"] == []
+        assert str(body["data"]["ui_state"]["next_action"]["command"]).startswith(
+            "rush memory grant"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_t07_dashboard_policy_actions_preview_and_apply(tmp_path: Path) -> None:
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.memory import MemoryTool
+
+    project_id, root, data_root, ids, _grant = _t07_policy_project(tmp_path)
+    owner = {"kind": "user", "id": "alice"}
+    target = ids["alice-failure"]
+    server, base_url, cookie, csrf = _t07_start(project_id, root, data_root)
+    store = TypedArtifactStore(root)
+    db = root / ".rush" / "memory.db"
+
+    def sha() -> str:
+        import hashlib
+
+        return hashlib.sha256(db.read_bytes()).hexdigest()
+
+    try:
+        requests: list[tuple[str, MemoryOperation, dict[str, Any]]] = [
+            (
+                "memory_edit",
+                "edit",
+                {
+                    "schema_version": 2,
+                    "subject": "failure",
+                    "artifact_id": target,
+                    "expected_version": 1,
+                    "owner_scope": owner,
+                    "content": {"text": "needle edited"},
+                },
+            ),
+            (
+                "memory_archive",
+                "archive",
+                {
+                    "schema_version": 2,
+                    "subject": "episodic",
+                    "artifact_id": ids["alice-episodic"],
+                    "expected_version": 1,
+                    "archived": True,
+                    "owner_scope": owner,
+                },
+            ),
+            (
+                "memory_propose",
+                "write",
+                {
+                    "schema_version": 2,
+                    "subject": "domain_knowledge",
+                    "content": {"text": "needle proposed"},
+                    "source": "tool-a",
+                    "owner_scope": owner,
+                },
+            ),
+        ]
+        for action, operation, request in requests:
+            before = sha()
+            preview = {**request, "apply": False}
+            status, body = _action(
+                base_url, project_id, cookie, csrf, operation=action, arguments=preview
+            )
+            assert status == 200, (action, body)
+            assert body["data"]["raw"]["code"] == "OK", (action, body)
+            expected = MemoryTool().run(root, operation=operation, request=preview)
+            assert _t07_scrub(body["data"]["raw"]) == _t07_scrub(expected["raw"]), (
+                action
+            )
+            assert sha() == before, f"{action}: a preview wrote"
+            assert body["data"]["memory_view_key"]["request_identity"] == {
+                "operation": action
+            }
+
+            invocation = {
+                "invocation_id": uuid.uuid4().hex,
+                "effect_id": uuid.uuid4().hex,
+            }
+            apply_args = {**request, "apply": True, **invocation}
+            # No cache_write grant: refused, nothing written.
+            status, body = _action(
+                base_url,
+                project_id,
+                cookie,
+                csrf,
+                operation=action,
+                arguments=apply_args,
+            )
+            assert status == 403, (action, status, body)
+            assert sha() == before
+            status, body = _action(
+                base_url,
+                project_id,
+                cookie,
+                csrf,
+                operation=action,
+                arguments=apply_args,
+                grants=_grant_all(),
+            )
+            assert status == 200 and body["data"]["raw"]["code"] == "OK", (action, body)
+            assert sha() != before, f"{action}: the apply wrote nothing"
+            replay = MemoryTool().run(
+                root,
+                operation=operation,
+                request=apply_args,
+                permissions=ExecutionPermissions(cache_write=True),
+            )
+            assert _t07_scrub(body["data"]["raw"]) == _t07_scrub(replay["raw"]), action
+        row = store.get_current_row(target)
+        assert row is not None and row["artifact_version"] == 2
+        archived = store.get_current_row(ids["alice-episodic"])
+        assert archived is not None and archived["archived_at"] is not None
+
+        # Another owner's row cannot be touched with Alice's grant.
+        before = sha()
+        status, body = _action(
+            base_url,
+            project_id,
+            cookie,
+            csrf,
+            operation="memory_edit",
+            arguments={
+                "schema_version": 2,
+                "subject": "failure",
+                "artifact_id": ids["bob-failure"],
+                "expected_version": 1,
+                "owner_scope": {"kind": "user", "id": "bob"},
+                "content": {"text": "hijack"},
+                "apply": True,
+                "invocation_id": uuid.uuid4().hex,
+                "effect_id": uuid.uuid4().hex,
+            },
+            grants=_grant_all(),
+        )
+        assert body["data"]["raw"]["code"] in ("E_OWNER", "E_SCOPE", "E_PERMISSION")
+        assert sha() == before
+    finally:
+        server.shutdown()
+        server.server_close()
