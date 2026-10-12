@@ -88,7 +88,12 @@ class ApiDiffer:
         return breaking
 
     def diff_symbol(
-        self, file_path: Path, symbol: str, base_ref: str = "main"
+        self,
+        file_path: Path,
+        symbol: str,
+        base_ref: str = "main",
+        *,
+        source_text: str | None = None,
     ) -> dict[str, Any] | str | None:
         """Per-symbol wrapper around `diff_file()`'s comparison logic (§6.5 Invariant 5).
 
@@ -100,7 +105,9 @@ class ApiDiffer:
 
         72-T01: also `"unknown"` for a non-`.py` file, a path not contained in
         `project_root` (checked before anything is read), a base or current file that does
-        not parse, and a missing or unreadable current file.
+        not parse, and a missing or unreadable current file. A supplied
+        `source_text` is the current file's text (one contained snapshot read by the
+        caller); the file is then never reopened.
         """
         from rush.io.physical_paths import ContainmentError, PhysicalRoot
 
@@ -128,10 +135,13 @@ class ApiDiffer:
         if old_sigs is None:
             return "unknown"
 
-        try:
-            new_code = contained.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            return "unknown"
+        if source_text is not None:
+            new_code = source_text
+        else:
+            try:
+                new_code = contained.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                return "unknown"
         new_sigs = self._signatures_or_none(new_code)
         if new_sigs is None:
             return "unknown"

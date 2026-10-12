@@ -32,8 +32,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..memory.retrieval import SourceValidationMemo, defended_recall
-from ..memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
+from ..memory.retrieval import (
+    RouteDenial,
+    SourceValidationMemo,
+    authorize_writer,
+    defended_recall,
+    recheck_failure,
+    route_access,
+    writer_owner,
+)
+from ..memory.store import (
+    MemoryAccessChanged,
+    MemoryArtifact,
+    MemorySubject,
+    TypedArtifactStore,
+)
 
 # Fixed source tag for cache-gate write-backs. `recall()`/`defended_recall()` fail closed
 # without a session_allowlist (Phase 61 §9 P61.9), so a read must allowlist the exact source
@@ -84,18 +97,28 @@ def check_memory_before_pack(
     starts varying packed content by view.
     """
     cache_key = _cache_key(context_path, target_symbol)
+    miss = CacheGateResult(hit=False, artifact_id=None, content=None)
+    # 72-T01 D1: the policy (or, in legacy mode, the `context_pack` allowlist)
+    # authorizes the read before any view; a denial is a miss.
+    try:
+        root = Path(project_root or Path.cwd()).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return miss
+    access = route_access(root, "ask", session_allowlist=[_CACHE_SOURCE])
+    if isinstance(access, RouteDenial):
+        return miss
     # T10: a read-only view (T20 `open_readonly_view`), so a lookup never creates
     # `.rush`, `memory.db`, a sidecar or a migrated schema. No usable store (absent,
     # legacy, busy or corrupt) is a miss, like any failed defended read.
-    store, _state = TypedArtifactStore.open_readonly_view(project_root or Path.cwd())
+    store, _state = TypedArtifactStore.open_readonly_view(root)
     if store is None:
-        return CacheGateResult(hit=False, artifact_id=None, content=None)
+        return miss
     artifacts: list[MemoryArtifact] = []
     # Failed defended reads are cache misses; never reuse unverified content.
     try:
         with suppress(Exception):
             artifacts = defended_recall(
-                store, subject, cache_key, [_CACHE_SOURCE], memo=memo
+                store, subject, cache_key, memo=memo, access=access
             )
     finally:
         store.close()
@@ -159,10 +182,51 @@ def write_cache_fill(
     content_hash = packed.get("source_content_hash")
     if not isinstance(content_hash, str) or not content_hash:
         return None
-    cache_key = _cache_key(context_path, target_symbol)
-    store = TypedArtifactStore(project_root)
+    try:
+        root = Path(project_root or Path.cwd()).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return None
+    # 72-T01 D4: the fill is written only inside the shared writer gate.
+    with authorize_writer(root, _CACHE_SOURCE) as granted:
+        if isinstance(granted, RouteDenial):
+            return None
+        cache_key = _cache_key(context_path, target_symbol)
+        identity = _cache_identity(
+            root, token_budget=token_budget, encoding=encoding, view=view
+        )
+        try:
+            return TypedArtifactStore(root).write(
+                MemoryArtifact(
+                    id=str(uuid.uuid4()),
+                    family="memory",
+                    subject=subject,
+                    trust_tier="DERIVED",
+                    content={
+                        **packed,
+                        _CACHE_KEY_FIELD: cache_key,
+                        _CACHE_IDENTITY_FIELD: identity,
+                    },
+                    source=_CACHE_SOURCE,
+                    created_at=time.time(),
+                    symbol_ref=f"{context_path}::{target_symbol}",
+                    content_hash=content_hash,
+                    owner_scope=writer_owner(granted),
+                ),
+                commit_check=lambda: recheck_failure(granted),
+            )
+        except MemoryAccessChanged:
+            return None
+
+
+def _cache_identity(
+    root: Path,
+    *,
+    token_budget: int | None,
+    encoding: str | None,
+    view: str | None,
+) -> dict[str, Any]:
     identity: dict[str, Any] = {
-        "namespace": str(store.project_root),
+        "namespace": str(root),
         "audience": _CACHE_SOURCE,
         "engine_revision": _ENGINE_REVISION,
     }
@@ -172,20 +236,4 @@ def write_cache_fill(
         identity["encoding"] = encoding
     if view is not None:
         identity["view"] = view
-    return store.write(
-        MemoryArtifact(
-            id=str(uuid.uuid4()),
-            family="memory",
-            subject=subject,
-            trust_tier="DERIVED",
-            content={
-                **packed,
-                _CACHE_KEY_FIELD: cache_key,
-                _CACHE_IDENTITY_FIELD: identity,
-            },
-            source=_CACHE_SOURCE,
-            created_at=time.time(),
-            symbol_ref=f"{context_path}::{target_symbol}",
-            content_hash=content_hash,
-        )
-    )
+    return identity

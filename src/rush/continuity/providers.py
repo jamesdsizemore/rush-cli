@@ -102,6 +102,18 @@ def provider_handoff(root: Path, name: str | None) -> dict[str, Any] | None:
     """Extract normalized handoff dictionary from named session checkpoint."""
     if not valid_name(name):
         return None
+    from ..memory.retrieval import RouteDenial, reader_route
+
+    # 72-T01 D1 (§2.3 Continuity package): a denied `ask` route reads nothing.
+    if isinstance(
+        reader_route(
+            root,
+            "ask",
+            ["checkpoint_journal:save_checkpoint", "migration:checkpoint_journal"],
+        ),
+        RouteDenial,
+    ):
+        return None
     checkpoint = CheckpointJournal(root).restore_checkpoint(name or "")
     if not isinstance(checkpoint, dict):
         return None

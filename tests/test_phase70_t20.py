@@ -1064,3 +1064,272 @@ def test_dashboard_expand_related_current_db_byte_identical(
     assert section[operation]["raw"]["code"] == "OK"
     assert _sha256(db_path) == before_hash
     assert sorted(p.name for p in db_path.parent.iterdir()) == before_dir
+
+
+# --- 72-T01 post-cap: final access recheck before a successful read result ---
+
+_PRIVATE_ID = "ovr-private-1"
+
+
+def _policy_grant(tmp_path: Path):
+    """A registered project holding one owner row of `source-a`, and a consented
+    grant (all read/write operations) at the per-test default data root."""
+    from rush.memory import authorization as auth
+    from rush.memory.store import legacy_owner_scope
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import register_project
+
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, data_root=data_root)
+    root = root.resolve()
+    owner = legacy_owner_scope(root)
+    store = TypedArtifactStore(root)
+    store.write(_artifact(id=_PRIVATE_ID, source="source-a", owner_scope=owner))
+    _checkpoint_and_close(store)
+
+    def revision() -> int:
+        return int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        )
+
+    grant = auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=["source-a"],
+        allowed_operations=["ask", "list", "expand", "write"],
+        expected_policy_revision=revision(),
+        consent=True,
+        data_root=data_root,
+    )
+
+    def revoke() -> None:
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=revision(),
+            consent=True,
+            data_root=data_root,
+        )
+
+    return root, owner, revoke
+
+
+def _revoke_once_after(monkeypatch, target, name, revoke, *, when=None, fake=None):
+    """Replace `target.name` so its first matching call revokes the grant right
+    after producing its result (the original's, or `fake`'s)."""
+    original = getattr(target, name)
+    fired = {"done": False}
+
+    def wrapper(*args, **kwargs):
+        result = (fake or original)(*args, **kwargs)
+        if not fired["done"] and (when is None or when(*args, **kwargs)):
+            fired["done"] = True
+            revoke()
+        return result
+
+    monkeypatch.setattr(target, name, wrapper)
+
+
+def _assert_overview_denied(result) -> None:
+    raw = result["raw"]
+    dumped = json.dumps(raw, sort_keys=True)
+    assert raw["code"] == "E_PERMISSION", dumped
+    assert raw["data"]["reason"] == "revoked", dumped
+    for key in ("rows", "total", "hidden_internal", "generation_token"):
+        assert key not in raw["data"], dumped
+    assert _PRIVATE_ID not in dumped
+
+
+def test_overview_policy_grant_lists_the_owner_row(tmp_path: Path) -> None:
+    from rush.tools.memory import memory_overview
+
+    root, _owner, _revoke = _policy_grant(tmp_path)
+    raw = memory_overview(root)["raw"]
+    assert raw is not None
+    assert raw["code"] == "OK", raw
+    assert [row["id"] for row in raw["data"]["rows"]] == [_PRIVATE_ID]
+
+
+def test_overview_list_grant_revoked_during_selection_returns_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-11: a revoke inside `reader_row_allowed` (selection) denies."""
+    from rush.memory import retrieval
+    from rush.tools.memory import memory_overview
+
+    root, _owner, revoke = _policy_grant(tmp_path)
+    _revoke_once_after(monkeypatch, retrieval, "reader_row_allowed", revoke)
+    _assert_overview_denied(memory_overview(root))
+
+
+def test_overview_list_grant_revoked_at_redaction_seam_returns_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-5: a revoke inside `sanitize_value` (response construction) denies."""
+    from rush.safety import redactor
+    from rush.tools.memory import memory_overview
+
+    root, _owner, revoke = _policy_grant(tmp_path)
+    _revoke_once_after(
+        monkeypatch,
+        redactor,
+        "sanitize_value",
+        revoke,
+        when=lambda value, *a, **k: isinstance(value, dict) and "rows" in value,
+    )
+    _assert_overview_denied(memory_overview(root))
+
+
+def _route_case(name: str, monkeypatch, revoke, root: Path, owner):
+    """Arm the route's store-reading step to revoke (when `revoke` is set) and
+    return the `MemoryTool.run` kwargs that reach its successful result."""
+    import rush.tools.memory as memory_module
+
+    def arm(target, attr, **kw):
+        if revoke is not None:
+            _revoke_once_after(monkeypatch, target, attr, revoke, **kw)
+        elif "fake" in kw:
+            monkeypatch.setattr(target, attr, kw["fake"])
+
+    owner_kw = {"owner_scope": owner.as_dict()}
+    if name == "related":
+        arm(
+            memory_module,
+            "related_artifacts",
+            fake=lambda *a, **k: {
+                "code": "OK",
+                "items": [{"id": _PRIVATE_ID}],
+                "complete": True,
+                "tokens": 1,
+                "bytes": 1,
+                "encoding": "cl100k_base",
+            },
+        )
+        return {
+            "operation": "related",
+            "request": {"id": _PRIVATE_ID, "version": 1},
+            **owner_kw,
+        }
+    if name == "intent_check":
+        arm(
+            memory_module,
+            "check_intent",
+            fake=lambda *a, **k: {
+                "code": "OK",
+                "intent_id": "i1",
+                "behavior_id": _PRIVATE_ID,
+                "passed": True,
+            },
+        )
+        return {
+            "operation": "intent",
+            "request": {"action": "check", "intent_id": "i1"},
+            **owner_kw,
+        }
+    if name == "receive":
+        arm(
+            memory_module,
+            "receive_handoff",
+            fake=lambda *a, **k: {"items": [{"id": _PRIVATE_ID}]},
+        )
+        return {
+            "operation": "receive",
+            "request": {"session_id": "s1", "capability": "c1"},
+            **owner_kw,
+        }
+    if name == "maintain_preview":
+        arm(
+            memory_module,
+            "preview_maintenance_candidates",
+            fake=lambda *a, **k: [{"id": _PRIVATE_ID, "artifact_version": 1}],
+        )
+        return {
+            "operation": "maintain",
+            "task": "staleness_sweep",
+            "request": {"apply": False},
+            **owner_kw,
+        }
+    if name == "archive_preview":
+        if revoke is not None:
+            original = TypedArtifactStore.preview_mutation
+
+            def preview(*a, **k):
+                result = original(*a, **k)
+                revoke()
+                return result
+
+            monkeypatch.setattr(TypedArtifactStore, "preview_mutation", preview)
+        return {
+            "operation": "archive",
+            "request": {
+                "id": _PRIVATE_ID,
+                "expected_version": 1,
+                "scope": "preference",
+                "apply": False,
+            },
+            **owner_kw,
+        }
+    assert name == "promote_preview"
+    if revoke is not None:
+        original_conflict = MemoryTool._promote_source_conflict
+
+        def conflict(*a, **k):
+            result = original_conflict(*a, **k)
+            revoke()
+            return result
+
+        monkeypatch.setattr(
+            MemoryTool, "_promote_source_conflict", staticmethod(conflict)
+        )
+    return {
+        "operation": "promote",
+        "subject": "preference",
+        "content": {"value": 1},
+        "source": "source-a",
+        "user_stated": True,
+        "request": {
+            "apply": False,
+            "source_id": _PRIVATE_ID,
+            "expected_version": 1,
+        },
+        **owner_kw,
+    }
+
+
+_RECHECK_ROUTES = [
+    "related",
+    "intent_check",
+    "receive",
+    "maintain_preview",
+    "archive_preview",
+    "promote_preview",
+]
+
+
+@pytest.mark.parametrize("route", _RECHECK_ROUTES)
+def test_read_route_succeeds_while_the_grant_holds(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, owner, _revoke = _policy_grant(tmp_path)
+    kwargs = _route_case(route, monkeypatch, None, root, owner)
+    result = MemoryTool().run(root, **kwargs)
+    assert result["status"] == "ok", json.dumps(result["raw"], default=str)
+
+
+@pytest.mark.parametrize("route", _RECHECK_ROUTES)
+def test_read_route_grant_revoked_during_read_returns_denial(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same shape as security-5: a grant revoked after the route's store read and
+    before its successful result returns the denial and none of the read data."""
+    root, owner, revoke = _policy_grant(tmp_path)
+    kwargs = _route_case(route, monkeypatch, revoke, root, owner)
+    result = MemoryTool().run(root, **kwargs)
+    raw = result["raw"]
+    assert raw is not None
+    dumped = json.dumps(raw, default=str, sort_keys=True)
+    assert raw["code"] == "E_PERMISSION", dumped
+    assert raw["data"]["reason"] == "revoked", dumped
+    assert result["status"] != "ok"
+    assert _PRIVATE_ID not in dumped

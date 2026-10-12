@@ -127,6 +127,15 @@ def _cache_hit_receipts(gate: CacheGateResult) -> list[dict[str, Any]]:
     ]
 
 
+def _context_denial(root: Path) -> tuple[str, str] | None:
+    """72-T01 D1 (§2.3 Continuity package): `(code, reason)` when the `ask` route
+    for the `context_pack` source is denied, else `None`."""
+    from ..memory.retrieval import RouteDenial, reader_route
+
+    access = reader_route(root, "ask", ["context_pack"])
+    return (access.code, access.reason) if isinstance(access, RouteDenial) else None
+
+
 def _pack_memory(
     used: list[dict[str, Any]], written: list[dict[str, Any]]
 ) -> dict[str, Any] | None:
@@ -166,6 +175,16 @@ def pack_context(
             started,
             "skipped",
             "Context target was not found inside the project.",
+            operation="context_pack",
+            granted=granted,
+            as_v1=as_v1,
+        )
+    denied = _context_denial(project_root)
+    if denied is not None:
+        return build_continuity_result(
+            started,
+            "skipped",
+            f"Context pack denied by the memory policy: {denied[0]} ({denied[1]}).",
             operation="context_pack",
             granted=granted,
             as_v1=as_v1,
@@ -296,6 +315,16 @@ def retrieve_context(
     session_id: str | None = None,
 ) -> ContinuityOutput:
     """Retrieve CCR chunk by handle."""
+    denied = _context_denial(root)
+    if denied is not None:
+        return build_continuity_result(
+            started,
+            "skipped",
+            f"Context retrieval denied by the memory policy: {denied[0]} ({denied[1]}).",
+            operation="context_retrieve",
+            granted=granted,
+            as_v1=as_v1,
+        )
     database = root / ".rush" / "cache" / "ccr.db"
     content = (
         CCRStore(root).retrieve_chunk(handle or "", touch=granted.cache_write)

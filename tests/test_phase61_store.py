@@ -7,6 +7,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -23,7 +24,7 @@ from rush.memory.store import (
 
 
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = {
+    defaults: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "family": "memory",
         "subject": "domain_knowledge",
@@ -94,6 +95,15 @@ def _insert_stated_row(
     conn.close()
 
 
+def _bind_store(root: Path) -> None:
+    """72-T01 D41: a raw-SQL fixture store is authoritative only after the approved
+    binding (preview digest, then approve)."""
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
+
+
 def test_recall_rescans_stated_signature_and_raises_on_mismatch(tmp_path: Path):
     store = TypedArtifactStore(project_root=tmp_path)
 
@@ -101,6 +111,7 @@ def test_recall_rescans_stated_signature_and_raises_on_mismatch(tmp_path: Path):
     content_a = {"note": "alphapromoted stays same"}
     id_a = str(uuid.uuid4())
     _insert_stated_row(store.db_path, id_a, content_a, signature="0" * 64)
+    _bind_store(tmp_path)
     with pytest.raises(SignatureMismatchError):
         store.recall("domain_knowledge", "alphapromoted", session_allowlist=["test"])
 
@@ -117,6 +128,7 @@ def test_recall_rescans_stated_signature_and_raises_on_mismatch(tmp_path: Path):
     )
     conn.commit()
     conn.close()
+    _bind_store(tmp_path)
 
     with pytest.raises(SignatureMismatchError):
         store.recall("domain_knowledge", "bravopromoted", session_allowlist=["test"])

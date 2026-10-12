@@ -55,7 +55,11 @@ from rush.review.results import (
     review_scope_v1,
 )
 
-from ..memory.retrieval import SourceValidationMemo, defended_recall
+from ..memory.retrieval import (
+    SourceValidationMemo,
+    defended_recall,
+    narrowed_reader_access,
+)
 from ..memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
 from .base import Finding, ToolFn, ToolName, ToolResult
 from .common import now_ms
@@ -134,6 +138,17 @@ def _recall_memory_citations(
     """
     if not targets or root is None:
         return [], []
+    # 72-T01 D1: each subject reads under its own access (legacy allowlist, or the
+    # grant narrowed to these sources), resolved before the read-only view.
+    accesses = {
+        subject: narrowed_reader_access(root, "ask", sources)
+        for subject, sources in (
+            ("failure", _FAILURE_MEMORY_SOURCES),
+            ("architectural_decision", _ARCHITECTURAL_DECISION_MEMORY_SOURCES),
+        )
+    }
+    if not any(accesses.values()):
+        return [], []
     store, _state = TypedArtifactStore.open_readonly_view(root)
     if store is None:
         return [], []
@@ -146,12 +161,15 @@ def _recall_memory_citations(
     )
     try:
         for target in targets:
-            for subject, sources in memory_sources:
+            for subject, _sources in memory_sources:
+                access = accesses[subject]
+                if access is None:
+                    continue
                 artifacts: list[MemoryArtifact] = []
                 # Optional citations must never expose content from a failed recall.
                 with suppress(Exception):
                     artifacts = defended_recall(
-                        store, subject, target.name, sources, memo=memo
+                        store, subject, target.name, memo=memo, access=access
                     )
                 for artifact in artifacts:
                     if artifact.stale:

@@ -29,12 +29,14 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import sqlite3
 import time
 import uuid
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, overload
 
 import tiktoken
 
@@ -46,6 +48,7 @@ from rush.memory.embeddings import (
 )
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.store import (
+    BindingVerifier,
     MemoryArtifact,
     MemorySubject,
     OwnerScope,
@@ -55,6 +58,7 @@ from rush.memory.store import (
     _inspect_text_for_trojan_chars,
     _row_to_artifact,
     _row_value,
+    binding_verifier,
     compute_content_signature,
     legacy_owner_scope,
     owner_scope_for_row,
@@ -84,39 +88,82 @@ _EXCERPT_CHARS = 200
 _CONTENT_HASHER = MerkleInvalidator.__new__(MerkleInvalidator)
 
 
+@dataclasses.dataclass(frozen=True)
+class ContainedSource:
+    """One anchored source file: the project root and its relative `path_part`
+    (read through `trust.read_contained_source`), path-like as the resolved
+    contained `path`."""
+
+    project_root: Path
+    path_part: str
+    path: Path
+
+    def __fspath__(self) -> str:
+        return os.fspath(self.path)
+
+
 @dataclasses.dataclass
 class SourceValidationMemo:
-    """MC04 request-local canonical-path memo: caches a source file's current content hash
-    and API-diff freshness result so `defended_recall()` computes each exactly once per
-    request, however many returned candidates share that same backing file. Discard after
-    the request that created it — never persisted, never shared across requests."""
+    """MC04 request-local canonical-path memo: caches a source file's contained snapshot
+    text, its content hash and its API-diff freshness so `defended_recall()` computes each
+    exactly once per request, however many returned candidates share that same backing
+    file. 72-T01 R21: the text comes from one `trust.read_contained_source` fd and the
+    API diff reuses that same text. Discard after the request that created it."""
 
-    _hash_cache: dict[Path, str | None] = dataclasses.field(default_factory=dict)
-    _api_diff_cache: dict[tuple[Path, str], Any] = dataclasses.field(
+    _text_cache: dict[tuple[Path, str], str | None] = dataclasses.field(
+        default_factory=dict
+    )
+    _hash_cache: dict[tuple[Path, str], str | None] = dataclasses.field(
+        default_factory=dict
+    )
+    _api_diff_cache: dict[tuple[Path, str, str], Any] = dataclasses.field(
         default_factory=dict
     )
 
-    def source_hash(self, file_path: Path) -> str | None:
-        if file_path not in self._hash_cache:
-            try:
-                self._hash_cache[file_path] = _CONTENT_HASHER.hash_content(
-                    file_path.read_text(encoding="utf-8")
-                )
-            except (OSError, UnicodeError):
-                self._hash_cache[file_path] = None
-        return self._hash_cache[file_path]
+    def source_text(self, project_root: Path, path_part: str) -> str | None:
+        key = (Path(project_root), path_part)
+        if key not in self._text_cache:
+            from rush.memory.trust import read_contained_source
 
-    def api_diff(self, project_root: Path, file_path: Path, symbol: str) -> Any:
-        key = (file_path, symbol)
+            self._text_cache[key] = read_contained_source(Path(project_root), path_part)
+        return self._text_cache[key]
+
+    def source_hash(
+        self, project_root: Path | ContainedSource, path_part: str | None = None
+    ) -> str | None:
+        """Content hash of `path_part` under `project_root`, or of one
+        `ContainedSource` (the single path-like argument `_freshness_of` passes)."""
+        if isinstance(project_root, ContainedSource):
+            root, part = project_root.project_root, project_root.path_part
+        elif path_part is not None:
+            root, part = Path(project_root), path_part
+        else:
+            raise TypeError("source_hash needs a ContainedSource or a path_part")
+        key = (root, part)
+        if key not in self._hash_cache:
+            text = self.source_text(root, part)
+            self._hash_cache[key] = (
+                None if text is None else _CONTENT_HASHER.hash_content(text)
+            )
+        return self._hash_cache[key]
+
+    def api_diff(
+        self, project_root: Path, file_path: Path, symbol: str, path_part: str
+    ) -> Any:
+        key = (Path(project_root), path_part, symbol)
         if key not in self._api_diff_cache:
             # Deferred import mirrors `TypedArtifactStore.recall()`'s own local import of
             # `ApiDiffer` (avoids a module-load-time cycle between `rush.memory` and
             # `rush.tools`).
             from rush.tools.api_diff import ApiDiffer
 
-            self._api_diff_cache[key] = ApiDiffer(
-                project_root=project_root
-            ).diff_symbol(file_path, symbol)
+            text = self.source_text(project_root, path_part)
+            if text is None:
+                self._api_diff_cache[key] = "unknown"
+            else:
+                self._api_diff_cache[key] = ApiDiffer(
+                    project_root=project_root
+                ).diff_symbol(file_path, symbol, source_text=text)
         return self._api_diff_cache[key]
 
 
@@ -136,15 +183,291 @@ Freshness = Literal["current", "stale", "unknown", "not_applicable"]
 VisibilityMode = Literal["ordinary", "inspect", "historical"]
 
 
+PolicyMode = Literal["policy", "legacy", "unavailable"]
+
+
+def _marked(canonical: Path) -> bool:
+    """D1 registration marker: a final or pending marker in `<root>/.rush`, or an
+    error other than absence while looking for one."""
+    from rush.memory.authorization import REGISTRATION_MARKER
+
+    rush = canonical / ".rush"
+    try:
+        names = os.listdir(rush)
+    except (FileNotFoundError, NotADirectoryError):
+        names = []
+    except OSError:
+        return True
+    if any(name.startswith(REGISTRATION_MARKER + ".pending-") for name in names):
+        return True
+    try:
+        os.lstat(rush / REGISTRATION_MARKER)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
+
+
+def _store_owner_match(
+    canonical: Path, grants: list[dict[str, Any]], open_store: Callable[[Path], Any]
+) -> str | None:
+    """D1 row 4/6: `match` when the project's store holds a project-owned row of a
+    granted project, `unreadable` when the store cannot be read, else `None`.
+    `open_store` is the predicate's read-only opener."""
+    ids = {
+        legacy_owner_scope(Path(g["project_root"])).id
+        for g in grants
+        if isinstance(g.get("project_root"), str)
+    } | {
+        g["owner_scope"]["id"]
+        for g in grants
+        if g.get("owner_scope", {}).get("kind") == "project"
+    }
+    try:
+        opened = open_store(canonical)
+    except (OSError, sqlite3.DatabaseError):
+        return "unreadable"
+    conn = opened.connection
+    if conn is None:
+        return "unreadable" if opened.state is not None else None
+    try:
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        if not {"owner_scope_kind", "owner_scope_id"} <= columns or not ids:
+            return None
+        found = conn.execute(
+            "SELECT 1 FROM memory_artifacts WHERE owner_scope_kind = 'project' "
+            "AND owner_scope_id IN (SELECT value FROM json_each(?)) LIMIT 1",
+            (json.dumps(sorted(ids)),),
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        return "unreadable"
+    finally:
+        conn.close()
+    return "match" if found is not None else None
+
+
+def memory_policy_decision(
+    project_root: Any, *, data_root: Path | None = None
+) -> tuple[PolicyMode, str | None]:
+    """D1: `(mode, reason)` for one project root. Read-only; never raises."""
+    return memory_policy_mode(project_root, data_root=data_root, with_reason=True)
+
+
+def _memory_policy_decision(
+    project_root: Any,
+    data_root: Path | None,
+    open_store: Callable[[Path], Any],
+) -> tuple[PolicyMode, str | None]:
+    from rush.memory import authorization as auth
+    from rush.workflows.projects import read_descriptor_strict, read_registry_strict
+
+    pol = auth.load_policy_readonly(data_root=data_root)
+    try:
+        if not isinstance(project_root, (str, os.PathLike)):
+            raise TypeError("project root")
+        canonical = Path(project_root).resolve()
+        os.fspath(canonical).encode("utf-8")
+    except (OSError, RuntimeError, ValueError, TypeError, UnicodeError):
+        return "unavailable", "project_missing"
+    if pol["state"] == "invalid":
+        return "unavailable", "policy_invalid"
+    if pol["state"] == "unavailable":
+        return "unavailable", "data_root_unavailable"
+    try:
+        overlay = Path(auth.user_overlay_owner_scope(data_root=data_root).id)
+    except auth.MemoryPolicyError:
+        return "unavailable", "data_root_unavailable"
+    if canonical == overlay or overlay in canonical.parents:
+        return "unavailable", "overlay_storage_root"
+    if pol["state"] == "missing":
+        return (
+            ("unavailable", "policy_missing")
+            if _marked(canonical)
+            else (
+                "legacy",
+                None,
+            )
+        )
+    grants = list(pol["grants"].values())
+    root_text = str(canonical)
+    registry = read_registry_strict(auth._data_root(data_root))
+    rid: str | None = None
+    if registry["state"] == "ok":
+        for project_id, entry in registry["registry"]["projects"].items():
+            if isinstance(entry, dict) and entry.get("root") == root_text:
+                rid = str(project_id)
+                break
+    if any(
+        g["project_root"] == root_text or (rid is not None and g["project_id"] == rid)
+        for g in grants
+    ):
+        return "policy", None
+    if grants:
+        descriptor = read_descriptor_strict(canonical)
+        if descriptor["state"] == "ok":
+            described = (descriptor["descriptor"] or {}).get("project_id")
+            if (
+                isinstance(described, str)
+                and described
+                and any(g["project_id"] == described for g in grants)
+            ):
+                return "policy", None
+        elif descriptor["state"] in ("corrupt", "unreadable"):
+            return "unavailable", "project_descriptor_invalid"
+        store = _store_owner_match(canonical, grants, open_store)
+        if store == "match":
+            return "policy", None
+        if registry["state"] in ("corrupt", "unreadable"):
+            return "unavailable", "project_registry_invalid"
+        if store == "unreadable":
+            return "unavailable", "memory_store_unreadable"
+    if _marked(canonical):
+        return "unavailable", "no_grant"
+    return "legacy", None
+
+
+@overload
+def memory_policy_mode(
+    project_root: Any,
+    *,
+    data_root: Path | None = None,
+    with_reason: Literal[False] = False,
+) -> PolicyMode: ...
+
+
+@overload
+def memory_policy_mode(
+    project_root: Any, *, data_root: Path | None = None, with_reason: Literal[True]
+) -> tuple[PolicyMode, str | None]: ...
+
+
+def memory_policy_mode(
+    project_root: Any, *, data_root: Path | None = None, with_reason: bool = False
+) -> PolicyMode | tuple[PolicyMode, str | None]:
+    """D1 predicate: the mode (`memory_policy_decision(...)[0]`), or with
+    `with_reason=True` the `(mode, reason)` pair. Read-only; never raises. Its
+    store-owner probe (rows 4/6) opens the store only through
+    `TypedArtifactStore.open_readonly`, which creates nothing."""
+    try:
+        decision = _memory_policy_decision(
+            project_root,
+            data_root,
+            lambda canonical: TypedArtifactStore.open_readonly(canonical),
+        )
+    except Exception:  # noqa: BLE001 - the mode predicate never raises
+        decision = ("unavailable", "policy_invalid")
+    return decision if with_reason else decision[0]
+
+
+_ASK_OPERATIONS = frozenset(
+    {
+        "ask",
+        "recall",
+        "related",
+        "explain",
+        "prepare",
+        "resume",
+        "plan_checks",
+        "last_success_diagnose",
+    }
+)
+_MUTATING_OPERATIONS = frozenset(
+    {"write", "edit", "archive", "delete", "promote", "maintain", "import"}
+)
+
+
+def required_operation_set(
+    operation: str,
+    *,
+    action: str | None = None,
+    apply: bool = False,
+    historical: bool = False,
+    overlay: bool = False,
+) -> tuple[str, ...]:
+    """D2: the grant operations one memory request needs (primary first)."""
+    result = _required_operations(operation, action, apply, overlay)
+    if historical and result[0] != "history" and "history" not in result:
+        result = (*result, "history")
+    return result
+
+
+def _required_operations(
+    operation: str, action: str | None, apply: bool, overlay: bool
+) -> tuple[str, ...]:
+    if operation == "historical":
+        return ("history",)
+    if operation == "overlay_read":
+        return ("overlay_read",)
+    if overlay:
+        if operation in {"ask", "recall", "list", "related"} or (
+            operation == "preference" and action == "resolve"
+        ):
+            return ("overlay_read", "list")
+        if operation == "expand":
+            return ("overlay_read", "expand")
+        if operation == "history":
+            return ("overlay_read", "history")
+        if apply and operation in {
+            "write",
+            "edit",
+            "archive",
+            "delete",
+            "promote",
+            "preference",
+        }:
+            return ("write",)
+        if not apply:
+            return ("overlay_read", "list")
+    if (
+        operation in _ASK_OPERATIONS
+        or (operation == "intent" and action == "check")
+        or (operation == "recipe" and action == "resolve")
+    ):
+        return ("ask",)
+    if (
+        operation == "list"
+        or (not apply and operation in _MUTATING_OPERATIONS)
+        or (operation == "preference" and (action == "resolve" or not apply))
+        or (operation == "capsule" and action == "preview_import")
+    ):
+        return ("list",)
+    if operation == "expand" or (
+        operation == "capsule" and action in {"preview_export", "export"}
+    ):
+        return ("expand",)
+    if operation == "history":
+        return ("history",)
+    if (
+        (apply and operation in _MUTATING_OPERATIONS)
+        or operation in {"link", "consolidate", "verify_attempt"}
+        or (operation == "intent" and action in {"create", "confirm", "supersede"})
+        or (operation == "recipe" and action in {"record", "outcome"})
+        or (operation == "preference" and apply)
+        or (operation == "capsule" and action == "import")
+    ):
+        return ("write",)
+    if operation == "handoff":
+        return ("write", "expand")
+    if operation == "receive":
+        return ("expand",)
+    if operation in {"bootstrap", "write"}:
+        return (operation,)
+    raise ValueError(f"no D2 operation set for {operation!r} (action {action!r})")
+
+
 @dataclasses.dataclass(frozen=True)
 class MemoryAccess:
-    """72-T01: the resolved authority behind one memory read.
+    """72-T01: the resolved authority behind one memory read or write.
 
     `kind="policy"` comes from `resolve()` (the owner-consented grant in
     `rush.memory.authorization`, never a caller claim); `kind="legacy_allowlist"` is
-    the explicit `session_allowlist` form (`legacy()`), which filters by source and,
-    only when an owner is declared, by owner. Every read route takes one of these and
-    decides each row through `evaluate_artifact_visibility`.
+    the explicit `session_allowlist` form (`legacy()`), valid only in D1 `legacy`
+    mode, which filters by source and, only when an owner is declared, by owner.
+    `required_operations` is the D2 set this access was resolved for; every one of
+    them is in the grant's allowed operations.
     """
 
     kind: Literal["policy", "legacy_allowlist"]
@@ -159,6 +482,8 @@ class MemoryAccess:
     session_binding: str | None = None
     data_root: Path | None = None
     requested_sources: tuple[str, ...] = ()
+    required_operations: frozenset[str] = frozenset()
+    required_operations_order: tuple[str, ...] = ()
 
     @classmethod
     def legacy(
@@ -168,6 +493,7 @@ class MemoryAccess:
         *,
         owner_scope: OwnerScope | None = None,
         operation: str = "ask",
+        data_root: Path | None = None,
     ) -> MemoryAccess:
         """The legacy explicit-allowlist access. An empty allowlist yields no sources,
         so every route fails closed on it."""
@@ -177,6 +503,7 @@ class MemoryAccess:
             operation=operation,
             sources=tuple(sorted(set(session_allowlist or ()))),
             owner_scope=owner_scope,
+            data_root=data_root,
         )
 
     @classmethod
@@ -185,6 +512,10 @@ class MemoryAccess:
         project_root: Path,
         *,
         operation: str,
+        action: str | None = None,
+        apply: bool = False,
+        historical: bool = False,
+        overlay: bool = False,
         owner_scope: OwnerScope | None = None,
         requested_sources: Iterable[str] = (),
         session_binding: str | None = None,
@@ -192,62 +523,429 @@ class MemoryAccess:
     ) -> MemoryAccess | None:
         """Policy access for one operation, or `None` when the policy denies it (a
         missing policy included). Never writes: `resolve_memory_scope` only reads."""
-        from rush.memory.authorization import resolve_memory_scope
-
-        requested = tuple(requested_sources)
-        result = resolve_memory_scope(
-            project_root=Path(project_root),
-            operation=_GRANT_FOR_OPERATION.get(operation, operation),
+        return cls.resolve_with_reason(
+            project_root,
+            operation=operation,
+            action=action,
+            apply=apply,
+            historical=historical,
+            overlay=overlay,
             owner_scope=owner_scope,
-            requested_sources=list(requested),
+            requested_sources=requested_sources,
+            session_binding=session_binding,
+            data_root=data_root,
+        )[0]
+
+    @classmethod
+    def resolve_with_reason(
+        cls,
+        project_root: Path,
+        *,
+        operation: str,
+        action: str | None = None,
+        apply: bool = False,
+        historical: bool = False,
+        overlay: bool = False,
+        owner_scope: OwnerScope | None = None,
+        requested_sources: Iterable[str] = (),
+        session_binding: str | None = None,
+        data_root: Path | None = None,
+    ) -> tuple[MemoryAccess | None, str]:
+        """`resolve()` plus the denial reason (`granted` on success)."""
+        try:
+            required = required_operation_set(
+                operation,
+                action=action,
+                apply=apply,
+                historical=historical,
+                overlay=overlay,
+            )
+        except ValueError:
+            return None, "invalid_request"
+        return cls._resolve_set(
+            project_root,
+            operation=operation,
+            required=required,
+            owner_scope=owner_scope,
+            requested_sources=tuple(requested_sources),
             session_binding=session_binding,
             data_root=data_root,
         )
+
+    @classmethod
+    def _resolve_set(
+        cls,
+        project_root: Path,
+        *,
+        operation: str,
+        required: tuple[str, ...],
+        owner_scope: OwnerScope | None,
+        requested_sources: tuple[str, ...],
+        session_binding: str | None,
+        data_root: Path | None,
+    ) -> tuple[MemoryAccess | None, str]:
+        from rush.memory.authorization import (
+            WRITER_SOURCE_FAMILIES,
+            resolve_memory_scope,
+        )
+
+        # D40: an internal caller may narrow to an approved `<family>:*` item; the
+        # resolver (a request boundary) only ever sees literal labels.
+        families = sorted(
+            {
+                s
+                for s in requested_sources
+                if isinstance(s, str)
+                and s.endswith(":*")
+                and s[:-2] in WRITER_SOURCE_FAMILIES
+            }
+        )
+        literal = [s for s in requested_sources if s not in families]
+
+        def scope(sources: list[str]) -> dict[str, Any]:
+            return resolve_memory_scope(
+                project_root=project_root,
+                operation=required[0],
+                owner_scope=owner_scope,
+                requested_sources=sources,
+                session_binding=session_binding,
+                data_root=data_root,
+            )
+
+        result = scope(literal)
         if result.get("access") not in ("read", "write"):
-            return None
+            return None, str(result.get("reason") or "policy_invalid")
+        approved = list(result["approved_sources"])
+        if families:
+            full = result if not literal else scope([])
+            if full.get("access") not in ("read", "write"):
+                return None, str(full.get("reason") or "policy_invalid")
+            if not set(families) <= set(full["approved_sources"]):
+                return None, "source_not_granted"
+            approved = sorted({*(approved if literal else ()), *families})
+        if not set(required) <= set(result["allowed_operations"]):
+            return None, "operation_not_granted"
         try:
             owner = OwnerScope.from_value(result["owner_scope"])
         except (TypeError, ValueError):
-            return None
-        return cls(
-            kind="policy",
-            project_root=Path(result["project_root"]),
-            operation=operation,
-            sources=tuple(result["approved_sources"]),
-            owner_scope=owner,
-            grant_id=result["grant_id"],
-            policy_revision=result["policy_revision"],
-            project_id=result["project_id"],
-            worktree_id=result["worktree_id"],
-            session_binding=session_binding,
-            data_root=data_root,
-            requested_sources=requested,
+            return None, "policy_invalid"
+        return (
+            cls(
+                kind="policy",
+                project_root=Path(result["project_root"]),
+                operation=operation,
+                sources=tuple(approved),
+                owner_scope=owner,
+                grant_id=result["grant_id"],
+                policy_revision=result["policy_revision"],
+                project_id=result["project_id"],
+                worktree_id=result["worktree_id"],
+                session_binding=session_binding,
+                data_root=data_root,
+                requested_sources=requested_sources,
+                required_operations=frozenset(required),
+                required_operations_order=required,
+            ),
+            "granted",
         )
 
-    def recheck(self) -> Literal["ok", "changed", "denied"]:
-        """Resolve again with this access's inputs: `denied` when the policy now denies
-        it, `changed` when the grant, revision, ids, root, owner or sources moved."""
-        if self.kind != "policy":
-            return "ok"
-        fresh = MemoryAccess.resolve(
+    def _re_resolve(self) -> tuple[MemoryAccess | None, str]:
+        return MemoryAccess._resolve_set(
             self.project_root,
             operation=self.operation,
+            required=self.required_operations_order
+            or required_operation_set(self.operation),
             owner_scope=self.owner_scope,
             requested_sources=self.requested_sources,
             session_binding=self.session_binding,
             data_root=self.data_root,
         )
+
+    def recheck(self) -> Literal["ok", "changed", "denied"]:
+        """Resolve again with this access's inputs: `denied` when the policy now denies
+        it (or, for the legacy form, when the project is no longer in D1 `legacy`
+        mode), `changed` when the grant, revision, ids, root, owner or sources moved."""
+        if self.kind != "policy":
+            try:
+                same_root = Path(self.project_root).resolve() == self.project_root
+            except (OSError, RuntimeError, ValueError):
+                return "denied"
+            if not same_root:
+                return "denied"
+            mode = memory_policy_mode(self.project_root, data_root=self.data_root)
+            return "ok" if mode == "legacy" else "denied"
+        fresh, _reason = self._re_resolve()
         if fresh is None:
             return "denied"
         return "ok" if fresh == self else "changed"
 
+    def denial_reason(self) -> str:
+        """Why a `denied` recheck denies (the fresh resolve reason)."""
+        if self.kind != "policy":
+            return "policy_mode_changed"
+        _fresh, reason = self._re_resolve()
+        return reason if reason != "granted" else "access_changed"
+
     @property
     def historical_allowed(self) -> bool:
-        """Historical reads need the legacy explicit form or a `history` grant."""
-        return (
-            self.kind == "legacy_allowlist"
-            or _GRANT_FOR_OPERATION.get(self.operation, self.operation) == "history"
+        """Historical reads need a `history` grant (policy) or D1 `legacy` mode."""
+        if self.kind == "policy":
+            return "history" in self.required_operations
+        return memory_policy_mode(self.project_root, data_root=self.data_root) == (
+            "legacy"
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class RouteDenial:
+    """D1: one route's denial before any store, view or telemetry construction."""
+
+    code: str
+    reason: str
+
+
+def recheck_failure(access: MemoryAccess) -> tuple[str, str] | None:
+    """D1 race rule, called immediately before a mutation commits: `None` when
+    `access` still holds, else the `(code, reason)` the mutation returns."""
+    state = access.recheck()
+    if state == "ok":
+        return None
+    if state == "changed":
+        return "E_RESTART", "access_changed"
+    return "E_PERMISSION", access.denial_reason()
+
+
+def _access_project_matches(access: MemoryAccess, root: Any) -> bool:
+    """`access` was resolved for exactly the project `root` names."""
+    try:
+        return Path(access.project_root) == Path(root).resolve()
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return False
+
+
+def supplied_writer_access_ok(
+    root: Path, source: str, access: MemoryAccess, *, data_root: Path | None = None
+) -> bool:
+    """D4: a caller-supplied writer access authorizes `source` at `root` when it is
+    a policy `write` access granting the source, or a legacy access in D1 `legacy`
+    mode."""
+    from rush.memory.authorization import source_granted
+
+    if not _access_project_matches(access, root):
+        return False
+    if access.recheck() != "ok":
+        return False
+    if access.kind == "policy":
+        return "write" in access.required_operations and source_granted(
+            source, access.sources
+        )
+    return memory_policy_mode(root, data_root=data_root or access.data_root) == "legacy"
+
+
+@contextmanager
+def authorize_writer(
+    root: Path,
+    source: str,
+    *,
+    owner: OwnerScope | None = None,
+    data_root: Path | None = None,
+    access: MemoryAccess | None = None,
+) -> Iterator[MemoryAccess | RouteDenial]:
+    """D4: the shared internal-writer gate. Holds the policy lock for the whole
+    `with` body and yields the writer's access, or the `RouteDenial` the writer
+    turns into its own denial value. Every effect belongs inside the body. A
+    supplied `access` pins the data root and owner: a conflicting explicit
+    `data_root` or `owner`, or another project's access, is refused."""
+    from rush.dashboard.state import PolicyLockRootUncreatable
+    from rush.memory.authorization import (
+        _data_root,
+        hold_policy_lock,
+        literal_source_is_valid,
+        load_policy_readonly,
+    )
+
+    if not isinstance(source, str) or "*" in source:
+        yield RouteDenial("E_INPUT", "source_pattern")
+        return
+    if not literal_source_is_valid(source):
+        yield RouteDenial("E_PERMISSION", "invalid_request")
+        return
+    if access is not None:
+        try:
+            conflicting = (
+                data_root is not None
+                and _data_root(data_root) != _data_root(access.data_root)
+            ) or (
+                owner is not None
+                and access.owner_scope is not None
+                and owner != access.owner_scope
+            )
+        except (OSError, RuntimeError, ValueError, TypeError):
+            conflicting = True
+        if conflicting:
+            yield RouteDenial("E_PERMISSION", "policy_grant_required")
+            return
+        data_root = access.data_root
+    # G3: the writer authority is decided before the lock root can be created.
+    mode, reason = memory_policy_decision(root, data_root=data_root)
+    if mode == "unavailable":
+        yield RouteDenial("E_PERMISSION", reason or "policy_invalid")
+        return
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(hold_policy_lock(data_root=data_root))
+        except PolicyLockRootUncreatable:
+            if load_policy_readonly(data_root=data_root)["state"] != "missing":
+                yield RouteDenial("E_PERMISSION", "lock_unavailable")
+                return
+        except Exception:  # noqa: BLE001 - any lock failure denies the write
+            yield RouteDenial("E_PERMISSION", "lock_unavailable")
+            return
+        mode, reason = memory_policy_decision(root, data_root=data_root)
+        if mode == "unavailable":
+            yield RouteDenial("E_PERMISSION", reason or "policy_invalid")
+            return
+        if access is not None:
+            failure = (
+                recheck_failure(access)
+                if _access_project_matches(access, root)
+                else None
+            )
+            if failure is not None:
+                yield RouteDenial(*failure)
+            elif supplied_writer_access_ok(root, source, access, data_root=data_root):
+                yield access
+            else:
+                yield RouteDenial("E_PERMISSION", "policy_grant_required")
+            return
+        writer_owner = owner or legacy_owner_scope(root)
+        if mode == "legacy":
+            yield MemoryAccess.legacy(
+                root,
+                [source],
+                owner_scope=writer_owner,
+                operation="write",
+                data_root=data_root,
+            )
+            return
+        resolved, why = MemoryAccess.resolve_with_reason(
+            root,
+            operation="write",
+            apply=True,
+            owner_scope=writer_owner,
+            requested_sources=[source],
+            data_root=data_root,
+        )
+        yield resolved if resolved is not None else RouteDenial("E_PERMISSION", why)
+
+
+def reader_route(
+    project_root: Path, operation: str, sources: Sequence[str]
+) -> MemoryAccess | RouteDenial:
+    """D1 access for an internal reader of a fixed source set (review citations,
+    the cache gate, status, continuity, patch memory, invariant graph, hook
+    signatures, migration readers): `legacy` mode keeps the explicit allowlist;
+    `policy` mode narrows the grant to the listed sources it approves (none
+    approved is `source_not_granted`); `unavailable` denies with its reason."""
+    from rush.memory.authorization import source_granted
+
+    full = route_access(project_root, operation)
+    if isinstance(full, RouteDenial):
+        return full
+    if full.kind != "policy":
+        return MemoryAccess.legacy(project_root, sources, operation=operation)
+    keep = [s for s in sources if source_granted(s, full.sources)]
+    if not keep:
+        return RouteDenial("E_PERMISSION", "source_not_granted")
+    return route_access(project_root, operation, session_allowlist=keep)
+
+
+def narrowed_reader_access(
+    project_root: Path, operation: str, sources: Sequence[str]
+) -> MemoryAccess | None:
+    """`reader_route` with a denial as `None` (the reader reads nothing)."""
+    access = reader_route(project_root, operation, sources)
+    return access if isinstance(access, MemoryAccess) else None
+
+
+def reader_row_allowed(access: MemoryAccess, project_root: Path, row: Any) -> bool:
+    """D1 row test for an internal reader's `sqlite3.Row`: a legacy access keeps
+    every row (HEAD behavior); a policy access keeps only rows of its owner whose
+    source it approves."""
+    if access.kind != "policy":
+        return True
+    from rush.memory.authorization import source_granted
+
+    if not source_granted(_row_value(row, "source"), access.sources):
+        return False
+    return (
+        access.owner_scope is None
+        or _row_owner(row, Path(project_root).resolve()) == access.owner_scope
+    )
+
+
+def writer_owner(access: MemoryAccess) -> OwnerScope | None:
+    """The owner an internal writer's row carries: a policy access's owner, else
+    `None` (the store's legacy default)."""
+    return access.owner_scope if access.kind == "policy" else None
+
+
+def _sources_have_pattern(sources: Iterable[Any]) -> bool:
+    return any(isinstance(s, str) and "*" in s for s in sources)
+
+
+def _source_input_denial(sources: list[Any]) -> tuple[str, str] | None:
+    """D40 request-source boundary: a `*` is `E_INPUT/source_pattern`; any other
+    non-literal label is `E_PERMISSION/invalid_request`."""
+    if _sources_have_pattern(sources):
+        return "E_INPUT", "source_pattern"
+    from rush.memory.authorization import literal_source_is_valid
+
+    if not all(literal_source_is_valid(s) for s in sources):
+        return "E_PERMISSION", "invalid_request"
+    return None
+
+
+def route_access(
+    project_root: Path,
+    operation: str,
+    *,
+    action: str | None = None,
+    apply: bool = False,
+    historical: bool = False,
+    session_allowlist: Iterable[str] | None = None,
+    owner_scope: OwnerScope | None = None,
+    data_root: Path | None = None,
+) -> MemoryAccess | RouteDenial:
+    """D1: the one route-resolution helper. `policy` mode resolves the grant (an
+    allowlist only narrows it), `legacy` mode builds the explicit-allowlist access,
+    `unavailable` denies with the predicate reason."""
+    allowlist = list(session_allowlist or ())
+    refused = _source_input_denial(allowlist)
+    if refused is not None:
+        return RouteDenial(*refused)
+    mode, reason = memory_policy_decision(project_root, data_root=data_root)
+    if mode == "unavailable":
+        return RouteDenial("E_PERMISSION", reason or "policy_invalid")
+    if mode == "legacy":
+        return MemoryAccess.legacy(
+            project_root,
+            allowlist,
+            owner_scope=owner_scope,
+            operation=operation,
+            data_root=data_root,
+        )
+    access, why = MemoryAccess.resolve_with_reason(
+        project_root,
+        operation=operation,
+        action=action,
+        apply=apply,
+        historical=historical,
+        owner_scope=owner_scope,
+        requested_sources=allowlist,
+        data_root=data_root,
+    )
+    return access if access is not None else RouteDenial("E_PERMISSION", why)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -271,34 +969,64 @@ def read_access(
     *,
     owner_scope: OwnerScope | None = None,
     data_root: Path | None = None,
+    action: str | None = None,
+    historical: bool = False,
 ) -> MemoryAccess | None:
-    """72-T01 read convention shared by `MemoryTool` and the learned-advice readers: a
-    non-empty `session_allowlist` is the legacy form; otherwise the policy is resolved
-    at `data_root` (default: the OS data root). `None` means fail closed."""
-    allowlist = list(session_allowlist or ())
-    if allowlist:
-        return MemoryAccess.legacy(
-            project_root, allowlist, owner_scope=owner_scope, operation=operation
-        )
-    return MemoryAccess.resolve(
-        project_root, operation=operation, owner_scope=owner_scope, data_root=data_root
+    """72-T01 read convention shared by `MemoryTool` and the learned-advice readers:
+    `route_access` with a `RouteDenial` (or a source-less legacy access) as `None`,
+    which means fail closed."""
+    result = route_access(
+        project_root,
+        operation,
+        action=action,
+        historical=historical,
+        session_allowlist=session_allowlist,
+        owner_scope=owner_scope,
+        data_root=data_root,
     )
+    if isinstance(result, RouteDenial) or not result.sources:
+        return None
+    return result
 
 
 def _route_access(
     store: TypedArtifactStore,
     access: MemoryAccess | None,
     session_allowlist: Iterable[str] | None,
-) -> MemoryAccess | None:
-    """One route's access: the given `access`, else the legacy allowlist form. Both
-    raise `ValueError`; neither, or no sources, is `None` (fail closed)."""
+    *,
+    operation: str = "ask",
+    historical: bool = False,
+) -> tuple[MemoryAccess | None, str | None]:
+    """One route's access and, when it is denied outside D1 `legacy` mode, the
+    denial reason. A given `access` is used as is; otherwise `legacy` mode builds
+    the explicit-allowlist form (an empty allowlist fails closed with no reason),
+    `policy` mode resolves the grant narrowed by the allowlist and `unavailable`
+    mode denies. Passing both raises `ValueError`."""
     if access is not None and session_allowlist is not None:
         raise ValueError("pass access or session_allowlist, not both")
     if access is None:
-        if not session_allowlist:
-            return None
-        access = MemoryAccess.legacy(store.project_root, session_allowlist)
-    return access if access.sources else None
+        allowlist = list(session_allowlist or ())
+        refused = _source_input_denial(allowlist)
+        if refused is not None:
+            return None, refused[1]
+        mode, reason = memory_policy_decision(store.project_root)
+        if mode == "unavailable":
+            return None, reason or "policy_invalid"
+        if mode == "legacy":
+            if not allowlist:
+                return None, None
+            access = MemoryAccess.legacy(store.project_root, allowlist)
+        else:
+            resolved, why = MemoryAccess.resolve_with_reason(
+                store.project_root,
+                operation=operation,
+                historical=historical,
+                requested_sources=allowlist,
+            )
+            if resolved is None:
+                return None, why
+            access = resolved
+    return (access, None) if access.sources else (None, None)
 
 
 def _row_owner(row: sqlite3.Row, project_root: Path) -> OwnerScope | None:
@@ -333,7 +1061,11 @@ def _access_allows(
     access: MemoryAccess,
     mode: VisibilityMode,
 ) -> bool:
-    if not _root_allows(store, access) or row["source"] not in access.sources:
+    from rush.memory.authorization import source_granted
+
+    if not _root_allows(store, access) or not source_granted(
+        row["source"], access.sources
+    ):
         return False
     if (
         access.owner_scope is not None
@@ -357,7 +1089,7 @@ def _lifecycle_reasons(row: sqlite3.Row, now: float) -> list[str]:
     return reasons
 
 
-def _parsed_content(row: sqlite3.Row) -> dict[str, Any] | None:
+def _parsed_content(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any] | None:
     try:
         content = json.loads(row["content"])
     except (TypeError, ValueError, RecursionError):
@@ -365,9 +1097,13 @@ def _parsed_content(row: sqlite3.Row) -> dict[str, Any] | None:
     return content if isinstance(content, dict) else None
 
 
-def _integrity(row: sqlite3.Row) -> tuple[list[str], str]:
+def _integrity(
+    row: sqlite3.Row, verifier: BindingVerifier | None = None
+) -> tuple[list[str], str]:
     """Integrity reasons and the OD-1 label: `verified` (bound by an authorized write),
-    `backfilled` (bound by the additive migration) or `unbound` (no binding)."""
+    `backfilled` (bound by the additive migration) or `unbound` (no binding). D41: a
+    STATED row whose row binding is `unbound` carries `store_unbound` when no other
+    integrity reason already blocks it."""
     content = _parsed_content(row)
     reasons = []
     if content is None:
@@ -396,6 +1132,13 @@ def _integrity(row: sqlite3.Row) -> tuple[list[str], str]:
         label = "backfilled"
     else:
         label = "verified"
+    if (
+        not reasons
+        and verifier is not None
+        and row["trust_tier"] == "STATED"
+        and verifier.row(row) == "unbound"
+    ):
+        reasons.append("store_unbound")
     return reasons, label
 
 
@@ -429,7 +1172,9 @@ def _freshness_of(
         return "unknown", ("source_hash_missing",)
     if not file_path.is_file():
         return "unknown", ("source_missing",)
-    current_hash = memo.source_hash(file_path)
+    current_hash = memo.source_hash(
+        ContainedSource(store.project_root, path_part, file_path)
+    )
     if current_hash is None:
         return "unknown", ("source_unreadable",)
     if current_hash != content_hash:
@@ -440,12 +1185,93 @@ def _freshness_of(
         # A whole-file anchor has no symbol to API-diff: its source hash decides, as
         # before T01, and a read spawns no `git`.
         return "current", ()
-    diff = memo.api_diff(store.project_root, file_path, symbol)
+    diff = memo.api_diff(store.project_root, file_path, symbol, path_part)
     if isinstance(diff, dict):
         return "stale", ("api_changed",)
     if diff is not None:
         return "unknown", ("api_baseline_unknown",)
     return "current", ()
+
+
+# D33/PR1: informational reasons never block ordinary use.
+_INFORMATIONAL_REASONS = frozenset({"unanchored_note"})
+_UNANCHORED_NOTE_SUBJECTS = frozenset(
+    {"domain_knowledge", "skill_pattern", "failure", "architectural_decision"}
+)
+_SESSION_ROW_SOURCES = frozenset(
+    {
+        "session_memory:record_turn",
+        "migration:session_memory",
+        "migration:hook_signatures",
+    }
+)
+_EXPERIENCE_KINDS = frozenset(
+    {"behavior_success", "repair_episode", "cause_experiment"}
+)
+
+
+def _freshness_class(
+    store: TypedArtifactStore,
+    row: sqlite3.Row | dict[str, Any],
+    memo: SourceValidationMemo,
+) -> tuple[Freshness, tuple[str, ...]]:
+    """D33/PR1: `(freshness, reasons)` for one row; the first matching class wins.
+    Anchored rows (`path::symbol`) keep `_freshness_of`; every unanchored writer
+    class is explicit, and an unmatched row is `unknown`."""
+    from rush.memory.store import INTERNAL_MEMORY_SOURCES
+
+    symbol_ref = row["symbol_ref"]
+    source = row["source"]
+    content = _parsed_content(row) or {}
+    kind = content.get("kind")
+    subject = row["subject"]
+    if symbol_ref is not None and "::" in symbol_ref:
+        return _freshness_of(store, symbol_ref, row["content_hash"], memo, None)
+    if subject == "preference" or row["trust_tier"] == "STATED":
+        return "not_applicable", ()
+    if subject == "active_context":
+        return "not_applicable", ()
+    if source in INTERNAL_MEMORY_SOURCES or source in _SESSION_ROW_SOURCES:
+        return "not_applicable", ()
+    if kind in ("observation", "intent"):
+        return "not_applicable", ()
+    if subject == "episodic" and kind == "checkpoint" and symbol_ref is None:
+        return "not_applicable", ()
+    if kind == "consolidated_episode_summary" or kind in _EXPERIENCE_KINDS:
+        return "not_applicable", ()
+    if kind == "recipe":
+        from rush.memory.recipes import resolve_symbol_source
+
+        helper = content.get("helper_ref")
+        resolved = resolve_symbol_source(
+            store.project_root, helper if isinstance(helper, dict) else None
+        )
+        if resolved is None:
+            return "unknown", ("recipe_helper_unresolved",)
+        if resolved[1] != content.get("helper_source_hash"):
+            return "stale", ("recipe_helper_changed",)
+        return "current", ()
+    if source == "skills_generator:generate_skill_markdown":
+        digest = content.get("closure_digest")
+        if isinstance(digest, str) and digest:
+            return "not_applicable", ()
+        return "unknown", ("closure_digest_missing",)
+    if symbol_ref is None and subject in _UNANCHORED_NOTE_SUBJECTS:
+        return "not_applicable", ("unanchored_note",)
+    if symbol_ref is not None:
+        return "unknown", ("symbol_ref_malformed",)
+    return "unknown", ("unanchored_unclassified",)
+
+
+def _artifact_row(artifact: MemoryArtifact) -> dict[str, Any]:
+    return {
+        "symbol_ref": artifact.symbol_ref,
+        "source": artifact.source,
+        "content": json.dumps(artifact.content),
+        "subject": artifact.subject,
+        "trust_tier": artifact.trust_tier,
+        "content_hash": artifact.content_hash,
+    }
 
 
 def artifact_freshness(
@@ -456,22 +1282,14 @@ def artifact_freshness(
     memo: SourceValidationMemo | None = None,
 ) -> tuple[str, tuple[str, ...]]:
     """X5: `(freshness, reasons)` for one artifact, with no access value and no write --
-    the same freshness `evaluate_artifact_visibility` reports. Unanchored rows give
-    `("not_applicable", ())`. `now` is accepted for a uniform read signature; freshness
-    depends only on the source file."""
+    the same freshness `evaluate_artifact_visibility` reports (D33 classes; the
+    informational `unanchored_note` is omitted). `now` is accepted for a uniform read
+    signature; freshness depends only on the source file."""
     del now
     memo = memo or SourceValidationMemo()
-    if isinstance(artifact, MemoryArtifact):
-        return _freshness_of(
-            store, artifact.symbol_ref, artifact.content_hash, memo, artifact.source
-        )
-    return _freshness_of(
-        store,
-        artifact["symbol_ref"],
-        artifact["content_hash"],
-        memo,
-        artifact["source"],
-    )
+    row = _artifact_row(artifact) if isinstance(artifact, MemoryArtifact) else artifact
+    freshness, reasons = _freshness_class(store, row, memo)
+    return freshness, tuple(r for r in reasons if r not in _INFORMATIONAL_REASONS)
 
 
 def _reference(
@@ -480,9 +1298,12 @@ def _reference(
     access: MemoryAccess,
     freshness: str,
     integrity: str,
+    *,
+    informational: tuple[str, ...] = (),
+    binding: str = "bound",
 ) -> dict[str, Any]:
     owner = _row_owner(row, store.project_root)
-    return {
+    reference = {
         "artifact_id": row["id"],
         "artifact_version": row["artifact_version"],
         "project_id": access.project_id,
@@ -496,7 +1317,11 @@ def _reference(
         "freshness": freshness,
         "integrity": integrity,
         "payload_hash": _row_value(row, "payload_hash"),
+        "reason_codes": list(informational),
     }
+    if binding == "unbound":
+        reference["store_binding"] = "unbound"
+    return reference
 
 
 def _decide(
@@ -507,27 +1332,36 @@ def _decide(
     mode: VisibilityMode,
     now: float | None,
     memo: SourceValidationMemo | None,
+    verifier: BindingVerifier | None = None,
 ) -> VisibilityDecision:
     """§3 steps 3-8 for a row that already passed the access gate."""
     moment = time.time() if now is None else now
-    integrity_reasons, label = _integrity(row)
+    verifier = verifier if verifier is not None else binding_verifier(store)
+    integrity_reasons, label = _integrity(row, verifier)
     blocking = _lifecycle_reasons(row, moment) + integrity_reasons
     if blocking and mode != "historical":
         return _NOT_VISIBLE
-    freshness, freshness_reasons = _freshness_of(
-        store,
-        row["symbol_ref"],
-        row["content_hash"],
-        memo or SourceValidationMemo(),
-        row["source"],
+    freshness, freshness_reasons = _freshness_class(
+        store, row, memo or SourceValidationMemo()
     )
-    reasons = tuple(sorted({*blocking, *freshness_reasons}))
+    informational = tuple(r for r in freshness_reasons if r in _INFORMATIONAL_REASONS)
+    reasons = tuple(
+        sorted({*blocking, *(r for r in freshness_reasons if r not in informational)})
+    )
     return VisibilityDecision(
         visible=True,
         usable_as_current=not reasons and freshness in ("current", "not_applicable"),
         freshness=freshness,
         reason_codes=reasons,
-        reference=_reference(store, row, access, freshness, label),
+        reference=_reference(
+            store,
+            row,
+            access,
+            freshness,
+            label,
+            informational=informational,
+            binding=verifier.row(row),
+        ),
     )
 
 
@@ -539,6 +1373,7 @@ def evaluate_artifact_visibility(
     mode: VisibilityMode = "ordinary",
     now: float | None = None,
     memo: SourceValidationMemo | None = None,
+    verifier: BindingVerifier | None = None,
 ) -> VisibilityDecision:
     """72-T01: the one shared visibility decision every memory read route uses.
 
@@ -556,7 +1391,9 @@ def evaluate_artifact_visibility(
     )
     if row is None or not _access_allows(store, row, access, mode):
         return _NOT_VISIBLE
-    return _decide(store, row, access=access, mode=mode, now=now, memo=memo)
+    return _decide(
+        store, row, access=access, mode=mode, now=now, memo=memo, verifier=verifier
+    )
 
 
 def _raise_legacy_integrity(row: sqlite3.Row) -> None:
@@ -599,13 +1436,22 @@ def visible_artifacts(
     memo = memo or SourceValidationMemo()
     moment = time.time() if now is None else now
     default_owner = legacy_owner_scope(store.project_root)
+    verifier = binding_verifier(store)
     found: list[MemoryArtifact] = []
     for row in rows:
         if not _access_allows(store, row, access, mode):
             continue
         if legacy_raise and access.kind == "legacy_allowlist":
             _raise_legacy_integrity(row)
-        decision = _decide(store, row, access=access, mode=mode, now=moment, memo=memo)
+        decision = _decide(
+            store,
+            row,
+            access=access,
+            mode=mode,
+            now=moment,
+            memo=memo,
+            verifier=verifier,
+        )
         if not decision.visible or (
             mode == "ordinary" and not decision.usable_as_current
         ):
@@ -683,7 +1529,7 @@ def defended_recall(
     `store.recall()` does; callers that treat a defended read as fail-closed should keep
     wrapping this in `contextlib.suppress(Exception)`, same as before.
     """
-    access = _route_access(store, access, session_allowlist)
+    access, _why = _route_access(store, access, session_allowlist)
     if access is None or access.recheck() != "ok":
         return []
     moment = time.time() if now is None else now
@@ -722,6 +1568,7 @@ def _record_memory_event(
     session_id: str | None = None,
     opt_in: bool,
     cache_write: bool,
+    access: MemoryAccess | None = None,
 ) -> None:
     """No-op unless a caller opts into real cost accounting by passing `telemetry` plus both
     IDs — existing `recall_page()`/`expand_artifact()` callers that pass none of this see zero
@@ -747,6 +1594,9 @@ def _record_memory_event(
         )
         if value is not None
     }
+    # 72-T01 §3.9: the event records the access it was read under, so policy-mode
+    # telemetry readers can scope totals to an owner and its granted sources.
+    owner = access.owner_scope if access is not None else None
     telemetry.record_memory_event(
         kind,
         tokens,
@@ -755,6 +1605,9 @@ def _record_memory_event(
         invocation_id=invocation_id,
         opt_in=opt_in,
         cache_write=cache_write,
+        owner_scope_kind=owner.kind if owner is not None else None,
+        owner_scope_id=owner.id if owner is not None else None,
+        sources_json=json.dumps(sorted(access.sources)) if access is not None else None,
         **attribution,
     )
 
@@ -928,7 +1781,7 @@ def _candidate_to_item(
         return None
     if not isinstance(content, dict):
         return None
-    return {
+    item: dict[str, Any] = {
         "id": row["id"],
         "version": row["artifact_version"],
         "excerpt": _excerpt(content),
@@ -939,6 +1792,57 @@ def _candidate_to_item(
             store, row["id"], row["artifact_version"], access, now=now, memo=memo
         ),
     }
+    if (decision.reference or {}).get("store_binding") == "unbound":
+        item["store_binding"] = "unbound"
+    if _contested(store, row, access, now=now, memo=memo):
+        item["contested"] = True
+    return item
+
+
+def _contested(
+    store: TypedArtifactStore,
+    row: Any,
+    access: MemoryAccess,
+    *,
+    now: float | None,
+    memo: SourceValidationMemo | None,
+) -> bool:
+    """D34: a visible peer with the same owner, subject and anchor contradicts this
+    row (either direction of `trust.evaluate_conflict`), or a versioned
+    `contradicts` relation joins the two."""
+    from rush.memory.trust import evaluate_conflict
+
+    default_owner = legacy_owner_scope(store.project_root)
+    owner = _row_owner(row, store.project_root)
+    if owner is None:
+        return False
+    try:
+        mine = _row_to_artifact(row, default_owner_scope=default_owner)
+    except (TypeError, ValueError):
+        return False
+    for peer in store.contest_peers(
+        row["subject"], row["symbol_ref"], owner, access.sources, exclude=row["id"]
+    ):
+        if not evaluate_artifact_visibility(
+            store, peer, access=access, now=now, memo=memo
+        ).visible:
+            continue
+        try:
+            other = _row_to_artifact(peer, default_owner_scope=default_owner)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(other.content, dict):
+            continue
+        if (
+            evaluate_conflict(mine, other) == "delete"
+            or evaluate_conflict(other, mine) == "delete"
+            or store.has_contradiction(
+                (row["id"], row["artifact_version"]),
+                (peer["id"], peer["artifact_version"]),
+            )
+        ):
+            return True
+    return False
 
 
 def _page_text(
@@ -1049,6 +1953,13 @@ def _page(
         "bytes": bytes_,
         "encoding": encoding,
     }
+
+
+def _denied_page(reason: str, encoding: str) -> dict[str, Any]:
+    """R1: a route denied outside D1 `legacy` mode: no items, never `complete`."""
+    page = _page("E_PERMISSION", encoding=encoding)
+    page["reason"] = reason
+    return page
 
 
 def _within(size: tuple[int, int], max_bytes: int, max_tokens: int) -> bool:
@@ -1171,8 +2082,10 @@ def recall_page(
     smallest `E_BUDGET` page, `limit < 1` or an unknown `encoding` are `E_INPUT` before
     any store read. A store with no cursor key (a read-only view) is `E_MIGRATION`.
     """
-    access = _route_access(store, access, session_allowlist)
+    access, why = _route_access(store, access, session_allowlist)
     if access is None:
+        if why is not None:
+            return _denied_page(why, encoding)
         return _page("OK", complete=True, encoding=encoding)
     refused = recall_admission(
         limit=limit,
@@ -1242,16 +2155,28 @@ def recall_page(
     scanned = 0
     while not more and not exhausted and scanned < _SCAN_CAP:
         batch_limit = min(_BATCH_SIZE, _SCAN_CAP - scanned)
-        batch = store.search_candidates(
-            subject,
-            query,
-            source_allowlist=allowed_sources,
-            scan_offset=position,
-            scan_limit=batch_limit,
-            owner_scope=access.owner_scope,
-            # 72-T02 fix1: no `now=` here. An SQL expiry filter under LIMIT/OFFSET
-            # shrinks the rank set when a row expires between pages and skips a row;
-            # expiry is decided per row by `evaluate_artifact_visibility` instead.
+        batch = (
+            store.search_candidates(
+                subject,
+                query,
+                source_allowlist=allowed_sources,
+                scan_offset=position,
+                scan_limit=batch_limit,
+                owner_scope=access.owner_scope,
+                # 72-T02 fix1: no `now=` here. An SQL expiry filter under LIMIT/OFFSET
+                # shrinks the rank set when a row expires between pages and skips a
+                # row; expiry is decided per row by `evaluate_artifact_visibility`.
+            )
+            if query
+            # 72-T01 R5: an unqueried (compact `list`) page browses the subject's
+            # rows in ID order through the same per-row decision.
+            else store.scope_artifacts(
+                subject,
+                source_allowlist=allowed_sources,
+                scan_offset=position,
+                scan_limit=batch_limit,
+                owner_scope=access.owner_scope,
+            )
         )
         for row in batch:
             item = eligible_item(row)
@@ -1313,6 +2238,7 @@ def recall_page(
                 session_id=session_id,
                 opt_in=opt_in,
                 cache_write=cache_write,
+                access=access,
             )
         return page
 
@@ -1687,8 +2613,18 @@ def expand_artifact(
     if admitted is not None:
         return admitted
 
-    access = _route_access(store, access, session_allowlist)
+    access, why = _route_access(
+        store,
+        access,
+        session_allowlist,
+        operation="expand",
+        historical=mode == "historical",
+    )
     if access is None:
+        if why is not None:
+            refusal = denied("E_PERMISSION")
+            refusal["reason"] = why
+            return refusal
         return denied()
     failed = _recheck_code(access, "E_NOT_VISIBLE")
     if failed is not None:
@@ -1697,17 +2633,29 @@ def expand_artifact(
     row = store.get_current_row(artifact_id)
     if row is None:
         return denied()
+    verifier = binding_verifier(store)
     decision = evaluate_artifact_visibility(
         store,
         row,
         access=access,
         mode="historical" if historical else "ordinary",
         now=now,
+        verifier=verifier,
     )
     if not decision.visible or not (historical or decision.usable_as_current):
         return denied()
     reasons = set(decision.reason_codes)
     current_version = row["artifact_version"]
+    if row["trust_tier"] == "STATED":
+        # D41: a STATED row whose current version bytes are not bound is never
+        # expanded, in any mode or version.
+        current_payload = store.get_version_payload(artifact_id, current_version)
+        if (
+            current_payload is None
+            or verifier.version_bytes(row, current_version, current_payload[0])
+            == "unbound"
+        ):
+            return denied()
     if version != current_version:
         if not historical:
             return refuse("E_VERSION", version_=current_version)
@@ -1716,6 +2664,11 @@ def expand_artifact(
     if payload is None:
         return denied()
     stored_text, stored_digest = payload
+    # D41: only a bound row's current version with its exact stored bytes carries
+    # current-row authority; unbound STATED bytes are never delivered, other
+    # unbound bytes are labelled.
+    unbound = verifier.version_bytes(row, version, stored_text) == "unbound"
+    binding_label = {"store_binding": "unbound"} if unbound else {}
     stored_bytes = stored_text.encode("utf-8")
     if utf8:
         if stored_digest is None:
@@ -1745,9 +2698,15 @@ def expand_artifact(
             max_tokens=max_tokens,
             encoding=encoding,
             extra=(
-                {"historical": True, "reason_codes": sorted(reasons)}
-                if historical
-                else None
+                {
+                    **(
+                        {"historical": True, "reason_codes": sorted(reasons)}
+                        if historical
+                        else {}
+                    ),
+                    **binding_label,
+                }
+                or None
             ),
         )
         if result["code"] != "OK":
@@ -1809,10 +2768,13 @@ def expand_artifact(
         session_id=session_id,
         opt_in=opt_in,
         cache_write=cache_write,
+        access=access,
     )
     if historical and not utf8:  # utf8 pages already carry (and measured) them
         result["historical"] = True
         result["reason_codes"] = sorted(reasons)
+    if not utf8:
+        result.update(binding_label)
     return result
 
 
@@ -1945,8 +2907,10 @@ def hybrid_candidates(
     the lexical or vector-scope scan returned a full `scan_limit` (512) batch, meaning
     unseen candidates beyond the cap were never ranked (§6.7 "report candidate truncation").
     """
-    access = _route_access(store, access, session_allowlist)
+    access, why = _route_access(store, access, session_allowlist)
     if access is None:
+        if why is not None:
+            return {"available": False, "code": "E_PERMISSION", "reason": why}
         return {"available": True, "rows": [], "candidates_truncated": False}
     if embed_config is None:
         return {"available": False, "reason": "no embedding engine configured"}
@@ -2108,8 +3072,12 @@ def hybrid_page(
     when no engine is configured or it is unreachable/invalid -- never reports that as hybrid
     success (§9.0 fixed contract).
     """
-    access = _route_access(store, access, session_allowlist)
+    access, why = _route_access(store, access, session_allowlist)
     if access is None:
+        if why is not None:
+            page = _denied_page(why, encoding)
+            page["retrieval"] = "hybrid"
+            return page
         page = _page("OK", complete=True, encoding=encoding)
         page["retrieval"] = "hybrid"
         page["candidates_truncated"] = False
@@ -2208,6 +3176,7 @@ def hybrid_page(
         session_id=session_id,
         opt_in=opt_in,
         cache_write=cache_write,
+        access=access,
     )
     page = _page(
         "OK",

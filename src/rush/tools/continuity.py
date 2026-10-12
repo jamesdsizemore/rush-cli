@@ -418,6 +418,30 @@ class SessionContinuityTool(ToolFn):
                 {"cwd": str(root), "handoff": handoff_receipt},
                 list(files or []),
             )
+        if checkpoint is None:
+            # 72-T01 D4: the memory policy refused the checkpoint write; the reason
+            # is the same read-only resolution the writer gate made.
+            from ..memory.retrieval import RouteDenial, route_access
+
+            refused = route_access(
+                root,
+                "write",
+                apply=True,
+                session_allowlist=["checkpoint_journal:save_checkpoint"],
+            )
+            reason = (
+                refused.reason
+                if isinstance(refused, RouteDenial)
+                else "memory_access_changed"
+            )
+            return self._result(
+                started,
+                "skipped",
+                f"Session save denied by the memory policy: E_PERMISSION ({reason}).",
+                operation="save",
+                granted=granted,
+                requested=_WRITE_PERMISSION,
+            )
         data = journal.restore_checkpoint(name or "")
         return self._result(
             started,
@@ -437,6 +461,21 @@ class SessionContinuityTool(ToolFn):
             ),
         )
 
+    @staticmethod
+    def _checkpoint_read_denial(root: Path) -> str | None:
+        """72-T01 D1: `"<code> (<reason>)"` when the checkpoint `ask` route is
+        denied, else `None`."""
+        from ..memory.retrieval import RouteDenial, reader_route
+
+        access = reader_route(
+            root,
+            "ask",
+            ["checkpoint_journal:save_checkpoint", "migration:checkpoint_journal"],
+        )
+        if isinstance(access, RouteDenial):
+            return f"{access.code} ({access.reason})"
+        return None
+
     def _run_list(
         self,
         started: float,
@@ -445,6 +484,16 @@ class SessionContinuityTool(ToolFn):
     ) -> ContinuityOutput:
         # T10 (finding 3): JSON first, then `memory.db` read-only, whether or not
         # `.rush/sessions` exists; `list_checkpoints` never creates anything.
+        denied = self._checkpoint_read_denial(root)
+        if denied is not None:
+            return self._result(
+                started,
+                "skipped",
+                f"Session list denied by the memory policy: {denied}.",
+                operation="list",
+                granted=granted,
+                raw=[],
+            )
         try:
             with collect_memory_reads() as reads:
                 sessions = CheckpointJournal(root).list_checkpoints()
@@ -524,6 +573,15 @@ class SessionContinuityTool(ToolFn):
                 started,
                 "error",
                 "Session checkpoint names must be a single filename.",
+                operation="restore",
+                granted=granted,
+            )
+        denied = self._checkpoint_read_denial(root)
+        if denied is not None:
+            return self._result(
+                started,
+                "skipped",
+                f"Session restore denied by the memory policy: {denied}.",
                 operation="restore",
                 granted=granted,
             )

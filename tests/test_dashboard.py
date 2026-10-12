@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 from http.server import HTTPServer
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,7 +31,7 @@ from rush.dashboard.server import (
     create_dashboard_server,
     reconnect_dashboard,
 )
-from rush.dashboard.state import MutationLedger, ProjectRegistry
+from rush.dashboard.state import MutationLedger, ProjectRecord, ProjectRegistry
 from rush.memory.handoff import prepare_handoff
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.tools.base import ToolResult
@@ -508,8 +509,8 @@ def test_restart_or_expiry_requires_reauthorization() -> None:
 # recovery receipts, _prepare_write() atomicity -----------------------------------
 
 
-def _artifact(**overrides) -> MemoryArtifact:
-    defaults = {
+def _artifact(**overrides: Any) -> MemoryArtifact:
+    defaults: dict[str, Any] = {
         "id": "artifact-default",
         "family": "memory",
         "subject": "domain_knowledge",
@@ -520,6 +521,18 @@ def _artifact(**overrides) -> MemoryArtifact:
     }
     defaults.update(overrides)
     return MemoryArtifact(**defaults)
+
+
+def _receipt(store: TypedArtifactStore, operation_id: str) -> dict[str, Any]:
+    receipt = store.get_receipt(operation_id)
+    assert receipt is not None
+    return receipt
+
+
+def _project(registry: ProjectRegistry, project_id: str) -> ProjectRecord:
+    record = registry.get(project_id)
+    assert record is not None
+    return record
 
 
 def test_mutation_ledger_scoped_by_project_not_just_request_id(
@@ -711,7 +724,16 @@ def test_insertion_failure_after_conflict_delete_rolls_back_the_delete_too_p69_0
             ),
         )
         conn.commit()
-    assert store.get_current("artifact-existing").trust_tier == "STATED"
+    # 72-T01 D41: a raw-SQL STATED row is authoritative only after the approved binding.
+    preview = TypedArtifactStore.bind_store(tmp_path / "project", approve=False)
+    TypedArtifactStore.bind_store(
+        tmp_path / "project",
+        approve=True,
+        expected_binding_digest=preview["binding_digest"],
+    )
+    current = store.get_current("artifact-existing")
+    assert current is not None
+    assert current.trust_tier == "STATED"
 
     # Pre-seed a colliding (id, version=1) row so _insert_row's second INSERT
     # fails mid-transaction, inside the same transaction as the conflict-delete
@@ -731,8 +753,11 @@ def test_insertion_failure_after_conflict_delete_rolls_back_the_delete_too_p69_0
     with pytest.raises(sqlite3.IntegrityError):
         store.write(candidate)
 
-    # The conflict-delete rolled back along with the failed insert.
-    assert store.get_current("artifact-existing") is not None
+    # 72-T01 D34: nothing was evicted before the failed insert, and nothing is after it.
+    kept = store.get_current("artifact-existing")
+    assert kept is not None
+    assert kept.trust_tier == "STATED"
+    assert kept.artifact_version == 1
 
 
 def test_recovery_receipt_distinguishes_promotion_created_from_promotion_completed(
@@ -744,13 +769,13 @@ def test_recovery_receipt_distinguishes_promotion_created_from_promotion_complet
         _artifact(id="artifact-promoted", content={"note": "will be promoted"}),
         receipt_operation_id="op-create-1",
     )
-    assert store.get_receipt("op-create-1")["kind"] == "create"
+    assert _receipt(store, "op-create-1")["kind"] == "create"
 
     stored, decision = store.promote(
         stored.id, user_stated=True, receipt_operation_id="op-promote-1"
     )
     assert decision.promoted is True
-    assert store.get_receipt("op-promote-1")["kind"] == "promote"
+    assert _receipt(store, "op-promote-1")["kind"] == "promote"
 
     # A denied promotion gets a create receipt, never a promote receipt.
     stored2 = store.write(
@@ -794,8 +819,8 @@ def test_recovery_receipt_correctly_attributes_edit_despite_intervening_unrelate
     )
     assert result_b["revision"] == 3
 
-    assert store.get_receipt("op-a")["revision"] == 2
-    assert store.get_receipt("op-b")["revision"] == 3
+    assert _receipt(store, "op-a")["revision"] == 2
+    assert _receipt(store, "op-b")["revision"] == 3
 
 
 def test_recovery_receipt_for_delete_exists_only_after_real_commit_not_before(
@@ -947,7 +972,8 @@ def test_current_generation_accepts_an_existing_connection_and_does_not_open_a_s
         connect_calls["n"] += 1
         return original_connect()
 
-    store._connect = _counting_connect
+    # test instruments this instance's _connect to count calls
+    store._connect = _counting_connect  # type: ignore[method-assign]
 
     with store._connect() as conn:
         connect_calls["n"] = 0
@@ -963,17 +989,17 @@ def test_refresh_memories_rejects_a_stale_generation_pair_from_snapshot_memories
 ):
     registry = ProjectRegistry({"project-a": {"source_identity": "src-a"}})
     assert registry.refresh_memories("project-a", [{"id": "m1"}], 5) is True
-    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
-    assert registry.get("project-a").memory_generation == 5
+    assert _project(registry, "project-a").snapshot["memories"] == [{"id": "m1"}]
+    assert _project(registry, "project-a").memory_generation == 5
 
     assert registry.refresh_memories("project-a", [{"id": "stale"}], 3) is False
-    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
+    assert _project(registry, "project-a").snapshot["memories"] == [{"id": "m1"}]
 
     assert registry.refresh_memories("project-a", [{"id": "same-gen"}], 5) is False
-    assert registry.get("project-a").snapshot["memories"] == [{"id": "m1"}]
+    assert _project(registry, "project-a").snapshot["memories"] == [{"id": "m1"}]
 
     assert registry.refresh_memories("project-a", [{"id": "m2"}], 6) is True
-    assert registry.get("project-a").snapshot["memories"] == [{"id": "m2"}]
+    assert _project(registry, "project-a").snapshot["memories"] == [{"id": "m2"}]
 
 
 def test_preview_and_read_only_actions_write_no_durable_ledger_entry(

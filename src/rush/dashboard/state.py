@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 if sys.platform != "win32":
     import fcntl
@@ -62,7 +62,10 @@ _cross_process_lock_depth = threading.local()
 
 @contextmanager
 def cross_process_project_lock(
-    project_id: str, *, data_root: Path | None = None
+    project_id: str,
+    *,
+    data_root: Path | None = None,
+    storage: Literal["file", "directory"] = "file",
 ) -> Iterator[None]:
     """S08 bullet 1: blocking cross-process mutual exclusion for one
     project's check-then-act mutation window (`_handle_action`'s
@@ -86,12 +89,30 @@ def cross_process_project_lock(
 
     Blocking (no `LOCK_NB`), unlike `claim_dead_owner`'s non-blocking
     best-effort claim above: this primitive is a real mutex a caller must
-    wait for, never one it silently skips."""
+    wait for, never one it silently skips.
+
+    72-T01 D2: `storage="directory"` locks the data root directory itself (no
+    lock file); a `memory-policy:` id requires it, and a nested entry for such
+    an id must name the same resolved data root."""
+    if storage not in ("file", "directory"):
+        raise ValueError(f"unknown lock storage {storage!r}")
+    is_policy = project_id.startswith(_POLICY_LOCK_PREFIX)
+    if is_policy and storage != "directory":
+        raise ValueError("a memory-policy lock requires storage='directory'")
     held = getattr(_cross_process_lock_depth, "held", None)
     if held is None:
         held = {}
         _cross_process_lock_depth.held = held
+    roots = getattr(_cross_process_lock_depth, "roots", None)
+    if roots is None:
+        roots = {}
+        _cross_process_lock_depth.roots = roots
+    resolved: Path | None = None
+    if storage == "directory":
+        resolved = _directory_lock_root(data_root)
     if held.get(project_id, 0) > 0:
+        if is_policy and roots.get(project_id) != resolved:
+            raise OSError("policy lock data_root mismatch")
         held[project_id] += 1
         try:
             yield
@@ -99,19 +120,111 @@ def cross_process_project_lock(
             held[project_id] -= 1
         return
     held[project_id] = 1
+    if is_policy:
+        roots[project_id] = resolved
     try:
-        with _acquire_cross_process_project_lock(project_id, data_root=data_root):
-            yield
+        if storage == "directory":
+            with _acquire_cross_process_project_lock(
+                project_id, data_root=resolved, storage=storage
+            ):
+                yield
+        else:
+            with _acquire_cross_process_project_lock(project_id, data_root=data_root):
+                yield
     finally:
         held[project_id] = 0
+        roots.pop(project_id, None)
+
+
+_POLICY_LOCK_PREFIX = "memory-policy:"
+# D2: the bounded wait for a directory (policy) lock.
+_DIRECTORY_LOCK_TIMEOUT_S = 30.0
+_DIRECTORY_LOCK_RETRY_S = 0.02
+
+
+class PolicyLockRootUncreatable(OSError):
+    """The absent policy-lock data root could not be created."""
+
+
+def _directory_lock_root(data_root: Path | None) -> Path:
+    if data_root is None:
+        from rush.setup.provision import default_data_root
+
+        data_root = default_data_root()
+    return Path(data_root).resolve()
+
+
+@contextmanager
+def _acquire_directory_lock(project_id: str, root: Path) -> Iterator[None]:
+    """D2: an exclusive lock on the data root directory, bounded by
+    `_DIRECTORY_LOCK_TIMEOUT_S`. POSIX `flock`s the directory fd; Windows
+    waits on a `Global\\RushPolicy-` named mutex. Never creates a file."""
+    if sys.platform == "win32":
+        import ctypes
+
+        name = _windows_policy_mutex_name(project_id)
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            raise OSError(f"CreateMutexW failed for {name!r}")
+        wait_result = kernel32.WaitForSingleObject(
+            handle, int(_DIRECTORY_LOCK_TIMEOUT_S * 1000)
+        )
+        if wait_result not in (0x00000000, 0x00000080):
+            kernel32.CloseHandle(handle)
+            raise OSError(f"WaitForSingleObject failed for {name!r}: {wait_result:#x}")
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+        return
+    if not os.path.lexists(root):
+        try:
+            os.makedirs(root, mode=0o700, exist_ok=True)
+        except OSError as exc:
+            raise PolicyLockRootUncreatable(str(exc)) from exc
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            raise OSError("policy lock data root is owned by another user")
+        deadline = time.monotonic() + _DIRECTORY_LOCK_TIMEOUT_S
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise OSError("policy lock busy") from None
+                time.sleep(_DIRECTORY_LOCK_RETRY_S)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _windows_policy_mutex_name(lock_id: str) -> str:
+    """D2: the machine-wide named mutex for one policy lock id."""
+    digest = hashlib.sha256(lock_id.encode("utf-8")).hexdigest()
+    return f"Global\\RushPolicy-{digest}"
 
 
 @contextmanager
 def _acquire_cross_process_project_lock(
-    project_id: str, *, data_root: Path | None = None
+    project_id: str,
+    *,
+    data_root: Path | None = None,
+    storage: Literal["file", "directory"] = "file",
 ) -> Iterator[None]:
     """The real OS-level acquisition `cross_process_project_lock` above
     calls exactly once per outermost entry on a given thread."""
+    if storage == "directory":
+        with _acquire_directory_lock(project_id, _directory_lock_root(data_root)):
+            yield
+        return
     if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
         # runner reachable in this environment. Mirrors `OwnerLock`'s
         # blocking-wait mutex pattern above, just with an infinite timeout
@@ -2290,11 +2403,31 @@ def reconcile_admissions(
                             # genuinely advanced past `prepared` -- never a
                             # leak either way.
                             continue
-                        leak_store = TypedArtifactStore(project_root)
-                        artifact_receipt = leak_store.get_receipt(artifact_receipt_id)
-                        session_receipt = leak_store.get_receipt(session_receipt_id)
+                        # 72-T01 R15: receipts are read read-only first; a
+                        # pre-72, busy or unreadable store (`unavailable`)
+                        # leaves the ledger unchanged; only real leaked
+                        # receipts open a writable store for the cleanup.
+                        artifact_state, artifact_receipt = (
+                            TypedArtifactStore.get_receipt_readonly(
+                                project_root, artifact_receipt_id
+                            )
+                        )
+                        session_state, session_receipt = (
+                            TypedArtifactStore.get_receipt_readonly(
+                                project_root, session_receipt_id
+                            )
+                        )
+                        if "unavailable" in (artifact_state, session_state):
+                            continue
                         if artifact_receipt is None and session_receipt is None:
                             continue
+                        view, _view_state = TypedArtifactStore.open_readonly_view(
+                            project_root
+                        )
+                        if view is None:
+                            continue
+                        view.close()
+                        leak_store = TypedArtifactStore(project_root)
                         with suppress(Exception):
                             if artifact_receipt is not None:
                                 leak_store.mark_artifact_orphaned(

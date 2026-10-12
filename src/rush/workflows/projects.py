@@ -44,14 +44,16 @@ import re
 import sqlite3
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, ClassVar
 
 from rush.config import load_config
@@ -1771,12 +1773,44 @@ def git_link_matches_commit(
     )
 
 
+_OWNER_COLUMNS = ("owner_scope_kind", "owner_scope_id")
+
+
+def _memory_row_filter(
+    root: Path,
+) -> tuple[Callable[[sqlite3.Row], bool] | None, bool]:
+    """72-T01 D1 `list` for the project registry readers: `(row test, legacy)`.
+    The test is `None` when the route is denied (the reader reads nothing);
+    `legacy` mode keeps every row and the tombstones, as before; `policy` mode
+    keeps the grant owner's rows whose source it approves, and no tombstone
+    (a tombstone carries no owner or source to authorize)."""
+    access = memory_list_access(root)
+    if access is NO_MEMORY_ACCESS:
+        return None, False
+    if access is None:
+        return (lambda _row: True), True
+    from rush.memory.retrieval import reader_row_allowed
+
+    resolved = Path(root).resolve()
+    return (lambda row: reader_row_allowed(access, resolved, row)), False
+
+
+def _owner_select(conn: sqlite3.Connection) -> str:
+    """The owner columns this schema has, as a `, a, b` SELECT suffix."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_artifacts)")}
+    return "".join(f", {c}" for c in _OWNER_COLUMNS if c in columns)
+
+
 def _readonly_memory_refs(
     root: Path,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Live and tombstoned memory artifact refs over the zero-write reader --
     the same SQL as `TypedArtifactStore.list_artifact_refs`/`list_deleted_refs`,
-    never reading `content`. No DB is no refs."""
+    never reading `content`. No DB is no refs. 72-T01 D1: filtered by
+    `_memory_row_filter`."""
+    visible, legacy = _memory_row_filter(root)
+    if visible is None:
+        return [], []
 
     def _read(
         conn: sqlite3.Connection,
@@ -1784,12 +1818,17 @@ def _readonly_memory_refs(
         conn.row_factory = sqlite3.Row
         if not sqlite_has_table(conn, "memory_artifacts"):
             return [], []
-        live = conn.execute(
-            "SELECT id, family, subject, trust_tier, source, created_at, "
-            "artifact_version FROM memory_artifacts ORDER BY id ASC"
-        ).fetchall()
+        live = [
+            row
+            for row in conn.execute(
+                "SELECT id, family, subject, trust_tier, source, created_at, "
+                f"artifact_version{_owner_select(conn)} FROM memory_artifacts "
+                "ORDER BY id ASC"
+            ).fetchall()
+            if visible(row)
+        ]
         deleted: list[sqlite3.Row] = []
-        if sqlite_has_table(conn, "memory_changes"):
+        if legacy and sqlite_has_table(conn, "memory_changes"):
             deleted = conn.execute(
                 "SELECT artifact_id AS id, subject, "
                 "MAX(artifact_version) AS revision, MAX(created_at) AS deleted_at "
@@ -1797,20 +1836,46 @@ def _readonly_memory_refs(
                 "AND artifact_id NOT IN (SELECT id FROM memory_artifacts) "
                 "GROUP BY artifact_id ORDER BY artifact_id ASC"
             ).fetchall()
-        return [dict(row) for row in live], [dict(row) for row in deleted]
+        return (
+            [
+                {k: row[k] for k in row.keys() if k not in _OWNER_COLUMNS}  # noqa: SIM118
+                for row in live
+            ],
+            [dict(row) for row in deleted],
+        )
 
     refs = read_sqlite_readonly(Path(root).resolve() / ".rush" / "memory.db", _read)
     return refs if refs is not None else ([], [])
 
 
+def authorized_map_memories(root: Path, memories: Any) -> Any:
+    """72-T01 D1 `list` for published or frozen map memory entries (dashboard
+    map/overview, historical map): `legacy` mode returns them unchanged; a
+    denied route keeps none; `policy` mode keeps only entries whose live row the
+    grant's owner and sources authorize (a frozen copy never outlives its
+    authorization). A non-list (`_NOT_CAPTURED`) is returned as is."""
+    if not isinstance(memories, list) or memory_list_access(root) is None:
+        return memories
+    try:
+        live, _deleted = _readonly_memory_refs(root)
+    except MemoryStoreUnreadableError:
+        return []
+    ids = {row["id"] for row in live}
+    return [m for m in memories if isinstance(m, dict) and m.get("id") in ids]
+
+
 def _readonly_memory_event_totals(
-    root: Path, filters: Mapping[str, str] | None = None
+    root: Path, filters: Mapping[str, str] | None = None, *, access: Any = None
 ) -> dict[str, int]:
     """Recorded memory-event token totals by kind, read without creating or
     migrating `.rush/telemetry/tokens.db`. Missing DB/table is no events.
     `filters` match stored identity columns; a schema without one of them
-    holds only unscoped rows, which a scoped selection never includes."""
+    holds only unscoped rows, which a scoped selection never includes.
+    72-T01 §3.9: a policy `access` counts only its owner/source events."""
+    from rush.token_economy.telemetry import access_event_predicate
+
     filters = dict(filters or {})
+    policy = getattr(access, "kind", None) == "policy"
 
     def _read(conn: sqlite3.Connection) -> dict[str, int]:
         if not sqlite_has_table(conn, "memory_events"):
@@ -1818,12 +1883,20 @@ def _readonly_memory_event_totals(
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
         if not set(filters) <= columns:
             return {}
-        where = " AND ".join(f"{column} = ?" for column in filters)
+        clauses = [f"{column} = ?" for column in filters]
+        params: list[Any] = list(filters.values())
+        if policy:
+            if not set(_MEMORY_EVENT_ACCESS_COLUMNS) <= columns:
+                return {}
+            clause, extra = access_event_predicate(access)
+            clauses.append(clause)
+            params.extend(extra)
+        where = " AND ".join(clauses)
         rows = conn.execute(
             "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events"
             + (f" WHERE {where}" if where else "")
             + " GROUP BY kind",
-            list(filters.values()),
+            params,
         ).fetchall()
         return {str(kind): int(total) for kind, total in rows}
 
@@ -2031,9 +2104,34 @@ def project_token_usage(
     coerced to `0` ("known-zero").
     """
     record = resolve_project(project, data_root=data_root)
+    root = Path(record["root"])
     return root_token_usage(
-        Path(record["root"]), run_id=run_id, agent_id=agent_id, session_id=session_id
+        root,
+        run_id=run_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        access=memory_list_access(root),
     )
+
+
+# 72-T01 D1: the access a denied (or `unavailable`) policy-mode reader uses -- it
+# matches no recorded memory event.
+NO_MEMORY_ACCESS = SimpleNamespace(
+    kind="policy", owner_scope=None, sources=(), policy_revision=None
+)
+_MEMORY_EVENT_ACCESS_COLUMNS = ("owner_scope_kind", "owner_scope_id", "sources_json")
+
+
+def memory_list_access(root: Path) -> Any:
+    """D1 `list` access for a telemetry reader of `root`: `None` in `legacy` mode
+    (the whole project, as before), the resolved grant in `policy` mode, and
+    `NO_MEMORY_ACCESS` when the route is denied."""
+    from rush.memory.retrieval import RouteDenial, route_access
+
+    access = route_access(root, "list")
+    if isinstance(access, RouteDenial):
+        return NO_MEMORY_ACCESS
+    return access if access.kind == "policy" else None
 
 
 _TOKEN_USAGE_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
@@ -2089,12 +2187,22 @@ def _event_time(value: Any) -> datetime | None:
 
 
 def _readonly_telemetry_scope(
-    root: Path, filters: Mapping[str, str], identity_keys: list[str]
+    root: Path,
+    filters: Mapping[str, str],
+    identity_keys: list[str],
+    *,
+    access: Any = None,
 ) -> tuple[int, list[datetime]]:
     """Telemetry rows (token and memory events) without a stored value for
     one of `identity_keys`, and the earliest/latest stored time of the rows
     in this selection. A legacy table without an identity column holds only
-    unscoped rows. Read-only, like `_readonly_memory_event_totals`."""
+    unscoped rows. Read-only, like `_readonly_memory_event_totals`. 72-T01
+    §3.9: a policy `access` sees only its own owner/source memory events
+    (token events carry no owner, so none of them)."""
+    from rush.token_economy.telemetry import access_event_predicate
+
+    policy = getattr(access, "kind", None) == "policy"
+    scope_clause, scope_params = access_event_predicate(access) if policy else ("", [])
 
     def _read(conn: sqlite3.Connection) -> tuple[int, list[datetime]]:
         unscoped = 0
@@ -2103,9 +2211,19 @@ def _readonly_telemetry_scope(
             if not sqlite_has_table(conn, table):
                 continue
             columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            if policy and (
+                table == "token_events"
+                or not set(_MEMORY_EVENT_ACCESS_COLUMNS) <= columns
+            ):
+                continue
+            scope = [scope_clause] if policy else []
             if not set(identity_keys) <= columns:
                 unscoped += int(
-                    conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                    conn.execute(
+                        f"SELECT COUNT(*) FROM {table}"
+                        + (f" WHERE {scope_clause}" if policy else ""),
+                        scope_params,
+                    ).fetchone()[0]
                 )
                 selected = None if filters else ""
             else:
@@ -2115,16 +2233,19 @@ def _readonly_telemetry_scope(
                 )
                 unscoped += int(
                     conn.execute(
-                        f"SELECT COUNT(*) FROM {table} WHERE {missing}"
+                        f"SELECT COUNT(*) FROM {table} WHERE ({missing})"
+                        + (f" AND {scope_clause}" if policy else ""),
+                        scope_params,
                     ).fetchone()[0]
                 )
                 selected = " AND ".join(f"{column} = ?" for column in filters)
             if selected is None or "timestamp" not in columns:
                 continue
+            where = " AND ".join([*([selected] if selected else []), *scope])
             bounds = conn.execute(
                 f"SELECT MIN(timestamp), MAX(timestamp) FROM {table}"
-                + (f" WHERE {selected}" if selected else ""),
-                list(filters.values()) if selected else [],
+                + (f" WHERE {where}" if where else ""),
+                [*(list(filters.values()) if selected else []), *scope_params],
             ).fetchone()
             times.extend(t for t in map(_event_time, bounds) if t is not None)
         return unscoped, times
@@ -2139,6 +2260,7 @@ def root_token_usage(
     run_id: str | None = None,
     agent_id: str | None = None,
     session_id: str | None = None,
+    access: Any = None,
 ) -> dict[str, Any]:
     """`project_token_usage` over an already-resolved project root: the one
     token authority shared by the Tokens section and `rush gain`, which may
@@ -2155,15 +2277,29 @@ def root_token_usage(
         )
         if value is not None
     }
+    # 72-T01 §3.9: the cache is keyed by the access a policy-mode read used, so
+    # one owner's totals (or the legacy whole-project totals) are never served
+    # to another access.
+    access_key = (
+        (
+            "policy",
+            access.owner_scope,
+            tuple(sorted(access.sources)),
+            access.policy_revision,
+        )
+        if getattr(access, "kind", None) == "policy"
+        else None
+    )
     key = (
         str(Path(root).resolve()),
         tuple(sorted(filters.items())),
         token_usage_signature(root),
+        access_key,
     )
     with _TOKEN_USAGE_CACHE_LOCK:
         cached = _TOKEN_USAGE_CACHE.get(key)
     if cached is None:
-        cached = _read_root_token_usage(root, filters)
+        cached = _read_root_token_usage(root, filters, access=access)
         with _TOKEN_USAGE_CACHE_LOCK:
             _TOKEN_USAGE_CACHE[key] = cached
             while len(_TOKEN_USAGE_CACHE) > _TOKEN_USAGE_CACHE_SIZE:
@@ -2171,7 +2307,9 @@ def root_token_usage(
     return copy.deepcopy(cached)
 
 
-def _read_root_token_usage(root: Path, filters: Mapping[str, str]) -> dict[str, Any]:
+def _read_root_token_usage(
+    root: Path, filters: Mapping[str, str], *, access: Any = None
+) -> dict[str, Any]:
     # A scoped selection's unscoped events are those missing one of its
     # identities; an unscoped view's are those with no stored run identity.
     identity_keys = list(filters) or ["run_id"]
@@ -2221,10 +2359,10 @@ def _read_root_token_usage(root: Path, filters: Mapping[str, str]) -> dict[str, 
     # reason, never an exception into the Tokens section.
     telemetry_error: str | None = None
     try:
-        recorded = _readonly_memory_event_totals(root, filters)
+        recorded = _readonly_memory_event_totals(root, filters, access=access)
         avoided = read_summary_readonly(root, **filters)
         unscoped_telemetry, telemetry_times = _readonly_telemetry_scope(
-            root, filters, identity_keys
+            root, filters, identity_keys, access=access
         )
         times.extend(telemetry_times)
     except (MemoryStoreUnreadableError, sqlite3.DatabaseError) as exc:
@@ -2295,19 +2433,28 @@ def _read_root_token_usage(root: Path, filters: Mapping[str, str]) -> dict[str, 
 
 
 def _memory_counts(
-    conn: sqlite3.Connection, include_internal: bool
+    conn: sqlite3.Connection,
+    include_internal: bool,
+    visible: Callable[[sqlite3.Row], bool] = lambda _row: True,
+    legacy: bool = True,
 ) -> tuple[dict[str, int], int] | None:
     """Every live row per subject (archived and expired included, as
     `list_artifact_refs`) and the tombstoned-id count (`list_deleted_refs`);
-    `None` for a schema that predates `artifact_version`/archive/expiry."""
+    `None` for a schema that predates `artifact_version`/archive/expiry.
+    72-T01 D1: only `visible` rows count; tombstones only in `legacy` mode."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_artifacts)")}
     if not {"artifact_version", "archived_at", "expired_at"} <= columns:
         return None
+    conn.row_factory = sqlite3.Row
     counts: dict[str, int] = {}
-    for subject, source in conn.execute("SELECT subject, source FROM memory_artifacts"):
-        if include_internal or not is_internal_memory_source(source):
-            counts[subject] = counts.get(subject, 0) + 1
-    if not sqlite_has_table(conn, "memory_changes"):
+    for row in conn.execute(
+        f"SELECT subject, source{_owner_select(conn)} FROM memory_artifacts"
+    ):
+        if (include_internal or not is_internal_memory_source(row["source"])) and (
+            visible(row)
+        ):
+            counts[row["subject"]] = counts.get(row["subject"], 0) + 1
+    if not legacy or not sqlite_has_table(conn, "memory_changes"):
         return counts, 0
     deleted = conn.execute(
         "SELECT COUNT(DISTINCT artifact_id) FROM memory_changes WHERE tombstone = 1 "
@@ -2323,9 +2470,12 @@ def _readonly_memory_counts(
     (`read_sqlite_readonly`) -- never a constructed store (no directory,
     schema, cursor key or sidecar). No DB counts nothing; an unreadable or
     unmigrated one raises `MemoryStoreUnreadableError`, never an empty count."""
+    visible, legacy = _memory_row_filter(root)
+    if visible is None:
+        return {}, 0
     db = Path(root).resolve() / ".rush" / "memory.db"
     counts = read_sqlite_readonly(
-        db, lambda conn: _memory_counts(conn, include_internal)
+        db, lambda conn: _memory_counts(conn, include_internal, visible, legacy)
     )
     if counts is not None:
         return counts
@@ -2454,15 +2604,24 @@ def _read_contained_manifest(root: Path, run_id: str, attempt_id: str) -> Any:
 
 def _current_map_memories(root: Path) -> list[dict[str, Any]] | str:
     """Recorded memory artifacts with `cites` only from the recorded
-    `symbol_ref` (`path::Symbol`), over the zero-write reader."""
+    `symbol_ref` (`path::Symbol`), over the zero-write reader. 72-T01 D1:
+    filtered by `_memory_row_filter` (a denied route lists none)."""
+    visible, _legacy = _memory_row_filter(root)
+    if visible is None:
+        return []
 
     def _read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         conn.row_factory = sqlite3.Row
         if not sqlite_has_table(conn, "memory_artifacts"):
             return []
-        rows = conn.execute(
-            "SELECT id, symbol_ref, source FROM memory_artifacts ORDER BY id ASC"
-        ).fetchall()
+        rows = [
+            row
+            for row in conn.execute(
+                f"SELECT id, symbol_ref, source{_owner_select(conn)} "
+                "FROM memory_artifacts ORDER BY id ASC"
+            ).fetchall()
+            if visible(row)
+        ]
         return [
             {
                 "id": row["id"],
@@ -2602,7 +2761,11 @@ def project_map_snapshot(
         frozen = frozen if isinstance(frozen, dict) else {}
         memories = frozen.get("memories")
         agents = frozen.get("agents")
-        snapshot["memories"] = memories if isinstance(memories, list) else _NOT_CAPTURED
+        snapshot["memories"] = (
+            authorized_map_memories(root, memories)
+            if isinstance(memories, list)
+            else _NOT_CAPTURED
+        )
         snapshot["agents"] = agents if isinstance(agents, list) else _NOT_CAPTURED
     else:
         snapshot["memories"] = _current_map_memories(root)
@@ -2625,8 +2788,45 @@ def project_map_snapshot(
     return snapshot
 
 
-def open_contained_file(root: Path | str, relative_path: str) -> int:
+def _require_final_path(fd: int, target: Path, relative_path: str) -> None:
+    """Windows: the opened handle's final path must equal `target`."""
+    if sys.platform != "win32":
+        raise OSError("final-path checks run only on Windows")
+    import ctypes
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_path = kernel32.GetFinalPathNameByHandleW
+    get_path.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+    ]
+    get_path.restype = ctypes.c_uint32
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = get_path(msvcrt.get_osfhandle(fd), buffer, 32768, 0)
+    if not length:
+        raise OSError("GetFinalPathNameByHandleW failed")
+    final = buffer.value
+    if final.startswith("\\\\?\\UNC\\"):
+        final = "\\\\" + final[8:]
+    elif final.startswith("\\\\?\\"):
+        final = final[4:]
+    if os.path.normcase(final) != os.path.normcase(str(target)):
+        raise ContainmentError(
+            "REPARSE_POINT_DISALLOWED",
+            "The opened file is not the validated path",
+            relative_path,
+        )
+
+
+def open_contained_file(
+    root: Path | str, relative_path: str, *, append: bool = False
+) -> int:
     """Opens `relative_path` under `root` read-only and returns the fd.
+    `append=True` opens it write-only for appending instead, creating a missing
+    final file with mode 0o600; every check below still applies.
 
     Lexical checks go through `PhysicalRoot.open_contained`; then every
     component is opened from the root's own fd with `dir_fd` and
@@ -2640,7 +2840,8 @@ def open_contained_file(root: Path | str, relative_path: str) -> int:
     target = physical.open_contained(relative_path)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     # O_NONBLOCK: opening a FIFO planted at the path must not hang the reader.
-    file_flags = os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0)
+    access_flags = (os.O_WRONLY | os.O_APPEND | os.O_CREAT) if append else os.O_RDONLY
+    file_flags = access_flags | nofollow | getattr(os, "O_NONBLOCK", 0)
     parts = Path(relative_path).parts
     if not parts:
         raise ContainmentError("NOT_REGULAR_FILE", "Path names no file", relative_path)
@@ -2652,13 +2853,25 @@ def open_contained_file(root: Path | str, relative_path: str) -> int:
                 next_fd = os.open(part, dir_flags, dir_fd=dir_fd)
                 os.close(dir_fd)
                 dir_fd = next_fd
-            fd = os.open(parts[-1], file_flags, dir_fd=dir_fd)
+            fd = os.open(parts[-1], file_flags, 0o600, dir_fd=dir_fd)
         finally:
             os.close(dir_fd)
+    elif sys.platform == "win32":
+        # No dir_fd (Windows): open by the validated path, then require the
+        # opened handle's final path to be exactly that path, so a junction
+        # or reparse point swapped in after validation is refused.
+        fd = os.open(target, file_flags, 0o600)
+        try:
+            _require_final_path(fd, target, relative_path)
+        except BaseException:
+            os.close(fd)
+            raise
     else:
-        # ponytail: no dir_fd (Windows) -- open_contained's component walk
-        # plus O_NOFOLLOW on the leaf is the check; the fstat checks remain.
-        fd = os.open(target, file_flags)
+        raise ContainmentError(
+            "REPARSE_POINT_DISALLOWED",
+            "No dir_fd support to open the path without following links",
+            relative_path,
+        )
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):

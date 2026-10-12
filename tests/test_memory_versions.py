@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,6 +19,7 @@ from rush.memory.store import (
     legacy_owner_scope,
     owner_scope_for_row,
 )
+from rush.tools.base import ToolResult
 
 
 def _legacy_db(root: Path) -> Path:
@@ -207,12 +210,24 @@ def _artifact(**overrides: object) -> MemoryArtifact:
     return MemoryArtifact(**base)  # type: ignore[arg-type]
 
 
+def _current(store: TypedArtifactStore, artifact_id: str) -> MemoryArtifact:
+    artifact = store.get_current(artifact_id)
+    assert artifact is not None
+    return artifact
+
+
+def _raw(result: ToolResult) -> dict[str, Any]:
+    raw = result["raw"]
+    assert raw is not None
+    return raw
+
+
 def test_owner_scope_validates_kind_and_id_structurally() -> None:
     assert OwnerScope("project", "p1").as_dict() == {"kind": "project", "id": "p1"}
     for kind in ("user", "project", "session", "agent"):
         assert OwnerScope(kind, "x").kind == kind
     with pytest.raises(ValueError):
-        OwnerScope("root", "x")
+        OwnerScope("root", "x")  # type: ignore[arg-type]  # deliberately invalid kind
     with pytest.raises(ValueError):
         OwnerScope("user", "")
     with pytest.raises(ValueError):
@@ -278,7 +293,7 @@ def test_write_stores_explicit_owner_scope_and_defaults_to_the_project(
 
     assert owned.owner_scope == OwnerScope("user", "alice")
     assert unowned.owner_scope == legacy_owner_scope(tmp_path)
-    assert store.get_current("a1").owner_scope == OwnerScope("user", "alice")
+    assert _current(store, "a1").owner_scope == OwnerScope("user", "alice")
 
 
 def test_owner_scope_mismatch_within_same_project_rejected(tmp_path: Path) -> None:
@@ -296,7 +311,7 @@ def test_owner_scope_mismatch_within_same_project_rejected(tmp_path: Path) -> No
         )
 
     assert caught.value.code == "E_OWNER"
-    assert store.get_current("a1").content == {"value": 1}
+    assert _current(store, "a1").content == {"value": 1}
 
 
 def test_owner_scope_is_immutable_after_write(tmp_path: Path) -> None:
@@ -319,7 +334,7 @@ def test_owner_scope_is_immutable_after_write(tmp_path: Path) -> None:
         apply=True,
     )
 
-    assert store.get_current("a1").owner_scope == OwnerScope("user", "alice")
+    assert _current(store, "a1").owner_scope == OwnerScope("user", "alice")
 
 
 def test_archive_rejects_wrong_owner_scope(tmp_path: Path) -> None:
@@ -335,7 +350,7 @@ def test_archive_rejects_wrong_owner_scope(tmp_path: Path) -> None:
             apply=True,
         )
 
-    assert store.get_current("a1").content == {"value": 1}
+    assert _current(store, "a1").content == {"value": 1}
     with sqlite3.connect(store.db_path) as conn:
         archived_at = conn.execute(
             "SELECT archived_at FROM memory_artifacts WHERE id='a1'"
@@ -361,7 +376,7 @@ def test_promote_rejects_mismatched_owner_scope(tmp_path: Path) -> None:
         )
 
     assert caught.value.code == "E_OWNER"
-    assert store.get_current("a1").trust_tier == "IMPORTED"
+    assert _current(store, "a1").trust_tier == "IMPORTED"
 
 
 def test_promote_succeeds_with_matching_owner_scope(tmp_path: Path) -> None:
@@ -549,7 +564,16 @@ def test_write_conflict_resolution_still_deletes_the_same_owners_stated_record(
         remaining = sorted(
             row[0] for row in conn.execute("SELECT id FROM memory_artifacts")
         )
-    assert remaining == ["a2"]
+        stated = conn.execute(
+            "SELECT trust_tier, artifact_version, content FROM memory_artifacts "
+            "WHERE id = 'a1'"
+        ).fetchone()
+    # 72-T01 D34: the conflicting write never evicts the STATED row, same owner
+    # included; it is inserted beside it as a lower-trust row.
+    assert remaining == ["a1", "a2"]
+    # Promotion bumps artifact_version (1 -> 2); the conflicting write leaves it there.
+    assert stated == ("STATED", 2, json.dumps({"flag": True}))
+    assert _current(store, "a2").trust_tier != "STATED"
 
 
 def test_preview_apply_false_never_creates_directories_or_touches_database_bytes(
@@ -572,7 +596,7 @@ def test_preview_apply_false_never_creates_directories_or_touches_database_bytes
             "apply": False,
         },
     )
-    assert result["raw"]["code"] == "E_INPUT"
+    assert _raw(result)["code"] == "E_INPUT"
     assert sorted(str(p.relative_to(fresh)) for p in fresh.rglob("*")) == before
 
     legacy_root = tmp_path / "legacy"
@@ -591,7 +615,7 @@ def test_preview_apply_false_never_creates_directories_or_touches_database_bytes
             "apply": False,
         },
     )
-    assert result["raw"]["code"] == "E_MIGRATION"
+    assert _raw(result)["code"] == "E_MIGRATION"
     assert db.read_bytes() == db_bytes
     assert sorted(p.name for p in db.parent.iterdir()) == entries
 
@@ -615,8 +639,8 @@ def test_preview_apply_false_still_reports_real_row_state(tmp_path: Path) -> Non
         },
     )
 
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"] == {
+    assert _raw(result)["code"] == "OK"
+    assert _raw(result)["data"] == {
         "applied": False,
         "id": "a1",
         "revision": 1,
@@ -636,7 +660,7 @@ def test_preview_apply_false_still_reports_real_row_state(tmp_path: Path) -> Non
             "apply": False,
         },
     )
-    assert denied["raw"]["code"] == "E_OWNER"
+    assert _raw(denied)["code"] == "E_OWNER"
 
 
 def test_memory_tool_accepts_owner_scope_on_all_five_operations(
@@ -659,8 +683,8 @@ def test_memory_tool_accepts_owner_scope_on_all_five_operations(
         permissions=granted,
     )
     assert written["status"] == "ok"
-    artifact_id = written["raw"]["id"]
-    assert written["raw"]["owner_scope"] == owner
+    artifact_id = _raw(written)["id"]
+    assert _raw(written)["owner_scope"] == owner
 
     promoted = tool.run(
         tmp_path,
@@ -672,7 +696,7 @@ def test_memory_tool_accepts_owner_scope_on_all_five_operations(
         owner_scope=owner,
         permissions=granted,
     )
-    assert promoted["raw"]["artifact"]["owner_scope"] == owner
+    assert _raw(promoted)["artifact"]["owner_scope"] == owner
 
     edited = tool.run(
         tmp_path,
@@ -687,7 +711,7 @@ def test_memory_tool_accepts_owner_scope_on_all_five_operations(
         },
         permissions=granted,
     )
-    assert edited["raw"]["code"] == "OK"
+    assert _raw(edited)["code"] == "OK"
 
     archived = tool.run(
         tmp_path,
@@ -701,7 +725,7 @@ def test_memory_tool_accepts_owner_scope_on_all_five_operations(
         },
         permissions=granted,
     )
-    assert archived["raw"]["code"] == "OK"
+    assert _raw(archived)["code"] == "OK"
 
     deleted = tool.run(
         tmp_path,
@@ -715,7 +739,7 @@ def test_memory_tool_accepts_owner_scope_on_all_five_operations(
         },
         permissions=granted,
     )
-    assert deleted["raw"]["code"] == "OK"
+    assert _raw(deleted)["code"] == "OK"
 
 
 def test_memory_tool_rejects_a_wrong_owner_on_delete(tmp_path: Path) -> None:
@@ -738,7 +762,7 @@ def test_memory_tool_rejects_a_wrong_owner_on_delete(tmp_path: Path) -> None:
         permissions=ExecutionPermissions(cache_write=True),
     )
 
-    assert result["raw"]["code"] == "E_OWNER"
+    assert _raw(result)["code"] == "E_OWNER"
     assert store.get_current("a1") is not None
 
 
@@ -792,7 +816,7 @@ def test_standalone_tui_invocation_has_a_usable_session_owner_scope_id() -> None
     assert OwnerScope("session", session_id).kind == "session"
 
 
-def _fake_actions(calls: list[dict[str, object]]):
+def _fake_actions(calls: list[dict[str, Any]]):
     from rush.tui import ScanActions
 
     def _memory_run(root, **kwargs):
@@ -836,7 +860,7 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
         _memory_edit_commit,
     )
 
-    calls: list[dict[str, object]] = []
+    calls: list[dict[str, Any]] = []
     actions = _fake_actions(calls)
     state = _memory_state(tmp_path)
     state.memory_owner_scope_kind = "user"
@@ -865,7 +889,7 @@ def test_tui_memory_admin_sends_owner_scope_on_every_mutation(tmp_path: Path) ->
 def test_tui_owner_scope_selector_cycles_all_four_kinds(tmp_path: Path) -> None:
     from rush.tui import _handle_memory_key, _handle_memory_owner_key
 
-    calls: list[dict[str, object]] = []
+    calls: list[dict[str, Any]] = []
     actions = _fake_actions(calls)
     state = _memory_state(tmp_path)
 

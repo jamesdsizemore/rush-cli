@@ -92,6 +92,19 @@ ArtifactId = Annotated[
     StrictStr, Field(min_length=1), AfterValidator(_no_path_separators)
 ]
 
+
+def _memory_source(value: str) -> str:
+    # 72-T01 D40: a memory source label is a literal (no `*`, NUL, Cc/Cf/Cs, padding).
+    from rush.memory.authorization import literal_source_is_valid
+
+    if not literal_source_is_valid(value):
+        raise ValueError("source must be a non-empty literal label")
+    return value
+
+
+MemorySource = Annotated[StrictStr, AfterValidator(_memory_source)]
+MemorySourceList = list[MemorySource]
+
 _GRANT_FIELDS = (
     "allow_network",
     "allow_download",
@@ -522,17 +535,23 @@ _MEMORY_COMMON: dict[str, Any] = {
     "max_bytes": (compact.MaxBytesParam, None),
     "no_cache": (StrictBool, False),
 }
-_ALLOWLIST_REQUIRED = (Annotated[StrList, Field(min_length=1)], _REQUIRED)
-_ALLOWLIST_OPTIONAL = (StrList | None, _OPTIONAL)
+# 72-T01 R5: a query's allowlist is optional (policy mode resolves owner and
+# sources; an allowlist only narrows them) but never an explicit `[]`.
+_ALLOWLIST_QUERY = (
+    Annotated[MemorySourceList, Field(min_length=1)] | None,
+    _OPTIONAL,
+)
+_ALLOWLIST_OPTIONAL = (MemorySourceList | None, _OPTIONAL)
 _QUERY = {
     "subject": (MemorySubject, _REQUIRED),
     "query": (NonEmptyStr, _REQUIRED),
-    "session_allowlist": _ALLOWLIST_REQUIRED,
+    "session_allowlist": _ALLOWLIST_QUERY,
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
 }
 _WRITE = {
     "subject": (MemorySubject, _REQUIRED),
     "content": (AnyDict, _REQUIRED),
-    "source": (NonEmptyStr, _REQUIRED),
+    "source": (MemorySource, _REQUIRED),
     "symbol_ref": (StrictStr | None, _OPTIONAL),
     "source_kind": (SourceKind, _OPTIONAL),
     "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
@@ -554,7 +573,8 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
         {
             "subject": (MemorySubject, _REQUIRED),
             "query": (StrictStr, _OPTIONAL),
-            "session_allowlist": _ALLOWLIST_REQUIRED,
+            "session_allowlist": _ALLOWLIST_QUERY,
+            "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
             "request": (_CompactRequest, _REQUIRED),
         },
     ),

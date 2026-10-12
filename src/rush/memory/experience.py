@@ -29,6 +29,7 @@ from typing import Any, Literal
 from rush.invocation.models import InvocationContext
 from rush.memory.intent import intent_evidence as _intent_evidence
 from rush.memory.store import (
+    MemoryAccessChanged,
     MemoryArtifact,
     MemorySubject,
     TypedArtifactStore,
@@ -37,6 +38,50 @@ from rush.memory.store import (
 from rush.memory.trust import default_entry_tier
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryWriteDenied(Exception):
+    """72-T01 D4: an experience writer's write was not authorized (no row written)."""
+
+    def __init__(self, code: str, reason: str) -> None:
+        super().__init__(f"{code}: {reason}")
+        self.code = code
+        self.reason = reason
+
+
+def _authorized_write(
+    project_root: Path,
+    artifact: MemoryArtifact,
+    write: Any,
+    *,
+    open_store: Any,
+    access: Any = None,
+) -> Any:
+    """D4: run `write(store, artifact, commit_check)` inside the shared writer
+    gate. A denial (or an access change before commit) raises `MemoryWriteDenied`
+    before any file, directory or row exists."""
+    import dataclasses
+
+    from rush.memory.retrieval import (
+        RouteDenial,
+        authorize_writer,
+        recheck_failure,
+        writer_owner,
+    )
+
+    with authorize_writer(project_root, artifact.source, access=access) as granted:
+        if isinstance(granted, RouteDenial):
+            raise MemoryWriteDenied(granted.code, granted.reason)
+        owned = (
+            dataclasses.replace(artifact, owner_scope=writer_owner(granted))
+            if artifact.owner_scope is None
+            else artifact
+        )
+        try:
+            return write(open_store(), owned, lambda: recheck_failure(granted))
+        except MemoryAccessChanged as exc:
+            raise MemoryWriteDenied(exc.code, exc.reason) from exc
+
 
 EvidenceKind = Literal[
     "tests_contracts",
@@ -115,8 +160,12 @@ def write_observation(
     source: str,
     content: dict[str, Any],
     project_root: Path,
+    access: Any = None,
 ) -> MemoryArtifact | None:
-    """Normalize and persist one `experience`/`episodic` observation. Never raises.
+    """Normalize and persist one `experience`/`episodic` observation. Raises only
+    `MemoryWriteDenied` (72-T01 D4: the write is authorized through the shared
+    writer gate; `access` is a caller-resolved `MemoryAccess`); every other failure
+    is logged and returns `None`.
 
     Reuses `TypedArtifactStore.write()` (§6.1 family/subject vocabulary,
     redact-before-store invariant) -- no parallel store, no raw SQL.
@@ -139,7 +188,16 @@ def write_observation(
             created_at=time.time(),
             content_hash=compute_content_signature(payload),
         )
-        return TypedArtifactStore(project_root).write(artifact)
+        stored: MemoryArtifact = _authorized_write(
+            project_root,
+            artifact,
+            lambda store, row, check: store.write(row, commit_check=check),
+            open_store=lambda: TypedArtifactStore(project_root),
+            access=access,
+        )
+        return stored
+    except MemoryWriteDenied:
+        raise
     except Exception:
         logger.warning(
             "memory observation write failed for operation %r (evidence_kind=%r)",
@@ -282,6 +340,7 @@ def record_attempt(
     outcome: RepairOutcome,
     affected_symbols: Sequence[str] = (),
     commit_message: str | None = None,
+    access: Any = None,
 ) -> MemoryArtifact:
     """MC06.2: record one repair-episode attempt under exact §9.0 conditions.
 
@@ -321,7 +380,14 @@ def record_attempt(
         created_at=time.time(),
         content_hash=compute_content_signature(payload),
     )
-    return TypedArtifactStore(project_root).write(artifact)
+    stored: MemoryArtifact = _authorized_write(
+        project_root,
+        artifact,
+        lambda store, row, check: store.write(row, commit_check=check),
+        open_store=lambda: TypedArtifactStore(project_root),
+        access=access,
+    )
+    return stored
 
 
 def recall_repair_episodes(
@@ -473,6 +539,7 @@ def record_behavior_success(
     conditions: Mapping[str, Any],
     source: str,
     namespace: str = DEFAULT_BEHAVIOR_NAMESPACE,
+    access: Any = None,
 ) -> MemoryArtifact:
     """MC10.2: record one genuinely executed pass of `behavior_id` and advance its
     namespace/behavior/runtime-platform last-success pointer, atomically, via
@@ -501,9 +568,20 @@ def record_behavior_success(
     digest = behavior_runtime_digest(
         runtime=conditions.get("runtime"), platform=conditions.get("platform")
     )
-    return TypedArtifactStore(project_root).write_pass(
-        artifact, namespace=namespace, behavior_id=behavior_id, runtime_digest=digest
+    stored: MemoryArtifact = _authorized_write(
+        project_root,
+        artifact,
+        lambda store, row, check: store.write_pass(
+            row,
+            namespace=namespace,
+            behavior_id=behavior_id,
+            runtime_digest=digest,
+            commit_check=check,
+        ),
+        open_store=lambda: TypedArtifactStore(project_root),
+        access=access,
     )
+    return stored
 
 
 def compare_last_success(
@@ -536,7 +614,7 @@ def compare_last_success(
         read_access,
         visible_artifacts,
     )
-    from rush.memory.store import payload_digest
+    from rush.memory.store import binding_verifier, payload_digest
 
     no_baseline: dict[str, Any] = {
         "baseline_ref": None,
@@ -556,22 +634,31 @@ def compare_last_success(
     digest = behavior_runtime_digest(
         runtime=conditions.get("runtime"), platform=conditions.get("platform")
     )
+    verifier = binding_verifier(view)
 
     def usable_text(found: tuple[str, int] | None) -> str | None:
         """The pointed-to version's bytes, or `None` unless the shared decision
-        delivers that artifact as current and the version's payload binding holds."""
+        delivers that artifact as current and the version's payload binding holds.
+        72-T01 D41: a `STATED` row's bytes also need `version_bytes == "bound"`
+        (its bound current version with exactly the MAC-covered content)."""
         if found is None:
             return None
+        row = view.get_current_row(found[0])
         decision = evaluate_artifact_visibility(
-            view, view.get_current_row(found[0]), access=access
+            view, row, access=access, verifier=verifier
         )
-        if not decision.usable_as_current:
+        if row is None or not decision.usable_as_current:
             return None
         payload = view.get_version_payload(*found)
         if payload is None:
             return None
         text, bound = payload
         if bound is not None and payload_digest(text) != bound:
+            return None
+        if (
+            row["trust_tier"] == "STATED"
+            and verifier.version_bytes(row, found[1], text) != "bound"
+        ):
             return None
         return text
 
@@ -666,6 +753,7 @@ def record_cause_experiment(
     control_receipt_ref: str | None,
     outcome_changed: bool,
     source: str,
+    access: Any = None,
 ) -> dict[str, Any]:
     """MC10.3/MC10.4: record one controlled-comparison experiment result. Only a real
     receipted control run (`control_receipt_ref` present) whose outcome actually changed
@@ -695,7 +783,13 @@ def record_cause_experiment(
         created_at=time.time(),
         content_hash=compute_content_signature(payload),
     )
-    stored = TypedArtifactStore(project_root).write(artifact)
+    stored: MemoryArtifact = _authorized_write(
+        project_root,
+        artifact,
+        lambda store, row, check: store.write(row, commit_check=check),
+        open_store=lambda: TypedArtifactStore(project_root),
+        access=access,
+    )
     return {
         "cause_state": cause_state,
         "artifact_id": stored.id,
@@ -707,6 +801,7 @@ __all__ = [
     "DEFAULT_BEHAVIOR_NAMESPACE",
     "CauseState",
     "EvidenceKind",
+    "MemoryWriteDenied",
     "RepairMatch",
     "RepairOutcome",
     "behavior_runtime_digest",

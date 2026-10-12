@@ -30,9 +30,16 @@ class PatchMemoryStore:
     @staticmethod
     def read_records(repo_root: Path) -> list[PatchMemoryRecord] | str:
         """Stored records, newest first, read without creating or migrating
-        anything (T27); the reason string when the store is unavailable."""
+        anything (T27); the reason string when the store is unavailable. 72-T01 D1
+        (§2.3 Patch memory): a denied `ask` route reads nothing and returns `[]`."""
+        from rush.memory.retrieval import RouteDenial, reader_route
         from rush.memory.store import open_sqlite_readonly
 
+        if isinstance(
+            reader_route(repo_root.resolve(), "ask", ["migration:patch_memory"]),
+            RouteDenial,
+        ):
+            return []
         db_path = repo_root.resolve() / ".rush" / "cache.db"
         opened = open_sqlite_readonly(db_path)
         if opened.connection is None:

@@ -32,6 +32,7 @@ research/
 .rush/cache/
 .rush/sessions/
 .rush/*.db
+.rush/memory-policy.required*
 .rush/handoffs/
 .rush/runs/
 .rush/scan_plans/

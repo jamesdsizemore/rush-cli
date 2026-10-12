@@ -49,6 +49,13 @@ def _insert_stated_row(
     )
     conn.commit()
     conn.close()
+    # 72-T01 D41: a raw-SQL STATED row is authoritative only after the approved
+    # store binding (preview digest, then approve).
+    root = db_path.parent.parent
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
 
 
 def test_review_finding_cites_prior_failure_memory(tmp_path: Path):

@@ -1,6 +1,11 @@
 """Unit tests for Phase 49 TraceScanner, SwarmMergeSolver, MeshLockManager, and FlightRecorder."""
 
+import json
+import os
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.tools.continuity import SessionContinuityTool
@@ -311,3 +316,103 @@ def test_continuity_recovery_skips_schema_invalid_replay_evidence(tmp_path: Path
     assert result["metadata"]["coordination"]["recovery"]["replay"]["state"] == (
         "unavailable"
     )
+
+
+def test_t01_flight_recorder_refuses_hard_linked_flight_file(tmp_path: Path):
+    """security-2 / spec-tests-13: a flight file hard-linked to an outside inode is
+    refused for both replay and record: no outside event is returned, no byte is
+    appended to the outside file and no artifact is committed."""
+    root = tmp_path / "project"
+    flights = root / ".rush" / "sessions" / "flights"
+    flights.mkdir(parents=True)
+    outside = tmp_path / "private.jsonl"
+    secret = json.dumps({"event_type": "private", "payload": {"secret": "OUTSIDE"}})
+    outside.write_text(secret + "\n", encoding="utf-8")
+    before = outside.read_bytes()
+    os.link(outside, flights / "s1.jsonl")
+
+    recorder = FlightRecorder(root, create=False)
+    assert recorder.replay_session("s1") == []
+    assert recorder._replay_session("s1") == []
+    FlightRecorder(root).record_event("s1", "evt", {"v": "PROJECT-WRITE"})
+    assert outside.read_bytes() == before
+    assert not (root / ".rush" / "memory.db").exists()
+
+    # An unlinked flight file in the same directory still records and replays.
+    FlightRecorder(root).record_event("s2", "evt", {"v": "kept"})
+    assert [e["payload"] for e in recorder.replay_session("s2")] == [{"v": "kept"}]
+    assert outside.read_bytes() == before
+
+
+_FLIGHT_SOURCES = ("flight_recorder:record_event", "migration:flight_recorder")
+
+
+@pytest.mark.parametrize(
+    "case", ["write_only", "revoked_before_replay", "revoked_after_selection"]
+)
+def test_t01_flight_replay_requires_held_ask_grant(
+    tmp_path: Path, monkeypatch: Any, case: str
+):
+    """security-3 / spec-tests-9: replaying a physical flight file is a D1 `ask`
+    read. A write-only grant, a grant revoked before replay and a grant revoked
+    after the file was selected and read all replay nothing."""
+    from rush.memory import authorization as auth
+    from rush.memory.store import legacy_owner_scope
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import register_project
+
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, data_root=data_root)
+    root = root.resolve()
+
+    def revision() -> int:
+        policy = auth.load_policy_readonly(data_root=data_root)
+        return int(policy["policy_revision"] or 0)
+
+    def grant(ops: tuple[str, ...]) -> dict[str, Any]:
+        return auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=list(_FLIGHT_SOURCES),
+            allowed_operations=list(ops),
+            expected_policy_revision=revision(),
+            consent=True,
+            data_root=data_root,
+        )
+
+    def revoke(granted: dict[str, Any]) -> None:
+        auth.revoke_memory_scope(
+            grant_id=granted["grant_id"],
+            expected_policy_revision=revision(),
+            consent=True,
+            data_root=data_root,
+        )
+
+    granted = grant(("ask", "write"))
+    recorder = FlightRecorder(root)
+    recorder.record_event("s1", "evt", {"secret": "FLIGHT-PRIVATE"})
+    assert (root / ".rush" / "sessions" / "flights" / "s1.jsonl").is_file()
+    # Control: the held `ask` grant replays the recorded event.
+    replayed = FlightRecorder(root, create=False).replay_session("s1")
+    assert [e["payload"] for e in replayed] == [{"secret": "FLIGHT-PRIVATE"}]
+
+    if case == "write_only":
+        grant(("write",))
+    elif case == "revoked_before_replay":
+        revoke(granted)
+    else:
+        read = FlightRecorder._replay_session
+
+        def read_then_revoke(self: Any, session_id: str) -> list[dict[str, Any]]:
+            events = read(self, session_id)
+            assert events, "the file must be selected and read before the revoke"
+            revoke(granted)
+            return events
+
+        monkeypatch.setattr(FlightRecorder, "_replay_session", read_then_revoke)
+
+    replay = FlightRecorder(root, create=False).replay_session("s1")
+    assert replay == []
+    assert "FLIGHT-PRIVATE" not in json.dumps(replay)

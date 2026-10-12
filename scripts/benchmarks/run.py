@@ -670,7 +670,8 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
         operation="write",
         subject="episodic",
         content={
-            "text": f"handoff {handoff.handoff_id} completed for run {run_a.run_id}"
+            "kind": "observation",
+            "text": f"handoff {handoff.handoff_id} completed for run {run_a.run_id}",
         },
         source="journey-session",
         permissions=full_permissions,

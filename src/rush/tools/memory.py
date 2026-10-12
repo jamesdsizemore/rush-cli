@@ -8,17 +8,22 @@ import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
 
 from ..memory.consolidation import consolidate_episodes
 from ..memory.embeddings import EmbeddingConfig
-from ..memory.experience import compare_last_success, prepare_memory
+from ..memory.experience import MemoryWriteDenied, compare_last_success, prepare_memory
 from ..memory.handoff import (
+    DEFAULT_PAGE_SIZE,
     HandoffError,
     acknowledge_readback,
+    load_session,
     prepare_handoff,
     receive_handoff,
+    validate_readbacks,
 )
 from ..memory.intent import check_intent, record_intent, supersede_intent
 from ..memory.maintenance import (
@@ -33,19 +38,23 @@ from ..memory.retrieval import (
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
     MemoryAccess,
+    RouteDenial,
     SourceValidationMemo,
     _measure_page,
-    artifact_freshness,
+    evaluate_artifact_visibility,
     expand_admission,
     expand_artifact,
     hybrid_page,
-    read_access,
+    memory_policy_mode,
     recall_admission,
     recall_page,
+    recheck_failure,
+    route_access,
 )
 from ..memory.retrieval import DEFAULT_LIMIT as _COMPACT_DEFAULT_LIMIT
 from ..memory.retrieval import _expand as _expand_body
 from ..memory.store import (
+    MemoryAccessChanged,
     MemoryArtifact,
     MemoryFamily,
     MemoryMigrationRequiredError,
@@ -461,7 +470,15 @@ class MemoryTool(ToolFn):
         owner_filter: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
-        root = Path(path).resolve()
+        try:
+            root = Path(path).resolve()
+        except (TypeError, ValueError, OSError, RuntimeError):
+            return self._envelope_result(
+                started,
+                str(operation),
+                "E_INPUT",
+                {"field": "path", "message": "invalid project path"},
+            )
         granted = permissions or ExecutionPermissions()
         real_invocation_id = invocation_id or str(uuid.uuid4())
 
@@ -628,34 +645,54 @@ class MemoryTool(ToolFn):
             "maintain": lambda: self._run_maintain(
                 started, root, task, batch_size, granted, owner_scope, request
             ),
-            "link": lambda: self._link(started, root, granted, request),
-            "related": lambda: self._related(started, root, session_allowlist, request),
+            "link": lambda: self._link(started, root, granted, request, owner_scope),
+            "related": lambda: self._related(
+                started, root, session_allowlist, request, owner_scope
+            ),
             "consolidate": lambda: self._consolidate(
-                started, root, session_allowlist, granted, request
+                started, root, session_allowlist, granted, request, owner_scope
             ),
             "verify_attempt": lambda: self._verify_attempt(
-                started, root, granted, request
+                started, root, granted, request, owner_scope
             ),
             "prepare": lambda: self._prepare(
-                started, root, session_allowlist, request, "prepare"
+                started, root, session_allowlist, request, "prepare", owner_scope
             ),
             "resume": lambda: self._prepare(
-                started, root, session_allowlist, request, "resume"
+                started, root, session_allowlist, request, "resume", owner_scope
             ),
-            "intent": lambda: self._intent(started, root, granted, request),
-            "recipe": lambda: self._recipe(started, root, granted, request),
-            "plan_checks": lambda: self._plan_checks(started, root, request),
+            "intent": lambda: self._intent(
+                started, root, granted, request, owner_scope
+            ),
+            "recipe": lambda: self._recipe(
+                started, root, granted, request, owner_scope
+            ),
+            "plan_checks": lambda: self._plan_checks(
+                started, root, request, owner_scope
+            ),
             "last_success_diagnose": lambda: self._last_success_diagnose(
-                started, root, request
+                started, root, request, owner_scope
             ),
-            "handoff": lambda: self._handoff(started, root, granted, request),
-            "receive": lambda: self._receive(started, root, request),
-            "delete": lambda: self._run_delete(started, root, granted, request),
-            "edit": lambda: self._run_edit(started, root, granted, request),
-            "archive": lambda: self._run_archive(started, root, granted, request),
+            "handoff": lambda: self._handoff(
+                started, root, granted, request, owner_scope
+            ),
+            "receive": lambda: self._receive(started, root, request, owner_scope),
+            "delete": lambda: self._run_delete(
+                started, root, granted, request, owner_scope
+            ),
+            "edit": lambda: self._run_edit(
+                started, root, granted, request, owner_scope
+            ),
+            "archive": lambda: self._run_archive(
+                started, root, granted, request, owner_scope
+            ),
         }
-        with collect_committed_writes() as committed:
-            result = dispatch_table[operation]()
+        try:
+            with collect_committed_writes() as committed:
+                result = dispatch_table[operation]()
+        except (MemoryAccessChanged, MemoryWriteDenied) as exc:
+            # D1 race rule: the access changed before the commit; nothing committed.
+            return self._denied(started, operation, RouteDenial(exc.code, exc.reason))
         if operation in _MUTATION_VIEW_OPERATIONS:
             result = _with_mutation_view(root, result, committed)
         return cast(
@@ -730,7 +767,20 @@ class MemoryTool(ToolFn):
             return self._result(
                 started, "error", "memory list requires subject.", operation="list"
             )
-        if not session_allowlist:
+        want_archived = include_archived if archived_filter is None else archived_filter
+        resolved = self._read_access(
+            root,
+            "list",
+            [source_filter] if source_filter else session_allowlist,
+            None,
+            historical=bool(want_archived),
+        )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "list", resolved)
+        access = resolved
+        if access.kind == "legacy_allowlist" and not session_allowlist:
+            access = dataclasses.replace(access, sources=())
+        if not access.sources:
             return self._result(
                 started,
                 "skipped",
@@ -747,20 +797,24 @@ class MemoryTool(ToolFn):
             return self._result(
                 started, "ok", "Found 0 memory artifact(s).", operation="list", raw=[]
             )
-        want_archived = include_archived if archived_filter is None else archived_filter
+        policy = access.kind == "policy"
+        mode: Literal["inspect", "historical"] = (
+            "historical" if want_archived else "inspect"
+        )
+        memo = SourceValidationMemo()
+        decided: list[tuple[sqlite3.Row, str]] = []
         try:
             rows: list[sqlite3.Row] = []
             offset = 0
             while True:
                 page = view.scope_artifacts(
                     subject,
-                    source_allowlist=[source_filter]
-                    if source_filter
-                    else session_allowlist,
+                    source_allowlist=list(access.sources),
                     trust_tiers=[trust_filter] if trust_filter else None,
-                    include_archived=want_archived,
+                    include_archived=bool(want_archived),
                     scan_offset=offset,
                     scan_limit=_LIST_SCAN_PAGE,
+                    owner_scope=access.owner_scope,
                 )
                 rows.extend(page)
                 if len(page) < _LIST_SCAN_PAGE:
@@ -769,21 +823,36 @@ class MemoryTool(ToolFn):
             matched = (
                 {
                     a.id
-                    for a in view.search(subject, query, include_archived=want_archived)
+                    for a in view.search(
+                        subject, query, include_archived=bool(want_archived)
+                    )
                 }
                 if query
                 else None
             )
+            for row in rows:
+                decision = evaluate_artifact_visibility(
+                    view, row, access=access, mode=mode, memo=memo
+                )
+                if decision.visible:
+                    decided.append((row, decision.freshness))
         finally:
             view.close()
-        artifacts: list[MemoryArtifact] = []
-        for row in rows:
+        artifacts: list[tuple[MemoryArtifact, str]] = []
+        for row, freshness in decided:
             if archived_filter is True and row["archived_at"] is None:
                 continue
-            if freshness_filter is not None and bool(row["stale"]) != (
-                freshness_filter == "stale"
-            ):
-                continue
+            if freshness_filter is not None:
+                if policy:
+                    fresh = freshness in ("current", "not_applicable") and not bool(
+                        row["stale"]
+                    )
+                    stale = freshness == "stale" or bool(row["stale"])
+                    keep = fresh if freshness_filter == "fresh" else stale
+                else:
+                    keep = bool(row["stale"]) == (freshness_filter == "stale")
+                if not keep:
+                    continue
             if matched is not None and row["id"] not in matched:
                 continue
             artifact = _row_to_artifact(
@@ -795,9 +864,13 @@ class MemoryTool(ToolFn):
                 != owner_filter
             ):
                 continue
-            if artifact.trust_tier == "STATED" and (
-                artifact.signature is None
-                or compute_content_signature(artifact.content) != artifact.signature
+            if (
+                not policy
+                and artifact.trust_tier == "STATED"
+                and (
+                    artifact.signature is None
+                    or compute_content_signature(artifact.content) != artifact.signature
+                )
             ):
                 return self._result(
                     started,
@@ -805,8 +878,12 @@ class MemoryTool(ToolFn):
                     f"signature mismatch for STATED artifact {artifact.id}",
                     operation="list",
                 )
-            findings = _inspect_text_for_trojan_chars(
-                json.dumps(artifact.content, ensure_ascii=False)
+            findings = (
+                []
+                if policy
+                else _inspect_text_for_trojan_chars(
+                    json.dumps(artifact.content, ensure_ascii=False)
+                )
             )
             if findings:
                 return self._result(
@@ -816,9 +893,16 @@ class MemoryTool(ToolFn):
                     f"{findings}",
                     operation="list",
                 )
-            artifacts.append(artifact)
+            artifacts.append((artifact, freshness))
+        if access.recheck() != "ok":
+            return self._denied(
+                started,
+                "list",
+                RouteDenial(
+                    *(recheck_failure(access) or ("E_RESTART", "access_changed"))
+                ),
+            )
         # 72-T01 F3: the same additive `freshness` key as the queried list.
-        memo = SourceValidationMemo()
         return self._result(
             started,
             "ok",
@@ -826,12 +910,9 @@ class MemoryTool(ToolFn):
             operation="list",
             raw=[
                 self._artifact_dict(
-                    dataclasses.replace(
-                        a, freshness=artifact_freshness(view, a, memo=memo)[0]
-                    ),
-                    with_freshness=True,
+                    dataclasses.replace(a, freshness=freshness), with_freshness=True
                 )
-                for a in artifacts
+                for a, freshness in artifacts
             ],
         )
 
@@ -917,10 +998,13 @@ class MemoryTool(ToolFn):
                 started, "error", f"invalid owner_scope: {exc}", operation=operation
             )
         historical = operation == "list" and include_archived
-        access = self._read_access(
-            root, "historical" if historical else operation, session_allowlist, owner
+        resolved = self._read_access(
+            root, operation, session_allowlist, owner, historical=historical
         )
-        if access is None:
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, operation, resolved)
+        access = resolved
+        if not access.sources:
             return self._result(
                 started,
                 "skipped",
@@ -1097,8 +1181,11 @@ class MemoryTool(ToolFn):
         if refused is not None:
             code = refused.pop("code")
             return self._envelope_result(started, operation, code, refused)
-        access = self._read_access(root, operation, session_allowlist, owner)
-        if access is None:
+        resolved = self._read_access(root, operation, session_allowlist, owner)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, operation, resolved)
+        access = resolved
+        if not access.sources:
             return self._envelope_result(
                 started,
                 operation,
@@ -1204,7 +1291,11 @@ class MemoryTool(ToolFn):
         embedding_model = request.get("embedding_model")
         embedding_model_digest = request.get("embedding_model_digest")
         embedding_chunking_version = request.get("embedding_chunking_version")
-        telemetry = TelemetryStore(root) if granted.cache_write else None
+        telemetry = (
+            cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
+            if granted.cache_write
+            else None
+        )
         if retrieval == "hybrid":
             embed_config = None
             if embedding_endpoint and embedding_model and embedding_model_digest:
@@ -1354,7 +1445,10 @@ class MemoryTool(ToolFn):
         if refused is not None:
             code = refused.pop("code")
             return self._envelope_result(started, "expand", code, refused)
-        access = self._read_access(root, "expand", session_allowlist, owner)
+        resolved = self._read_access(root, "expand", session_allowlist, owner)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "expand", resolved)
+        access: MemoryAccess | None = resolved if resolved.sources else None
         not_visible = _expand_body(
             "E_NOT_VISIBLE",
             artifact_id=artifact_id,
@@ -1385,7 +1479,11 @@ class MemoryTool(ToolFn):
             return self._envelope_result(
                 started, "expand", "E_NOT_VISIBLE", not_visible
             )
-        telemetry = TelemetryStore(root) if granted.cache_write else None
+        telemetry = (
+            cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
+            if granted.cache_write
+            else None
+        )
         try:
             result = self._expand_read(
                 store,
@@ -1461,9 +1559,11 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC03 §6.3 `link` operation: adds one versioned evidence edge. Requires
-        `cache_write`, same gate as `write`/`promote`/`maintain`."""
+        `cache_write`, same gate as `write`/`promote`/`maintain`. 72-T01: D2 `{write}`
+        is resolved, and the policy lock held, before the store is constructed."""
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
             return self._envelope_result(
@@ -1511,16 +1611,28 @@ class MemoryTool(ToolFn):
                     "target_version and kind."
                 },
             )
-        store = TypedArtifactStore(root)
-        result = add_relation(
-            store,
-            source_id=source_id,
-            source_version=source_version,
-            target_id=target_id,
-            target_version=target_version,
-            kind=kind,
-            origin_ref=origin_ref,
-        )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started, "link", "E_INPUT", {"message": f"invalid owner_scope: {exc}"}
+            )
+        resolved = self._read_access(root, "link", None, owner, apply=True)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "link", resolved)
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "link", refused)
+            store = TypedArtifactStore(root)
+            result = add_relation(
+                store,
+                source_id=source_id,
+                source_version=source_version,
+                target_id=target_id,
+                target_version=target_version,
+                kind=kind,
+                origin_ref=origin_ref,
+            )
         code = result.pop("code")
         return self._envelope_result(started, "link", code, result)
 
@@ -1530,8 +1642,11 @@ class MemoryTool(ToolFn):
         root: Path,
         session_allowlist: list[str] | None,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
-        """MC03 §6.3 `related` operation: bounded, authorized traversal from one seed."""
+        """MC03 §6.3 `related` operation: bounded, authorized traversal from one seed.
+        72-T01: D1 `ask` access first; reads a read-only view, so a missing store
+        creates nothing."""
         if request is None:
             return self._envelope_result(
                 started,
@@ -1583,22 +1698,61 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = (
-            self._readonly_store
-            if self._readonly_store is not None
-            else TypedArtifactStore(root)
-        )
-        result = related_artifacts(
-            store,
-            artifact_id=artifact_id,
-            version=version,
-            session_allowlist=session_allowlist,
-            depth=depth,
-            max_nodes=max_nodes,
-            max_tokens=max_tokens,
-            max_bytes=max_bytes,
-            encoding=encoding,
-        )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "related",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        resolved = self._read_access(root, "related", session_allowlist, owner)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "related", resolved)
+        allowlist = list(resolved.sources)
+        store = self._readonly_store
+        own_view = store is None
+        if store is None:
+            store, state = TypedArtifactStore.open_readonly_view(root)
+            if state is not None:
+                return self._envelope_result(
+                    started,
+                    "related",
+                    _READ_STATE_CODES[state],
+                    {"message": readonly_view_reason(state)},
+                )
+        if store is None:
+            return self._envelope_result(
+                started,
+                "related",
+                "E_NOT_VISIBLE",
+                {
+                    "items": [],
+                    "complete": True,
+                    "tokens": 0,
+                    "bytes": 0,
+                    "encoding": encoding,
+                },
+            )
+        try:
+            result = related_artifacts(
+                store,
+                artifact_id=artifact_id,
+                version=version,
+                session_allowlist=allowlist,
+                depth=depth,
+                max_nodes=max_nodes,
+                max_tokens=max_tokens,
+                max_bytes=max_bytes,
+                encoding=encoding,
+            )
+        finally:
+            if own_view:
+                store.close()
+        revoked = self._revoked(started, "related", resolved)
+        if revoked is not None:
+            return revoked
         code = result.pop("code")
         return self._envelope_result(started, "related", code, result)
 
@@ -1609,9 +1763,11 @@ class MemoryTool(ToolFn):
         session_allowlist: list[str] | None,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC03 §6.3 `consolidate` operation: derives a duplicate-episode summary. Requires
-        `cache_write`, same gate as `write`/`promote`/`maintain`/`link`."""
+        `cache_write`, same gate as `write`/`promote`/`maintain`/`link`. 72-T01: D2
+        `{write}` and the policy lock precede the store."""
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
             return self._envelope_result(
@@ -1643,10 +1799,33 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "memory consolidate requires symptom."},
             )
-        store = TypedArtifactStore(root)
-        result = consolidate_episodes(
-            store, symptom=symptom, session_allowlist=session_allowlist
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "consolidate",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        resolved = self._read_access(
+            root, "consolidate", session_allowlist, owner, apply=True
         )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "consolidate", resolved)
+        if not resolved.sources:
+            result = consolidate_episodes(
+                cast(TypedArtifactStore, None), symptom=symptom, session_allowlist=[]
+            )
+            code = result.pop("code")
+            return self._envelope_result(started, "consolidate", code, result)
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "consolidate", refused)
+            store = TypedArtifactStore(root)
+            result = consolidate_episodes(
+                store, symptom=symptom, session_allowlist=list(resolved.sources)
+            )
         code = result.pop("code")
         return self._envelope_result(started, "consolidate", code, result)
 
@@ -1657,6 +1836,7 @@ class MemoryTool(ToolFn):
         session_allowlist: list[str] | None,
         request: dict[str, Any] | None,
         operation: str,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC06.3 `prepare`/`resume`: read-only repair-episode recall. Executes no
         commands and never withholds or prohibits a patch -- it only surfaces recorded
@@ -1694,6 +1874,11 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"memory {operation} requires task and conditions."},
             )
+        gated = self._read_gate(
+            started, root, operation, owner_scope, allowlist=session_allowlist
+        )
+        if isinstance(gated, dict):
+            return cast(ToolResult, gated)
         result = prepare_memory(
             project_root=root,
             symptom=query or task,
@@ -1734,11 +1919,76 @@ class MemoryTool(ToolFn):
         operation: str,
         session_allowlist: list[str] | None,
         owner: OwnerScope | None,
-    ) -> MemoryAccess | None:
-        """72-T01 read access: a non-empty `session_allowlist` is the legacy explicit
-        form (no owner filter unless `owner` is declared); otherwise the policy at the
-        default data root. `None` keeps each route's fail-closed output."""
-        return read_access(root, operation, session_allowlist, owner_scope=owner)
+        *,
+        action: str | None = None,
+        apply: bool = False,
+        historical: bool = False,
+    ) -> MemoryAccess | RouteDenial:
+        """72-T01 D1/D2 access for one route (`retrieval.route_access`): `legacy`
+        mode builds the explicit-allowlist form (a source-less one keeps each route's
+        fail-closed output), `policy` mode resolves the grant (the allowlist only
+        narrows it), `unavailable` mode denies."""
+        return route_access(
+            root,
+            operation,
+            action=action,
+            apply=apply,
+            historical=historical,
+            session_allowlist=session_allowlist,
+            owner_scope=owner,
+        )
+
+    def _read_gate(
+        self,
+        started: float,
+        root: Path,
+        operation: str,
+        owner_scope: dict[str, str] | OwnerScope | None,
+        *,
+        allowlist: list[str] | None = None,
+        historical: bool = False,
+    ) -> MemoryAccess | ToolResult:
+        """D1 gate for a read route whose reader resolves its own access: the
+        route's denial (or an invalid owner) before any read, else the access."""
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        resolved = self._read_access(
+            root, operation, allowlist, owner, historical=historical
+        )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, operation, resolved)
+        return resolved
+
+    def _denied(
+        self, started: float, operation: str, denial: RouteDenial
+    ) -> ToolResult:
+        """A D1 denial: the denial code with its exact reason, before any effect."""
+        return self._envelope_result(
+            started,
+            operation,
+            denial.code,
+            {
+                "reason": denial.reason,
+                "message": f"memory {operation} denied: {denial.reason}.",
+            },
+        )
+
+    def _revoked(
+        self, started: float, operation: str, access: MemoryAccess
+    ) -> ToolResult | None:
+        """D1 race rule for a read or preview: the denial when `access` no longer
+        holds, checked immediately before a successful result carrying store data."""
+        failure = recheck_failure(access)
+        if failure is None:
+            return None
+        return self._denied(started, operation, RouteDenial(*failure))
 
     @staticmethod
     def _parse_owner_scope(
@@ -1758,7 +2008,13 @@ class MemoryTool(ToolFn):
         owner_scope = OwnerScope.from_value(value)
         if owner_scope.kind == "project":
             candidate = Path(owner_scope.id)
-            if candidate.is_absolute() and candidate.resolve() != root:
+            # 72-T01 D1: outside `legacy` mode the grant decides the owner (a
+            # different project's owner is denied by resolution, not here).
+            if (
+                candidate.is_absolute()
+                and candidate.resolve() != root
+                and memory_policy_mode(root) == "legacy"
+            ):
                 raise ValueError(
                     f"project-kind owner_scope {owner_scope.id!r} names a different "
                     f"project than {str(root)!r}"
@@ -1814,8 +2070,16 @@ class MemoryTool(ToolFn):
             return self._result(
                 started, "error", f"invalid owner_scope: {exc}", operation="write"
             )
+        resolved = self._read_access(root, "write", [source], owner, apply=apply)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "write", resolved)
         artifact = self._build_artifact(
-            subject, content, source, symbol_ref, source_kind, owner
+            subject,
+            content,
+            source,
+            symbol_ref,
+            source_kind,
+            _write_owner(owner, resolved),
         )
         if not apply:
             return self._result(
@@ -1825,8 +2089,11 @@ class MemoryTool(ToolFn):
                 operation="write",
                 raw=_new_artifact_preview(artifact, root, grants, granted),
             )
-        store = TypedArtifactStore(root)
-        stored = store.write(artifact)
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "write", refused)
+            store = TypedArtifactStore(root)
+            stored = store.write(artifact, commit_check=_commit_check(resolved))
         raw = self._artifact_dict(stored)
         if grants is not None:
             raw["required_grants"] = grants
@@ -1945,6 +2212,10 @@ class MemoryTool(ToolFn):
             return self._result(
                 started, "error", f"invalid owner_scope: {exc}", operation="promote"
             )
+        resolved = self._read_access(root, "promote", [source], owner, apply=apply)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "promote", resolved)
+        owner = _write_owner(owner, resolved)
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind, owner
         )
@@ -2038,6 +2309,9 @@ class MemoryTool(ToolFn):
                     raw={"code": "E_VERSION", **stale},
                 )
         if not apply:
+            revoked = self._revoked(started, "promote", resolved)
+            if revoked is not None:
+                return revoked
             preview = _new_artifact_preview(artifact, root, grants, granted)
             preview["user_stated"] = user_stated
             preview["candidate_sources"] = list(candidate_sources or [])
@@ -2049,37 +2323,46 @@ class MemoryTool(ToolFn):
                 operation="promote",
                 raw=preview,
             )
-        store = TypedArtifactStore(root)
-        # P69-01.2f/S04: promotion is two separately-committed effects (candidate
-        # creation, then a distinct promotion decision) -- each consumes its own
-        # independently-reserved effect id (`_s04_effect_ids`'s `candidate_create`/
-        # `promotion` keys) so recovery can tell "created" apart from "created and
-        # promoted" via two independently-addressable receipts, never one shared
-        # base id suffixed into two derived strings.
-        reserved = receipt_operation_ids or {}
-        stored = store.write(
-            artifact,
-            receipt_operation_id=reserved.get("candidate_create"),
-        )
-        try:
-            stored, decision = store.promote(
-                stored.id,
-                user_stated=user_stated,
-                candidate_sources=candidate_sources,
-                candidate_refs=candidate_refs,
-                expected_version=stored.artifact_version,
-                owner_scope=owner,
-                receipt_operation_id=reserved.get("promotion"),
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "promote", refused)
+            store = TypedArtifactStore(root)
+            # P69-01.2f/S04: promotion is two separately-committed effects (candidate
+            # creation, then a distinct promotion decision) -- each consumes its own
+            # independently-reserved effect id (`_s04_effect_ids`'s `candidate_create`/
+            # `promotion` keys) so recovery can tell "created" apart from "created and
+            # promoted" via two independently-addressable receipts, never one shared
+            # base id suffixed into two derived strings.
+            reserved = receipt_operation_ids or {}
+            stored = store.write(
+                artifact,
+                receipt_operation_id=reserved.get("candidate_create"),
+                commit_check=_commit_check(resolved),
             )
-        except VersionConflictError as exc:
+            try:
+                stored, decision = store.promote(
+                    stored.id,
+                    user_stated=user_stated,
+                    candidate_sources=candidate_sources,
+                    candidate_refs=candidate_refs,
+                    expected_version=stored.artifact_version,
+                    owner_scope=owner,
+                    receipt_operation_id=reserved.get("promotion"),
+                    commit_check=_commit_check(resolved),
+                )
+                promotion_error: VersionConflictError | None = None
+            except VersionConflictError as conflict:
+                promotion_error = conflict
+        if promotion_error is not None:
             return self._result(
                 started,
                 "fail",
-                f"Promotion candidate created but corroboration changed: {exc}",
+                "Promotion candidate created but corroboration changed: "
+                f"{promotion_error}",
                 operation="promote",
                 raw={
                     "code": "E_VERSION",
-                    "reason": str(exc),
+                    "reason": str(promotion_error),
                     "artifact": self._artifact_dict(stored),
                 },
             )
@@ -2173,6 +2456,9 @@ class MemoryTool(ToolFn):
                 "legacy-owner default at this boundary).",
                 operation="maintain",
             )
+        resolved = self._read_access(root, "maintain", None, owner, apply=apply)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "maintain", resolved)
         if not apply:
             try:
                 candidates = preview_maintenance_candidates(
@@ -2190,6 +2476,14 @@ class MemoryTool(ToolFn):
                     operation="maintain",
                     raw={"message": str(exc)},
                 )
+            candidates = _in_source_scope(
+                resolved,
+                candidates,
+                lambda: TypedArtifactStore.open_readonly_view(root),
+            )
+            revoked = self._revoked(started, "maintain", resolved)
+            if revoked is not None:
+                return revoked
             ids = [str(c["id"]) for c in candidates]
             effective = grants if grants is not None else ["cache_write"]
             return self._result(
@@ -2217,13 +2511,49 @@ class MemoryTool(ToolFn):
         )
         if expected_revisions is not None:
             restriction["expected_revisions"] = expected_revisions
-        result = run_maintenance_cycle(
-            task,
-            batch_size=batch_size,
-            project_root=root,
-            owner_scope=owner,
-            **restriction,
-        )
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "maintain", refused)
+            if resolved.kind == "policy":
+                # D40/D1: a policy-mode sweep visits only rows of the resolved
+                # owner whose source the grant approves.
+                try:
+                    scoped = _in_source_scope(
+                        resolved,
+                        preview_maintenance_candidates(
+                            task,
+                            batch_size=batch_size,
+                            project_root=root,
+                            owner_scope=owner,
+                            candidate_ids=candidate_ids,
+                        ),
+                        lambda: TypedArtifactStore.open_readonly_view(root),
+                    )
+                except (
+                    MemoryStoreUnreadableError,
+                    MemoryMigrationRequiredError,
+                ) as exc:
+                    return self._result(
+                        started,
+                        "error",
+                        str(exc),
+                        operation="maintain",
+                        raw={"message": str(exc)},
+                    )
+                restriction["candidate_ids"] = [str(c["id"]) for c in scoped]
+                if expected_revisions is not None:
+                    restriction["expected_revisions"] = {
+                        k: v
+                        for k, v in expected_revisions.items()
+                        if k in restriction["candidate_ids"]
+                    }
+            result = run_maintenance_cycle(
+                task,
+                batch_size=batch_size,
+                project_root=root,
+                owner_scope=owner,
+                **restriction,
+            )
         maintain_raw = dataclasses.asdict(result)
         if grants is not None:
             maintain_raw["required_grants"] = grants
@@ -2253,6 +2583,7 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         # Lazy import: `rush.memory.verification` -> `rush.patch.applier` ->
         # `rush.tools.common` -> `rush.tools.__init__` -> this module. A module-level
@@ -2304,6 +2635,20 @@ class MemoryTool(ToolFn):
                 operation="verify_attempt",
             )
         try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._result(
+                started,
+                "error",
+                f"invalid owner_scope: {exc}",
+                operation="verify_attempt",
+            )
+        # 72-T01 G3: D2 `{write}` before the sandbox or any observation write; the
+        # observation write itself requires its `verify_attempt:<id>` source (D40).
+        resolved = self._read_access(root, "verify_attempt", None, owner, apply=True)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "verify_attempt", resolved)
+        try:
             contract = parse_patch_contract(contract_raw, default_sandbox_path=root)
         except (KeyError, TypeError, ValueError) as exc:
             return self._result(
@@ -2320,6 +2665,7 @@ class MemoryTool(ToolFn):
             patch=patch,
             granted=granted,
             declared_permission_names=tuple(declared_permissions),
+            access=resolved,
         )
         status = _VERIFY_ATTEMPT_OUTCOME_STATUS.get(outcome.outcome, "error")
         return self._result(
@@ -2343,6 +2689,7 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC07.3 `intent` operation: `create`/`confirm`/`supersede` a confirmed-intent
         record (each requires `cache_write`, same gate as `write`/`promote`), or read-only
@@ -2379,6 +2726,26 @@ class MemoryTool(ToolFn):
                     "{create,confirm,supersede,check} and intent_id."
                 },
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "intent",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        # 72-T01 D2: `check` is an `ask` read (its reader narrows to the intent's
+        # source itself); a write narrows the grant to `intent:<id>`.
+        resolved = self._read_access(
+            root,
+            "intent",
+            None if action == "check" else [f"intent:{intent_id}"],
+            owner,
+            action=action,
+        )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "intent", resolved)
 
         if action == "check":
             current_revision = request.get("current_revision")
@@ -2394,6 +2761,9 @@ class MemoryTool(ToolFn):
                 intent_id=intent_id,
                 current_revision=current_revision,
             )
+            revoked = self._revoked(started, "intent", resolved)
+            if revoked is not None:
+                return revoked
             code = result.pop("code")
             return self._envelope_result(started, "intent", code, result)
 
@@ -2455,16 +2825,21 @@ class MemoryTool(ToolFn):
                     "E_INPUT",
                     {"message": "intent confirm requires expected_version."},
                 )
-            result = record_intent(
-                project_root=root,
-                intent_id=intent_id,
-                behavior_id=behavior_id,
-                statement_ref=statement_ref,
-                source_refs=source_refs,
-                check_refs=check_refs,
-                exceptions=exceptions,
-                expected_version=expected_version,
-            )
+            with _policy_mutation(resolved) as refused:
+                if refused is not None:
+                    return self._denied(started, "intent", refused)
+                result = record_intent(
+                    project_root=root,
+                    intent_id=intent_id,
+                    behavior_id=behavior_id,
+                    statement_ref=statement_ref,
+                    source_refs=source_refs,
+                    check_refs=check_refs,
+                    exceptions=exceptions,
+                    expected_version=expected_version,
+                    owner_scope=_write_owner(owner, resolved),
+                    commit_check=_commit_check(resolved),
+                )
             code = result.pop("code")
             return self._envelope_result(started, "intent", code, result)
 
@@ -2491,16 +2866,20 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "new_behavior_id must be a string."},
             )
-        result = supersede_intent(
-            project_root=root,
-            intent_id=intent_id,
-            expected_old_version=expected_version,
-            new_statement_ref=new_statement_ref,
-            new_behavior_id=new_behavior_id,
-            source_refs=source_refs,
-            check_refs=check_refs,
-            exceptions=exceptions,
-        )
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "intent", refused)
+            result = supersede_intent(
+                project_root=root,
+                intent_id=intent_id,
+                expected_old_version=expected_version,
+                new_statement_ref=new_statement_ref,
+                new_behavior_id=new_behavior_id,
+                source_refs=source_refs,
+                check_refs=check_refs,
+                exceptions=exceptions,
+                commit_check=_commit_check(resolved),
+            )
         code = result.pop("code")
         return self._envelope_result(started, "intent", code, result)
 
@@ -2510,6 +2889,7 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC08.3 `recipe` operation: read-only `resolve` (no permission, resolves current
         source on disk) versus `record`/`outcome` (each requires `cache_write`, same gate as
@@ -2545,6 +2925,26 @@ class MemoryTool(ToolFn):
                     "{record,resolve,outcome} and recipe_id."
                 },
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "recipe",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        # 72-T01 D2: `resolve` is an `ask` read (its reader narrows to the recipe's
+        # source itself); a write narrows the grant to `recipe:<id>`.
+        resolved = self._read_access(
+            root,
+            "recipe",
+            None if action == "resolve" else [f"recipe:{recipe_id}"],
+            owner,
+            action=action,
+        )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "recipe", resolved)
 
         if action == "resolve":
             current_dependencies = request.get("current_dependencies")
@@ -2630,18 +3030,23 @@ class MemoryTool(ToolFn):
                     "E_INPUT",
                     {"message": "expected_version must be an int."},
                 )
-            result = record_recipe(
-                project_root=root,
-                recipe_id=recipe_id,
-                purpose=request.get("purpose"),
-                helper_ref=helper_ref,
-                required_symbols=required_symbols,
-                required_dependencies=required_dependencies,
-                required_config_digest=request.get("required_config_digest"),
-                checks=checks,
-                exceptions=exceptions,
-                expected_version=expected_version,
-            )
+            with _policy_mutation(resolved) as refused:
+                if refused is not None:
+                    return self._denied(started, "recipe", refused)
+                result = record_recipe(
+                    project_root=root,
+                    recipe_id=recipe_id,
+                    purpose=request.get("purpose"),
+                    helper_ref=helper_ref,
+                    required_symbols=required_symbols,
+                    required_dependencies=required_dependencies,
+                    required_config_digest=request.get("required_config_digest"),
+                    checks=checks,
+                    exceptions=exceptions,
+                    expected_version=expected_version,
+                    owner_scope=_write_owner(owner, resolved),
+                    commit_check=_commit_check(resolved),
+                )
             code = result.pop("code")
             return self._envelope_result(started, "recipe", code, result)
 
@@ -2665,13 +3070,17 @@ class MemoryTool(ToolFn):
                     "and verifier_receipt_ref."
                 },
             )
-        result = record_recipe_outcome(
-            project_root=root,
-            recipe_id=recipe_id,
-            recipe_version=recipe_version,
-            patch_hash=patch_hash,
-            verifier_receipt_ref=verifier_receipt_ref,
-        )
+        with _policy_mutation(resolved) as refused:
+            if refused is not None:
+                return self._denied(started, "recipe", refused)
+            result = record_recipe_outcome(
+                project_root=root,
+                recipe_id=recipe_id,
+                recipe_version=recipe_version,
+                patch_hash=patch_hash,
+                verifier_receipt_ref=verifier_receipt_ref,
+                commit_check=_commit_check(resolved),
+            )
         code = result.pop("code")
         return self._envelope_result(started, "recipe", code, result)
 
@@ -2680,6 +3089,7 @@ class MemoryTool(ToolFn):
         started: float,
         root: Path,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC09.3 `plan_checks` operation: read-only -- ranks `required_checks` by real
         observed evidence (never drops or adds required membership). No permission gate,
@@ -2732,6 +3142,9 @@ class MemoryTool(ToolFn):
                     "environment."
                 },
             )
+        gated = self._read_gate(started, root, "plan_checks", owner_scope)
+        if isinstance(gated, dict):
+            return cast(ToolResult, gated)
         result = plan_checks(
             project_root=root,
             changed_targets=changed_targets,
@@ -2745,6 +3158,7 @@ class MemoryTool(ToolFn):
         started: float,
         root: Path,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC10.3 `last_success_diagnose` operation: read-only -- compares current
         `conditions` to the recorded per-behavior/runtime last-success pointer. No
@@ -2783,6 +3197,15 @@ class MemoryTool(ToolFn):
                     "and conditions (dict); historical must be a bool."
                 },
             )
+        gated = self._read_gate(
+            started,
+            root,
+            "last_success_diagnose",
+            owner_scope,
+            historical=bool(historical),
+        )
+        if isinstance(gated, dict):
+            return cast(ToolResult, gated)
         result = compare_last_success(
             project_root=root,
             behavior_id=behavior_id,
@@ -2797,6 +3220,7 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC14 sender-side `handoff` operation (Phase 63 plan §9.1 `handoff prepare` /
         `handoff dispatch/status` rows -- "one CLI leaf with actions"). `action=prepare`
@@ -2840,6 +3264,19 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"action must be one of {sorted(_HANDOFF_ACTIONS)}."},
             )
+        try:
+            owner = self._parse_owner_scope(owner_scope, root)
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "handoff",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        # 72-T01 D2/D21: every handoff action needs one grant with write+expand.
+        gate = self._read_access(root, "handoff", None, owner, action=action)
+        if isinstance(gate, RouteDenial):
+            return self._denied(started, "handoff", gate)
         if action in ("dispatch", "status"):
             return self._envelope_result(
                 started,
@@ -2892,27 +3329,35 @@ class MemoryTool(ToolFn):
                 },
             )
         assert isinstance(selected_refs, list)  # guaranteed by valid_refs above
-        store = TypedArtifactStore(root)
         session_allowlist = (
             [receiver_namespace] if receiver_namespace else [receiver_audience]
         )
+        resolved = self._read_access(
+            root, "handoff", session_allowlist, owner, action=action
+        )
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "handoff", resolved)
         try:
-            session, raw_capability, delta = prepare_handoff(
-                store,
-                root=root,
-                audience=receiver_audience,
-                granted_ids=[ref["id"] for ref in selected_refs],
-                session_allowlist=session_allowlist,
-                constraints={
-                    **(constraints or {}),
-                    "goal": goal,
-                    "unresolved_decisions": unresolved_decisions or [],
-                },
-            )
+            with _policy_mutation(resolved) as refused:
+                if refused is not None:
+                    return self._denied(started, "handoff", refused)
+                store = TypedArtifactStore(root)
+                session, raw_capability, delta = prepare_handoff(
+                    store,
+                    root=root,
+                    audience=receiver_audience,
+                    granted_ids=[ref["id"] for ref in selected_refs],
+                    session_allowlist=session_allowlist,
+                    constraints={
+                        **(constraints or {}),
+                        "goal": goal,
+                        "unresolved_decisions": unresolved_decisions or [],
+                    },
+                    sender=resolved,
+                    commit_check=_commit_check(resolved),
+                )
         except HandoffError as exc:
-            return self._envelope_result(
-                started, "handoff", exc.code, {"message": str(exc)}
-            )
+            return self._envelope_result(started, "handoff", exc.code, exc.data())
         return self._envelope_result(
             started,
             "handoff",
@@ -2930,6 +3375,7 @@ class MemoryTool(ToolFn):
         started: float,
         root: Path,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """MC11 `receive` operation: the one write-capable-looking action a restricted
         handoff receiver may call. `session_id`/`capability` gate everything -- no
@@ -2967,12 +3413,13 @@ class MemoryTool(ToolFn):
                 {"message": "memory receive requires session_id and capability."},
             )
         cursor = request.get("cursor")
-        page_size = request.get("page_size", 50)
+        page_size = request.get("page_size", DEFAULT_PAGE_SIZE)
         ack = request.get("ack")
         if (
             (cursor is not None and not isinstance(cursor, str))
             or not isinstance(page_size, int)
             or isinstance(page_size, bool)
+            or not 1 <= page_size <= DEFAULT_PAGE_SIZE
             or (ack is not None and not isinstance(ack, list))
         ):
             return self._envelope_result(
@@ -2981,23 +3428,57 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
-        store = TypedArtifactStore(root)
         try:
             if ack:
+                validate_readbacks(ack)
+            owner = self._parse_owner_scope(owner_scope, root)
+        except HandoffError as exc:
+            return self._envelope_result(started, "receive", exc.code, exc.data())
+        except ValueError as exc:
+            return self._envelope_result(
+                started,
+                "receive",
+                "E_INPUT",
+                {"message": f"invalid owner_scope: {exc}"},
+            )
+        gate = self._read_access(root, "receive", None, owner)
+        if isinstance(gate, RouteDenial):
+            return self._denied(started, "receive", gate)
+        # 72-T01 D22: a read-only load; a writable store opens only for a valid,
+        # authorized ack, after every check.
+        view, _state = TypedArtifactStore.open_readonly_view(root)
+        try:
+            if view is None:
+                load_session(None, session_id, capability)
+            assert view is not None
+            if ack:
                 acknowledge_readback(
-                    store, session_id=session_id, capability=capability, readbacks=ack
+                    lambda: TypedArtifactStore(root),
+                    session_id=session_id,
+                    capability=capability,
+                    readbacks=ack,
+                    view=view,
                 )
+                view.close()
+                view, _state = TypedArtifactStore.open_readonly_view(root)
+                if view is None:
+                    load_session(None, session_id, capability)
+                assert view is not None
             result = receive_handoff(
-                store,
+                view,
                 session_id=session_id,
                 capability=capability,
                 cursor=cursor,
                 page_size=page_size,
             )
         except HandoffError as exc:
-            return self._envelope_result(
-                started, "receive", exc.code, {"message": str(exc)}
-            )
+            return self._envelope_result(started, "receive", exc.code, exc.data())
+        finally:
+            if view is not None:
+                view.close()
+        revoked = self._revoked(started, "receive", gate)
+        if revoked is not None:
+            return revoked
         return self._envelope_result(started, "receive", "OK", result)
 
     def _run_delete(
@@ -3006,6 +3487,7 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """P65-07.3 public `delete`: batch-removes memory artifacts through the §6.4
         transaction/outbox algorithm (`TypedArtifactStore.delete_batch`). Preview
@@ -3089,7 +3571,9 @@ class MemoryTool(ToolFn):
         assert isinstance(expected_revisions, dict)  # narrowed by valid_revisions above
 
         try:
-            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+            owner = self._parse_owner_scope(
+                request.get("owner_scope", owner_scope), root
+            )
         except ValueError as exc:
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": f"invalid owner_scope: {exc}"}
@@ -3098,6 +3582,22 @@ class MemoryTool(ToolFn):
         if grants_error:
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": grants_error}
+            )
+        resolved = self._read_access(root, "delete", None, owner, apply=apply)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, "delete", resolved)
+        owner = _write_owner(owner, resolved)
+        hidden = _hidden_targets(
+            resolved,
+            artifact_ids,
+            lambda: TypedArtifactStore.open_readonly_view(root),
+        )
+        if hidden:
+            return self._envelope_result(
+                started,
+                "delete",
+                "E_INPUT",
+                {"message": f"unknown artifact_id: {hidden[0]!r}"},
             )
 
         if apply:
@@ -3116,17 +3616,49 @@ class MemoryTool(ToolFn):
         receipt_operation_ids = request.get("receipt_operation_ids")
         if not isinstance(receipt_operation_ids, dict):
             receipt_operation_ids = None
-        store = TypedArtifactStore(root)
         try:
-            result = store.delete_batch(
-                artifact_ids,
-                expected_revisions=expected_revisions,
-                scope=scope,
-                owner_scope=owner,
-                apply=apply,
-                receipt_operation_id=request.get("receipt_operation_id"),
-                receipt_operation_ids=receipt_operation_ids,
-            )
+            if not apply:
+                # A preview is genuinely read-only: it runs over a query-only view and
+                # never constructs a writable `TypedArtifactStore` (which would create
+                # `.rush/memory.db`).
+                view, view_state = TypedArtifactStore.open_readonly_view(root)
+                if view is None:
+                    if view_state is None:
+                        raise KeyError(artifact_ids[0])
+                    return self._envelope_result(
+                        started,
+                        "delete",
+                        _READ_STATE_CODES[view_state],
+                        {"message": readonly_view_reason(view_state)},
+                    )
+                try:
+                    result = view.delete_batch(
+                        artifact_ids,
+                        expected_revisions=expected_revisions,
+                        scope=scope,
+                        owner_scope=owner,
+                        apply=False,
+                    )
+                finally:
+                    view.close()
+                failure = recheck_failure(resolved)
+                if failure is not None:
+                    return self._denied(started, "delete", RouteDenial(*failure))
+            else:
+                with _policy_mutation(resolved) as lock_refused:
+                    if lock_refused is not None:
+                        return self._denied(started, "delete", lock_refused)
+                    store = TypedArtifactStore(root)
+                    result = store.delete_batch(
+                        artifact_ids,
+                        expected_revisions=expected_revisions,
+                        scope=scope,
+                        owner_scope=owner,
+                        apply=True,
+                        receipt_operation_id=request.get("receipt_operation_id"),
+                        receipt_operation_ids=receipt_operation_ids,
+                        commit_check=_commit_check(resolved),
+                    )
         except KeyError as exc:
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": f"unknown artifact_id: {exc}"}
@@ -3174,12 +3706,13 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """P65-07 §6.4 public `edit`: applies `TypedArtifactStore.edit()`'s compare-and-swap
         content update. Preview (`apply=False`, the default) is always allowed and never
         writes; apply requires `cache_write`."""
         return self._edit_or_archive(
-            started, root, granted, request, "edit", _EDIT_REQUEST_KEYS
+            started, root, granted, request, "edit", _EDIT_REQUEST_KEYS, owner_scope
         )
 
     def _run_archive(
@@ -3188,12 +3721,19 @@ class MemoryTool(ToolFn):
         root: Path,
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         """P65-07 §6.4 public `archive`: sets/clears an archived marker via
         `TypedArtifactStore.archive()`. Preview (`apply=False`, the default) is always
         allowed and never writes; apply requires `cache_write`. Never deletes content."""
         return self._edit_or_archive(
-            started, root, granted, request, "archive", _ARCHIVE_REQUEST_KEYS
+            started,
+            root,
+            granted,
+            request,
+            "archive",
+            _ARCHIVE_REQUEST_KEYS,
+            owner_scope,
         )
 
     def _edit_or_archive(
@@ -3204,6 +3744,7 @@ class MemoryTool(ToolFn):
         request: dict[str, Any] | None,
         operation: Literal["edit", "archive"],
         valid_keys: set[str],
+        owner_scope: dict[str, str] | OwnerScope | None = None,
     ) -> ToolResult:
         if request is None:
             return self._envelope_result(
@@ -3279,7 +3820,9 @@ class MemoryTool(ToolFn):
             archived = requested_archived
 
         try:
-            owner = self._parse_owner_scope(request.get("owner_scope"), root)
+            owner = self._parse_owner_scope(
+                request.get("owner_scope", owner_scope), root
+            )
         except ValueError as exc:
             return self._envelope_result(
                 started,
@@ -3291,6 +3834,22 @@ class MemoryTool(ToolFn):
         if grants_error:
             return self._envelope_result(
                 started, operation, "E_INPUT", {"message": grants_error}
+            )
+        resolved = self._read_access(root, operation, None, owner, apply=apply)
+        if isinstance(resolved, RouteDenial):
+            return self._denied(started, operation, resolved)
+        owner = _write_owner(owner, resolved)
+        hidden = _hidden_targets(
+            resolved,
+            [artifact_id],
+            lambda: TypedArtifactStore.open_readonly_view(root),
+        )
+        if hidden:
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"message": f"unknown artifact_id: {artifact_id!r}"},
             )
 
         if apply:
@@ -3323,26 +3882,35 @@ class MemoryTool(ToolFn):
                     owner_scope=owner,
                     operation=operation,
                 )
-            elif operation == "edit":
-                result = TypedArtifactStore(root).edit(
-                    artifact_id,
-                    content,
-                    expected_version=expected_version,
-                    scope=scope,
-                    owner_scope=owner,
-                    apply=True,
-                    receipt_operation_id=receipt_operation_id,
-                )
+                revoked = self._revoked(started, operation, resolved)
+                if revoked is not None:
+                    return revoked
             else:
-                result = TypedArtifactStore(root).archive(
-                    artifact_id,
-                    expected_version=expected_version,
-                    scope=scope,
-                    owner_scope=owner,
-                    apply=True,
-                    archived=archived,
-                    receipt_operation_id=receipt_operation_id,
-                )
+                with _policy_mutation(resolved) as lock_refused:
+                    if lock_refused is not None:
+                        return self._denied(started, operation, lock_refused)
+                    if operation == "edit":
+                        result = TypedArtifactStore(root).edit(
+                            artifact_id,
+                            content,
+                            expected_version=expected_version,
+                            scope=scope,
+                            owner_scope=owner,
+                            apply=True,
+                            receipt_operation_id=receipt_operation_id,
+                            commit_check=_commit_check(resolved),
+                        )
+                    else:
+                        result = TypedArtifactStore(root).archive(
+                            artifact_id,
+                            expected_version=expected_version,
+                            scope=scope,
+                            owner_scope=owner,
+                            apply=True,
+                            archived=archived,
+                            receipt_operation_id=receipt_operation_id,
+                            commit_check=_commit_check(resolved),
+                        )
         except KeyError as exc:
             return self._envelope_result(
                 started,
@@ -3450,6 +4018,114 @@ class MemoryTool(ToolFn):
             raw=raw,
             metadata={"operation": operation},
         )
+
+
+# --- 72-T01 D1 mutation guard ------------------------------------------------
+
+
+@contextmanager
+def _policy_mutation(access: MemoryAccess) -> Iterator[RouteDenial | None]:
+    """D1 race rule for one mutation: hold the policy lock, then re-evaluate the
+    access under it. Yields the denial (`lock_unavailable`, the recheck failure)
+    or `None` while the lock is held; the caller commits with `commit_check`."""
+    from ..dashboard.state import PolicyLockRootUncreatable
+    from ..memory.authorization import hold_policy_lock, load_policy_readonly
+
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(hold_policy_lock(data_root=access.data_root))
+        except PolicyLockRootUncreatable:
+            if not (
+                access.kind == "legacy_allowlist"
+                and load_policy_readonly(data_root=access.data_root)["state"]
+                == "missing"
+            ):
+                yield RouteDenial("E_PERMISSION", "lock_unavailable")
+                return
+        except (OSError, ValueError):
+            yield RouteDenial("E_PERMISSION", "lock_unavailable")
+            return
+        except Exception as exc:  # noqa: BLE001 - a policy error denies the mutation
+            reason = getattr(exc, "reason", None) or "lock_unavailable"
+            yield RouteDenial("E_PERMISSION", str(reason))
+            return
+        failure = recheck_failure(access)
+        yield RouteDenial(*failure) if failure is not None else None
+
+
+def _hidden_targets(
+    access: MemoryAccess, ids: list[str], open_view: Callable[[], Any]
+) -> list[str]:
+    """Policy mode: the existing target ids whose source the grant does not
+    approve (they are reported exactly like unknown ids). Legacy: none."""
+    if access.kind != "policy":
+        return []
+    from ..memory.authorization import source_granted
+
+    view, _state = open_view()
+    if view is None:
+        return []
+    try:
+        hidden = []
+        for artifact_id in ids:
+            row = view.get_current_row(artifact_id)
+            if row is not None and not source_granted(row["source"], access.sources):
+                hidden.append(artifact_id)
+        return hidden
+    finally:
+        view.close()
+
+
+def _in_source_scope(
+    access: MemoryAccess,
+    candidates: list[dict[str, Any]],
+    open_view: Callable[[], Any],
+) -> list[dict[str, Any]]:
+    """Policy mode: the candidates whose current row's source the grant approves
+    (legacy mode keeps every owner-scoped candidate, as before)."""
+    if access.kind != "policy" or not candidates:
+        return candidates
+    from ..memory.authorization import source_granted
+
+    view, _state = open_view()
+    if view is None:
+        return []
+    try:
+        kept = []
+        for candidate in candidates:
+            row = view.get_current_row(str(candidate["id"]))
+            if row is not None and source_granted(row["source"], access.sources):
+                kept.append(candidate)
+        return kept
+    finally:
+        view.close()
+
+
+def _write_owner(owner: OwnerScope | None, access: MemoryAccess) -> OwnerScope | None:
+    """The owner a new row is written under: the declared owner, else (policy
+    mode) the resolved grant's owner, else the store's legacy default."""
+    if owner is not None or access.kind != "policy":
+        return owner
+    return access.owner_scope
+
+
+def _commit_check(access: MemoryAccess) -> Callable[[], tuple[str, str] | None]:
+    """D1: the check every store mutation runs immediately before its commit."""
+    return lambda: recheck_failure(access)
+
+
+class _LazyTelemetry:
+    """G3: a `TelemetryStore` constructed (by the route's own factory) only when an
+    event is actually recorded."""
+
+    def __init__(self, open_store: Callable[[], TelemetryStore]) -> None:
+        self._open_store = open_store
+        self._store: TelemetryStore | None = None
+
+    def record_memory_event(self, *args: Any, **kwargs: Any) -> Any:
+        if self._store is None:
+            self._store = self._open_store()
+        return self._store.record_memory_event(*args, **kwargs)
 
 
 # --- T28-D: reviewed grants ----------------------------------------------------------
@@ -3805,6 +4481,18 @@ def memory_overview(
             ).value,
         )
 
+    from ..memory.retrieval import RouteDenial, reader_row_allowed, route_access
+
+    # 72-T01 D1 `list`: the overview reads the project's memory rows, so its access is
+    # resolved before any store is opened. `policy` mode lists only the grant owner's
+    # rows of approved sources (and counts only those); a denial lists nothing.
+    access = route_access(canonical, "list")
+    if isinstance(access, RouteDenial):
+        return _fail(
+            access.code, access.reason, f"memory overview denied: {access.reason}"
+        )
+    policy_access = access if access.kind == "policy" else None
+
     token_generation: int | None = None
     if generation is not None:
         reason, token_generation = _overview_token_error(
@@ -3853,30 +4541,55 @@ def memory_overview(
             where = live if include_internal else [*live, internal_sql]
             params: tuple[str, ...] = () if include_internal else internal_params
             where_sql = f"WHERE {' AND '.join(where)}" if where else ""
-            total = int(
-                conn.execute(
-                    f"SELECT COUNT(*) FROM memory_artifacts {where_sql}", params
-                ).fetchone()[0]
-            )
             owner_columns = [
                 c for c in ("owner_scope_kind", "owner_scope_id") if c in columns
             ]
             selected = ", ".join(
                 ["id", "subject", "source", "created_at", "trust_tier", *owner_columns]
             )
-            page = conn.execute(
-                f"SELECT {selected} FROM memory_artifacts {where_sql} "
-                "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-                (*params, OVERVIEW_LIMIT, offset),
-            ).fetchall()
-            if not include_internal:
-                hidden_where = " AND ".join([*live, f"NOT ({internal_sql})"])
-                hidden_internal = int(
+            if policy_access is None:
+                total = int(
                     conn.execute(
-                        f"SELECT COUNT(*) FROM memory_artifacts WHERE {hidden_where}",
-                        internal_params,
+                        f"SELECT COUNT(*) FROM memory_artifacts {where_sql}", params
                     ).fetchone()[0]
                 )
+                page = conn.execute(
+                    f"SELECT {selected} FROM memory_artifacts {where_sql} "
+                    "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                    (*params, OVERVIEW_LIMIT, offset),
+                ).fetchall()
+            else:
+                allowed = [
+                    row
+                    for row in conn.execute(
+                        f"SELECT {selected} FROM memory_artifacts {where_sql} "
+                        "ORDER BY created_at DESC, id DESC",
+                        params,
+                    ).fetchall()
+                    if reader_row_allowed(policy_access, canonical, row)
+                ]
+                total = len(allowed)
+                page = allowed[offset : offset + OVERVIEW_LIMIT]
+            if not include_internal:
+                hidden_where = " AND ".join([*live, f"NOT ({internal_sql})"])
+                if policy_access is None:
+                    hidden_internal = int(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM memory_artifacts "
+                            f"WHERE {hidden_where}",
+                            internal_params,
+                        ).fetchone()[0]
+                    )
+                else:
+                    hidden_internal = sum(
+                        1
+                        for row in conn.execute(
+                            f"SELECT {selected} FROM memory_artifacts "
+                            f"WHERE {hidden_where}",
+                            internal_params,
+                        ).fetchall()
+                        if reader_row_allowed(policy_access, canonical, row)
+                    )
             conn.commit()
         except sqlite3.OperationalError as exc:
             if "locked" in str(exc) or "busy" in str(exc):
@@ -3930,4 +4643,9 @@ def memory_overview(
     data["generation_token"] = _overview_token(
         canonical_str, current_generation, include_internal
     )
+    # D1 race rule: a `list` grant revoked or changed during selection or response
+    # construction returns the denial, never the rows, counts or token.
+    failure = recheck_failure(access)
+    if failure is not None:
+        return _fail(failure[0], failure[1], f"memory overview denied: {failure[1]}")
     return tool._envelope_result(started, "overview", "OK", data)

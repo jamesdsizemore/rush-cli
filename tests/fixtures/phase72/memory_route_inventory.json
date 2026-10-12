@@ -1,0 +1,657 @@
+{
+  "schema_version": 1,
+  "pairs": [
+    {
+      "module": "cli.py",
+      "function": "context_persona_cmd",
+      "route": "cli_other_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "cli.py",
+      "function": "flight_recorder_cmd",
+      "route": "cli_other_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/context.py",
+      "function": "pack_context",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/context.py",
+      "function": "retrieve_context",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/coordination.py",
+      "function": "_fetch_replay_events",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/providers.py",
+      "function": "provider_handoff",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/receipts.py",
+      "function": "_extract_session_memory",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "continuity/receipts.py",
+      "function": "last_handoff_for_provider",
+      "route": "continuity_package",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_build_memory_section",
+      "route": "dashboard_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_build_tokens_section",
+      "route": "dashboard_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_refresh_project_memories",
+      "route": "dashboard_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_refresh_project_memories_if_store_exists",
+      "route": "dashboard_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/server.py",
+      "function": "_sync_current_map",
+      "route": "dashboard_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "dashboard/state.py",
+      "function": "reconcile_admissions",
+      "route": "dashboard_admission_reconcile",
+      "task": "72-T01"
+    },
+    {
+      "module": "hook/tamper_detector.py",
+      "function": "verify_signatures",
+      "route": "hook_signatures",
+      "task": "72-T01"
+    },
+    {
+      "module": "mcp_support/tool_registry.py",
+      "function": "rush_memory_bridge",
+      "route": "mcp_bridge",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/checkpoint_journal.py",
+      "function": "_list_checkpoints",
+      "route": "checkpoint_journal",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/checkpoint_journal.py",
+      "function": "_restore_checkpoint",
+      "route": "checkpoint_journal",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/experience.py",
+      "function": "compare_last_success",
+      "route": "experience",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/experience.py",
+      "function": "record_attempt",
+      "route": "experience",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/experience.py",
+      "function": "record_behavior_success",
+      "route": "experience",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/experience.py",
+      "function": "record_cause_experiment",
+      "route": "experience",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/experience.py",
+      "function": "write_observation",
+      "route": "experience",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/expiry.py",
+      "function": "sweep_reviewed_expired",
+      "route": "maintenance_expiry",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/intent.py",
+      "function": "_resolve_authorized_statement",
+      "route": "intent_module",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/intent.py",
+      "function": "check_intent",
+      "route": "intent_module",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/intent.py",
+      "function": "record_intent",
+      "route": "intent_module",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/intent.py",
+      "function": "supersede_intent",
+      "route": "intent_module",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/invariant_graph.py",
+      "function": "get_all",
+      "route": "invariant_graph",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/maintenance.py",
+      "function": "_revision_conflicts",
+      "route": "maintenance_expiry",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/maintenance.py",
+      "function": "preview_maintenance_candidates",
+      "route": "maintenance_expiry",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/maintenance.py",
+      "function": "run_maintenance_cycle",
+      "route": "maintenance_expiry",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "_origin_rows_readonly",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_checkpoint_journal",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_failure_ledger",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_flight_recorder",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_hook_signatures",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_invariant_graph",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_merkle_invalidator",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_patch_memory",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_preference_store",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "migrate_session_memory",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "read_origin",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "read_origin_kind",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "read_origin_kind_by_symbol",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/migration.py",
+      "function": "read_origin_kind_readonly",
+      "route": "migration",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "_update_migrated",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "delete",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "get",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "get_preference_readonly",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "list_all",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/preference_store.py",
+      "function": "set",
+      "route": "preferences",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/recipes.py",
+      "function": "record_recipe",
+      "route": "recipes",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/recipes.py",
+      "function": "record_recipe_outcome",
+      "route": "recipes",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/recipes.py",
+      "function": "resolve_recipe",
+      "route": "recipes",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/retrieval.py",
+      "function": "memory_policy_mode",
+      "route": "mode_predicate",
+      "task": "72-T01"
+    },
+    {
+      "module": "memory/retrieval.py",
+      "function": "read_visible",
+      "route": "retrieval_helper",
+      "task": "72-T01"
+    },
+    {
+      "module": "patch/memory.py",
+      "function": "read_records",
+      "route": "patch_memory",
+      "task": "72-T01"
+    },
+    {
+      "module": "plugins/skills_generator.py",
+      "function": "generate_skill_markdown",
+      "route": "skills_generator",
+      "task": "72-T01"
+    },
+    {
+      "module": "session_memory.py",
+      "function": "find_attribution_link",
+      "route": "session_memory",
+      "task": "72-T01"
+    },
+    {
+      "module": "session_memory.py",
+      "function": "format_for_mcp",
+      "route": "session_memory",
+      "task": "72-T01"
+    },
+    {
+      "module": "session_memory.py",
+      "function": "record_fix_attribution",
+      "route": "session_memory",
+      "task": "72-T01"
+    },
+    {
+      "module": "token_economy/memory_cache_gate.py",
+      "function": "check_memory_before_pack",
+      "route": "cache_gate",
+      "task": "72-T01"
+    },
+    {
+      "module": "token_economy/memory_cache_gate.py",
+      "function": "write_cache_fill",
+      "route": "cache_gate",
+      "task": "72-T01"
+    },
+    {
+      "module": "token_economy/telemetry.py",
+      "function": "read_artifact_expansion_receipts_readonly",
+      "route": "telemetry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "token_economy/telemetry.py",
+      "function": "read_memory_event_totals_readonly",
+      "route": "telemetry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "token_economy/telemetry.py",
+      "function": "read_summary_readonly",
+      "route": "telemetry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/continuity.py",
+      "function": "_run_list",
+      "route": "continuity_tool",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/continuity.py",
+      "function": "_run_restore",
+      "route": "continuity_tool",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/continuity.py",
+      "function": "_run_save",
+      "route": "continuity_tool",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/flight_recorder.py",
+      "function": "_replay_session",
+      "route": "flight_recorder",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_compact_page",
+      "route": "ask",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_compact_query",
+      "route": "ask",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_consolidate",
+      "route": "consolidate",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_edit_or_archive",
+      "route": "edit",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_expand",
+      "route": "expand",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_handoff",
+      "route": "handoff",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_link",
+      "route": "link",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_list_filtered",
+      "route": "list",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_memory_attribution",
+      "route": "mutation_view",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_promote_source_conflict",
+      "route": "promote",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_query",
+      "route": "ask",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_receive",
+      "route": "receive",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_related",
+      "route": "related",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_run_delete",
+      "route": "delete",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_run_maintain",
+      "route": "maintain",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_run_promote",
+      "route": "promote",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_run_write",
+      "route": "write",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_with_mutation_view",
+      "route": "mutation_view",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "memory_overview",
+      "route": "overview",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/review.py",
+      "function": "_recall_memory_citations",
+      "route": "review_citations",
+      "task": "72-T01"
+    },
+    {
+      "module": "tools/status.py",
+      "function": "_memory",
+      "route": "status",
+      "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_load_map_snapshot",
+      "route": "tui",
+      "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_expand_selected",
+      "route": "tui",
+      "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_mutation_apply",
+      "route": "tui",
+      "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_promote_selected",
+      "route": "tui",
+      "task": "72-T01"
+    },
+    {
+      "module": "tui.py",
+      "function": "_memory_sources_and_state",
+      "route": "tui",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/project_run.py",
+      "function": "build_handoff",
+      "route": "scan_handoff",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/project_run.py",
+      "function": "dispatch_handoff",
+      "route": "scan_handoff",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/project_run.py",
+      "function": "recover_prepared_handoff",
+      "route": "scan_handoff",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/projects.py",
+      "function": "_current_map_memories",
+      "route": "project_registry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/projects.py",
+      "function": "_readonly_memory_counts",
+      "route": "project_registry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/projects.py",
+      "function": "_readonly_memory_event_totals",
+      "route": "project_registry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/projects.py",
+      "function": "_readonly_memory_refs",
+      "route": "project_registry_readers",
+      "task": "72-T01"
+    },
+    {
+      "module": "workflows/projects.py",
+      "function": "_readonly_telemetry_scope",
+      "route": "project_registry_readers",
+      "task": "72-T01"
+    }
+  ],
+  "exemptions": [
+    {
+      "module": "cache.py",
+      "function": "stats_readonly",
+      "target": ".rush/cache.db"
+    },
+    {
+      "module": "dashboard/state.py",
+      "function": "read_ledger_view",
+      "target": "<data_root>/dashboard/mutation_ledger.db"
+    },
+    {
+      "module": "memory/failure_ledger.py",
+      "function": "read_receipt",
+      "target": ".rush/memory/failures.db"
+    },
+    {
+      "module": "memory/transport.py",
+      "function": "dispatch",
+      "target": "caller-supplied content only (SDK/ACP payload or dedicated handoff file via _write_dedicated_file); reads no memory"
+    }
+  ]
+}

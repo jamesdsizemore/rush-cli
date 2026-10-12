@@ -3150,8 +3150,18 @@ def _memory_sources_and_state(project: ProjectState) -> tuple[list[str], str | N
     `_all_known_sources` in `server.py`), never a narrower cross-tool
     allowlist. Read-only: `TypedArtifactStore.list_artifact_refs()` is a
     public read method, never a raw SQLite write."""
+    from rush.memory.retrieval import RouteDenial, route_access
     from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 
+    # 72-T01 D1: in `policy` mode the grant's own sources (never every source in
+    # the store); a denied or `unavailable` route lists nothing.
+    access = route_access(Path(project.root), "list")
+    if isinstance(access, RouteDenial):
+        return [], None
+    if access.kind == "policy":
+        return sorted(
+            s for s in access.sources if not is_internal_memory_source(s)
+        ), None
     # R20.G8: a read-only view -- never creates or migrates `.rush/memory.db`.
     # An unreadable store returns its state (e.g. `migration_required`) so the
     # caller shows it instead of an empty list.
@@ -3615,8 +3625,14 @@ def _memory_expand_selected(
     mutation_receipts = TypedArtifactStore.read_artifact_receipts_readonly(
         project.root, item["id"], item["artifact_version"]
     )
+    from rush.workflows.projects import memory_list_access
+
+    # 72-T01 §3.9: policy mode shows only the grant's own expansion receipts.
     expansion_receipts = read_artifact_expansion_receipts_readonly(
-        project.root, item["id"], item["artifact_version"]
+        project.root,
+        item["id"],
+        item["artifact_version"],
+        access=memory_list_access(project.root),
     )
     state.memory_expanded = {
         **data,

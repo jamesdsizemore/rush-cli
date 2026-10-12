@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import types
 from pathlib import Path
+from typing import Any
 
+import pytest
+
+from rush.memory import checkpoint_journal
 from rush.memory.checkpoint_journal import CheckpointJournal
 
 
@@ -22,6 +28,7 @@ def test_checkpoint_same_name_policy_and_replace_are_atomic(tmp_path: Path) -> N
         {"epoch": 1, "note": "initial snapshot"},
         ["src/main.py", "src/config.py"],
     )
+    assert dest1 is not None
     assert dest1.exists()
     assert dest1.is_file()
 
@@ -39,6 +46,7 @@ def test_checkpoint_same_name_policy_and_replace_are_atomic(tmp_path: Path) -> N
         {"epoch": 2, "note": "updated snapshot"},
         ["src/main.py", "src/auth.py", "src/new.py"],
     )
+    assert dest2 is not None
     assert dest2.resolve() == dest1.resolve()
 
     # Verify atomic replacement content
@@ -124,3 +132,102 @@ def test_corrupt_journal_bytes_are_retained_and_listed(tmp_path: Path) -> None:
     assert valid_entry is not None
     assert valid_entry.get("status") == "ok"
     assert valid_entry["metadata"]["stage"] == "phase-58"
+
+
+# --- spec-tests-10: checkpoint readers honor the C01 `ask` route ------------
+
+_CP_SOURCES = ("checkpoint_journal:save_checkpoint", "migration:checkpoint_journal")
+_SECRET = "CHECKPOINT-SECRET"
+
+
+def _revision(auth: Any, data_root: Path) -> int:
+    return int(auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0)
+
+
+def _policy_journal(
+    tmp_path: Path, ops: tuple[str, ...]
+) -> tuple[CheckpointJournal, Any]:
+    """A registered policy-mode project granted `ops` on the checkpoint sources
+    for the writer's owner, with checkpoint `cp1` saved (it holds `_SECRET`).
+    Returns the journal and a zero-argument revoke of that grant."""
+    from rush.memory import authorization as auth
+    from rush.memory.store import legacy_owner_scope
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import register_project
+
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, data_root=data_root)
+    root = root.resolve()
+    grant = auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=legacy_owner_scope(root),
+        approved_sources=list(_CP_SOURCES),
+        allowed_operations=list(ops),
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    journal = CheckpointJournal(root)
+    saved = journal.save_checkpoint("cp1", {"secret": _SECRET}, ["a.py"])
+    assert saved is not None and saved.is_file()
+
+    def revoke() -> None:
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+
+    return journal, revoke
+
+
+def test_checkpoint_readers_return_nothing_under_write_only_grant(
+    tmp_path: Path,
+) -> None:
+    journal, _revoke = _policy_journal(tmp_path, ("write",))
+    assert journal.restore_checkpoint("cp1") is None
+    assert journal.list_checkpoints() == []
+
+
+def test_checkpoint_readers_return_nothing_after_revocation(tmp_path: Path) -> None:
+    journal, revoke = _policy_journal(tmp_path, ("ask", "write"))
+    restored = journal.restore_checkpoint("cp1")
+    assert restored is not None and restored["metadata"] == {"secret": _SECRET}
+    assert [c["checkpoint_id"] for c in journal.list_checkpoints()] == ["cp1"]
+
+    revoke()
+    assert journal.restore_checkpoint("cp1") is None
+    assert journal.list_checkpoints() == []
+
+
+@pytest.mark.parametrize("reader", ["restore", "list"])
+def test_checkpoint_readers_recheck_after_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader: str
+) -> None:
+    """The grant is revoked after the reader passed its route and selected the
+    checkpoint file (inside its JSON parse): nothing is returned."""
+    journal, revoke = _policy_journal(tmp_path, ("ask", "write"))
+    revoked: list[bool] = []
+
+    def loads(text: str) -> Any:
+        if not revoked:
+            revoked.append(True)
+            revoke()
+        return json.loads(text)
+
+    monkeypatch.setattr(
+        checkpoint_journal,
+        "json",
+        types.SimpleNamespace(loads=loads, JSONDecodeError=json.JSONDecodeError),
+    )
+    if reader == "restore":
+        out: Any = journal.restore_checkpoint("cp1")
+        assert out is None
+    else:
+        out = journal.list_checkpoints()
+        assert out == []
+    assert revoked == [True]
+    assert _SECRET not in repr(out)

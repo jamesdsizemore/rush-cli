@@ -334,13 +334,22 @@ def _engines(root: Path) -> dict[str, Any]:
 
 
 def _memory(root: Path) -> dict[str, Any]:
-    """T18's useful-memory count over the zero-write reader."""
+    """T18's useful-memory count over the zero-write reader. 72-T01 D1 (§2.3
+    Status): a denied `list` route is the `unavailable` section with its reason;
+    `policy` mode counts only the grant owner's rows whose source it approves."""
+    import sqlite3
+
+    from rush.memory.retrieval import RouteDenial, reader_row_allowed, route_access
     from rush.memory.store import (
         MemoryStoreUnreadableError,
+        internal_source_exclusion_sql,
         read_sqlite_readonly,
         useful_memory_count,
     )
 
+    access = route_access(root, "list")
+    if isinstance(access, RouteDenial):
+        return {"state": "unavailable", "useful_count": None, "reason": access.reason}
     db = root / ".rush" / "memory.db"
     if db.parent.is_symlink() or db.is_symlink():
         return {
@@ -357,7 +366,16 @@ def _memory(root: Path) -> dict[str, Any]:
         }
         if not {"source", "artifact_version", "archived_at", "expired_at"} <= columns:
             return None
-        return useful_memory_count(conn)
+        if access.kind != "policy":
+            return useful_memory_count(conn)
+        fragment, params = internal_source_exclusion_sql()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            f"SELECT * FROM memory_artifacts WHERE {fragment} "
+            "AND archived_at IS NULL AND expired_at IS NULL",
+            params,
+        ).fetchall()
+        return sum(1 for row in rows if reader_row_allowed(access, root, row))
 
     try:
         count = read_sqlite_readonly(db, read)

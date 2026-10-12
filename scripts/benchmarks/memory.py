@@ -762,6 +762,7 @@ def build_guest_handoff_episode(root: Path) -> tuple[str, DecideFn]:
                     "request": {
                         "action": "prepare",
                         "receiver_audience": "handoff-receiver",
+                        "receiver_namespace": "guest-session",
                         "goal": "diagnose duplicate promo application",
                         "selected_refs": [
                             {
@@ -963,6 +964,7 @@ def build_diagnosis_handoff_episode(root: Path) -> tuple[str, DecideFn]:
                     "request": {
                         "action": "prepare",
                         "receiver_audience": "handoff-receiver",
+                        "receiver_namespace": "diagnosis-session",
                         "goal": "hand off deploy-pipeline diagnosis",
                         "selected_refs": [
                             {

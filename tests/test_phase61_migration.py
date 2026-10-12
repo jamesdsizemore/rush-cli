@@ -3,12 +3,15 @@ into the unified `TypedArtifactStore` (Phase 61 §6.3 Invariant 5, §9 P61.3.1-2
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sqlite3
+import time
 from pathlib import Path
 
 from rush.hook.tamper_detector import HookTamperDetector
+from rush.memory import authorization
 from rush.memory.checkpoint_journal import CheckpointJournal
 from rush.memory.failure_ledger import FailureLedger
 from rush.memory.invariant_graph import InvariantGraph
@@ -20,11 +23,17 @@ from rush.memory.migration import (
     migrate_invariant_graph,
     migrate_patch_memory,
     migrate_preference_store,
+    read_origin,
+    read_origin_kind,
+    read_origin_kind_by_symbol,
 )
 from rush.memory.preference_store import PreferenceStore
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import MemoryArtifact, TypedArtifactStore, legacy_owner_scope
 from rush.patch.memory import PatchMemoryStore
+from rush.session_memory import SessionMemoryManager
+from rush.setup.provision import default_data_root
 from rush.tools.flight_recorder import FlightRecorder
+from rush.workflows.projects import register_project
 
 
 def _rows(store: TypedArtifactStore, **where: str) -> list[sqlite3.Row]:
@@ -270,3 +279,75 @@ def test_migration_rerun_after_partial_completion_does_not_duplicate_or_drop_row
     rows_b = _rows(store, origin_kind="failure_ledger", origin_id=fp_b)
     assert len(rows_a) == 1
     assert len(rows_b) == 1
+
+
+def _session_row(store: TypedArtifactStore, name: str, summary: str) -> None:
+    store.write(
+        MemoryArtifact(
+            id=name,
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content={
+                "timestamp": "2026-01-01T00:00:00",
+                "tool_name": "tool",
+                "finding_count": 1,
+                "fixes_applied": 0,
+                "summary": summary,
+            },
+            source="migration:session_memory",
+            created_at=time.time(),
+            symbol_ref="sym",
+            origin_kind="session_memory",
+            origin_id=f"{name}-id",
+        )
+    )
+
+
+def test_origin_readers_omit_tampered_derived_payload_keep_unbound_rows(
+    tmp_path: Path,
+) -> None:
+    """security-4: a DERIVED row whose content no longer matches its payload_hash is
+    never delivered by a compatibility reader; an unbound row (payload_hash NULL, as
+    an old schema leaves it) stays readable."""
+    data_root = default_data_root()
+    root = tmp_path / "project"
+    root.mkdir()
+    register_project(root, data_root=data_root)
+    root = root.resolve()
+    policy = authorization.load_policy_readonly(data_root=data_root)
+    authorization.grant_memory_scope(
+        project_root=root,
+        owner_scope=legacy_owner_scope(root),
+        approved_sources=["migration:session_memory"],
+        allowed_operations=["ask"],
+        expected_policy_revision=int(policy["policy_revision"] or 0),
+        consent=True,
+        data_root=data_root,
+    )
+    store = TypedArtifactStore(root)
+    _session_row(store, "clean", "CLEAN-OK")
+    _session_row(store, "tampered", "ORIGINAL")
+    _session_row(store, "legacy", "LEGACY")
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = "
+            "json_set(content, '$.summary', 'INJECTED-PAYLOAD') WHERE id = 'tampered'"
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET payload_hash = NULL, payload_hash_origin = NULL,"
+            " content = json_set(content, '$.summary', 'LEGACY-OK') WHERE id = 'legacy'"
+        )
+        conn.commit()
+
+    assert read_origin(root, "session_memory", "tampered-id") is None
+    legacy = read_origin(root, "session_memory", "legacy-id")
+    assert legacy is not None and legacy["summary"] == "LEGACY-OK"
+    kind = read_origin_kind(root, "session_memory")
+    assert sorted(r["summary"] for r in kind) == ["CLEAN-OK", "LEGACY-OK"]
+    by_symbol = read_origin_kind_by_symbol(root, "session_memory", "sym")
+    assert sorted(r["summary"] for r in by_symbol) == ["CLEAN-OK", "LEGACY-OK"]
+    manager = SessionMemoryManager(root / ".rush" / "session_memory.json")
+    framed = manager.format_for_mcp()
+    assert "INJECTED-PAYLOAD" not in framed
+    assert "CLEAN-OK" in framed and "LEGACY-OK" in framed

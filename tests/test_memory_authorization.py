@@ -220,7 +220,7 @@ def _bind(
 
 
 def _resolve(
-    auth: Any, root: Path, data_root: Path, operation: str = "ask", **kwargs: Any
+    auth: Any, root: Path | str, data_root: Path, operation: str = "ask", **kwargs: Any
 ) -> dict[str, Any]:
     return auth.resolve_memory_scope(
         project_root=root, operation=operation, data_root=data_root, **kwargs
@@ -1828,7 +1828,12 @@ def test_lock_acquisition_failure_is_e_lock(
     grant = _grant(auth, root, legacy_owner_scope(root), d)
     sha_before = _sha(_policy_file(d))
 
-    def failing_acquire(project_id: str, *, data_root: Path | None = None) -> Any:
+    storages: list[str] = []
+
+    def failing_acquire(
+        project_id: str, *, data_root: Path | None = None, storage: str = "file"
+    ) -> Any:
+        storages.append(storage)
         raise OSError("lock busy")
 
     monkeypatch.setattr(
@@ -1869,6 +1874,8 @@ def test_lock_acquisition_failure_is_e_lock(
         consent=True,
         data_root=d,
     )
+    # D2: every policy writer takes the policy lock on the data-root directory.
+    assert storages == ["directory"] * 3
     assert _sha(_policy_file(d)) == sha_before
 
 
@@ -2178,3 +2185,554 @@ def test_grant_rejects_non_utf8_canonical_project(
         consent=True,
         data_root=d,
     )
+
+
+# --- 72-T01 R12: PR6 survivors, one case per surviving guard mutant -------------
+
+
+def _inject_grants(monkeypatch: pytest.MonkeyPatch, auth: Any, mutate: Any) -> None:
+    """Wrap the strict loader so `mutate(loaded)` can add records the writer could
+    never produce (defence in depth behind the loader's own validation)."""
+    import copy as _copy
+
+    real_load = auth._load
+
+    def load(data_root: Path | None) -> Any:
+        loaded, data = real_load(data_root)
+        loaded = _copy.deepcopy(loaded)
+        mutate(loaded)
+        return loaded, data
+
+    monkeypatch.setattr(auth, "_load", load)
+
+
+PR6_CASES = [
+    "principal_regex",
+    "snapshot_version",
+    "snapshot_data",
+    "revoke_grant_id_input",
+    "binding_grant_id_input",
+    "resolve_project_root_type",
+    "session_binding_type",
+    "registry_invalid",
+    "duplicate_candidates",
+    "revoke_unknown_grant",
+    "binding_principal_mismatch",
+    "project_is_a_file",
+    "project_removed",
+    "unregistered_project",
+    "overlay_only_no_owner",
+    "binding_stale_project_id",
+    "binding_stale_worktree_id",
+    "root_match_unregistered",
+    "other_project_grant_is_no_candidate",
+    "relink_moved_root",
+    "overlay_owner_without_overlay_read",
+    "agent_overlay_read_injected",
+    "grant_without_project_id_injected",
+    "user_kind_owner_without_overlay_read",
+    "stage0_wildcard_requested_source",
+    "stage14_family_item_granted",
+    "require_sources_pattern_item",
+]
+
+
+@pytest.mark.parametrize("case", PR6_CASES)
+def test_t01_pr6_authorization_guards(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import types as _types
+    import uuid as _uuid
+
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, record = _project(tmp_path, "project", d)
+    owner = legacy_owner_scope(root)
+    policy = _policy_file(d)
+
+    if case == "principal_regex":
+        grant = _grant(auth, root, owner, d)
+        sha = _sha(policy)
+        monkeypatch.setattr(auth, "_current_os_principal", lambda: "root")
+        for call in (
+            lambda: auth.revoke_memory_scope(
+                grant_id=grant["grant_id"],
+                expected_policy_revision=1,
+                consent=True,
+                data_root=d,
+            ),
+            lambda: auth.register_memory_binding(
+                grant_id=grant["grant_id"],
+                session_id="s",
+                host_id="h",
+                expected_policy_revision=1,
+                consent=True,
+                data_root=d,
+            ),
+            lambda: _grant(auth, root, OwnerScope("agent", "x"), d, expected=1),
+        ):
+            with pytest.raises(auth.MemoryPolicyError) as info:
+                call()
+            assert (info.value.code, info.value.reason) == (
+                "E_PRINCIPAL",
+                "principal_unavailable",
+            )
+        assert _sha(policy) == sha
+        return
+
+    if case in {"snapshot_version", "snapshot_data"}:
+        real = auth.CASMapTransaction
+
+        class Skewed:
+            def __init__(self, **kwargs: Any) -> None:
+                self._real = real(**kwargs)
+
+            def write(self, data: Any, expected_version: int) -> Any:
+                snap = self._real.write(data, expected_version=expected_version)
+                return _types.SimpleNamespace(
+                    version=snap.version + (1 if case == "snapshot_version" else 0),
+                    data=snap.data
+                    if case == "snapshot_version"
+                    else {**snap.data, "extra": 1},
+                )
+
+        monkeypatch.setattr(auth, "CASMapTransaction", Skewed)
+        _expect(
+            auth,
+            "E_POLICY_IO",
+            "written_snapshot_mismatch",
+            auth.grant_memory_scope,
+            project_root=root,
+            owner_scope=owner,
+            approved_sources=["source-a"],
+            allowed_operations=["ask"],
+            expected_policy_revision=0,
+            consent=True,
+            data_root=d,
+        )
+        monkeypatch.setattr(auth, "CASMapTransaction", real)
+        control = _grant(auth, root, OwnerScope("agent", "control"), d, expected=1)
+        assert control["policy_revision"] == 2
+        return
+
+    if case in {"revoke_grant_id_input", "binding_grant_id_input"}:
+        grant = _grant(auth, root, owner, d)
+        sha = _sha(policy)
+        for bad in ("", 5, None):
+            if case == "revoke_grant_id_input":
+                _expect(
+                    auth,
+                    "E_INPUT",
+                    "grant_id",
+                    auth.revoke_memory_scope,
+                    grant_id=bad,
+                    expected_policy_revision=1,
+                    consent=True,
+                    data_root=d,
+                )
+            else:
+                _expect(
+                    auth,
+                    "E_INPUT",
+                    "grant_id",
+                    auth.register_memory_binding,
+                    grant_id=bad,
+                    session_id="s",
+                    host_id="h",
+                    expected_policy_revision=1,
+                    consent=True,
+                    data_root=d,
+                )
+        assert _sha(policy) == sha
+        assert grant["grant_id"]
+        return
+
+    if case == "resolve_project_root_type":
+        _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+        for bad_root in (5, None, b"x", 1.5):
+            result = auth.resolve_memory_scope(
+                project_root=bad_root,  # type: ignore[arg-type]  # deliberate wrong type
+                operation="ask",
+                data_root=d,
+            )
+            _assert_denied(result, "invalid_request")
+        return
+
+    if case == "session_binding_type":
+        grant = _grant(auth, root, owner, d)
+        binding = _bind(auth, grant["grant_id"], d, expected=1)
+        _assert_granted(_resolve(auth, root, d, session_binding=binding["binding_id"]))
+        for bad_binding in (5, b"x", ["b"]):
+            _assert_denied(
+                _resolve(auth, root, d, session_binding=bad_binding),
+                "invalid_request",
+            )
+        return
+
+    if case == "registry_invalid":
+        _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+        (d / "projects.json").write_bytes(b"{not json")
+        _assert_denied(_resolve(auth, root, d), "project_registry_invalid")
+        return
+
+    if case == "duplicate_candidates":
+        grant = _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+
+        def duplicate(loaded: dict[str, Any]) -> None:
+            twin = dict(loaded["grants"][grant["grant_id"]])
+            twin["grant_id"] = str(_uuid.uuid4())
+            loaded["grants"][twin["grant_id"]] = twin
+
+        _inject_grants(monkeypatch, auth, duplicate)
+        _assert_denied(_resolve(auth, root, d), "policy_invalid")
+        _assert_denied(_resolve(auth, root, d, owner_scope=owner), "policy_invalid")
+        return
+
+    if case == "revoke_unknown_grant":
+        grant = _grant(auth, root, owner, d)
+        sha = _sha(policy)
+        unknown = str(_uuid.uuid4())
+        _expect(
+            auth,
+            "E_GRANT_NOT_FOUND",
+            unknown,
+            auth.revoke_memory_scope,
+            grant_id=unknown,
+            expected_policy_revision=1,
+            consent=True,
+            data_root=d,
+        )
+        _expect(
+            auth,
+            "E_GRANT_NOT_FOUND",
+            unknown,
+            auth.register_memory_binding,
+            grant_id=unknown,
+            session_id="s",
+            host_id="h",
+            expected_policy_revision=1,
+            consent=True,
+            data_root=d,
+        )
+        assert _sha(policy) == sha
+        assert grant["grant_id"]
+        return
+
+    if case == "binding_principal_mismatch":
+        grant = _grant(auth, root, owner, d)
+        control = _bind(auth, grant["grant_id"], d, expected=1, session_id="one")
+        assert control["revoked"] is False
+        payload = _raw(d)
+        payload["data"]["grants"][grant["grant_id"]]["principal"] = "uid:999999"
+        _write_raw(d, payload)
+        assert auth.load_policy_readonly(data_root=d)["state"] == "ok"
+        sha = _sha(policy)
+        _expect(
+            auth,
+            "E_PRINCIPAL",
+            "principal_mismatch",
+            auth.register_memory_binding,
+            grant_id=grant["grant_id"],
+            session_id="two",
+            host_id="h",
+            expected_policy_revision=2,
+            consent=True,
+            data_root=d,
+        )
+        assert _sha(policy) == sha
+        return
+
+    if case in {"project_is_a_file", "project_removed"}:
+        _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+        if case == "project_is_a_file":
+            target = tmp_path / "file.txt"
+            target.write_text("not a directory", encoding="utf-8")
+        else:
+            target = root
+            shutil.rmtree(root)
+        _assert_denied(_resolve(auth, target, d), "project_missing")
+        return
+
+    if case == "unregistered_project":
+        _grant(auth, root, owner, d)
+        other = tmp_path / "other"
+        other.mkdir()
+        _assert_denied(_resolve(auth, other.resolve(), d), "project_not_registered")
+        register_project(other, data_root=d)
+        _assert_denied(_resolve(auth, other.resolve(), d), "no_grant")
+        return
+
+    if case == "overlay_only_no_owner":
+        overlay = auth.user_overlay_owner_scope(data_root=d)
+        _grant(auth, root, overlay, d, ops=("overlay_read",))
+        _assert_denied(_resolve(auth, root, d, "ask"), "owner_not_granted")
+        _grant(auth, root, owner, d, ops=("ask",), expected=1)
+        _assert_granted(_resolve(auth, root, d, "ask"))
+        return
+
+    if case in {"binding_stale_project_id", "binding_stale_worktree_id"}:
+        grant = _grant(auth, root, owner, d)
+        binding = _bind(auth, grant["grant_id"], d, expected=1)
+        _assert_granted(_resolve(auth, root, d, session_binding=binding["binding_id"]))
+        payload = _raw(d)
+        field = "project_id" if case.endswith("project_id") else "worktree_id"
+        payload["data"]["bindings"][binding["binding_id"]][field] = (
+            "other-project" if field == "project_id" else "1" * 64
+        )
+        _write_raw(d, payload)
+        assert auth.load_policy_readonly(data_root=d)["state"] == "ok"
+        _assert_denied(
+            _resolve(auth, root, d, session_binding=binding["binding_id"]),
+            "binding_stale",
+        )
+        return
+
+    if case == "root_match_unregistered":
+        _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+        (d / "projects.json").write_text(
+            json.dumps({"version": 1, "projects": {}}), encoding="utf-8"
+        )
+        _assert_denied(_resolve(auth, root, d), "relinked")
+        (root / ".rush" / "project.json").unlink()
+        reborn = register_project(root, data_root=d)
+        assert reborn.project_id != record.project_id
+        _assert_denied(_resolve(auth, root, d), "relinked")
+        return
+
+    if case == "other_project_grant_is_no_candidate":
+        _grant(auth, root, owner, d)
+        other, _rec = _project(tmp_path, "other", d)
+        _assert_denied(_resolve(auth, other, d), "no_grant")
+        return
+
+    if case == "relink_moved_root":
+        _grant(auth, root, owner, d)
+        new_root = tmp_path / "relinked"
+        new_root.mkdir()
+        relink_project(
+            record.project_id,
+            new_root,
+            expected_revision=record.revision,
+            data_root=d,
+        )
+        _assert_denied(_resolve(auth, new_root.resolve(), d), "relinked")
+        return
+
+    if case == "overlay_owner_without_overlay_read":
+        alice = OwnerScope("agent", "alice")
+        _grant(auth, root, alice, d, ops=("ask",))
+        overlay = auth.user_overlay_owner_scope(data_root=d)
+        _grant(auth, root, overlay, d, ops=("ask",), expected=1)
+        granted = _resolve(auth, root, d, "ask")
+        _assert_granted(granted)
+        assert granted["owner_scope"] == {"kind": "agent", "id": "alice"}
+        return
+
+    if case == "user_kind_owner_without_overlay_read":
+        alice = OwnerScope("user", "alice")
+        _grant(auth, root, alice, d, ops=("ask",))
+        granted = _resolve(auth, root, d, "ask")
+        _assert_granted(granted)
+        assert granted["owner_scope"] == {"kind": "user", "id": "alice"}
+        return
+
+    if case == "stage0_wildcard_requested_source":
+        # D40 stage 0: a requested source is a literal label. The control grants the
+        # family item and a literal; only the wildcard request differs.
+        _grant(auth, root, owner, d, sources=("intent:*", "source-a"))
+        _assert_granted(_resolve(auth, root, d, requested_sources=["source-a"]))
+        _assert_denied(
+            _resolve(auth, root, d, requested_sources=["intent:*"]), "invalid_request"
+        )
+        return
+
+    if case == "stage14_family_item_granted":
+        # D40 stage 14: `source_granted` decides, so a family item authorizes a
+        # non-empty suffix of its own family only.
+        _grant(auth, root, owner, d, sources=("intent:*",))
+        _assert_granted(_resolve(auth, root, d, requested_sources=["intent:i1"]))
+        _assert_denied(
+            _resolve(auth, root, d, requested_sources=["recipe:r1"]),
+            "source_not_granted",
+        )
+        _assert_denied(
+            _resolve(auth, root, d, requested_sources=["intent:"]),
+            "source_not_granted",
+        )
+        return
+
+    if case == "require_sources_pattern_item":
+        # `_require_sources` rejects a pattern item that is not a canonical family.
+        _expect(
+            auth,
+            "E_INPUT",
+            "approved_sources",
+            auth.grant_memory_scope,
+            project_root=root,
+            owner_scope=owner,
+            approved_sources=["a*b"],
+            allowed_operations=["ask"],
+            expected_policy_revision=0,
+            consent=True,
+            data_root=d,
+        )
+        assert not policy.exists()
+        _grant(auth, root, owner, d, sources=("intent:*",))
+        assert _sha(policy)
+        return
+
+    if case == "grant_without_project_id_injected":
+        grant = _grant(auth, root, owner, d)
+        _assert_granted(_resolve(auth, root, d))
+        (d / "projects.json").write_text(
+            json.dumps({"version": 1, "projects": {}}), encoding="utf-8"
+        )
+
+        def orphan(loaded: dict[str, Any]) -> None:
+            twin = dict(loaded["grants"][grant["grant_id"]])
+            twin["project_id"] = None
+            twin["project_root"] = str(tmp_path / "elsewhere")
+            loaded["grants"] = {_uuid.uuid4().hex: twin}
+
+        _inject_grants(monkeypatch, auth, orphan)
+        _assert_denied(_resolve(auth, root, d), "project_not_registered")
+        return
+
+    assert case == "agent_overlay_read_injected"
+    alice = OwnerScope("agent", "alice")
+    grant = _grant(auth, root, alice, d, ops=("ask",))
+    _assert_granted(_resolve(auth, root, d, "ask"))
+
+    def foreign_overlay_read(loaded: dict[str, Any]) -> None:
+        twin = dict(loaded["grants"][grant["grant_id"]])
+        twin["grant_id"] = str(_uuid.uuid4())
+        twin["owner_scope"] = {"kind": "agent", "id": "robot"}
+        twin["allowed_operations"] = ["ask", "overlay_read"]
+        loaded["grants"][twin["grant_id"]] = twin
+
+    _inject_grants(monkeypatch, auth, foreign_overlay_read)
+    _assert_denied(_resolve(auth, root, d, "ask"), "owner_required")
+
+
+# --- 72-T01 R23: D40 writer-source families ----------------------------------------
+
+
+def test_source_granted_family_items() -> None:
+    from rush.memory.authorization import WRITER_SOURCE_FAMILIES, source_granted
+
+    assert dict(WRITER_SOURCE_FAMILIES) == {
+        "intent": "intent:",
+        "recipe": "recipe:",
+        "repair_attempt": "repair_attempt:",
+        "invocation": "invocation:",
+        "verify_attempt": "verify_attempt:",
+    }
+    # exact label
+    assert source_granted("source-a", ["source-a"]) is True
+    assert source_granted("source-b", ["source-a"]) is False
+    # family item: a canonical prefix with a non-empty suffix
+    for family in WRITER_SOURCE_FAMILIES.values():
+        assert source_granted(f"{family}x", [f"{family}*"]) is True, family
+        assert source_granted(f"{family}a:b", [f"{family}*"]) is True, family
+    # empty suffix and foreign family
+    assert source_granted("intent:", ["intent:*"]) is False
+    assert source_granted("recipe:x", ["intent:*"]) is False
+    assert source_granted("intentx", ["intent:*"]) is False
+    assert source_granted("intent:x", ["recipe:*", "invocation:*"]) is False
+    # an exact label never authorizes a prefix, and `unknown:*` is not a family
+    assert source_granted("intent:x", ["intent:"]) is False
+    assert source_granted("intent:", ["intent:"]) is True
+    assert source_granted("unknown:x", ["unknown:*"]) is False
+    assert source_granted("anything", ["*"]) is False
+    # not a string
+    for bad in (5, None, b"intent:x", ("intent:x",)):
+        assert source_granted(bad, ["intent:*"]) is False, bad  # type: ignore[arg-type]
+
+
+def test_t01_grant_rejects_pattern_sources_and_accepts_families(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    owner = legacy_owner_scope(root)
+    for bad in (["intent*"], ["unknown:*"], ["*"], ["a*b"], ["source-a", "*"]):
+        _expect(
+            auth,
+            "E_INPUT",
+            "approved_sources",
+            auth.grant_memory_scope,
+            project_root=root,
+            owner_scope=owner,
+            approved_sources=bad,
+            allowed_operations=["ask"],
+            expected_policy_revision=0,
+            consent=True,
+            data_root=d,
+        )
+    assert not _policy_file(d).exists()
+    granted = _grant(
+        auth,
+        root,
+        owner,
+        d,
+        sources=("intent:*", "recipe:*", "intent:", "source-a"),
+    )
+    assert granted["approved_sources"] == sorted(
+        ["intent:*", "recipe:*", "intent:", "source-a"]
+    )
+    _assert_granted(_resolve(auth, root, d, requested_sources=["intent:i1"]))
+    _assert_granted(
+        _resolve(auth, root, d, requested_sources=["recipe:r1", "source-a"])
+    )
+    _assert_denied(
+        _resolve(auth, root, d, requested_sources=["verify_attempt:v1"]),
+        "source_not_granted",
+    )
+    # the exact label `intent:` is granted as itself only
+    _assert_granted(_resolve(auth, root, d, requested_sources=["intent:"]))
+
+
+def test_requested_sources_reject_family_patterns(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    _grant(auth, root, legacy_owner_scope(root), d, sources=("intent:*", "source-a"))
+    _assert_granted(_resolve(auth, root, d, requested_sources=["intent:i1"]))
+    for bad in (
+        ["intent:*"],
+        ["*"],
+        ["a*b"],
+        ["source-a", "intent:*"],
+        ["x\x00"],
+        ["a\ud800"],
+        [""],
+        [" source-a"],
+        ["a\u200bb"],
+        [1],
+        [True],
+    ):
+        _assert_denied(
+            _resolve(auth, root, d, requested_sources=bad), "invalid_request"
+        )
+    assert auth.literal_source_is_valid("source-a") is True
+    assert auth.literal_source_is_valid("intent:i1") is True
+    for bad_source in (
+        "",
+        " x",
+        "x ",
+        "a*",
+        "*",
+        "x\x00",
+        "a\u200bb",
+        "a\ud800",
+        3,
+        None,
+    ):
+        assert auth.literal_source_is_valid(bad_source) is False, bad_source  # type: ignore[arg-type]

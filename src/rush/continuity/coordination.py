@@ -151,7 +151,17 @@ def _fetch_replay_events(
     session's JSONL was migrated); a JSONL replay reads no memory."""
     if not session_id:
         return "not_found", [], []
+    from ..memory.retrieval import RouteDenial, reader_route
     from ..tools.routing import memory_receipt
+
+    # 72-T01 D1 (§2.3 Continuity package): a denied `ask` route reads nothing.
+    if isinstance(
+        reader_route(
+            root, "ask", ["flight_recorder:record_event", "migration:flight_recorder"]
+        ),
+        RouteDenial,
+    ):
+        return "unavailable", [], []
 
     try:
         from ..tools.flight_recorder import FlightRecorder

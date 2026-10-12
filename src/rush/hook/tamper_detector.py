@@ -33,6 +33,14 @@ class HookTamperDetector:
         return signatures
 
     def verify_signatures(self) -> tuple[bool, list[str]]:
+        # 72-T01 D1 (§2.3 Hook signatures): a denied `ask` route is `(False, [reason])`.
+        from rush.memory.retrieval import RouteDenial, reader_route
+
+        access = reader_route(self.repo_root, "ask", ["migration:hook_signatures"])
+        if isinstance(access, RouteDenial):
+            return False, [
+                f"Hook signatures unavailable: {access.code} ({access.reason})."
+            ]
         if not self.sig_file.exists():
             # Already renamed `.migrated` by migration.migrate_hook_signatures(); the unified
             # store, not the old file, is now the source of truth (Phase 61 §6.3 Invariant 5).

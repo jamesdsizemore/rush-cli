@@ -310,6 +310,15 @@ def test_promotion_update_is_transactional(tmp_path):
     assert stored.corroboration_count == 0
 
 
+def _bind_store(root):
+    """72-T01 D41: a raw-SQL fixture store is authoritative only after the approved
+    binding (preview digest, then approve)."""
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
+
+
 @pytest.mark.parametrize("attack", ["none", "signature", "trojan"])
 def test_list_enforces_recall_defenses(tmp_path, attack):
     store = TypedArtifactStore(tmp_path)
@@ -331,6 +340,7 @@ def test_list_enforces_recall_defenses(tmp_path, attack):
                     "UPDATE memory_artifacts SET content=? WHERE id='allowed'",
                     (json.dumps({"fact": "needle\u202e"}),),
                 )
+        _bind_store(tmp_path)
     result = MemoryTool().run(
         tmp_path,
         operation="list",
@@ -352,6 +362,7 @@ def test_expiry_selects_due_rows_before_limit(tmp_path):
         conn.execute(
             "UPDATE memory_artifacts SET trust_tier='STATED' WHERE id='immortal'"
         )
+    _bind_store(tmp_path)
     store.write(artifact("not_due", tier="IMPORTED", age=40 * 86400))
     store.write(artifact("due_first", age=30 * 86400))
     store.write(artifact("due_second", age=20 * 86400))

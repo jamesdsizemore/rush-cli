@@ -16,9 +16,10 @@ import sys
 import time
 from base64 import b64decode
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from mcp.types import TextContent
 
 from rush.mcp_support.tool_registry import build_memory_bridge_handler
 from rush.memory import handoff, transport
@@ -305,8 +306,8 @@ def test_bridge_denies_unrelated_tools_and_scope_widening(tmp_path: Path) -> Non
 
             return (
                 [t.name for t in tools.tools],
-                _json.loads(write_attempt.content[0].text),
-                _json.loads(widen_attempt.content[0].text),
+                _json.loads(cast(TextContent, write_attempt.content[0]).text),
+                _json.loads(cast(TextContent, widen_attempt.content[0]).text),
             )
 
     tool_names, denied_write, denied_widen = _run_sync(_run)
@@ -540,7 +541,7 @@ def test_guest_intent_and_last_success_survive_readback(tmp_path: Path) -> None:
         store,
         root=tmp_path,
         audience="codex_cli",
-        granted_ids=[passed.id],
+        granted_ids=[passed.id, intent_id],
         session_allowlist=["test:guest-checkout-pass", intent_source],
         intent_behavior_ids=["guest-checkout"],
         namespace="default",
@@ -634,7 +635,9 @@ def test_mark_artifact_orphaned_is_idempotent(tmp_path: Path) -> None:
     store.mark_artifact_orphaned("A1", now=60.0)
     assert _orphaned_at(store, "A1") == 50.0
     # Marking orphaned never deletes or alters the artifact's content.
-    assert store.get_current("A1").content == artifact.content
+    current = store.get_current("A1")
+    assert current is not None
+    assert current.content == artifact.content
 
 
 def test_mark_artifact_orphaned_unknown_id_is_a_silent_no_op(tmp_path: Path) -> None:
@@ -869,7 +872,7 @@ def test_t02_fix1_m38_reassembly_rejects_overstated_total_bytes(
 
     store, data = _t02_literal_utf8(tmp_path.resolve())
 
-    def expand(offset: int, **caps: int) -> dict[str, Any]:
+    def expand(offset: int, **caps: Any) -> dict[str, Any]:
         return expand_artifact(
             store,
             artifact_id="u1",

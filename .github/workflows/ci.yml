@@ -312,6 +312,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: uv run pytest "tests/test_dashboard_http_contract.py::test_windows_data_dir_acl_checked_before_persisting_capability" -q
 
+      - name: Verify Windows Phase 72 memory contracts
+        if: ${{ !cancelled() }}
+        run: |
+          uv run pytest tests/test_phase72_memory_correctness.py tests/test_memory_authorization.py -q -rA -m windows_only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

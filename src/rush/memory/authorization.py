@@ -35,7 +35,7 @@ import uuid
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from rush.io.physical_paths import ContainmentError, PhysicalRoot
 from rush.memory.transactions import CASConflictError, CASMapTransaction, StoreError
@@ -226,7 +226,7 @@ def hold_policy_lock(*, data_root: Path | None = None) -> Iterator[None]:
 
     root = _writer_root(data_root)
     lock_id = "memory-policy:" + str(root / POLICY_RELATIVE_PATH)
-    with cross_process_project_lock(lock_id, data_root=root):
+    with cross_process_project_lock(lock_id, data_root=root, storage="directory"):
         yield
 
 
@@ -688,6 +688,13 @@ def _not_utf8(value: str) -> bool:
     return any(unicodedata.category(ch) == "Cs" for ch in value)
 
 
+def _approved_item_is_valid(item: str) -> bool:
+    """D40: an approved item is a literal label or a canonical `<family>:*` item."""
+    if "*" not in item:
+        return True
+    return item.endswith(":*") and item[:-2] in WRITER_SOURCE_FAMILIES
+
+
 def _require_sources(value: Any) -> list[str]:
     items = _string_list(value)
     if (
@@ -695,9 +702,82 @@ def _require_sources(value: Any) -> list[str]:
         or len(set(items)) != len(items)
         or "*" in items
         or any(_not_utf8(item) for item in items)
+        or not all(_approved_item_is_valid(item) for item in items)
     ):
         raise MemoryPolicyError("E_INPUT", "approved_sources")
     return sorted(items)
+
+
+# --- D40: writer source families ---------------------------------------------
+
+WRITER_SOURCE_FAMILIES: dict[str, str] = {
+    "intent": "intent:",
+    "recipe": "recipe:",
+    "repair_attempt": "repair_attempt:",
+    "invocation": "invocation:",
+    "verify_attempt": "verify_attempt:",
+}
+
+_WRITER_LITERAL_SOURCES = (
+    "session_memory:record_turn",
+    "provenance_ai:attribution_link",
+    "flight_recorder:record_event",
+    "skills_generator:generate_skill_markdown",
+    "context_pack",
+    "checkpoint_journal:save_checkpoint",
+    "migration:preference_store",
+    "migration:invariant_graph",
+    "migration:merkle_invalidator",
+    "migration:checkpoint_journal",
+    "migration:failure_ledger",
+    "migration:patch_memory",
+    "migration:flight_recorder",
+    "migration:hook_signatures",
+    "migration:session_memory",
+)
+
+
+def literal_source_is_valid(value: object) -> bool:
+    """A request source label: non-empty, unpadded, no `*`, no Cc/Cf/Cs character."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value.strip() == value
+        and "*" not in value
+        and not any(unicodedata.category(ch) in {"Cc", "Cf", "Cs"} for ch in value)
+    )
+
+
+def family_prefixes(approved: Sequence[str]) -> list[str]:
+    """The canonical family prefixes named by `<family>:*` items of `approved`."""
+    return sorted(
+        WRITER_SOURCE_FAMILIES[item[:-2]]
+        for item in approved
+        if isinstance(item, str)
+        and item.endswith(":*")
+        and item[:-2] in WRITER_SOURCE_FAMILIES
+    )
+
+
+def source_granted(source: Any, approved: Sequence[str]) -> bool:
+    """D40: `source` is an approved exact label or has a granted family prefix."""
+    if not isinstance(source, str):
+        return False
+    if source in approved:
+        return True
+    return any(
+        source.startswith(prefix) and len(source) > len(prefix)
+        for prefix in family_prefixes(approved)
+    )
+
+
+def writer_source_catalog(project_root: Path) -> list[str]:
+    """Every source an internal (D4) writer records under, in D40 order."""
+    return [
+        *_WRITER_LITERAL_SOURCES,
+        str(Path(project_root).resolve()),
+        *(f"{family}*" for family in WRITER_SOURCE_FAMILIES.values()),
+    ]
 
 
 def _require_operations(value: Any) -> list[str]:
@@ -840,6 +920,262 @@ def _grant_result(view: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- D1 registration marker and `.rush/.gitignore` ----------------------------
+
+REGISTRATION_MARKER = "memory-policy.required"
+_PENDING_PREFIX = REGISTRATION_MARKER + ".pending-"
+_GITIGNORE_PATTERN = b"memory-policy.required*"
+_GITIGNORE_MAX = 65536
+_GITIGNORE_ERRORS = (OSError, ContainmentError, ValueError, RuntimeError, UnicodeError)
+_MARKER_ERRORS = (OSError, ContainmentError, ValueError, RuntimeError)
+
+
+def _soft_flags() -> int:
+    """`O_NOFOLLOW | O_NONBLOCK | O_BINARY` where the platform has them."""
+    return (
+        getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
+
+
+def _marker_io(exc: BaseException) -> MemoryPolicyError:
+    return MemoryPolicyError("E_POLICY_IO", "registration_marker")
+
+
+class _RushDir:
+    """The canonical project's `.rush` directory for the D1 marker writer.
+
+    POSIX (`os.open in os.supports_dir_fd`) works through `O_NOFOLLOW`
+    directory fds; otherwise each step is a path operation preceded by a
+    `PhysicalRoot.open_contained` check. `created` records whether this call
+    made `.rush`.
+    """
+
+    def __init__(self, canonical: Path) -> None:
+        self.canonical = canonical
+        self.use_fd = os.open in os.supports_dir_fd
+        self.root_fd: int | None = None
+        self.rush_fd: int | None = None
+        self.created = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        for fd in (self.rush_fd, self.root_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.rush_fd = self.root_fd = None
+
+    def _contained(self, rel: str) -> Path:
+        return PhysicalRoot(self.canonical).open_contained(rel, purpose="write")
+
+    def open(self) -> None:
+        """Open (creating when absent) `.rush`; raises on any failure."""
+        if self.use_fd:
+            dir_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            dir_flags |= getattr(os, "O_NOFOLLOW", 0)
+            if self.root_fd is None:
+                self.root_fd = os.open(self.canonical, dir_flags)
+            if self.rush_fd is None:
+                try:
+                    self.rush_fd = os.open(".rush", dir_flags, dir_fd=self.root_fd)
+                except FileNotFoundError:
+                    os.mkdir(".rush", 0o700, dir_fd=self.root_fd)
+                    self.created = True
+                    self.rush_fd = os.open(".rush", dir_flags, dir_fd=self.root_fd)
+            return
+        path = self._contained(".rush")
+        if not os.path.lexists(path):
+            os.mkdir(path, 0o700)
+            self.created = True
+        elif not path.is_dir():
+            raise NotADirectoryError(str(path))
+
+    def open_file(self, name: str, flags: int, mode: int = 0o600) -> int:
+        self.open()
+        if self.use_fd:
+            return os.open(name, flags, mode, dir_fd=self.rush_fd)
+        return os.open(self._contained(f".rush/{name}"), flags, mode)
+
+    def unlink(self, name: str) -> None:
+        self.open()
+        if self.use_fd:
+            os.unlink(name, dir_fd=self.rush_fd)
+        else:
+            os.unlink(self._contained(f".rush/{name}"))
+
+    def listdir(self) -> list[str]:
+        self.open()
+        if self.use_fd:
+            assert self.rush_fd is not None
+            return os.listdir(self.rush_fd)
+        return os.listdir(self._contained(".rush"))
+
+    def rmdir_if_created(self) -> None:
+        if not self.created:
+            return
+        try:
+            if self.use_fd:
+                if self.rush_fd is not None:
+                    os.close(self.rush_fd)
+                    self.rush_fd = None
+                os.rmdir(".rush", dir_fd=self.root_fd)
+            else:
+                os.rmdir(self._contained(".rush"))
+        except _MARKER_ERRORS:
+            pass
+
+    def _create_empty(self, name: str) -> None:
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+        flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        os.close(self.open_file(name, flags, 0o600))
+
+    def create_pending_marker(self) -> str:
+        """Create this call's pending marker; any failure is `E_POLICY_IO`."""
+        name = _PENDING_PREFIX + uuid.uuid4().hex
+        try:
+            self._create_empty(name)
+        except _MARKER_ERRORS as exc:
+            raise _marker_io(exc) from exc
+        return name
+
+    def ensure_final_marker(self) -> None:
+        """The final marker exists afterwards; any failure is `E_POLICY_IO`."""
+        try:
+            self._create_empty(REGISTRATION_MARKER)
+        except FileExistsError:
+            return
+        except _MARKER_ERRORS as exc:
+            raise _marker_io(exc) from exc
+
+    def promote_pending(self, pending: str) -> None:
+        """Rename the pending marker onto the final one; a failure keeps it."""
+        try:
+            self.open()
+            if self.use_fd:
+                os.rename(
+                    pending,
+                    REGISTRATION_MARKER,
+                    src_dir_fd=self.rush_fd,
+                    dst_dir_fd=self.rush_fd,
+                )
+            else:
+                src = self._contained(f".rush/{pending}")
+                dst = self._contained(f".rush/{REGISTRATION_MARKER}")
+                os.replace(src, dst)
+        except _MARKER_ERRORS:
+            pass
+
+
+def _ignore_needs_pattern(data: bytes) -> bool:
+    last: bytes | None = None
+    for line in data.split(b"\n"):
+        if line.endswith(b"\r"):
+            line = line[:-1]
+        stripped = line.strip(b" \t")
+        if not stripped or stripped.startswith(b"#"):
+            continue
+        last = line
+    return last not in (b"*", _GITIGNORE_PATTERN)
+
+
+def _gitignore_step(rush: _RushDir) -> tuple[str, int, int] | None:
+    """Make `.rush/.gitignore` ignore the marker; failures are swallowed.
+
+    Returns this step's effect for an undo: `("created", 0, 0)` or
+    `("appended", size_before, appended_length)`, else `None`.
+    """
+    soft = _soft_flags()
+    try:
+        try:
+            fd = rush.open_file(
+                ".gitignore", os.O_CREAT | os.O_EXCL | os.O_WRONLY | soft, 0o644
+            )
+        except FileExistsError:
+            pass
+        else:
+            try:
+                os.write(fd, b"*\n")
+            finally:
+                os.close(fd)
+            return ("created", 0, 0)
+        fd = rush.open_file(".gitignore", os.O_RDONLY | soft)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_size > _GITIGNORE_MAX:
+                return None
+            chunks: list[bytes] = []
+            while chunk := os.read(fd, 65536):
+                chunks.append(chunk)
+                if sum(len(c) for c in chunks) > _GITIGNORE_MAX:
+                    return None
+        finally:
+            os.close(fd)
+        data = b"".join(chunks)
+        if not _ignore_needs_pattern(data):
+            return None
+        extra = (b"\n" if data and not data.endswith(b"\n") else b"") + (
+            _GITIGNORE_PATTERN + b"\n"
+        )
+        fd = rush.open_file(".gitignore", os.O_WRONLY | os.O_APPEND | soft)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                return None
+            os.write(fd, extra)
+        finally:
+            os.close(fd)
+        return ("appended", len(data), len(extra))
+    except _GITIGNORE_ERRORS:
+        return None
+
+
+def _undo_gitignore(rush: _RushDir, effect: tuple[str, int, int] | None) -> None:
+    if effect is None:
+        return
+    try:
+        if effect[0] == "created":
+            rush.unlink(".gitignore")
+            return
+        _kind, before, appended = effect
+        fd = rush.open_file(".gitignore", os.O_WRONLY | _soft_flags())
+        try:
+            info = os.fstat(fd)
+            if stat.S_ISREG(info.st_mode) and info.st_size == before + appended:
+                os.ftruncate(fd, before)
+        finally:
+            os.close(fd)
+    except _GITIGNORE_ERRORS:
+        pass
+
+
+def _undo_registration(
+    rush: _RushDir,
+    pending: str | None,
+    effects: list[tuple[str, int, int] | None],
+) -> None:
+    """A failed new grant: drop this call's pending marker and `.gitignore`
+    effects (newest first), keep another call's marker ignored, and remove a
+    `.rush` this call created."""
+    if pending is not None:
+        try:
+            rush.unlink(pending)
+        except _MARKER_ERRORS:
+            pass
+    for effect in effects:
+        _undo_gitignore(rush, effect)
+    try:
+        if any(n.startswith(REGISTRATION_MARKER) for n in rush.listdir()):
+            _gitignore_step(rush)
+    except _MARKER_ERRORS:
+        pass
+    rush.rmdir_if_created()
+
+
 def grant_memory_scope(
     *,
     project_root: Path,
@@ -910,40 +1246,102 @@ def grant_memory_scope(
                 and record["allowed_operations"] == operations
                 and record["expires_at"] == expiry
             ):
+                with _RushDir(canonical) as rush:
+                    _gitignore_step(rush)
+                    rush.ensure_final_marker()
                 return _grant_result(loaded["grants"][gid])
         _check_version(expected, current)
-        revision = current + 1
-        now = _now()
-        grant_id = str(uuid.uuid4())
-        for gid in active:
-            grants[gid].update(
-                revoked=True,
-                revoked_at=now,
-                revoked_revision=revision,
-                superseded_by=grant_id,
+        with _RushDir(canonical) as rush:
+            return _grant_new(
+                rush, root, current, data, key, sources_hex, operations, expiry
             )
-            _revoke_bindings(data, gid)
-        record = {
-            "grant_id": grant_id,
-            "principal": principal,
-            "project_id": project_id,
-            "project_root_hex": key[2],
-            "worktree_id": worktree_id,
-            "owner_scope": {"kind": owner[0], "id_hex": key[5]},
-            "approved_sources_hex": sources_hex,
-            "allowed_operations": operations,
-            "consented_at": now,
-            "expires_at": expiry,
-            "granted_revision": revision,
-            "revoked": False,
-            "revoked_at": None,
-            "revoked_revision": None,
-            "superseded_by": None,
-        }
-        grants[grant_id] = record
-        data["policy_revision"] = revision
-        _commit(root, current, data)
-        return _grant_result(_grant_view(grant_id, record, revision))
+
+
+def _grant_new(
+    rush: _RushDir,
+    root: Path,
+    current: int,
+    data: dict[str, Any],
+    key: tuple[str, ...],
+    sources_hex: list[str],
+    operations: list[str],
+    expiry: float | None,
+) -> dict[str, Any]:
+    """D1: write a new grant with its pending registration marker and the
+    `.rush/.gitignore` step around the CAS commit (lock held by the caller)."""
+    undo_first = _gitignore_step(rush)
+    try:
+        pending = rush.create_pending_marker()
+    except MemoryPolicyError:
+        _undo_registration(rush, None, [undo_first])
+        raise
+    undo_second = _gitignore_step(rush)
+    try:
+        result = _commit_new_grant(
+            root, current, data, key, sources_hex, operations, expiry
+        )
+    except MemoryPolicyError as exc:
+        try:
+            landed = _reload(root)[0] > current
+        except MemoryPolicyError:
+            raise exc from None
+        if landed:
+            rush.promote_pending(pending)
+        else:
+            _undo_registration(rush, pending, [undo_second, undo_first])
+        raise
+    rush.promote_pending(pending)
+    return result
+
+
+def _commit_new_grant(
+    root: Path,
+    current: int,
+    data: dict[str, Any],
+    key: tuple[str, ...],
+    sources_hex: list[str],
+    operations: list[str],
+    expiry: float | None,
+) -> dict[str, Any]:
+    grants = data["grants"]
+    active = [
+        gid
+        for gid, record in grants.items()
+        if not record["revoked"] and _scope_key(record) == key
+    ]
+    principal, project_id, _root_hex, worktree_id, owner_kind, owner_hex = key
+    revision = current + 1
+    now = _now()
+    grant_id = str(uuid.uuid4())
+    for gid in active:
+        grants[gid].update(
+            revoked=True,
+            revoked_at=now,
+            revoked_revision=revision,
+            superseded_by=grant_id,
+        )
+        _revoke_bindings(data, gid)
+    record = {
+        "grant_id": grant_id,
+        "principal": principal,
+        "project_id": project_id,
+        "project_root_hex": key[2],
+        "worktree_id": worktree_id,
+        "owner_scope": {"kind": owner_kind, "id_hex": owner_hex},
+        "approved_sources_hex": sources_hex,
+        "allowed_operations": operations,
+        "consented_at": now,
+        "expires_at": expiry,
+        "granted_revision": revision,
+        "revoked": False,
+        "revoked_at": None,
+        "revoked_revision": None,
+        "superseded_by": None,
+    }
+    grants[grant_id] = record
+    data["policy_revision"] = revision
+    _commit(root, current, data)
+    return _grant_result(_grant_view(grant_id, record, revision))
 
 
 def revoke_memory_scope(
@@ -1136,7 +1534,7 @@ def _resolve(
         if target is None:
             return _denied("invalid_request", operation, 0)
     requested = _string_list(requested_sources)
-    if requested is None:
+    if requested is None or not all(literal_source_is_valid(s) for s in requested):
         return _denied("invalid_request", operation, 0)
     if session_binding is not None and not isinstance(session_binding, str):
         return _denied("invalid_request", operation, 0)
@@ -1261,7 +1659,7 @@ def _resolve(
 
     # Stage 14: sources (an empty request means all of the grant's sources).
     sources = sorted(set(requested)) or list(grant["approved_sources"])
-    if not set(sources) <= set(grant["approved_sources"]):
+    if not all(source_granted(s, grant["approved_sources"]) for s in sources):
         return deny("source_not_granted")
 
     # Stage 15: binding fingerprint, project and worktree.

@@ -43,7 +43,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import pytest
@@ -828,7 +828,7 @@ def test_t27_populated_project_list_shows_identity_and_state(tmp_path: Path) -> 
     )
 
     result = ProjectTool().run(Path("."), action="list")
-    json_result = dict(result)
+    json_result: dict[str, Any] = dict(result)
     assert json_result["status"] == "ok"
     assert any(
         p["project_id"] == record.project_id for p in json_result["raw"]["projects"]
@@ -893,7 +893,7 @@ def test_t27_family_projection_covers_every_registered_tool() -> None:
     try:
         from rush.theme import FAMILY_PROJECTIONS  # type: ignore[attr-defined]
     except ImportError:
-        FAMILY_PROJECTIONS = None
+        FAMILY_PROJECTIONS = None  # type: ignore[assignment]  # sentinel: theme lacks the attribute
 
     assert FAMILY_PROJECTIONS, (
         "T27 defect: theme.py must define FAMILY_PROJECTIONS, a "
@@ -1069,18 +1069,21 @@ def test_t27_route_set_includes_live_operation_enums_and_gain_alias() -> None:
     # against the choices Click actually declared, never a hand-typed list.
     subject_param = next(
         p
-        for p in cli.commands["memory"].commands["write"].params
+        for p in cast(click.Group, cli.commands["memory"]).commands["write"].params
         if p.name == "subject"
     )
+    assert isinstance(subject_param.type, click.Choice)
     assert subject_param.type.choices, "memory write's subject Choice must be non-empty"
 
     import inspect
 
-    context_gain_cmd = cli.commands["context"].commands["gain"]
+    context_gain_cmd = cast(click.Group, cli.commands["context"]).commands["gain"]
     root_gain_cmd = cli.commands["gain"]
+    assert context_gain_cmd.callback is not None
     assert "_run_gain_live_panel" in inspect.getsource(context_gain_cmd.callback), (
         "`context gain` must be a real alias for the same `gain` producer"
     )
+    assert root_gain_cmd.callback is not None
     assert "_run_gain_live_panel" in inspect.getsource(root_gain_cmd.callback)
 
 
@@ -1270,7 +1273,7 @@ def test_t27_read_only_routes_write_nothing_under_home(
     before = _snapshot_tree(home)
 
     path = tuple(route_id.split("."))
-    command = cli
+    command: Any = cli
     for part in path[:-1]:
         command = command.commands[part]
     command = command.commands[path[-1]]
@@ -1556,8 +1559,8 @@ def _new_leaf_paths(tmp_path: Path, before: set[Path], cwd: Path) -> set[str]:
                 break
         # A lock file's name is its target's absolute path, flattened.
         fixture = tmp_path / "fixture-project"
-        for real in (fixture.resolve(), fixture):
-            text = text.replace(MeshLockManager._lock_name(real), "_<fixture-flat>")
+        for variant in (fixture.resolve(), fixture):
+            text = text.replace(MeshLockManager._lock_name(variant), "_<fixture-flat>")
         if text != "<cwd>":
             normalized.add(text)
     return normalized
@@ -1596,6 +1599,23 @@ def test_t27_matrix_route_writes_only_its_allowed_paths(
     assert not unexpected, (
         f"{case_id} wrote outside its declared allowed_paths: {sorted(unexpected)}"
     )
+    # 72-T01 D41: a store-creating or store-writing route also creates the store-binding
+    # key (and, when it created `.rush`, `.rush/.gitignore`); the declared allowance
+    # above is only honest while those routes really write them.
+    key = "<data-root>/user/.rush/memory_store.key"
+    gitignore = "<cwd>/.rush/.gitignore"
+    d41_created = {
+        "memory.maintain": {key},
+        "memory.promote": {key, gitignore},
+        "memory.write": {key, gitignore},
+        "scan.handoff": {key},
+        "session.save": {key},
+    }
+    if case_id in d41_created:
+        missing = d41_created[case_id] - written
+        assert not missing, (
+            f"{case_id} did not write {sorted(missing)}: {sorted(written)}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -2078,9 +2098,8 @@ _SEEDERS: dict[str, Any] = {
 def _allow_only_seed_engines(monkeypatch: pytest.MonkeyPatch) -> None:
     """Real spawns for the engines the seeded lists come from; every other
     engine (network scanners, aislop, ...) stays unavailable."""
-    real_popen = subprocess.Popen
 
-    class _SeedEnginePopen(real_popen):
+    class _SeedEnginePopen(subprocess.Popen[bytes]):
         def __init__(self, args: Any, *rest: Any, **kwargs: Any) -> None:
             argv0 = args[0] if isinstance(args, list | tuple) else str(args).split()[0]
             name = Path(str(argv0)).name

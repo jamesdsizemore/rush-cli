@@ -38,6 +38,7 @@ from rush.dashboard.server import (
     _s04_effect_ids,
     _validate_memory_owner_scope,
 )
+from rush.dashboard.state import ProjectRecord
 from rush.governance.public_operations import build_operations_inventory
 from rush.invocation import InvocationExecutor
 from rush.mcp_support.tool_registry import make_tool_wrapper
@@ -491,6 +492,7 @@ def test_stdio_stdout_contains_only_jsonrpc(tmp_path: Path) -> None:
         tool_payload = json.loads(call_response["result"]["content"][0]["text"])
         assert tool_payload["raw"]["operation"] == "plan_checks"
     finally:
+        assert proc.stdin is not None
         proc.stdin.close()
         try:
             proc.wait(timeout=10)
@@ -519,7 +521,9 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         source="csv-helper",
         allow_cache_write=True,
     )
-    artifact_id = write_result["raw"]["id"]
+    write_raw = write_result["raw"]
+    assert write_raw is not None
+    artifact_id = write_raw["id"]
     recall_result = tool(
         path=tmp_path,
         operation="recall",
@@ -529,7 +533,9 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         session_allowlist=["csv-helper"],
     )
     assert recall_result["status"] == "ok", recall_result
-    items = recall_result["raw"]["data"]["items"]
+    recall_raw = recall_result["raw"]
+    assert recall_raw is not None
+    items = recall_raw["data"]["items"]
     assert any(item["id"] == artifact_id for item in items)
 
     expand_out = _cli_call(
@@ -583,6 +589,7 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         {
             "action": "prepare",
             "receiver_audience": "agent_b",
+            "receiver_namespace": "csv-helper",
             "goal": "share the csv helper evidence",
             "selected_refs": [{"id": artifact_id, "version": 1}],
         },
@@ -604,6 +611,12 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
 
 # --- M07/M08 (69-dashboard-tui-codex-implementation-review.md): dashboard
 # memory-mutation publication refresh and owner-scope authorization -------
+
+
+def _project(ctx: DashboardContext, project_id: str) -> ProjectRecord:
+    record = ctx.projects.get(project_id)
+    assert record is not None
+    return record
 
 
 @pytest.fixture
@@ -648,7 +661,7 @@ def test_memory_edit_immediately_updates_map_content_and_generation(
             owner_scope=owner,
         )
     )
-    before = ctx.projects.get(project_id)
+    before = _project(ctx, project_id)
     assert before.memory_generation == 0
     assert before.sequence == 1
 
@@ -668,7 +681,7 @@ def test_memory_edit_immediately_updates_map_content_and_generation(
     assert status_code == 200
     assert body["status"] == "ok"
 
-    after = ctx.projects.get(project_id)
+    after = _project(ctx, project_id)
     assert after.memory_generation > before.memory_generation
     assert after.sequence > before.sequence
     memories_by_id = {m["id"]: m for m in after.snapshot["memories"]}
@@ -694,7 +707,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
                 owner_scope=owner,
             )
         )
-    generation_before = ctx.projects.get(project_id).memory_generation
+    generation_before = _project(ctx, project_id).memory_generation
 
     _, body = _dispatch_memory_archive(
         ctx,
@@ -710,7 +723,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_archive = ctx.projects.get(project_id).memory_generation
+    gen_after_archive = _project(ctx, project_id).memory_generation
     assert gen_after_archive > generation_before
 
     _, body = _dispatch_memory_delete(
@@ -726,7 +739,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_delete = ctx.projects.get(project_id).memory_generation
+    gen_after_delete = _project(ctx, project_id).memory_generation
     assert gen_after_delete > gen_after_archive
 
     _, body = _dispatch_memory_promote(
@@ -741,7 +754,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_promote = ctx.projects.get(project_id).memory_generation
+    gen_after_promote = _project(ctx, project_id).memory_generation
     assert gen_after_promote > gen_after_delete
 
 
@@ -872,7 +885,7 @@ def test_promotion_denial_after_candidate_write_still_refreshes_the_real_candida
 ) -> None:
     ctx, project_id, _root = _registered_ctx(tmp_path, _isolated_projects_data_root)
     owner = OwnerScope("project", project_id)
-    generation_before = ctx.projects.get(project_id).memory_generation
+    generation_before = _project(ctx, project_id).memory_generation
 
     _, body = _dispatch_memory_promote(
         ctx,
@@ -891,7 +904,7 @@ def test_promotion_denial_after_candidate_write_still_refreshes_the_real_candida
         "promotion for this assertion to be meaningful"
     )
 
-    after = ctx.projects.get(project_id)
+    after = _project(ctx, project_id)
     assert after.memory_generation > generation_before
     memory_ids = {m["id"] for m in after.snapshot["memories"]}
     assert body["raw"]["artifact"]["id"] in memory_ids
@@ -919,7 +932,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
         {},
     )
     assert not (root / ".rush" / "memory.db").exists()
-    record = ctx.projects.get(project_id)
+    record = _project(ctx, project_id)
     assert record.memory_generation == 0
     assert record.sequence == 1
 
@@ -940,7 +953,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
     )
     assert body["status"] == "ok"
     artifact_id = body["raw"]["artifact"]["id"]
-    seeded = ctx.projects.get(project_id)
+    seeded = _project(ctx, project_id)
     generation_before = seeded.memory_generation
     sequence_before = seeded.sequence
 
@@ -958,7 +971,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
         {"cache_write": True},
     )
     assert body["raw"]["code"] == "E_VERSION"
-    record_after = ctx.projects.get(project_id)
+    record_after = _project(ctx, project_id)
     assert record_after.memory_generation == generation_before
     assert record_after.sequence == sequence_before
 
@@ -1061,7 +1074,9 @@ def test_arbitrary_nonempty_user_agent_labels_accepted_structurally_and_persist_
         permissions=ExecutionPermissions(cache_write=True),
     )
     assert result["status"] == "ok"
-    stored_id = result["raw"]["id"]
+    result_raw = result["raw"]
+    assert result_raw is not None
+    stored_id = result_raw["id"]
 
     with sqlite3.connect(TypedArtifactStore(root).db_path) as conn:
         row = conn.execute(

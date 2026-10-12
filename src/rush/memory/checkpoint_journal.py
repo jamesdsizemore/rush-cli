@@ -13,11 +13,30 @@ from typing import Any
 from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
 from rush.io.physical_paths import PhysicalRoot
 from rush.memory.migration import read_origin_kind_refs_readonly, read_origin_readonly
-from rush.memory.store import MemoryArtifact, TypedArtifactStore, note_memory_read
+from rush.memory.store import (
+    MemoryArtifact,
+    note_memory_read,
+    write_checked_artifact,
+)
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import SecretRedactor
 
 _SESSIONS = Path(".rush") / "sessions"
+_READ_SOURCES = ("checkpoint_journal:save_checkpoint", "migration:checkpoint_journal")
+
+
+def _reader_access(project_root: Path) -> Any:
+    """72-T01 D1: the checkpoint readers' `ask` route, or `None` when denied."""
+    from rush.memory.retrieval import narrowed_reader_access
+
+    return narrowed_reader_access(project_root, "ask", _READ_SOURCES)
+
+
+def _still_held(access: Any) -> bool:
+    """72-T01 D1: the route still holds immediately before a read returns."""
+    from rush.memory.retrieval import recheck_failure
+
+    return recheck_failure(access) is None
 
 
 class CheckpointJournal:
@@ -36,13 +55,21 @@ class CheckpointJournal:
         """The contained `.rush/sessions` directory, created on first access."""
         return self._ensure_session_dir()
 
-    def _ensure_session_dir(self) -> Path:
+    def _ensure_rush_dir(self) -> Path:
+        """The contained `.rush` directory, created if absent."""
         self.project_root.mkdir(parents=True, exist_ok=True)
-        physical = PhysicalRoot(self.project_root)
-        directory = self.project_root
-        for rel in (Path(".rush"), _SESSIONS):
-            directory = physical.open_contained(rel, purpose="write")
-            directory.mkdir(exist_ok=True)
+        directory = PhysicalRoot(self.project_root).open_contained(
+            Path(".rush"), purpose="write"
+        )
+        directory.mkdir(exist_ok=True)
+        return directory
+
+    def _ensure_session_dir(self) -> Path:
+        self._ensure_rush_dir()
+        directory = PhysicalRoot(self.project_root).open_contained(
+            _SESSIONS, purpose="write"
+        )
+        directory.mkdir(exist_ok=True)
         return directory
 
     @property
@@ -56,9 +83,27 @@ class CheckpointJournal:
 
     def save_checkpoint(
         self, name: str, metadata: dict[str, Any], files: list[str]
+    ) -> Path | None:
+        """Saves a point-in-time session checkpoint using AtomicFile and schema 1.0.0.
+
+        72-T01 D4: authorized through the shared writer gate first; a denial (or an
+        access change before commit) returns `None` with nothing written."""
+        from rush.memory.retrieval import RouteDenial, authorize_writer
+        from rush.memory.store import MemoryAccessChanged
+
+        with authorize_writer(
+            self.project_root, "checkpoint_journal:save_checkpoint"
+        ) as granted:
+            if isinstance(granted, RouteDenial):
+                return None
+            try:
+                return self._save_checkpoint(granted, name, metadata, files)
+            except MemoryAccessChanged:
+                return None
+
+    def _save_checkpoint(
+        self, granted: Any, name: str, metadata: dict[str, Any], files: list[str]
     ) -> Path:
-        """Saves a point-in-time session checkpoint using AtomicFile and schema 1.0.0."""
-        self._ensure_session_dir()
         timestamp = int(time.time())
 
         checkpoint_data, _ = SecretRedactor.redact_value(
@@ -73,14 +118,22 @@ class CheckpointJournal:
             }
         )
         rel_path = _SESSIONS / f"{name}.json"
+        # The checked typed-store write comes first: a commit refused by an access
+        # change leaves no checkpoint file and no `.rush/sessions` directory behind.
+        # `.rush` itself exists first, so creating the store adds no `.gitignore`.
+        self._ensure_rush_dir()
+        self._write_handoff_artifact(name, checkpoint_data, timestamp, granted)
+        self._ensure_session_dir()
         atomic = AtomicFile(PhysicalRoot(self.project_root))
         sanitized = SanitizedJsonValue.from_value(checkpoint_data)
-        result = atomic.write_json(rel_path, sanitized)
-        self._write_handoff_artifact(name, checkpoint_data, timestamp)
-        return result
+        return atomic.write_json(rel_path, sanitized)
 
     def _write_handoff_artifact(
-        self, name: str, checkpoint_data: dict[str, Any], created_at: float
+        self,
+        name: str,
+        checkpoint_data: dict[str, Any],
+        created_at: float,
+        granted: Any = None,
     ) -> None:
         """Forward-writes the checkpoint (receipt included) as one `family="handoff"` row.
 
@@ -88,7 +141,10 @@ class CheckpointJournal:
         one-shot absorption of pre-existing files) so this per-save write never collides with, or
         gets skipped by, that idempotent migration's `(origin_kind, origin_id)` uniqueness check.
         """
-        TypedArtifactStore(self.project_root).write(
+        from rush.memory.retrieval import recheck_failure, writer_owner
+
+        write_checked_artifact(
+            self.project_root,
             MemoryArtifact(
                 id=str(uuid.uuid4()),
                 family="handoff",
@@ -98,7 +154,11 @@ class CheckpointJournal:
                 source="checkpoint_journal:save_checkpoint",
                 created_at=created_at,
                 symbol_ref=SecretRedactor.redact_text(name),
-            )
+                owner_scope=writer_owner(granted) if granted is not None else None,
+            ),
+            commit_check=(
+                (lambda: recheck_failure(granted)) if granted is not None else None
+            ),
         )
 
     def restore_checkpoint(self, name: str) -> dict[str, Any] | None:
@@ -108,7 +168,19 @@ class CheckpointJournal:
         `migration.migrate_checkpoint_journal`), falls back to the `TypedArtifactStore` row so this
         method stays the sole existence authority `continuity.py`'s `_run_restore` relies on.
         The store read is `read_origin_readonly`: nothing is created or migrated.
+
+        72-T01 D1: read only under the checkpoint `ask` route, rechecked before the
+        result is returned; a denial or revocation returns `None`.
         """
+        if self._readable_root() is None:
+            return None
+        access = _reader_access(self.project_root)
+        if access is None:
+            return None
+        data = self._restore_checkpoint(name)
+        return data if data is None or _still_held(access) else None
+
+    def _restore_checkpoint(self, name: str) -> dict[str, Any] | None:
         physical = self._readable_root()
         if physical is None:
             return None
@@ -131,7 +203,19 @@ class CheckpointJournal:
         return migrated
 
     def list_checkpoints(self) -> list[dict[str, Any]]:
-        """Lists all saved session checkpoints, retaining and digesting corrupt records."""
+        """Lists all saved session checkpoints, retaining and digesting corrupt records.
+
+        72-T01 D1: read only under the checkpoint `ask` route, rechecked before the
+        result is returned; a denial or revocation returns `[]`."""
+        if self._readable_root() is None:
+            return []
+        access = _reader_access(self.project_root)
+        if access is None:
+            return []
+        results = self._list_checkpoints()
+        return results if _still_held(access) else []
+
+    def _list_checkpoints(self) -> list[dict[str, Any]]:
         results = []
         physical_names = set()
         physical = self._readable_root()

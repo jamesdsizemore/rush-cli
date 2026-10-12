@@ -238,7 +238,7 @@ def _db_state(root: Path) -> dict[str, Any]:
     gc.collect()
     db = root / ".rush" / "memory.db"
     with sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True) as conn:
-        state = {
+        state: dict[str, Any] = {
             "sqlite_master": conn.execute(
                 "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
             ).fetchall(),
@@ -401,6 +401,7 @@ def _case_dashboard_overview_and_map(fx: dict[str, Any]) -> None:
     )
     server_module._refresh_project_memories(ctx, pid, fx["root"])
     record = ctx.projects.get(pid)
+    assert record is not None
     overview = server_module._build_overview_section(pid, record)
     assert overview["memory_count"] == 7
     project_map = build_project_map({"project_id": pid, **record.snapshot})
@@ -581,3 +582,120 @@ CASES = {
 @pytest.mark.parametrize("case", list(CASES))
 def test_t18_bookkeeping_projection(case: str, fx: dict[str, Any]) -> None:
     CASES[case](fx)
+
+
+# ---------------------------------------------------------------------------
+# 72-T01 post-cap: dashboard memory refresh under a revoked or list-only grant
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def policy_fx(fx: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """`fx` with the policy reader (`authorization` binds `default_data_root` at
+    import) also pointed at the isolated data root."""
+    monkeypatch.setattr(
+        "rush.memory.authorization.default_data_root", lambda: fx["data_root"]
+    )
+    return fx
+
+
+def _list_grant(fx: dict[str, Any], ops: tuple[str, ...] = ("list",)) -> str:
+    from rush.memory import authorization as auth
+    from rush.memory.store import legacy_owner_scope
+
+    data_root = fx["data_root"]
+    revision = auth.load_policy_readonly(data_root=data_root)["policy_revision"]
+    grant = auth.grant_memory_scope(
+        project_root=fx["root"],
+        owner_scope=legacy_owner_scope(fx["root"]),
+        approved_sources=["agent:notes"],
+        allowed_operations=list(ops),
+        expected_policy_revision=int(revision or 0),
+        consent=True,
+        data_root=data_root,
+    )
+    return str(grant["grant_id"])
+
+
+def _dashboard_ctx(fx: dict[str, Any]) -> DashboardContext:
+    pid = fx["project_id"]
+    return DashboardContext(
+        {pid: {"root": str(fx["root"]), "name": "proj"}},
+        bound_host="127.0.0.1",
+        bound_port=0,
+        data_root=fx["data_root"],
+    )
+
+
+@pytest.mark.parametrize("mode", ["policy", "legacy"])
+def test_dashboard_refresh_publishes_nothing_after_revoke_during_snapshot(
+    mode: str, policy_fx: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-6 / spec-tests-12: a list grant revoked (policy) or the project
+    leaving `legacy` mode while the snapshot is selected publishes nothing."""
+    from rush.memory import authorization as auth
+
+    fx = policy_fx
+    data_root = fx["data_root"]
+    grant_id = _list_grant(fx) if mode == "policy" else None
+    original = TypedArtifactStore.snapshot_memories
+
+    def revoke_after_selection(
+        self: TypedArtifactStore, *args: Any, **kwargs: Any
+    ) -> tuple[list[dict[str, Any]], int]:
+        access = kwargs.get("access")
+        assert (access is not None and access.kind == "policy") == (mode == "policy")
+        selected = original(self, *args, **kwargs)
+        assert selected[0], "the snapshot selected rows before the revoke"
+        if grant_id is not None:
+            auth.revoke_memory_scope(
+                grant_id=grant_id,
+                expected_policy_revision=int(
+                    auth.load_policy_readonly(data_root=data_root)["policy_revision"]
+                ),
+                consent=True,
+                data_root=data_root,
+            )
+        else:
+            _list_grant(fx)  # a policy now exists: the project left `legacy`
+        return selected
+
+    monkeypatch.setattr(TypedArtifactStore, "snapshot_memories", revoke_after_selection)
+    ctx = _dashboard_ctx(fx)
+    calls: list[Any] = []
+    monkeypatch.setattr(ctx.projects, "refresh_memories", lambda *a: calls.append(a))
+
+    server_module._refresh_project_memories(ctx, fx["project_id"], fx["root"])
+
+    assert calls == []
+    record = ctx.projects.get(fx["project_id"])
+    assert record is not None
+    assert record.memory_generation == 0
+
+
+def test_dashboard_refresh_list_only_grant_adds_no_rush_paths(
+    policy_fx: dict[str, Any],
+) -> None:
+    """security-7: a list-only refresh reads through a read-only view, so it
+    never recreates `.rush/cache` (or any other path under `.rush`)."""
+    import shutil
+
+    fx = policy_fx
+    root = fx["root"]
+    _list_grant(fx)
+    assert (root / ".rush" / "cache").is_dir()
+    shutil.rmtree(root / ".rush" / "cache")
+    before = sorted(p.relative_to(root) for p in (root / ".rush").rglob("*"))
+
+    ctx = _dashboard_ctx(fx)
+    server_module._refresh_project_memories(ctx, fx["project_id"], root)
+
+    assert sorted(p.relative_to(root) for p in (root / ".rush").rglob("*")) == before
+    record = ctx.projects.get(fx["project_id"])
+    assert record is not None
+    assert record.memory_generation > 0
+    assert {m["id"] for m in record.snapshot["memories"]} == {
+        "useful-dk-1",
+        "useful-dk-2",
+        ARCHIVED_ID,
+    }

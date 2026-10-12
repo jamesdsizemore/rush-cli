@@ -10,6 +10,8 @@ from __future__ import annotations
 import base64
 import contextlib
 import dataclasses
+import datetime
+import gc
 import hashlib
 import hmac
 import json
@@ -17,18 +19,25 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import string
 import subprocess
+import sys
+import textwrap
 import threading
 import time
+import types
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, cast
 
 import pytest
 import tiktoken
 
+from rush.memory.retrieval import VisibilityMode
 from rush.memory.store import (
     MemoryArtifact,
+    MemorySubject,
     OwnerScope,
     TypedArtifactStore,
     legacy_owner_scope,
@@ -36,10 +45,10 @@ from rush.memory.store import (
 )
 from rush.permissions import ExecutionPermissions
 from rush.setup.provision import default_data_root
-from rush.tools.memory import MemoryTool
+from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.workflows.projects import register_project
 
-SUBJECT = "domain_knowledge"
+SUBJECT: Final = "domain_knowledge"
 ALICE = OwnerScope("user", "alice")
 BOB = OwnerScope("user", "bob")
 DAY = 86400.0
@@ -49,6 +58,11 @@ OVERLAY_SOURCE = "personal-preferences"
 
 
 # --- helpers (existing code and stdlib only) --------------------------------
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
 
 
 def _sha_text(text: str) -> str:
@@ -487,7 +501,10 @@ def test_t01_denied_current_routes_and_authority(tmp_path: Path) -> None:
     for mode, access in (("ordinary", ask), ("inspect", ask), ("historical", history)):
         _assert_not(
             evaluate_artifact_visibility(
-                store, store.get_current("row-b1"), access=access, mode=mode
+                store,
+                store.get_current("row-b1"),
+                access=access,
+                mode=cast(VisibilityMode, mode),
             )
         )
 
@@ -713,7 +730,7 @@ def test_t01_edit_and_update_content_drop_stated_authority(tmp_path: Path) -> No
         _row(store, artifact_id, None, f"mk-{artifact_id}", source="src")
         _, promotion = store.promote(artifact_id, user_stated=True, expected_version=1)
         assert promotion.promoted is True
-        assert store.get_current(artifact_id).trust_tier == "STATED"
+        assert _nn(store.get_current(artifact_id)).trust_tier == "STATED"
 
     edited = {"text": "needle edited"}
     updated = {"text": "needle updated"}
@@ -920,7 +937,9 @@ def test_t01_policy_revocation_and_revision_change_close_reads(
     revoked = ask()
     assert _raw(revoked)["code"] == "E_PERMISSION"
     assert _items(revoked) == []
-    assert _raw(expand())["code"] == "E_NOT_VISIBLE"
+    revoked_expand = _raw(expand())
+    assert revoked_expand["code"] == "E_PERMISSION"
+    assert _reason_of(revoked_expand) == "revoked"
 
     regrant = _grant(auth, root, ALICE, data_root, ops=("ask", "expand"))
     assert _raw(expand())["code"] == "OK"
@@ -937,8 +956,9 @@ def test_t01_policy_revocation_and_revision_change_close_reads(
     release.set()
     thread.join(10)
     paused_expand = box["result"]
-    assert _raw(paused_expand)["code"] == "E_NOT_VISIBLE"
-    assert not _raw(paused_expand)["data"].get("content_base64")
+    assert _raw(paused_expand)["code"] == "E_PERMISSION"
+    assert _reason_of(_raw(paused_expand)) == "revoked"
+    assert not (_raw(paused_expand).get("data") or {}).get("content_base64")
     assert TelemetryStore(root).get_memory_event_total() == telemetry_before
 
 
@@ -963,6 +983,16 @@ def test_t01_forged_identity_moved_root_and_missing_policy_create_nothing(
     _row(store_a, "row-a1", ALICE, marker)
     tool = MemoryTool()
 
+    def _user_tree(base: Path) -> list[str]:
+        return sorted(
+            p.relative_to(base).as_posix() for p in (base / "user").rglob("*")
+        )
+
+    # 72-T01 D41: the store-creating write above made exactly the store-binding key
+    # under the data root's user subtree, and nothing else (no policy file).
+    after_write = _user_tree(data_root)
+    assert after_write == ["user/.rush", "user/.rush/memory_store.key"]
+
     def ask(root: Path, owner: OwnerScope, **extra: Any) -> Any:
         return tool.run(
             root,
@@ -984,7 +1014,7 @@ def test_t01_forged_identity_moved_root_and_missing_policy_create_nothing(
     assert _raw(forged)["code"] == "E_PERMISSION"
     assert marker not in _dump(_raw(forged))
     assert not auth.policy_path(data_root=data_root).exists()
-    assert not (data_root / "user").exists()
+    assert _user_tree(data_root) == after_write
     assert (
         MemoryAccess.resolve(
             root_a, operation="ask", owner_scope=ALICE, data_root=data_root
@@ -992,7 +1022,7 @@ def test_t01_forged_identity_moved_root_and_missing_policy_create_nothing(
         is None
     )
     assert not auth.policy_path(data_root=data_root).exists()
-    assert not (data_root / "user").exists()
+    assert _user_tree(data_root) == after_write
 
     _grant(auth, root_a, ALICE, data_root)
     assert (
@@ -1179,7 +1209,7 @@ def test_t01_review_citations_and_cache_selection_use_shared_decision(
 
     def review() -> tuple[list[str], int]:
         result = ReviewTool().run(root / "module.py")
-        memory = result.get("metadata", {}).get("memory") or {}
+        memory = _nn(result.get("metadata", {})).get("memory") or {}
         used = [entry["id"] for entry in memory.get("used", [])]
         citations = [
             f for f in result["findings"] if f.get("rule") == "memory-failure-citation"
@@ -1469,7 +1499,7 @@ def test_t01_unbound_and_backfilled_integrity_labels(tmp_path: Path) -> None:
         )
         assert decision.visible is True, artifact_id
         assert decision.usable_as_current is True, artifact_id
-        assert decision.reference["integrity"] == label, artifact_id
+        assert _nn(decision.reference)["integrity"] == label, artifact_id
     bad = retrieval.evaluate_artifact_visibility(
         reopened, reopened.get_current("row-bad-sig"), access=access
     )
@@ -1593,6 +1623,7 @@ def test_t01_learned_advice_reads_use_shared_decision(tmp_path: Path) -> None:
             f"ev-{kind}",
             "episodic",
             {
+                "kind": "observation",
                 "evidence_kind": "source_graph",
                 "check_id": "chkone",
                 "targets": ["tgtone"],
@@ -1603,6 +1634,14 @@ def test_t01_learned_advice_reads_use_shared_decision(tmp_path: Path) -> None:
             cause(kind, f"cause-{kind}", "behcurrent", "pass-current")
     add_pass("current", "pass-control", "behcontrol")
     cause("current", "cause-control", "behcontrol", "pass-control")
+    # D33 class 14: an unanchored episodic row that is no observation, intent or
+    # checkpoint is `unknown` (`unanchored_unclassified`), never usable as current.
+    add(
+        "current",
+        "ev-nokind",
+        "episodic",
+        {"evidence_kind": "source_graph", "check_id": "chkone", "targets": ["tgtone"]},
+    )
 
     for artifact_id, subject in rows["archived"]:
         store.archive(
@@ -1681,6 +1720,7 @@ def test_t01_learned_advice_reads_use_shared_decision(tmp_path: Path) -> None:
     assert "ev-current" in planned
     for kind in excluded:
         assert f"ev-{kind}" not in planned, kind
+    assert "ev-nokind" not in planned, "D33 class 14 unanchored_unclassified"
 
     missing = tmp_path / "missing"
     missing.mkdir()
@@ -1767,7 +1807,7 @@ def test_t01_artifact_freshness_matches_visibility_decision(tmp_path: Path) -> N
     before = (_sha_file(db), db.stat().st_mtime_ns)
     for artifact_id, (_, _, freshness, reasons) in rows.items():
         artifact = store.get_current(artifact_id)
-        assert retrieval.artifact_freshness(store, artifact) == (
+        assert retrieval.artifact_freshness(store, _nn(artifact)) == (
             freshness,
             reasons,
         ), artifact_id
@@ -1781,11 +1821,15 @@ def test_t01_artifact_freshness_matches_visibility_decision(tmp_path: Path) -> N
             freshness,
             reasons,
         ), artifact_id
-    assert retrieval.artifact_freshness(store, store.get_current("unanchored")) == (
+    assert retrieval.artifact_freshness(
+        store, _nn(store.get_current("unanchored"))
+    ) == (
         "not_applicable",
         (),
     )
-    assert retrieval.artifact_freshness(plain_store, plain_store.get_current("g1")) == (
+    assert retrieval.artifact_freshness(
+        plain_store, _nn(plain_store.get_current("g1"))
+    ) == (
         "unknown",
         ("api_baseline_unknown",),
     )
@@ -1808,7 +1852,7 @@ def test_t01_checkpoint_name_symbol_ref_is_not_an_anchor(tmp_path: Path) -> None
     _row(store, "cp-row", None, "mk-cp", source=checkpoint_source, symbol_ref="cp-1")
     _row(store, "other-row", None, "mk-other", source="src", symbol_ref="cp-1")
 
-    assert retrieval.artifact_freshness(store, store.get_current("cp-row")) == (
+    assert retrieval.artifact_freshness(store, _nn(store.get_current("cp-row"))) == (
         "not_applicable",
         (),
     )
@@ -1874,7 +1918,7 @@ def _fix1_raw_content(db: Path, artifact_id: str) -> str:
 
 
 def _fix1_assert_quarantined(
-    store: TypedArtifactStore, artifact_id: str, subject: str, source: str
+    store: TypedArtifactStore, artifact_id: str, subject: MemorySubject, source: str
 ) -> None:
     from rush.memory.retrieval import (
         MemoryAccess,
@@ -1884,7 +1928,7 @@ def _fix1_assert_quarantined(
 
     root = store.project_root
     legacy = MemoryAccess.legacy(root, [source])
-    assert store.get_current(artifact_id).trust_tier != "STATED"
+    assert _nn(store.get_current(artifact_id)).trust_tier != "STATED"
     ordinary = evaluate_artifact_visibility(
         store, store.get_current_row(artifact_id), access=legacy
     )
@@ -2202,7 +2246,7 @@ def test_t01_fix1_memory_tool_wire_carries_freshness(tmp_path: Path) -> None:
         "mk-gone",
         source="src",
         symbol_ref="gone.py::",
-        content_hash=memo.source_hash(root / "gone.py"),
+        content_hash=memo.source_hash(root, "gone.py"),
     )
     _row(
         store,
@@ -2211,7 +2255,7 @@ def test_t01_fix1_memory_tool_wire_carries_freshness(tmp_path: Path) -> None:
         "mk-moved",
         source="src",
         symbol_ref="moved.py::",
-        content_hash=memo.source_hash(root / "moved.py"),
+        content_hash=memo.source_hash(root, "moved.py"),
     )
     _row(store, "w-plain", None, "mk-plain", source="src")
     (root / "gone.py").unlink()
@@ -2219,7 +2263,7 @@ def test_t01_fix1_memory_tool_wire_carries_freshness(tmp_path: Path) -> None:
 
     tool = MemoryTool()
 
-    def wire(operation: str) -> dict[str, dict[str, Any]]:
+    def wire(operation: MemoryOperation) -> dict[str, dict[str, Any]]:
         result = tool.run(
             root,
             operation=operation,
@@ -2260,7 +2304,7 @@ def test_t01_fix1_checkpoint_exemption_covers_names_only(
     store = TypedArtifactStore(root)
     if case == "anchored":
         symbol_ref = "m.py::K"
-        content_hash = retrieval.SourceValidationMemo().source_hash(root / "m.py")
+        content_hash = retrieval.SourceValidationMemo().source_hash(root, "m.py")
     else:
         symbol_ref = "/etc/passwd::x"
         content_hash = "0" * 64
@@ -2301,7 +2345,7 @@ def test_t01_fix1_checkpoint_exemption_covers_names_only(
     decision = retrieval.evaluate_artifact_visibility(
         store, store.get_current("cp-row"), access=access, mode="historical"
     )
-    freshness = retrieval.artifact_freshness(store, store.get_current("cp-row"))[0]
+    freshness = retrieval.artifact_freshness(store, _nn(store.get_current("cp-row")))[0]
     if case == "anchored":
         assert decision.freshness == "stale"
         assert "source_hash_mismatch" in decision.reason_codes
@@ -2439,7 +2483,7 @@ def _fix2_assert_bound(
     assert text == raw, (artifact_id, version)
     assert _payload_version_row(db, artifact_id, version)[2] == origin
 
-    row = store.get_current_row(artifact_id)
+    row = _nn(store.get_current_row(artifact_id))
     access = MemoryAccess.legacy(store.project_root, [row["source"]])
     historical = evaluate_artifact_visibility(
         store, row, access=access, mode="historical"
@@ -2477,6 +2521,12 @@ def test_t01_fix2_j1_noncanonical_backfill_survives_rewrite(
     _drop_payload_columns(db)
 
     store = TypedArtifactStore(root)
+    # D41: the raw rewrite broke the row MAC; re-bind the store (preview, then approve
+    # with its digest) so the honest backfilled row is bound again.
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
     assert _fix1_raw_content(db, "j1") == noncanonical
     assert _payload_row(db, "j1") == (_sha_text(noncanonical), "backfill")
     before = _version(db, "j1")
@@ -2489,9 +2539,9 @@ def test_t01_fix2_j1_noncanonical_backfill_survives_rewrite(
         store, "j1", "backfill", visible=path not in ("expiry", "staleness")
     )
     if path == "promote_stated":
-        assert store.get_current("j1").trust_tier == "STATED"
+        assert _nn(store.get_current("j1")).trust_tier == "STATED"
     if path == "expiry":
-        assert store.get_current_row("j1")["expired_at"] is not None
+        assert _nn(store.get_current_row("j1"))["expired_at"] is not None
 
 
 def test_t01_fix2_j1_canonical_write_row_archive_keeps_write_binding(
@@ -2712,13 +2762,13 @@ def test_t01_fix2_blob_content_never_rebound(
         store, store.get_current_row("b2"), access=access
     )
     assert first.usable_as_current is True, first.reason_codes
-    assert first.reference["integrity"] == "unbound"
+    assert _nn(first.reference)["integrity"] == "unbound"
     _pm_archive_unarchive(store, "b2")
     after = evaluate_artifact_visibility(
         store, store.get_current_row("b2"), access=access
     )
     assert after.visible is True and after.usable_as_current is True, after.reason_codes
-    assert after.reference["integrity"] == "unbound"
+    assert _nn(after.reference)["integrity"] == "unbound"
     assert _payload_row(db, "b2") == (None, None)
 
 
@@ -2938,6 +2988,14 @@ def _t02_literal_utf8(root: Path) -> tuple[TypedArtifactStore, bytes]:
             (text, digest),
         )
         conn.commit()
+    # D41: the raw rewrite broke the row MACs; re-bind the store (preview, then approve
+    # with its digest) so `u1` is a bound row again.
+    preview = TypedArtifactStore.bind_store(root.resolve(), approve=False)
+    TypedArtifactStore.bind_store(
+        root.resolve(),
+        approve=True,
+        expected_binding_digest=preview["binding_digest"],
+    )
     stored = store.get_version_content("u1", 1)
     assert stored is not None
     data = stored.encode("utf-8")
@@ -4367,7 +4425,7 @@ def test_t02_fix3_admission_precedes_access_view_and_telemetry(
     if kind == "compact":
         result = MemoryTool().run(
             root,
-            operation=operation,
+            operation=cast(MemoryOperation, operation),
             subject=SUBJECT,
             query="needle",
             session_allowlist=allow,
@@ -4424,3 +4482,14531 @@ def test_t02_fix3_missing_store_compact_page_reports_measured_size(
     empty = compact(other.resolve())
     assert empty["items"] == []
     assert (page["bytes"], page["tokens"]) == (empty["bytes"], empty["tokens"])
+
+
+# =============================================================================
+# 72-T01 remaining work (R1-R24), G5 test author. Every test imports the T01
+# symbols inside its own body, so each one fails on its own until T01 lands.
+# =============================================================================
+
+FULL_OPS = ("ask", "bootstrap", "expand", "list", "write")
+FULL_OPS_HISTORY = (*FULL_OPS, "history")
+
+
+def _rd(result: Any) -> dict[str, Any]:
+    """The `raw` dict of a ToolResult, or `{}` when the result carries none."""
+    raw = result.get("raw") if hasattr(result, "get") else None
+    return raw if isinstance(raw, dict) else {}
+
+
+def _reason_of(value: Any) -> Any:
+    """The denial `reason` of a ToolResult or page: top level, `raw`, or `raw.data`."""
+    if hasattr(value, "get") and "raw" in value:
+        value = _rd(value)
+    if not isinstance(value, dict):
+        return None
+    data: Any = value.get("data") if isinstance(value.get("data"), dict) else {}
+    return value.get("reason") or data.get("reason")
+
+
+def _code_of(value: Any) -> Any:
+    if hasattr(value, "get") and "raw" in value:
+        value = _rd(value)
+    return value.get("code") if isinstance(value, dict) else None
+
+
+def _policy_project(
+    tmp_path: Path,
+    *,
+    name: str = "project",
+    owner: OwnerScope = ALICE,
+    sources: tuple[str, ...] = ("source-a",),
+    ops: tuple[str, ...] = FULL_OPS,
+) -> tuple[Any, Path, Path, TypedArtifactStore, dict[str, Any]]:
+    """A registered project with a store and one consented grant at the default
+    data root (the per-test HOME places it under `tmp_path`)."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / name, data_root)
+    store = TypedArtifactStore(root)
+    grant = _grant(auth, root, owner, data_root, sources=sources, ops=ops)
+    return auth, data_root, root, store, grant
+
+
+def _tree(base: Path) -> list[str]:
+    if not base.exists():
+        return []
+    return sorted(p.relative_to(base).as_posix() for p in base.rglob("*"))
+
+
+def _digest_dir(base: Path) -> dict[str, Any]:
+    """relative path -> a tuple of the entry kind, its sha256 (files) or link text
+    (symlinks), and its `lstat` identity (type, permission bits, owner, device,
+    inode) for every entry under `base`."""
+    out: dict[str, Any] = {}
+    if not base.exists():
+        return out
+    for p in sorted(base.rglob("*")):
+        rel = p.relative_to(base).as_posix()
+        try:
+            st = p.lstat()
+            meta = (
+                stat.S_IFMT(st.st_mode),
+                stat.S_IMODE(st.st_mode),
+                st.st_uid,
+                st.st_gid,
+                st.st_dev,
+                st.st_ino,
+            )
+            if stat.S_ISLNK(st.st_mode):
+                out[rel] = ("symlink", os.readlink(p), meta)
+            elif stat.S_ISREG(st.st_mode):
+                out[rel] = ("file", _sha_file(p), meta)
+            else:
+                out[rel] = ("dir", meta)
+        except OSError:
+            out[rel] = "<unreadable>"
+    return out
+
+
+def _table_counts(db: Path) -> dict[str, int]:
+    """Row count of every table, through the non-creating `read_sqlite_readonly`:
+    measuring a db never adds a `-shm` (or any entry) beside it (spec-tests-7). A store
+    that cannot be read without writing (`wal_index_missing`, `E_STORE_BUSY`) is
+    itself the measured state."""
+    from rush.memory.store import MemoryStoreUnreadableError, read_sqlite_readonly
+
+    if not db.exists():
+        return {}
+
+    def count(conn: sqlite3.Connection) -> dict[str, int]:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' "
+                "AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name"
+            )
+        ]
+        return {
+            n: int(conn.execute(f'SELECT COUNT(*) FROM "{n}"').fetchone()[0])
+            for n in names
+        }
+
+    try:
+        return read_sqlite_readonly(db, count) or {}
+    except MemoryStoreUnreadableError:
+        return {"<unreadable>": 1}
+
+
+def _effects(root: Path, data_root: Path, *, tree: bool = True) -> dict[str, Any]:
+    """Everything a denied route must leave unchanged: the project tree and memory
+    db bytes, every table's row count, and the data root (the lock directory
+    `dashboard/project_locks` excluded). `tree=False` skips the project tree for
+    routes that legitimately rewrite their own non-memory output."""
+    db = root / ".rush" / "memory.db"
+    data = {
+        k: v
+        for k, v in _digest_dir(data_root).items()
+        if not k.startswith("dashboard/project_locks")
+    }
+    return {
+        "root": _digest_dir(root) if tree else None,
+        "db": _sha_file(db) if db.exists() else None,
+        "counts": _table_counts(db),
+        "data": data,
+    }
+
+
+def _seed_abc(store: TypedArtifactStore) -> None:
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    _row(store, "b1", ALICE, "mk-b1", source="source-b")
+    _row(store, "bob1", BOB, "mk-bob1", source="source-a")
+
+
+# --- R1 ---------------------------------------------------------------------
+
+
+def test_t01_baseline_probe_policy_route(tmp_path: Path) -> None:
+    """Plan §2.4 probe as a test: after R1 every field is true."""
+    from rush.memory.authorization import grant_memory_scope
+    from rush.memory.retrieval import expand_artifact, recall_page
+    from rush.memory.trust import resolve_symbol_ref
+
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("def Known():\n    return 1\n", encoding="utf-8")
+    source = root / "source.py"
+    source.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
+    _git(root, "init", "--initial-branch=main")
+    _git(root, "add", "source.py")
+    _git(root, "commit", "-m", "fixture")
+    store = TypedArtifactStore(root)
+    owner = legacy_owner_scope(root)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    for i in range(3):
+        store.write(
+            MemoryArtifact(
+                id=f"p{i}",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"text": "needle"},
+                source="allowed",
+                created_at=time.time(),
+                symbol_ref="source.py::Known",
+                content_hash=digest,
+                owner_scope=owner,
+            )
+        )
+    store.write(
+        MemoryArtifact(
+            id="x0",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content={"text": "needle"},
+            source="ungranted",
+            created_at=time.time(),
+            symbol_ref="source.py::Known",
+            content_hash=digest,
+            owner_scope=owner,
+        )
+    )
+    register_project(root)
+    grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=["allowed"],
+        allowed_operations=["ask", "expand", "list", "write", "history"],
+        expected_policy_revision=0,
+        consent=True,
+    )
+    page = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        limit=2,
+    )
+    paging_ok = page["complete"] is False and bool(page["next_cursor"])
+    store.archive(
+        "p2",
+        expected_version=1,
+        scope="domain_knowledge",
+        owner_scope=owner,
+        apply=True,
+    )
+    active = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        limit=10,
+    )
+    ungranted = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["ungranted"],
+        limit=10,
+    )
+    archived = store.get_current("p2")
+    assert archived is not None
+    expansion = expand_artifact(
+        store,
+        artifact_id="p2",
+        version=archived.artifact_version,
+        session_allowlist=["allowed"],
+    )
+    results = {
+        "paging": paging_ok,
+        "archive_hidden": [item["id"] for item in active["items"]] == ["p0", "p1"],
+        "expansion_denied": expansion["code"] == "E_NOT_VISIBLE",
+        "outside_denied": resolve_symbol_ref(str(outside) + "::Known", root) is False,
+        "ungranted_source_denied": (
+            ungranted["code"] == "E_PERMISSION" and ungranted["items"] == []
+        ),
+    }
+    assert results == dict.fromkeys(results, True), results
+    assert ungranted.get("complete") is not True
+    assert _reason_of(ungranted) == "source_not_granted"
+    assert "x0" not in _dump(ungranted)
+
+
+def test_t01_fix_legacy_allowlist_requires_policy(tmp_path: Path) -> None:
+    from rush.memory.retrieval import (
+        hybrid_candidates,
+        hybrid_page,
+        read_access,
+        recall_page,
+    )
+
+    _auth, _data_root, root, store, _grant_row = _policy_project(tmp_path)
+    _seed_abc(store)
+
+    # An allowlist outside the grant resolves to nothing; inside it narrows the grant.
+    assert read_access(root, "ask", ["source-b"]) is None
+    narrowed = read_access(root, "ask", ["source-a"])
+    assert narrowed is not None
+    assert narrowed.kind == "policy"
+    assert narrowed.sources == ("source-a",)
+    assert narrowed.owner_scope == ALICE
+
+    denied = recall_page(
+        store, subject=SUBJECT, query="needle", session_allowlist=["source-b"]
+    )
+    assert denied["code"] == "E_PERMISSION"
+    assert denied["items"] == []
+    assert denied.get("complete") is not True
+    assert _reason_of(denied) == "source_not_granted"
+    assert "mk-b1" not in _dump(denied)
+
+    calls, embed = _embed_spy()
+    denied_hybrid = hybrid_page(
+        store,
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-b"],
+        embed_config=_embed_config(),
+        embed_fn=embed,
+    )
+    assert denied_hybrid["code"] == "E_PERMISSION"
+    assert denied_hybrid["items"] == []
+    assert denied_hybrid.get("complete") is not True
+    assert _reason_of(denied_hybrid) == "source_not_granted"
+    candidates = hybrid_candidates(
+        store,
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-b"],
+        embed_config=_embed_config(),
+        embed_fn=embed,
+    )
+    assert candidates["available"] is False
+    assert candidates["code"] == "E_PERMISSION"
+    assert candidates["reason"] == "source_not_granted"
+    assert calls == []
+
+    # Inside the grant: only Alice's `source-a` row (Bob's `source-a` row is another owner).
+    granted = recall_page(
+        store, subject=SUBJECT, query="needle", session_allowlist=["source-a"]
+    )
+    assert granted["code"] == "OK"
+    assert _ids(granted) == ["a1"]
+    granted_hybrid = hybrid_page(
+        store,
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-a"],
+        embed_config=_embed_config(),
+        embed_fn=embed,
+    )
+    assert _ids(granted_hybrid) == ["a1"]
+
+    # A never-granted, unmarked project keeps the legacy allowlist route.
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    legacy_store = TypedArtifactStore(legacy_root)
+    _seed_abc(legacy_store)
+    empty = recall_page(
+        legacy_store, subject=SUBJECT, query="needle", session_allowlist=[]
+    )
+    assert empty["code"] == "OK"
+    assert empty["items"] == []
+    assert empty["complete"] is True
+    legacy_page = recall_page(
+        legacy_store, subject=SUBJECT, query="needle", session_allowlist=["source-a"]
+    )
+    assert set(_ids(legacy_page)) == {"a1", "bob1"}
+
+
+# --- R14 --------------------------------------------------------------------
+
+
+def test_t01_compound_operation_sets(tmp_path: Path) -> None:
+    from rush.memory.retrieval import MemoryAccess, required_operation_set
+
+    rows: list[tuple[tuple[Any, ...], dict[str, Any], tuple[str, ...]]] = [
+        (("ask",), {}, ("ask",)),
+        (("recall",), {}, ("ask",)),
+        (("related",), {}, ("ask",)),
+        (("explain",), {}, ("ask",)),
+        (("prepare",), {}, ("ask",)),
+        (("resume",), {}, ("ask",)),
+        (("plan_checks",), {}, ("ask",)),
+        (("last_success_diagnose",), {}, ("ask",)),
+        (("intent",), {"action": "check"}, ("ask",)),
+        (("recipe",), {"action": "resolve"}, ("ask",)),
+        (("list",), {}, ("list",)),
+        (("write",), {}, ("list",)),
+        (("edit",), {}, ("list",)),
+        (("archive",), {}, ("list",)),
+        (("delete",), {}, ("list",)),
+        (("promote",), {}, ("list",)),
+        (("maintain",), {}, ("list",)),
+        (("import",), {}, ("list",)),
+        (("preference",), {"action": "resolve"}, ("list",)),
+        (("preference",), {}, ("list",)),
+        (("capsule",), {"action": "preview_import"}, ("list",)),
+        (("expand",), {}, ("expand",)),
+        (("capsule",), {"action": "preview_export"}, ("expand",)),
+        (("capsule",), {"action": "export"}, ("expand",)),
+        (("history",), {}, ("history",)),
+        (("write",), {"apply": True}, ("write",)),
+        (("edit",), {"apply": True}, ("write",)),
+        (("archive",), {"apply": True}, ("write",)),
+        (("delete",), {"apply": True}, ("write",)),
+        (("promote",), {"apply": True}, ("write",)),
+        (("maintain",), {"apply": True}, ("write",)),
+        (("import",), {"apply": True}, ("write",)),
+        (("link",), {}, ("write",)),
+        (("consolidate",), {}, ("write",)),
+        (("verify_attempt",), {}, ("write",)),
+        (("intent",), {"action": "create"}, ("write",)),
+        (("intent",), {"action": "confirm"}, ("write",)),
+        (("intent",), {"action": "supersede"}, ("write",)),
+        (("recipe",), {"action": "record"}, ("write",)),
+        (("recipe",), {"action": "outcome"}, ("write",)),
+        (("preference",), {"apply": True}, ("write",)),
+        (("capsule",), {"action": "import"}, ("write",)),
+        (("handoff",), {"action": "prepare"}, ("write", "expand")),
+        (("handoff",), {"action": "dispatch"}, ("write", "expand")),
+        (("handoff",), {"action": "status"}, ("write", "expand")),
+        (("receive",), {}, ("expand",)),
+        (("ask",), {"historical": True}, ("ask", "history")),
+        (("list",), {"historical": True}, ("list", "history")),
+        (("expand",), {"historical": True}, ("expand", "history")),
+        (("history",), {"historical": True}, ("history",)),
+        (("ask",), {"overlay": True}, ("overlay_read", "list")),
+        (("recall",), {"overlay": True}, ("overlay_read", "list")),
+        (("list",), {"overlay": True}, ("overlay_read", "list")),
+        (("related",), {"overlay": True}, ("overlay_read", "list")),
+        (
+            ("preference",),
+            {"overlay": True, "action": "resolve"},
+            ("overlay_read", "list"),
+        ),
+        (("expand",), {"overlay": True}, ("overlay_read", "expand")),
+        (("history",), {"overlay": True}, ("overlay_read", "history")),
+        (("write",), {"overlay": True, "apply": True}, ("write",)),
+        (("edit",), {"overlay": True, "apply": True}, ("write",)),
+        (("write",), {"overlay": True}, ("overlay_read", "list")),
+        (("historical",), {}, ("history",)),
+        (("overlay_read",), {}, ("overlay_read",)),
+    ]
+    for args, kwargs, expected in rows:
+        assert required_operation_set(*args, **kwargs) == expected, (args, kwargs)
+    with pytest.raises(ValueError):
+        required_operation_set("bogus")
+    with pytest.raises(ValueError):
+        required_operation_set("intent")
+    with pytest.raises(ValueError):
+        required_operation_set("recipe", action="bogus")
+
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1")
+
+    def resolve(**kwargs: Any) -> tuple[Any, str]:
+        return MemoryAccess.resolve_with_reason(
+            root, owner_scope=ALICE, data_root=data_root, **kwargs
+        )
+
+    _grant(auth, root, ALICE, data_root, ops=("history",))
+    for op in ("list", "recall", "expand", "ask"):
+        access, reason = resolve(operation=op)
+        assert access is None, op
+        assert reason == "operation_not_granted", op
+
+    _grant(auth, root, ALICE, data_root, ops=("expand",))
+    access, reason = resolve(operation="expand", historical=True)
+    assert access is None and reason == "operation_not_granted"
+    access, _ = resolve(operation="expand")
+    assert access is not None
+    assert access.required_operations == frozenset({"expand"})
+
+    _grant(auth, root, ALICE, data_root, ops=("list",))
+    access, reason = resolve(operation="write", apply=True)
+    assert access is None and reason == "operation_not_granted"
+    access, _ = resolve(operation="write")
+    assert access is not None
+    assert access.required_operations == frozenset({"list"})
+
+    grant = _grant(auth, root, ALICE, data_root, ops=("expand", "history", "list"))
+    access, _ = resolve(operation="expand", historical=True)
+    assert access is not None
+    assert access.required_operations == frozenset({"expand", "history"})
+    assert access.historical_allowed is True
+    loaded = auth.load_policy_readonly(data_root=data_root)
+    resolved_grant = loaded["grants"][grant["grant_id"]]
+    assert access.grant_id == grant["grant_id"]
+    assert access.required_operations <= set(resolved_grant["allowed_operations"])
+    plain, _ = resolve(operation="expand")
+    assert plain is not None
+    assert plain.historical_allowed is False
+
+
+# --- R3 ---------------------------------------------------------------------
+
+
+def test_t01_fix_historical_needs_history_grant(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess, evaluate_artifact_visibility
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "live", ALICE, "mk-live")
+    _row(store, "arch", ALICE, "mk-arch")
+    store.archive(
+        "arch", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    tool = MemoryTool()
+
+    listed = tool.run(
+        root,
+        operation="list",
+        subject=SUBJECT,
+        query="needle",
+        include_archived=True,
+        owner_scope=ALICE.as_dict(),
+    )
+    assert _code_of(listed) == "E_PERMISSION"
+    assert _reason_of(listed) == "operation_not_granted"
+    assert "arch" not in _dump(_rd(listed))
+
+    assert store.recall(SUBJECT, "needle", ["source-a"], mode="historical") == []
+    assert store.recall(SUBJECT, "needle", ["source-a"], include_archived=True) == []
+
+    access = MemoryAccess.resolve(
+        root, operation="list", owner_scope=ALICE, data_root=data_root
+    )
+    assert access is not None
+    archived_row = store.get_current_row("arch")
+    assert (
+        evaluate_artifact_visibility(
+            store, archived_row, access=access, mode="historical"
+        ).visible
+        is False
+    )
+
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS_HISTORY)
+    with_history, reason = MemoryAccess.resolve_with_reason(
+        root,
+        operation="list",
+        historical=True,
+        owner_scope=ALICE,
+        data_root=data_root,
+    )
+    assert with_history is not None, reason
+    decision = evaluate_artifact_visibility(
+        store, archived_row, access=with_history, mode="historical"
+    )
+    assert decision.visible is True
+    assert decision.usable_as_current is False
+    assert "archived" in decision.reason_codes
+    found = store.recall(SUBJECT, "needle", mode="historical", access=with_history)
+    assert "arch" in {a.id for a in found}
+
+
+# --- R4 ---------------------------------------------------------------------
+
+
+def _list_ids(result: Any) -> list[str]:
+    raw = result.get("raw") if hasattr(result, "get") else None
+    if isinstance(raw, list):
+        return sorted(item["id"] for item in raw)
+    return []
+
+
+def _list_fixture(root: Path, store: TypedArtifactStore) -> str:
+    """Rows for the R4 matrix; returns the whole-file anchor's first source hash."""
+    (root / "m.py").write_text("def Known():\n    return 1\n", encoding="utf-8")
+    anchor_hash = _sha_file(root / "m.py")
+    _row(store, "ok", ALICE, "mk-ok", source="source-a")
+    _row(
+        store,
+        "wf",
+        ALICE,
+        "mk-wf",
+        source="source-a",
+        symbol_ref="m.py::",
+        content_hash=anchor_hash,
+    )
+    _row(
+        store,
+        "gone",
+        ALICE,
+        "mk-gone",
+        source="source-a",
+        symbol_ref="gone.py::Known",
+        content_hash="a" * 64,
+    )
+    _row(store, "bob", BOB, "mk-bob", source="source-a")
+    _row(store, "other", ALICE, "mk-other", source="source-b")
+    _row(store, "expired", ALICE, "mk-expired", source="source-a")
+    _row(store, "arch", ALICE, "mk-arch", source="source-a")
+    store.archive(
+        "arch", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'expired'",
+            (time.time() - 10,),
+        )
+        conn.commit()
+    return anchor_hash
+
+
+def test_t01_list_filtered_uses_policy_and_decision(tmp_path: Path) -> None:
+    auth, data_root, root, store, _g = _policy_project(tmp_path)
+    _list_fixture(root, store)
+    tool = MemoryTool()
+
+    def listing(**filters: Any) -> Any:
+        return tool.run(
+            root,
+            operation="list",
+            subject=SUBJECT,
+            query="",
+            owner_scope=ALICE.as_dict(),
+            **filters,
+        )
+
+    # Unfiltered: Alice's granted-source live rows only (no Bob, no `source-b`, no
+    # archived without `history`, no elapsed `expires_at`).
+    assert _list_ids(listing()) == ["gone", "ok", "wf"]
+
+    outside = listing(source_filter="source-b")
+    assert _code_of(outside) == "E_PERMISSION"
+    assert _reason_of(outside) == "source_not_granted"
+    assert _list_ids(outside) == []
+    assert "mk-other" not in _dump(outside.get("raw"))
+
+    archived = listing(archived_filter=True)
+    assert _code_of(archived) == "E_PERMISSION"
+    assert _reason_of(archived) == "operation_not_granted"
+    assert "mk-arch" not in _dump(archived.get("raw"))
+
+    # A whole-file anchor whose file hash changed is stale by the shared decision
+    # even though the sweep-maintained `stale` column is still 0.
+    (root / "m.py").write_text("def Known():\n    return 2\n", encoding="utf-8")
+    assert _list_ids(listing(freshness_filter="fresh")) == ["ok"]
+    assert _list_ids(listing(freshness_filter="stale")) == ["wf"]
+    # `gone` (anchor file deleted: freshness `unknown`, `source_missing`) is in
+    # neither filtered list and stays in the unfiltered one.
+    assert "gone" in _list_ids(listing())
+    assert "gone" not in _list_ids(listing(freshness_filter="fresh"))
+    assert "gone" not in _list_ids(listing(freshness_filter="stale"))
+
+    # `history` unlocks archived listing.
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS_HISTORY)
+    with_history = listing(archived_filter=True)
+    assert _list_ids(with_history) == ["arch"]
+
+    # Legacy mode (no policy): the HEAD filtering by the `stale` column only is unchanged.
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    legacy_store = TypedArtifactStore(legacy_root)
+    _list_fixture(legacy_root, legacy_store)
+    (legacy_root / "m.py").write_text("def Known():\n    return 2\n", encoding="utf-8")
+
+    def legacy_listing(**filters: Any) -> Any:
+        return tool.run(
+            legacy_root,
+            operation="list",
+            subject=SUBJECT,
+            query="",
+            session_allowlist=["source-a"],
+            **filters,
+        )
+
+    assert _list_ids(legacy_listing()) == ["bob", "gone", "ok", "wf"]
+    assert _list_ids(legacy_listing(freshness_filter="fresh")) == [
+        "bob",
+        "gone",
+        "ok",
+        "wf",
+    ]
+    assert _list_ids(legacy_listing(freshness_filter="stale")) == []
+    assert _list_ids(legacy_listing(archived_filter=True)) == ["arch"]
+
+
+# --- R5 ---------------------------------------------------------------------
+
+
+def _mcp_memory(**arguments: Any) -> dict[str, Any]:
+    import asyncio
+
+    from rush.mcp import build_server
+
+    server = build_server()
+
+    async def _call() -> Any:
+        return await server.call_tool("rush_memory", arguments)
+
+    result = asyncio.run(_call())
+    return json.loads(result.content[0].text)
+
+
+def test_t01_mcp_query_policy_route(tmp_path: Path) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    _auth, _data_root, root, store, _g = _policy_project(tmp_path)
+    _seed_abc(store)
+    owner = ALICE.as_dict()
+
+    for operation in ("ask", "recall"):
+        legacy_form = _mcp_memory(
+            path=str(root),
+            operation=operation,
+            subject=SUBJECT,
+            query="needle",
+            owner_scope=owner,
+        )
+        assert legacy_form["status"] == "ok", (operation, legacy_form)
+        assert sorted(item["id"] for item in legacy_form["raw"]) == ["a1"]
+        compact = _mcp_memory(
+            path=str(root),
+            operation=operation,
+            subject=SUBJECT,
+            query="needle",
+            owner_scope=owner,
+            request={"view": "compact"},
+        )
+        assert compact["raw"]["code"] == "OK", (operation, compact)
+        assert _ids(compact["raw"]["data"]) == ["a1"]
+    listed = _mcp_memory(
+        path=str(root),
+        operation="list",
+        subject=SUBJECT,
+        query="needle",
+        owner_scope=owner,
+    )
+    assert listed["status"] == "ok"
+    assert sorted(item["id"] for item in listed["raw"]) == ["a1"]
+    listed_compact = _mcp_memory(
+        path=str(root),
+        operation="list",
+        subject=SUBJECT,
+        query="",
+        owner_scope=owner,
+        request={"view": "compact"},
+    )
+    assert listed_compact["raw"]["code"] == "OK"
+    assert _ids(listed_compact["raw"]["data"]) == ["a1"]
+
+    # An allowlist narrows the grant; one outside it is denied.
+    narrowed = _mcp_memory(
+        path=str(root),
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        owner_scope=owner,
+        session_allowlist=["source-b"],
+        request={"view": "compact"},
+    )
+    assert narrowed["raw"]["code"] == "E_PERMISSION"
+    assert narrowed["raw"]["data"]["reason"] == "source_not_granted"
+
+    # `[]` stays rejected by the strict model for every query operation.
+    for operation, extra in (
+        ("ask", {}),
+        ("recall", {}),
+        ("list", {}),
+        ("list", {"request": {"view": "compact"}}),
+    ):
+        outcome = validate_and_normalize(
+            "rush_memory",
+            {
+                "path": str(root),
+                "operation": operation,
+                "subject": SUBJECT,
+                "query": "needle",
+                "session_allowlist": [],
+                **extra,
+            },
+        )
+        assert outcome.rejected, (operation, extra)
+        assert _nn(outcome.error)["data"]["details"][0]["loc"][0] == "session_allowlist"
+
+    # Legacy mode: an omitted allowlist is the HEAD fail-closed `skipped`.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    legacy = _mcp_memory(
+        path=str(bare),
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+    )
+    assert legacy["status"] == "skipped"
+    assert not (bare / ".rush").exists()
+
+
+# --- R6 ---------------------------------------------------------------------
+
+
+def _anchor_failure(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    owner: OwnerScope,
+    module_hash: str,
+) -> None:
+    _row(
+        store,
+        artifact_id,
+        owner,
+        artifact_id,
+        source="migration:failure_ledger",
+        subject="failure",
+        symbol_ref="module.py::Known",
+        content_hash=module_hash,
+        content={
+            "target_file": "module.py",
+            "fix_commit": "abc1234",
+            "error_message": f"marker {artifact_id}",
+        },
+    )
+
+
+def _anchor_pack(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    owner: OwnerScope,
+    module_hash: str,
+) -> None:
+    _row(
+        store,
+        artifact_id,
+        owner,
+        artifact_id,
+        source="context_pack",
+        symbol_ref="module.py::Known",
+        content_hash=module_hash,
+        content={
+            "text": f"packed {artifact_id}",
+            "source_content_hash": module_hash,
+            "cache_key": "module.py:Known",
+            "cache_identity": {"audience": "context_pack"},
+        },
+    )
+
+
+def test_t01_review_and_cache_gate_policy_owner(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.token_economy.memory_cache_gate import check_memory_before_pack
+    from rush.tools.review import ReviewTool
+
+    data_root = default_data_root()
+    root = _git_repo(tmp_path / "project", {"module.py": KNOWN_SRC})
+    register_project(root, data_root=data_root)
+    module_hash = _sha_file(root / "module.py")
+    store = TypedArtifactStore(root)
+    _anchor_failure(store, "f-alice", ALICE, module_hash)
+    _anchor_failure(store, "f-bob", BOB, module_hash)
+    _anchor_pack(store, "c-alice", ALICE, module_hash)
+    _anchor_pack(store, "c-bob", BOB, module_hash)
+    grant = _grant(
+        auth,
+        root,
+        ALICE,
+        data_root,
+        sources=("migration:failure_ledger", "context_pack"),
+        ops=FULL_OPS,
+    )
+
+    def review() -> tuple[list[str], int]:
+        result = ReviewTool().run(root / "module.py")
+        memory = _nn(result.get("metadata", {})).get("memory") or {}
+        used = sorted(entry["id"] for entry in memory.get("used", []))
+        citations = [
+            f for f in result["findings"] if f.get("rule") == "memory-failure-citation"
+        ]
+        return used, len(citations)
+
+    assert review() == (["f-alice"], 1)
+    hit = check_memory_before_pack("module.py", "Known", project_root=root)
+    assert hit.hit is True
+    assert hit.artifact_id == "c-alice"
+
+    # Only Bob's pack row remains selectable: Alice's grant never selects it.
+    store.archive(
+        "c-alice", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    assert (
+        check_memory_before_pack("module.py", "Known", project_root=root).hit is False
+    )
+
+    # Unavailable mode (invalid policy): no memory, nothing created.
+    auth.policy_path(data_root=data_root).write_bytes(b"{")
+    before = _effects(root, data_root, tree=False)
+    assert review() == ([], 0)
+    assert (
+        check_memory_before_pack("module.py", "Known", project_root=root).hit is False
+    )
+    assert _effects(root, data_root, tree=False) == before
+    assert grant["grant_id"]
+
+
+# --- R8 ---------------------------------------------------------------------
+
+
+def _recipe_fixture(root: Path) -> None:
+    (root / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+
+
+def test_t01_recipe_intent_shared_decision_no_files(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.intent import check_intent, record_intent
+    from rush.memory.recipes import record_recipe, resolve_recipe
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _recipe_fixture(root)
+    owner = legacy_owner_scope(root)
+    helper_ref = {"path": "helper.py", "symbol": "helper"}
+    assert (
+        record_recipe(
+            project_root=root, recipe_id="r-live", purpose="p", helper_ref=helper_ref
+        )["code"]
+        == "OK"
+    )
+    assert (
+        record_recipe(
+            project_root=root, recipe_id="r-arch", purpose="p", helper_ref=helper_ref
+        )["code"]
+        == "OK"
+    )
+    assert (
+        record_intent(project_root=root, intent_id="i-live", behavior_id="b-live")[
+            "code"
+        ]
+        == "OK"
+    )
+    assert (
+        record_intent(project_root=root, intent_id="i-arch", behavior_id="b-arch")[
+            "code"
+        ]
+        == "OK"
+    )
+    store = TypedArtifactStore(root)
+    store.archive(
+        "r-arch",
+        expected_version=1,
+        scope="skill_pattern",
+        owner_scope=owner,
+        apply=True,
+    )
+    store.archive(
+        "i-arch",
+        expected_version=1,
+        scope="architectural_decision",
+        owner_scope=owner,
+        apply=True,
+    )
+    live_recipe = store.get_current("r-live")
+    live_intent = store.get_current("i-live")
+    assert live_recipe is not None and live_intent is not None
+    foreign_recipe = dataclasses.replace(
+        live_recipe, id="r-bob", source="recipe:r-bob", owner_scope=BOB
+    )
+    foreign_intent = dataclasses.replace(
+        live_intent, id="i-bob", source="intent:i-bob", owner_scope=BOB
+    )
+    store.write(foreign_recipe)
+    store.write(foreign_intent)
+
+    def unknown_recipe(recipe_id: str) -> dict[str, Any]:
+        return {"code": "E_INPUT", "message": f"unknown recipe {recipe_id!r}"}
+
+    def unknown_intent(intent_id: str) -> dict[str, Any]:
+        return {"code": "E_INPUT", "message": f"unknown intent {intent_id!r}"}
+
+    def assert_unresolved() -> None:
+        assert resolve_recipe(project_root=root, recipe_id="r-live")["code"] == "OK"
+        assert resolve_recipe(project_root=root, recipe_id="r-live")["usable"] is True
+        for rid in ("r-arch", "r-bob", "r-never"):
+            assert resolve_recipe(project_root=root, recipe_id=rid) == unknown_recipe(
+                rid
+            ), rid
+        assert check_intent(project_root=root, intent_id="i-live")["code"] == (
+            "UNRESOLVED"
+        )
+        for iid in ("i-arch", "i-bob", "i-never"):
+            assert check_intent(project_root=root, intent_id=iid) == unknown_intent(
+                iid
+            ), iid
+
+    # Legacy mode (no policy): archived and foreign-owner records are not resolved.
+    assert_unresolved()
+
+    # Policy mode: Alice is the project owner; `recipe:*` and `intent:*` are granted.
+    _grant(
+        auth,
+        root,
+        owner,
+        data_root,
+        sources=("intent:*", "recipe:*"),
+        ops=FULL_OPS,
+    )
+    assert_unresolved()
+
+    # No store: nothing is created, the project tree is unchanged.
+    bare = _registered(tmp_path / "bare", data_root)
+    _grant(auth, bare, legacy_owner_scope(bare), data_root, sources=("intent:*",))
+    before = _effects(bare, data_root)
+    assert resolve_recipe(project_root=bare, recipe_id="r") == unknown_recipe("r")
+    assert check_intent(project_root=bare, intent_id="i") == unknown_intent("i")
+    assert _effects(bare, data_root) == before
+    assert not (bare / ".rush" / "memory.db").exists()
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert resolve_recipe(project_root=plain, recipe_id="r") == unknown_recipe("r")
+    assert check_intent(project_root=plain, intent_id="i") == unknown_intent("i")
+    assert list(plain.iterdir()) == []
+
+
+# --- R9 (related) -----------------------------------------------------------
+
+
+def test_t01_related_missing_store_creates_nothing(tmp_path: Path) -> None:
+    tool = MemoryTool()
+    request = {"id": "ghost", "version": 1}
+
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    result = tool.run(
+        legacy_root,
+        operation="related",
+        session_allowlist=["s"],
+        request=request,
+    )
+    assert _code_of(result) in {"OK", "E_NOT_VISIBLE"}
+    assert list(legacy_root.iterdir()) == []
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "policy", data_root)
+    from rush.memory import authorization as auth
+
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    before = _effects(root, data_root)
+    granted = tool.run(
+        root,
+        operation="related",
+        request=request,
+        owner_scope=ALICE.as_dict(),
+    )
+    assert _code_of(granted) in {"OK", "E_NOT_VISIBLE"}
+    assert not (root / ".rush" / "memory.db").exists()
+    assert _effects(root, data_root) == before
+
+    auth.policy_path(data_root=data_root).write_bytes(b"{")
+    unavailable_before = _effects(root, data_root)
+    denied = tool.run(
+        root,
+        operation="related",
+        request=request,
+        owner_scope=ALICE.as_dict(),
+    )
+    assert _code_of(denied) == "E_PERMISSION"
+    assert _reason_of(denied) == "policy_invalid"
+    assert _effects(root, data_root) == unavailable_before
+
+
+# --- R10: policy lock, race rule, revocation ---------------------------------
+
+REPO_SRC = Path(__file__).resolve().parents[1] / "src"
+
+
+class _Proxy:
+    """Forwards every attribute to `target` except the named overrides."""
+
+    def __init__(self, target: Any, **overrides: Any) -> None:
+        object.__setattr__(self, "_target", target)
+        object.__setattr__(self, "_overrides", overrides)
+
+    def __getattr__(self, name: str) -> Any:
+        overrides = object.__getattribute__(self, "_overrides")
+        if name in overrides:
+            return overrides[name]
+        return getattr(object.__getattribute__(self, "_target"), name)
+
+
+def _child_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(REPO_SRC)
+    return env
+
+
+def _spawn(code: str, **args: Any) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [sys.executable, "-c", code, json.dumps(args)],
+        env=_child_env(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def _wait_for_file(path: Path, *children: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 60
+    while not path.exists():
+        for child in children:
+            if child.poll() is not None:
+                out, err = child.communicate()
+                raise AssertionError(f"child exited {child.returncode}: {out}{err}")
+        assert time.monotonic() < deadline, f"timed out waiting for {path}"
+        time.sleep(0.01)
+
+
+def _reap(child: subprocess.Popen[str], timeout: float = 60.0) -> tuple[int, str, str]:
+    try:
+        out, err = child.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        child.kill()
+        out, err = child.communicate()
+        raise AssertionError(f"child did not exit in {timeout}s: {out}{err}") from None
+    return child.returncode, out, err
+
+
+_HOLD_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    import rush.memory.authorization as auth
+    args = json.loads(sys.argv[1])
+    with auth.hold_policy_lock(data_root=Path(args["data_root"])):
+        Path(args["ready"]).write_text("ready")
+        deadline = time.monotonic() + 60
+        while not Path(args["release"]).exists():
+            if time.monotonic() > deadline:
+                sys.exit(3)
+            time.sleep(0.01)
+    """
+)
+
+_GRANT_CHILD = textwrap.dedent(
+    """
+    import json, sys
+    from pathlib import Path
+    import rush.memory.authorization as auth
+    from rush.memory.store import OwnerScope
+    args = json.loads(sys.argv[1])
+    Path(args["started"]).write_text("started")
+    try:
+        r = auth.grant_memory_scope(
+            project_root=Path(args["root"]),
+            owner_scope=OwnerScope("user", "carol"),
+            approved_sources=["source-a"],
+            allowed_operations=["ask"],
+            expected_policy_revision=args["revision"],
+            consent=True,
+            data_root=Path(args["data_root"]),
+        )
+        print(json.dumps({"policy_revision": r["policy_revision"]}))
+    except auth.MemoryPolicyError as exc:
+        print(json.dumps({"code": exc.code, "reason": exc.reason}))
+    """
+)
+
+_REVOKE_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    import rush.memory.authorization as auth
+    args = json.loads(sys.argv[1])
+    Path(args["started"]).write_text("started")
+    r = auth.revoke_memory_scope(
+        grant_id=args["grant_id"],
+        expected_policy_revision=args["revision"],
+        consent=True,
+        data_root=Path(args["data_root"]),
+    )
+    print(json.dumps({"policy_revision": r["policy_revision"], "ts": time.time()}))
+    """
+)
+
+_FILE_STORAGE_CHILD = textwrap.dedent(
+    """
+    import json, sys
+    from rush.dashboard.state import cross_process_project_lock
+    args = json.loads(sys.argv[1])
+    with cross_process_project_lock("memory-policy:" + args["policy_path"]):
+        pass
+    """
+)
+
+
+def _lock_id(auth: Any, data_root: Path) -> str:
+    return "memory-policy:" + str(auth.policy_path(data_root=data_root))
+
+
+def _write_apply(
+    root: Path, *, owner: OwnerScope = ALICE, marker: str = "w", **kwargs: Any
+) -> Any:
+    source = kwargs.pop("source", "source-a")
+    return MemoryTool().run(
+        root,
+        operation="write",
+        subject=SUBJECT,
+        content={"text": f"needle {marker}"},
+        source=source,
+        owner_scope=owner.as_dict(),
+        request={"apply": True},
+        permissions=ExecutionPermissions(cache_write=True),
+        **kwargs,
+    )
+
+
+def _archive_request(
+    artifact_id: str, *, apply: bool, version: int = 1, receipt: str | None = None
+) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "id": artifact_id,
+        "expected_version": version,
+        "scope": SUBJECT,
+        "owner_scope": ALICE.as_dict(),
+        "apply": apply,
+    }
+    if receipt is not None:
+        request["receipt_operation_id"] = receipt
+    return request
+
+
+def _archive(
+    root: Path, artifact_id: str, *, apply: bool, receipt: str | None = None
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="archive",
+        request=_archive_request(artifact_id, apply=apply, receipt=receipt),
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+
+def _counts(root: Path) -> dict[str, int]:
+    return _table_counts(root / ".rush" / "memory.db")
+
+
+def _fake_kernel32(
+    *, wait: int = 0x102, create: int = 1
+) -> tuple[types.SimpleNamespace, dict[str, Any]]:
+    calls: dict[str, Any] = {"create": [], "wait": [], "close": 0, "release": 0}
+
+    def CreateMutexW(*args: Any) -> int:
+        calls["create"].append(args[2] if len(args) > 2 else None)
+        return create
+
+    def WaitForSingleObject(handle: Any, milliseconds: int) -> int:
+        calls["wait"].append(milliseconds)
+        return wait
+
+    def CloseHandle(handle: Any) -> int:
+        calls["close"] += 1
+        return 1
+
+    def ReleaseMutex(handle: Any) -> int:
+        calls["release"] += 1
+        return 1
+
+    return (
+        types.SimpleNamespace(
+            CreateMutexW=CreateMutexW,
+            WaitForSingleObject=WaitForSingleObject,
+            CloseHandle=CloseHandle,
+            ReleaseMutex=ReleaseMutex,
+        ),
+        calls,
+    )
+
+
+def _install_fake_windows(
+    monkeypatch: pytest.MonkeyPatch, kernel32: types.SimpleNamespace
+) -> None:
+    import ctypes
+
+    import rush.dashboard.state as ds
+
+    monkeypatch.setattr(ds, "sys", _Proxy(sys, platform="win32"))
+    monkeypatch.setattr(
+        ctypes, "windll", types.SimpleNamespace(kernel32=kernel32), raising=False
+    )
+
+
+def _assert_lock_unavailable_everywhere(
+    auth: Any, data_root: Path, root: Path, grant_root: Path
+) -> None:
+    """Memory mutation -> E_PERMISSION lock_unavailable; grant writer -> E_LOCK; zero
+    effects on the store, the policy bytes and the data root."""
+    policy_before = _sha_file(auth.policy_path(data_root=data_root))
+    effects = _effects(root, data_root)
+    result = _write_apply(root)
+    assert _code_of(result) == "E_PERMISSION"
+    assert _reason_of(result) == "lock_unavailable"
+    with pytest.raises(auth.MemoryPolicyError) as info:
+        auth.grant_memory_scope(
+            project_root=grant_root,
+            owner_scope=BOB,
+            approved_sources=["source-a"],
+            allowed_operations=["ask"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    assert info.value.code == "E_LOCK"
+    assert _sha_file(auth.policy_path(data_root=data_root)) == policy_before
+    assert _effects(root, data_root) == effects
+
+
+@pytest.mark.posix_only
+def test_t01_policy_lock_reentrant_same_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    import rush.dashboard.state as ds
+    from rush.memory import authorization as auth
+
+    data_root = tmp_path / "lock-root"
+    data_root.mkdir()
+    prefix = str(data_root.resolve())
+    opens: list[str] = []
+    exclusive: list[int] = []
+    real_open, real_flock = os.open, fcntl.flock
+
+    def spy_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        if str(path).startswith(prefix):
+            opens.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    def spy_flock(fd: int, operation: int) -> Any:
+        if operation & fcntl.LOCK_EX:
+            exclusive.append(operation)
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(os, "open", spy_open)
+    monkeypatch.setattr(ds.fcntl, "flock", spy_flock)
+    with (
+        auth.hold_policy_lock(data_root=data_root),
+        auth.hold_policy_lock(data_root=data_root),
+        auth.hold_policy_lock(data_root=data_root),
+    ):
+        pass
+    # D2 directory storage: the one fd is the data root directory itself, never a
+    # lock file under `dashboard/project_locks`.
+    assert opens == [prefix], opens
+    assert len(exclusive) == 1, exclusive
+    # Released: the same thread can take it again as a fresh outermost entry.
+    with auth.hold_policy_lock(data_root=data_root):
+        pass
+    assert len(exclusive) == 2
+
+
+def test_t01_policy_lock_blocks_other_thread(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = tmp_path / "lock-root"
+    data_root.mkdir()
+    holding, release, second_in = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+
+    def holder() -> None:
+        with auth.hold_policy_lock(data_root=data_root):
+            holding.set()
+            release.wait(10)
+
+    def contender() -> None:
+        holding.wait(10)
+        with auth.hold_policy_lock(data_root=data_root):
+            second_in.set()
+
+    first = threading.Thread(target=holder)
+    second = threading.Thread(target=contender)
+    before = _tree(data_root)
+    first.start()
+    assert holding.wait(10)
+    second.start()
+    try:
+        assert not second_in.wait(0.5)
+        # The lock is held on the data root directory: no lock file is created, and a
+        # third open file description of that directory cannot take the flock.
+        assert _tree(data_root) == before
+        if sys.platform != "win32":
+            import fcntl
+
+            fd = os.open(data_root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+    finally:
+        release.set()
+    assert second_in.wait(10)
+    first.join(10)
+    second.join(10)
+    assert not first.is_alive() and not second.is_alive()
+
+
+def test_t01_policy_lock_creates_no_file(tmp_path: Path) -> None:
+    import hashlib as _hashlib
+
+    auth, data_root, _root, _store, _g = _policy_project(tmp_path)
+    key = data_root / "user" / ".rush" / "memory_store.key"
+    before = _tree(data_root)
+    with (
+        auth.hold_policy_lock(data_root=data_root),
+        auth.hold_policy_lock(data_root=data_root),
+    ):
+        pass
+    assert _tree(data_root) == before
+    digest = _hashlib.sha256(_lock_id(auth, data_root).encode("utf-8")).hexdigest()
+    assert not (data_root / "dashboard" / "project_locks" / f"{digest}.lock").exists()
+    assert key.exists(), "the D41 key is created by the store, before the snapshot"
+    assert before == _tree(data_root)
+
+
+@pytest.mark.posix_nonroot
+def test_t01_policy_lock_readonly_data_root_locks(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = tmp_path / "ro-root"
+    data_root.mkdir()
+    before = _tree(data_root)
+    data_root.chmod(0o555)
+    try:
+        with (
+            auth.hold_policy_lock(data_root=data_root),
+            auth.hold_policy_lock(data_root=data_root),
+        ):
+            pass
+        assert _tree(data_root) == before
+    finally:
+        data_root.chmod(0o700)
+
+
+@pytest.mark.posix_only
+def test_t01_policy_lock_bounded_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.dashboard.state as ds
+
+    auth, data_root, root, store, _g = _policy_project(tmp_path)
+    _row(store, "a1", ALICE, "mk-a1")
+    monkeypatch.setattr(ds, "_DIRECTORY_LOCK_TIMEOUT_S", 0.5)
+    ready, release = tmp_path / "ready", tmp_path / "release"
+    child = _spawn(
+        _HOLD_CHILD, data_root=str(data_root), ready=str(ready), release=str(release)
+    )
+    try:
+        _wait_for_file(ready, child)
+        started = time.monotonic()
+        _assert_lock_unavailable_everywhere(auth, data_root, root, root)
+        assert time.monotonic() - started < 30
+    finally:
+        release.write_text("go")
+        code, _out, err = _reap(child)
+    assert code == 0, err
+
+    # A data root owned by another uid is refused before any flock.
+    proxy = _Proxy(os, geteuid=lambda: os.geteuid() + 4242)
+    monkeypatch.setattr(ds, "os", proxy)
+    _assert_lock_unavailable_everywhere(auth, data_root, root, root)
+
+
+def test_t01_policy_lock_windows_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.dashboard.state as ds
+
+    auth, data_root, root, _store, _g = _policy_project(tmp_path)
+    kernel32, calls = _fake_kernel32(wait=0x00000102)
+    _install_fake_windows(monkeypatch, kernel32)
+    assert ds._DIRECTORY_LOCK_TIMEOUT_S == 30.0
+    _assert_lock_unavailable_everywhere(auth, data_root, root, root)
+    assert calls["wait"], "the policy lock never reached WaitForSingleObject"
+    assert set(calls["wait"]) == {30000}
+    assert calls["close"] >= len(calls["wait"])
+    assert calls["release"] == 0
+
+    # `storage="file"` keeps the infinite wait.
+    file_kernel32, file_calls = _fake_kernel32(wait=0x00000000)
+    _install_fake_windows(monkeypatch, file_kernel32)
+    with ds.cross_process_project_lock("project:fixture", data_root=data_root):
+        pass
+    assert file_calls["wait"] == [0xFFFFFFFF]
+    assert file_calls["release"] == 1
+
+
+@pytest.mark.windows_only
+def test_t01_policy_lock_windows_timeout_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.dashboard.state as ds
+
+    auth, data_root, root, _store, _g = _policy_project(tmp_path)
+    monkeypatch.setattr(ds, "_DIRECTORY_LOCK_TIMEOUT_S", 0.5)
+    ready, release = tmp_path / "ready", tmp_path / "release"
+    child = _spawn(
+        _HOLD_CHILD, data_root=str(data_root), ready=str(ready), release=str(release)
+    )
+    try:
+        _wait_for_file(ready, child)
+        _assert_lock_unavailable_everywhere(auth, data_root, root, root)
+    finally:
+        release.write_text("go")
+        code, _out, err = _reap(child)
+    assert code == 0, err
+
+
+def test_t01_policy_lock_windows_global_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.dashboard.state as ds
+
+    auth, data_root, root, _store, _g = _policy_project(tmp_path)
+    lock_id = _lock_id(auth, data_root)
+    expected = (
+        "Global\\RushPolicy-" + hashlib.sha256(lock_id.encode("utf-8")).hexdigest()
+    )
+    assert ds._windows_policy_mutex_name(lock_id) == expected
+
+    kernel32, calls = _fake_kernel32(wait=0x00000000)
+    _install_fake_windows(monkeypatch, kernel32)
+    with ds.cross_process_project_lock(
+        lock_id, data_root=data_root, storage="directory"
+    ):
+        pass
+    assert calls["create"] == [expected]
+    assert calls["release"] == 1
+
+    file_kernel32, file_calls = _fake_kernel32(wait=0x00000000)
+    _install_fake_windows(monkeypatch, file_kernel32)
+    with ds.cross_process_project_lock("project:fixture", data_root=data_root):
+        pass
+    assert file_calls["create"] == [
+        "Local\\RushOwner-"
+        + hashlib.sha256(b"project-mutation:project:fixture").hexdigest()
+    ]
+
+    # CreateMutexW returning NULL fails closed.
+    null_kernel32, null_calls = _fake_kernel32(create=0)
+    _install_fake_windows(monkeypatch, null_kernel32)
+    _assert_lock_unavailable_everywhere(auth, data_root, root, root)
+    assert null_calls["wait"] == []
+
+
+def test_t01_policy_lock_rejects_non_directory_storage(tmp_path: Path) -> None:
+    import rush.dashboard.state as ds
+    from rush.memory import authorization as auth
+
+    data_root = tmp_path / "lock-root"
+    data_root.mkdir()
+    lock_id = _lock_id(auth, data_root)
+    with (
+        pytest.raises(ValueError),
+        ds.cross_process_project_lock(lock_id, data_root=data_root),
+    ):
+        pass
+    with (
+        pytest.raises(ValueError),
+        ds.cross_process_project_lock(lock_id, data_root=data_root, storage="file"),
+    ):
+        pass
+    with (
+        pytest.raises(ValueError),
+        ds.cross_process_project_lock(
+            lock_id,
+            data_root=data_root,
+            storage="bogus",  # type: ignore[arg-type]
+        ),
+    ):
+        pass
+    assert not (data_root / "dashboard" / "project_locks").exists()
+    assert _tree(data_root) == []
+
+
+@pytest.mark.posix_only
+def test_t01_policy_lock_nested_root_mismatch_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.dashboard.state as ds
+    from rush.memory import authorization as auth
+
+    root_a, root_b = tmp_path / "A", tmp_path / "B"
+    root_a.mkdir()
+    root_b.mkdir()
+    project = _registered(tmp_path / "project", root_a)
+    lock_id = _lock_id(auth, root_a)
+    acquisitions: list[str] = []
+    real = ds._acquire_cross_process_project_lock
+
+    @contextlib.contextmanager
+    def spy(project_id: str, **kwargs: Any) -> Any:
+        acquisitions.append(project_id)
+        with real(project_id, **kwargs):
+            yield
+
+    monkeypatch.setattr(ds, "_acquire_cross_process_project_lock", spy)
+    started = tmp_path / "started"
+    child: subprocess.Popen[str] | None = None
+    try:
+        with auth.hold_policy_lock(data_root=root_a):
+            with (
+                pytest.raises(OSError),
+                ds.cross_process_project_lock(
+                    lock_id, data_root=root_b, storage="directory"
+                ),
+            ):
+                pass
+            assert len(acquisitions) == 1
+            child = _spawn(
+                _GRANT_CHILD,
+                root=str(project),
+                data_root=str(root_a),
+                revision=0,
+                started=str(started),
+            )
+            _wait_for_file(started, child)
+            time.sleep(0.5)
+            assert child.poll() is None, "the grant must block on the outer lock"
+        code, out, err = _reap(child)
+    finally:
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.communicate()
+    assert code == 0, err
+    assert json.loads(out.strip().splitlines()[-1]) == {"policy_revision": 1}
+
+
+@pytest.mark.posix_only
+def test_t01_policy_lock_creates_missing_parents(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = tmp_path / "a" / "b" / "data"
+    assert not (tmp_path / "a").exists()
+    old = os.umask(0o022)
+    try:
+        with auth.hold_policy_lock(data_root=data_root):
+            assert data_root.is_dir()
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(data_root.stat().st_mode) == 0o700
+    assert _tree(data_root) == []
+
+
+@pytest.mark.posix_only
+def test_t01_policy_writer_blocked_through_mutation_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import retrieval
+    from rush.tools import memory as memory_tool
+
+    auth, data_root, root, store, grant = _policy_project(tmp_path)
+    _row(store, "a1", ALICE, "mk-a1")
+    before = _counts(root)
+    entered, gate = threading.Event(), threading.Event()
+
+    def waiting(access: Any) -> None:
+        entered.set()
+        gate.wait(30)
+
+    monkeypatch.setattr(retrieval, "recheck_failure", waiting)
+    if hasattr(memory_tool, "recheck_failure"):
+        monkeypatch.setattr(memory_tool, "recheck_failure", waiting)
+
+    thread, box = _run_in_thread(
+        lambda: _archive(root, "a1", apply=True, receipt="op-blocked")
+    )
+    child: subprocess.Popen[str] | None = None
+    try:
+        assert entered.wait(30)
+        started = tmp_path / "revoke-started"
+        revision = _revision(auth, data_root)
+        child = _spawn(
+            _REVOKE_CHILD,
+            grant_id=grant["grant_id"],
+            revision=revision,
+            data_root=str(data_root),
+            started=str(started),
+        )
+        _wait_for_file(started, child)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            assert child.poll() is None, "revoke ran while a mutation was mid-commit"
+            time.sleep(0.05)
+        released_at = time.time()
+        gate.set()
+        thread.join(30)
+        assert not thread.is_alive()
+        code, out, err = _reap(child)
+        assert code == 0, err
+        revoked = json.loads(out.strip().splitlines()[-1])
+        assert revoked["policy_revision"] == revision + 1
+        assert revoked["ts"] > released_at
+    finally:
+        gate.set()
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.communicate()
+    assert _code_of(box["result"]) == "OK"
+    after = _counts(root)
+    assert after["mutation_receipts"] == before["mutation_receipts"] + 1
+    assert _nn(store.get_current_row("a1"))["archived_at"] is not None
+    second = _spawn(
+        _FILE_STORAGE_CHILD, policy_path=str(auth.policy_path(data_root=data_root))
+    )
+    try:
+        code2, _out2, err2 = _reap(second)
+    finally:
+        if second.poll() is None:
+            second.kill()
+            second.communicate()
+    assert code2 != 0
+    assert "ValueError" in err2
+
+
+# --- R10: mutation race rule --------------------------------------------------
+
+
+def test_t01_mutation_revoke_between_preview_and_apply(tmp_path: Path) -> None:
+    auth, data_root, root, store, grant = _policy_project(tmp_path)
+    _row(store, "a1", ALICE, "mk-a1")
+    preview = _archive(root, "a1", apply=False)
+    assert _code_of(preview) == "OK"
+    before = _counts(root)
+    effects = _effects(root, data_root)
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    effects = _effects(root, data_root)
+    applied = _archive(root, "a1", apply=True, receipt="op-revoked")
+    assert _code_of(applied) == "E_PERMISSION"
+    assert _reason_of(applied) == "revoked"
+    assert _nn(store.get_current_row("a1"))["archived_at"] is None
+    assert _nn(store.get_current_row("a1"))["artifact_version"] == 1
+    assert _counts(root) == before
+    assert _counts(root).get("mutation_receipts", 0) == before.get(
+        "mutation_receipts", 0
+    )
+    assert _effects(root, data_root) == effects
+    written = _write_apply(root, marker="late")
+    assert _code_of(written) == "E_PERMISSION"
+    assert _reason_of(written) == "revoked"
+    assert _counts(root) == before
+
+
+def test_t01_grant_expiry_mid_transaction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.store import TypedArtifactStore as Store
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = Store(root)
+    _row(store, "a1", ALICE, "mk-a1")
+    expires = time.time() + 3600
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=ALICE,
+        approved_sources=["source-a"],
+        allowed_operations=list(FULL_OPS),
+        expected_policy_revision=0,
+        consent=True,
+        expires_at=expires,
+        data_root=data_root,
+    )
+    import rush.memory.store as store_module
+
+    before = _counts(root)
+    original = store_module._write_version
+    fired = {"n": 0}
+    with monkeypatch.context() as patch:
+
+        def late(*args: Any, **kwargs: Any) -> Any:
+            result = original(*args, **kwargs)
+            if fired["n"] == 0:
+                fired["n"] += 1
+                patch.setattr(auth, "_now", lambda: expires + 1)
+            return result
+
+        patch.setattr(store_module, "_write_version", late)
+        applied = _archive(root, "a1", apply=True, receipt="op-expired")
+    assert fired["n"] == 1, "the archive transaction never reached _write_version"
+    assert _code_of(applied) == "E_PERMISSION"
+    assert _reason_of(applied) == "expired"
+    assert _nn(store.get_current_row("a1"))["archived_at"] is None
+    assert _counts(root) == before
+
+
+def _policy_race_cases() -> list[Any]:
+    return [
+        pytest.param(
+            "enrolment_between_check_and_write", id="enrolment_between_check_and_write"
+        ),
+        pytest.param(
+            "legacy_cursor_after_enrolment", id="legacy_cursor_after_enrolment"
+        ),
+        pytest.param(
+            "legacy_cursor_to_policy_restart", id="legacy_cursor_to_policy_restart"
+        ),
+        pytest.param("revoke_before_response", id="revoke_before_response"),
+        pytest.param("fresh_request_no_grant", id="fresh_request_no_grant"),
+        pytest.param(
+            "readonly_root_no_policy_legacy_write",
+            id="readonly_root_no_policy_legacy_write",
+            marks=pytest.mark.posix_nonroot,
+        ),
+        pytest.param(
+            "readonly_root_with_policy_lock_acquired",
+            id="readonly_root_with_policy_lock_acquired",
+            marks=pytest.mark.posix_nonroot,
+        ),
+        pytest.param(
+            "data_root_open_oserror",
+            id="data_root_open_oserror",
+            marks=pytest.mark.posix_only,
+        ),
+    ]
+
+
+@pytest.mark.parametrize("case", _policy_race_cases())
+def test_t01_policy_mode_race(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory import retrieval
+    from rush.memory.retrieval import recall_page
+
+    data_root = default_data_root()
+
+    if case == "enrolment_between_check_and_write":
+        import rush.dashboard.state as ds
+
+        root = tmp_path / "legacy"
+        root.mkdir()
+        # The project is registered but has no grant yet: legacy mode.
+        root = _registered(root, data_root)
+        store = TypedArtifactStore(root)
+        _row(store, "a1", ALICE, "mk-a1")
+        before = _counts(root)
+        real = ds.cross_process_project_lock
+        state = {"enrolled": False}
+
+        @contextlib.contextmanager
+        def enrol_first(project_id: str, **kwargs: Any) -> Any:
+            if project_id.startswith("memory-policy:") and not state["enrolled"]:
+                state["enrolled"] = True
+                _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+            with real(project_id, **kwargs):
+                yield
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ds, "cross_process_project_lock", enrol_first)
+            result = _write_apply(root, owner=legacy_owner_scope(root))
+        assert state["enrolled"], "the mutation never took the policy lock"
+        assert _code_of(result) == "E_PERMISSION"
+        assert _reason_of(result) == "policy_mode_changed"
+        assert _counts(root) == before
+        return
+
+    if case in {"legacy_cursor_after_enrolment", "legacy_cursor_to_policy_restart"}:
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        minted_source = (
+            "source-b" if case == "legacy_cursor_after_enrolment" else "source-a"
+        )
+        for i in range(3):
+            _row(store, f"r{i}", ALICE, f"mk-r{i}", source=minted_source)
+        first = recall_page(
+            store,
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=[minted_source],
+            limit=1,
+        )
+        assert first["code"] == "OK" and first["next_cursor"]
+        _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        cont = recall_page(
+            store,
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=[minted_source],
+            limit=1,
+            cursor=first["next_cursor"],
+        )
+        if case == "legacy_cursor_after_enrolment":
+            assert cont["code"] == "E_PERMISSION"
+            assert _reason_of(cont) == "source_not_granted"
+        else:
+            assert cont["code"] == "E_RESTART"
+        assert cont["items"] == []
+        return
+
+    if case == "revoke_before_response":
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        for i in range(3):
+            _row(store, f"r{i}", ALICE, f"mk-r{i}")
+        grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        entered, release = _pause_first_call(monkeypatch, retrieval, "_measure_page")
+        thread, box = _run_in_thread(
+            lambda: MemoryTool().run(
+                root,
+                operation="ask",
+                subject=SUBJECT,
+                query="needle",
+                request={"view": "compact", "limit": 1},
+                owner_scope=ALICE.as_dict(),
+                session_allowlist=["source-a"],
+            )
+        )
+        assert entered.wait(10)
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        release.set()
+        thread.join(10)
+        assert not thread.is_alive()
+        assert _code_of(box["result"]) == "E_PERMISSION"
+        assert _items(box["result"]) == []
+        return
+
+    if case == "fresh_request_no_grant":
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        _row(store, "r0", ALICE, "mk-r0")
+        grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        result = MemoryTool().run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            request={"view": "compact"},
+            session_allowlist=["source-a"],
+        )
+        assert _code_of(result) == "E_PERMISSION"
+        assert _reason_of(result) == "revoked"
+        assert "mk-r0" not in _dump(_rd(result))
+        return
+
+    if case == "readonly_root_no_policy_legacy_write":
+        root = tmp_path / "project"
+        root.mkdir()
+        data_root.mkdir(parents=True, exist_ok=True)
+        assert not auth.policy_path(data_root=data_root).exists()
+        data_root.chmod(0o555)
+        try:
+            result = _write_apply(root, owner=legacy_owner_scope(root), source="s")
+        finally:
+            data_root.chmod(0o700)
+        assert _code_of(result) in {None, "OK"}
+        assert result["status"] == "ok"
+        assert _counts(root)["memory_artifacts"] == 1
+        return
+
+    if case == "readonly_root_with_policy_lock_acquired":
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        _row(store, "r0", ALICE, "mk-r0")
+        _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        assert retrieval.memory_policy_mode(root) == "policy"
+        data_root.chmod(0o555)
+        try:
+            result = _write_apply(root, marker="ro")
+            denied = _write_apply(root, owner=BOB, marker="bob")
+        finally:
+            data_root.chmod(0o700)
+        assert result["status"] == "ok", _dump(result)
+        assert _counts(root)["memory_artifacts"] == 2
+        assert _code_of(denied) == "E_PERMISSION"
+        assert _reason_of(denied) == "owner_not_granted"
+        assert _counts(root)["memory_artifacts"] == 2
+        return
+
+    assert case == "data_root_open_oserror"
+    import rush.dashboard.state as ds
+
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "r0", ALICE, "mk-r0")
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    real_open = os.open
+
+    def failing_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if flags & getattr(os, "O_DIRECTORY", 0):
+            raise OSError("forced data-root open failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(ds, "os", _Proxy(os, open=failing_open))
+    effects = _effects(root, data_root)
+    result = _write_apply(root)
+    assert _code_of(result) == "E_PERMISSION"
+    assert _reason_of(result) == "lock_unavailable"
+    assert _effects(root, data_root) == effects
+
+
+# --- R10: read-only data root barrier ----------------------------------------
+
+
+@pytest.mark.posix_nonroot
+def test_t01_policy_lock_readonly_dir_barrier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.store import TypedArtifactStore as Store
+
+    data_root = default_data_root()
+    (data_root / "user" / ".rush").mkdir(parents=True, mode=0o700, exist_ok=True)
+    root = _registered(tmp_path / "project", data_root)
+    store = Store(root)
+    _row(store, "a1", ALICE, "mk-a1")
+    entered, release = threading.Event(), threading.Event()
+    original = Store._insert_row
+
+    def paused(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if not entered.is_set():
+            entered.set()
+            release.wait(30)
+        return original(self, *args, **kwargs)
+
+    data_root.chmod(0o555)
+    before = _tree(data_root)
+    child: subprocess.Popen[str] | None = None
+    patch_ctx = monkeypatch.context()
+    patch = patch_ctx.__enter__()
+    try:
+        patch.setattr(Store, "_insert_row", paused)
+        thread, box = _run_in_thread(
+            lambda: _write_apply(root, owner=legacy_owner_scope(root), source="s")
+        )
+        assert entered.wait(30)
+        started = tmp_path / "grant-started"
+        child = _spawn(
+            _GRANT_CHILD,
+            root=str(root),
+            data_root=str(data_root),
+            revision=0,
+            started=str(started),
+        )
+        _wait_for_file(started, child)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            assert child.poll() is None, "enrolment overtook an in-flight legacy write"
+            time.sleep(0.05)
+        release.set()
+        thread.join(30)
+        assert not thread.is_alive()
+        assert box["result"]["status"] == "ok"
+        code, out, err = _reap(child)
+        assert code == 0, err
+        assert json.loads(out.strip().splitlines()[-1]) == {"policy_revision": 1}
+    finally:
+        release.set()
+        patch_ctx.__exit__(None, None, None)
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.communicate()
+        data_root.chmod(0o700)
+    added = set(_tree(data_root)) - set(before)
+    assert added <= {"user/.rush/memory_authorization.json"}, added
+
+    # Enrolment committed first: the next mutation is denied with zero effects.
+    effects = _effects(root, data_root)
+    denied = _write_apply(root, owner=legacy_owner_scope(root), source="s")
+    assert _code_of(denied) == "E_PERMISSION"
+    assert _effects(root, data_root) == effects
+
+
+# --- R13: route inventory ---------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+INVENTORY_FIXTURE = (
+    REPO_ROOT / "tests" / "fixtures" / "phase72" / "memory_route_inventory.json"
+)
+PLAN_PATH = (
+    REPO_ROOT
+    / "docs"
+    / "phase-plans"
+    / "phase-72-memory-correctness-and-user-control-plan.md"
+)
+INVENTORY_CALLEES = frozenset(
+    {
+        "TypedArtifactStore",
+        "open_readonly",
+        "open_readonly_view",
+        "open_sqlite_readonly",
+        "read_sqlite_readonly",
+        "PreferenceStore",
+        "write_if_new",
+        "artifact_version_sources",
+        "SessionMemoryManager",
+        "FlightRecorder",
+        "CheckpointJournal",
+        "save_checkpoint",
+        "TelemetryStore",
+        "_write_dedicated_file",
+        "get_receipt_readonly",
+        "version_history_readonly",
+        "consent_inventory",
+        "preview_import_records",
+        "apply_import_records",
+        "find_import_effect_readonly",
+    }
+)
+TASK_IDS = frozenset(
+    {
+        "72-T01",
+        "72-T02",
+        "72-T03",
+        "72-T04",
+        "72-T05",
+        "72-T06",
+        "73-T09/CODEC",
+        "73-T02/BOOTSTRAP-CONSENT",
+        "72-T07",
+        "75-T02/EVALUATOR",
+        "72-T08",
+        "72-T09",
+    }
+)
+
+
+def _inventory_matches(node: Any) -> bool:
+    import ast
+
+    if isinstance(node, ast.Call):
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name is not None and (
+            name in INVENTORY_CALLEES or name.startswith("read_origin")
+        ):
+            return True
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "TypedArtifactStore"
+    )
+
+
+def _scan_route_pairs(overrides: dict[str, str] | None = None) -> set[tuple[str, str]]:
+    """R13: every (module relative to `src/rush`, innermost enclosing `def` or
+    `<module>`) holding a memory-store-touching node, `memory/store.py` excluded.
+    `overrides` replaces or adds module sources by relative path."""
+    import ast
+
+    src = REPO_ROOT / "src" / "rush"
+    sources: dict[str, str] = {}
+    for path in sorted(src.rglob("*.py")):
+        rel = path.relative_to(src).as_posix()
+        if rel != "memory/store.py":
+            sources[rel] = path.read_text(encoding="utf-8")
+    for rel, text in (overrides or {}).items():
+        sources[rel] = text
+    pairs: set[tuple[str, str]] = set()
+    for rel, text in sources.items():
+        tree = ast.parse(text)
+        docstrings = {
+            id(node.body[0].value)
+            for node in ast.walk(tree)
+            if isinstance(
+                node,
+                (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
+            )
+            and node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        }
+
+        def walk(
+            node: Any, function: str, rel: str = rel, docs: set[int] = docstrings
+        ) -> None:
+            for child in ast.iter_child_nodes(node):
+                inner = function
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    inner = child.name
+                if _inventory_matches(child) or (
+                    isinstance(child, ast.Constant)
+                    and isinstance(child.value, str)
+                    and "memory.db" in child.value
+                    and id(child) not in docs
+                ):
+                    pairs.add((rel, inner))
+                walk(child, inner)
+
+        walk(tree, "<module>")
+    return pairs
+
+
+def _plan_section_2_3() -> str:
+    text = PLAN_PATH.read_text(encoding="utf-8")
+    start = text.index("### 2.3 Route inventory")
+    end = text.index("### 2.4", start)
+    return text[start:end]
+
+
+def _inventory_violations(
+    scan: set[tuple[str, str]], fixture: dict[str, Any], plan_section: str
+) -> list[str]:
+    problems: list[str] = []
+    pairs = fixture.get("pairs", [])
+    exemptions = fixture.get("exemptions", [])
+    listed: list[tuple[str, str]] = []
+    for entry in pairs:
+        key = (entry.get("module"), entry.get("function"))
+        listed.append(key)  # type: ignore[arg-type]
+        if not entry.get("route"):
+            problems.append(f"empty route: {key}")
+        if entry.get("task") not in TASK_IDS:
+            problems.append(f"unknown task {entry.get('task')!r}: {key}")
+        if entry.get("task") == "72-T01" and str(entry.get("function")) not in (
+            plan_section
+        ):
+            problems.append(f"72-T01 function absent from plan 2.3: {key}")
+    for entry in exemptions:
+        listed.append((entry.get("module"), entry.get("function")))  # type: ignore[arg-type]
+        if not entry.get("target"):
+            problems.append(f"empty exemption target: {entry}")
+    seen: set[tuple[str, str]] = set()
+    for key in listed:
+        if key in seen:
+            problems.append(f"duplicate: {key}")
+        seen.add(key)
+    for key in sorted(scan - seen):
+        problems.append(f"unlisted: {key[0]}::{key[1]}")
+    for key in sorted(seen - scan):
+        problems.append(f"stale: {key[0]}::{key[1]}")
+    return problems
+
+
+def _load_inventory() -> dict[str, Any]:
+    fixture = json.loads(INVENTORY_FIXTURE.read_text(encoding="utf-8"))
+    assert fixture["schema_version"] == 1
+    return fixture
+
+
+# R8/R13/R15: the routes T01 turns read-only. Each reader opens the store through
+# `open_readonly_view`, never the writable `TypedArtifactStore(...)` constructor, and the
+# two receipt readers call the static `get_receipt_readonly` (writable `leak_store`
+# stays only for cleanup).
+_READONLY_ROUTE_FUNCTIONS = (
+    ("memory/recipes.py", "resolve_recipe"),
+    ("memory/intent.py", "check_intent"),
+    ("tools/memory.py", "_related"),
+)
+_RECEIPT_READ_FUNCTIONS = (
+    ("dashboard/state.py", "reconcile_admissions"),
+    ("workflows/project_run.py", "recover_prepared_handoff"),
+)
+
+
+def _call_names(rel: str, function: str) -> set[str]:
+    import ast
+
+    tree = ast.parse((REPO_ROOT / "src" / "rush" / rel).read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == function
+        ):
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call):
+                    func = call.func
+                    if isinstance(func, ast.Name):
+                        names.add(func.id)
+                    elif isinstance(func, ast.Attribute):
+                        names.add(func.attr)
+    return names
+
+
+def _t01_route_contract_violations() -> list[str]:
+    problems: list[str] = []
+    for rel, function in _READONLY_ROUTE_FUNCTIONS:
+        names = _call_names(rel, function)
+        if "TypedArtifactStore" in names:
+            problems.append(f"writable store in read route: {rel}::{function}")
+        if "open_readonly_view" not in names:
+            problems.append(f"no read-only view in read route: {rel}::{function}")
+    for rel, function in _RECEIPT_READ_FUNCTIONS:
+        if "get_receipt_readonly" not in _call_names(rel, function):
+            problems.append(f"receipt read is not read-only: {rel}::{function}")
+    return problems
+
+
+def test_t01_memory_route_inventory_closed() -> None:
+    fixture = _load_inventory()
+    scan = _scan_route_pairs()
+    # the scan is not trivially empty: 110 pairs at HEAD, minus the three writers
+    # (`record_turn`, `record_event`, `_write_handoff_artifact`) whose store now opens
+    # inside the shared writer gate instead of in the function itself
+    assert len(scan) >= 105, "the AST scan found far fewer pairs than at HEAD"
+    assert _inventory_violations(scan, fixture, _plan_section_2_3()) == []
+    assert _t01_route_contract_violations() == []
+
+
+def test_t01_inventory_rejects_unlisted_pair() -> None:
+    assert _t01_route_contract_violations() == []
+    fixture = _load_inventory()
+    section = _plan_section_2_3()
+    baseline = _scan_route_pairs()
+    assert _inventory_violations(baseline, fixture, section) == []
+    status = (REPO_ROOT / "src" / "rush" / "tools" / "status.py").read_text(
+        encoding="utf-8"
+    )
+    added = status + (
+        "\n\ndef _inventory_probe_unlisted(root):\n"
+        "    return TypedArtifactStore(root)\n"
+    )
+    scan = _scan_route_pairs({"tools/status.py": added})
+    assert scan - baseline == {("tools/status.py", "_inventory_probe_unlisted")}
+    assert _inventory_violations(scan, fixture, section) == [
+        "unlisted: tools/status.py::_inventory_probe_unlisted"
+    ]
+    literal = status + (
+        '\n\ndef _inventory_probe_literal():\n    return ".rush/memory.db"\n'
+    )
+    assert ("tools/status.py", "_inventory_probe_literal") in _scan_route_pairs(
+        {"tools/status.py": literal}
+    )
+    docstring_only = status + (
+        '\n\ndef _inventory_probe_doc():\n    """reads memory.db"""\n    return 1\n'
+    )
+    assert ("tools/status.py", "_inventory_probe_doc") not in _scan_route_pairs(
+        {"tools/status.py": docstring_only}
+    )
+
+
+def test_t01_inventory_rejects_stale_pair() -> None:
+    assert _t01_route_contract_violations() == []
+    fixture = _load_inventory()
+    section = _plan_section_2_3()
+    scan = _scan_route_pairs()
+    assert _inventory_violations(scan, fixture, section) == []
+    stale = json.loads(json.dumps(fixture))
+    stale["pairs"].append(
+        {
+            "module": "tools/status.py",
+            "function": "_inventory_probe_stale",
+            "route": "stale",
+            "task": "72-T01",
+        }
+    )
+    problems = _inventory_violations(scan, stale, section)
+    assert "stale: tools/status.py::_inventory_probe_stale" in problems
+    duplicate = json.loads(json.dumps(fixture))
+    duplicate["pairs"].append(dict(fixture["pairs"][0]))
+    assert any(
+        p.startswith("duplicate:")
+        for p in _inventory_violations(scan, duplicate, section)
+    )
+    emptied = json.loads(json.dumps(fixture))
+    emptied["pairs"][0]["route"] = ""
+    assert any(
+        p.startswith("empty route:")
+        for p in _inventory_violations(scan, emptied, section)
+    )
+    # A removed call also leaves its fixture entry stale.
+    first = fixture["pairs"][0]
+    source = (REPO_ROOT / "src" / "rush" / first["module"]).read_text(encoding="utf-8")
+    scan_without = _scan_route_pairs({first["module"]: "x = 1\n"})
+    assert source
+    assert f"stale: {first['module']}::{first['function']}" in _inventory_violations(
+        scan_without, fixture, section
+    )
+
+
+# --- R11: D1 mode predicate -------------------------------------------------
+
+
+def _decision(root: Any, **kwargs: Any) -> tuple[str, Any]:
+    from rush.memory.retrieval import memory_policy_decision, memory_policy_mode
+
+    decision = memory_policy_decision(root, **kwargs)
+    assert memory_policy_mode(root, **kwargs) == decision[0]
+    return decision
+
+
+def _mode_cases() -> list[Any]:
+    posix = pytest.mark.posix_only
+    nonroot = pytest.mark.posix_nonroot
+    names = [
+        ("row0_invalid_project_roots", ()),
+        ("row1_policy_invalid", ()),
+        ("row1_data_root_unavailable", ()),
+        ("row1_unreadable_policy", (nonroot,)),
+        ("row1a_overlay_storage_root", ()),
+        ("row1a_overlay_storage_root_symlink", (posix,)),
+        ("row2_missing_policy_final_marker", ()),
+        ("row2_missing_policy_pending_marker", ()),
+        ("row2a_missing_policy_unmarked", ()),
+        ("row2a_rush_is_a_file", ()),
+        ("row3_root_match", ()),
+        ("row3_registry_id_match_after_relink", ()),
+        ("row3a_descriptor_moved_root", ()),
+        ("row3a_descriptor_copied_root", ()),
+        ("row3b_descriptor_corrupt_no_match", ()),
+        ("row3_corrupt_descriptor_root_match", ()),
+        ("row4_copied_store_project_owned_rows", ()),
+        ("row4_agent_rows_in_other_project_stay_legacy", ()),
+        ("row5_registry_corrupt", ()),
+        ("row5_registry_unreadable", (nonroot,)),
+        ("row6_store_unreadable", ()),
+        ("row6_unrelated_project_stays_legacy", ()),
+        ("row7_marked_no_grant", ()),
+        ("row7a_unmarked_no_grant", ()),
+        ("descriptor_unrelated", ()),
+    ]
+    return [pytest.param(n, id=n, marks=m) for n, m in names]
+
+
+@pytest.mark.parametrize("case", _mode_cases())
+def test_t01_mode_predicate_rows(case: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.workflows.projects import relink_project
+
+    data_root = default_data_root()
+    data_root.mkdir(parents=True, exist_ok=True)
+
+    def mark(root: Path, name: str = "memory-policy.required") -> None:
+        (root / ".rush").mkdir(exist_ok=True)
+        (root / ".rush" / name).write_bytes(b"")
+
+    def project(name: str, *, register: bool = True) -> Path:
+        path = tmp_path / name
+        path.mkdir(parents=True, exist_ok=True)
+        return _registered(path, data_root) if register else path.resolve()
+
+    def alice_grant(root: Path) -> dict[str, Any]:
+        return _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+
+    if case == "row0_invalid_project_roots":
+        loop = tmp_path / "loop"
+        loop.symlink_to(loop)
+        for bad in ("a\x00b", loop, 3, None, b"x"):
+            assert _decision(bad) == ("unavailable", "project_missing"), bad
+            assert _decision(bad, data_root=data_root) == (
+                "unavailable",
+                "project_missing",
+            ), bad
+        return
+    if case == "row1_policy_invalid":
+        root = project("a")
+        alice_grant(root)
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+        assert _decision(root) == ("unavailable", "policy_invalid")
+        return
+    if case == "row1_data_root_unavailable":
+        root = project("a")
+        loop = tmp_path / "dr-loop"
+        loop.symlink_to(loop)
+        for bad in (3, Path(str(tmp_path) + "/a\x00b"), loop):
+            assert _decision(root, data_root=bad) == (
+                "unavailable",
+                "data_root_unavailable",
+            ), bad
+        return
+    if case == "row1_unreadable_policy":
+        root = project("a")
+        alice_grant(root)
+        policy = auth.policy_path(data_root=data_root)
+        policy.chmod(0o000)
+        try:
+            assert _decision(root) == ("unavailable", "policy_invalid")
+        finally:
+            policy.chmod(0o600)
+        return
+    if case in {"row1a_overlay_storage_root", "row1a_overlay_storage_root_symlink"}:
+        overlay = data_root / "user"
+        (overlay / "sub").mkdir(parents=True, exist_ok=True)
+        targets = [overlay, overlay / "sub"]
+        if case.endswith("symlink"):
+            link = tmp_path / "overlay-link"
+            link.symlink_to(overlay)
+            targets = [link]
+        for target in targets:
+            assert _decision(target) == ("unavailable", "overlay_storage_root"), target
+        return
+    if case == "row2_missing_policy_final_marker":
+        root = project("a", register=False)
+        mark(root)
+        assert _decision(root) == ("unavailable", "policy_missing")
+        return
+    if case == "row2_missing_policy_pending_marker":
+        root = project("a", register=False)
+        mark(root, "memory-policy.required.pending-" + "ab" * 16)
+        assert _decision(root) == ("unavailable", "policy_missing")
+        return
+    if case == "row2a_missing_policy_unmarked":
+        root = project("a", register=False)
+        assert _decision(root) == ("legacy", None)
+        (root / ".rush").mkdir()
+        assert _decision(root) == ("legacy", None)
+        from rush.memory.retrieval import memory_policy_mode
+
+        # The no-policy store project that test_t01_legacy_allowlist_route_retained
+        # drives: nothing registered, nothing granted, so the mode is legacy.
+        store_root = tmp_path / "project"
+        store_root.mkdir()
+        TypedArtifactStore(store_root)
+        assert memory_policy_mode(store_root) == "legacy"
+        return
+    if case == "row2a_rush_is_a_file":
+        root = project("a", register=False)
+        (root / ".rush").write_bytes(b"not a directory")
+        assert _decision(root) == ("legacy", None)
+        return
+    if case == "row3_root_match":
+        root = project("a")
+        alice_grant(root)
+        assert _decision(root) == ("policy", None)
+        return
+    if case == "row3_registry_id_match_after_relink":
+        root = project("a")
+        record = register_project(root, data_root=data_root)
+        alice_grant(root)
+        new_root = tmp_path / "relinked"
+        new_root.mkdir()
+        relink_project(
+            record.project_id,
+            new_root,
+            expected_revision=record.revision,
+            data_root=data_root,
+        )
+        assert _decision(new_root.resolve()) == ("policy", None)
+        return
+    if case in {"row3a_descriptor_moved_root", "row3a_descriptor_copied_root"}:
+        root = project("a")
+        store = TypedArtifactStore(root)
+        _row(store, "a1", ALICE, "mk-a1")
+        alice_grant(root)
+        moved = tmp_path / "b"
+        if case.endswith("moved_root"):
+            root.rename(moved)
+        else:
+            shutil.copytree(root, moved)
+        moved = moved.resolve()
+        assert _decision(moved) == ("policy", None)
+        before = _effects(moved, data_root)
+        result = MemoryTool().run(
+            moved,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            request={"view": "compact"},
+            owner_scope=ALICE.as_dict(),
+        )
+        assert _code_of(result) == "E_PERMISSION"
+        assert _reason_of(result) == "project_not_registered"
+        assert "mk-a1" not in _dump(_rd(result))
+        assert _effects(moved, data_root) == before
+        return
+    if case in {
+        "row3b_descriptor_corrupt_no_match",
+        "row3_corrupt_descriptor_root_match",
+    }:
+        granted = project("a")
+        alice_grant(granted)
+        other = project("b")
+        (other / ".rush" / "project.json").write_bytes(b"{not json")
+        if case == "row3b_descriptor_corrupt_no_match":
+            assert _decision(other) == ("unavailable", "project_descriptor_invalid")
+        else:
+            alice_grant(other)
+            assert _decision(other) == ("policy", None)
+        return
+    if case == "row4_copied_store_project_owned_rows":
+        granted = project("a")
+        store = TypedArtifactStore(granted)
+        owner = legacy_owner_scope(granted)
+        _row(store, "p1", owner, "mk-p1")
+        _grant(auth, granted, owner, data_root, ops=FULL_OPS)
+        copy = tmp_path / "copy"
+        (copy / ".rush").mkdir(parents=True)
+        shutil.copyfile(store.db_path, copy / ".rush" / store.db_path.name)
+        copy = copy.resolve()
+        assert _decision(copy) == ("policy", None)
+        before = _effects(copy, data_root)
+        result = MemoryTool().run(
+            copy,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            request={"view": "compact"},
+            owner_scope=owner.as_dict(),
+        )
+        assert _code_of(result) == "E_PERMISSION"
+        assert _reason_of(result) == "project_not_registered"
+        assert "mk-p1" not in _dump(_rd(result))
+        assert _effects(copy, data_root) == before
+        return
+    if case == "row4_agent_rows_in_other_project_stay_legacy":
+        granted = project("a")
+        _grant(auth, granted, OwnerScope("agent", "robot"), data_root, ops=FULL_OPS)
+        other = project("b", register=False)
+        other_store = TypedArtifactStore(other)
+        _row(other_store, "g1", OwnerScope("agent", "robot"), "mk-g1")
+        assert _decision(other) == ("legacy", None)
+        return
+    if case in {"row5_registry_corrupt", "row5_registry_unreadable"}:
+        granted = project("a")
+        alice_grant(granted)
+        stray = tmp_path / "stray"
+        stray.mkdir()
+        registry = data_root / "projects.json"
+        if case == "row5_registry_corrupt":
+            registry.write_bytes(b"{not json")
+            assert _decision(stray.resolve()) == (
+                "unavailable",
+                "project_registry_invalid",
+            )
+        else:
+            registry.chmod(0o000)
+            try:
+                assert _decision(stray.resolve()) == (
+                    "unavailable",
+                    "project_registry_invalid",
+                )
+            finally:
+                registry.chmod(0o600)
+        return
+    if case in {"row6_store_unreadable", "row6_unrelated_project_stays_legacy"}:
+        granted = project("a")
+        alice_grant(granted)
+        other = project("b", register=False)
+        if case == "row6_store_unreadable":
+            (other / ".rush").mkdir()
+            (other / ".rush" / "memory.db").write_bytes(b"garbage" * 600)
+            assert _decision(other) == ("unavailable", "memory_store_unreadable")
+        else:
+            assert _decision(other) == ("legacy", None)
+        return
+    if case == "row7_marked_no_grant":
+        granted = project("a")
+        alice_grant(granted)
+        other = project("b", register=False)
+        mark(other)
+        assert _decision(other) == ("unavailable", "no_grant")
+        return
+    if case == "row7a_unmarked_no_grant":
+        granted = project("a")
+        alice_grant(granted)
+        other = project("b", register=False)
+        assert _decision(other) == ("legacy", None)
+        return
+    assert case == "descriptor_unrelated"
+    granted = project("a")
+    alice_grant(granted)
+    other = project("b")
+    assert (other / ".rush" / "project.json").exists()
+    assert _decision(other) == ("legacy", None)
+
+
+# --- R11: overlay storage root ---------------------------------------------
+
+
+def _overlay_calls() -> dict[str, Any]:
+    """Route drivers over one project root: each takes the root and returns a
+    ToolResult. Every request is a well-formed one for its operation."""
+    permissions = ExecutionPermissions(cache_write=True)
+    tool = MemoryTool()
+
+    def compact(operation: MemoryOperation) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation=operation,
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=[OVERLAY_SOURCE],
+            owner_scope=owner.as_dict(),
+            request={"view": "compact"},
+        )
+
+    def legacy(operation: MemoryOperation) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation=operation,
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=[OVERLAY_SOURCE],
+            owner_scope=owner.as_dict(),
+        )
+
+    def generic(
+        operation: MemoryOperation, request: dict[str, Any], **extra: Any
+    ) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation=operation,
+            session_allowlist=[OVERLAY_SOURCE],
+            owner_scope=owner.as_dict(),
+            request=request,
+            permissions=permissions,
+            **extra,
+        )
+
+    link = {
+        "source_id": "p1",
+        "source_version": 1,
+        "target_id": "p1",
+        "target_version": 1,
+        "kind": "relates_to",
+    }
+    edit = {
+        "id": "p1",
+        "expected_version": 1,
+        "scope": SUBJECT,
+        "content": {"text": "overlay changed"},
+    }
+    archive = {"id": "p1", "expected_version": 1, "scope": SUBJECT}
+    delete = {
+        "artifact_ids": ["p1"],
+        "expected_revisions": {"p1": 1},
+        "scope": SUBJECT,
+    }
+
+    def write(apply: bool) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation="write",
+            subject=SUBJECT,
+            content={"text": "overlay write"},
+            source=OVERLAY_SOURCE,
+            owner_scope=owner.as_dict(),
+            request={"apply": apply},
+            permissions=permissions,
+        )
+
+    def promote(apply: bool) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation="promote",
+            subject=SUBJECT,
+            content={"text": "overlay promote"},
+            source=OVERLAY_SOURCE,
+            user_stated=True,
+            owner_scope=owner.as_dict(),
+            request={"apply": apply},
+            permissions=permissions,
+        )
+
+    def maintain(apply: bool) -> Any:
+        return lambda root, owner: tool.run(
+            root,
+            operation="maintain",
+            task="staleness_sweep",
+            owner_scope=owner.as_dict(),
+            request={"apply": apply},
+            permissions=permissions,
+        )
+
+    return {
+        "ask": compact("ask"),
+        "recall": compact("recall"),
+        "list": compact("list"),
+        "ask_legacy": legacy("ask"),
+        "recall_legacy": legacy("recall"),
+        "list_legacy": legacy("list"),
+        "expand": generic("expand", {"id": "p1", "version": 1}),
+        "related": generic("related", {"id": "p1", "version": 1}),
+        "link": generic("link", link),
+        "consolidate": generic("consolidate", {"symptom": "overlay"}),
+        "write_preview": write(False),
+        "write_apply": write(True),
+        "edit_preview": generic("edit", edit),
+        "edit_apply": generic("edit", {**edit, "apply": True}),
+        "archive_preview": generic("archive", archive),
+        "archive_apply": generic("archive", {**archive, "apply": True}),
+        "delete_preview": generic("delete", delete),
+        "delete_apply": generic("delete", {**delete, "apply": True}),
+        "promote_preview": promote(False),
+        "promote_apply": promote(True),
+        "maintain_preview": maintain(False),
+        "maintain_apply": maintain(True),
+    }
+
+
+@pytest.mark.parametrize("policy", ["none", "other_project_grant"])
+@pytest.mark.parametrize(
+    "root_kind",
+    [
+        pytest.param("overlay_root", id="overlay_root"),
+        pytest.param("overlay_subdir", id="overlay_subdir"),
+        pytest.param("symlink", id="symlink", marks=pytest.mark.posix_only),
+    ],
+)
+def test_t01_overlay_storage_root_never_project_route(
+    root_kind: str, policy: str, tmp_path: Path
+) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    overlay_owner = auth.user_overlay_owner_scope(data_root=data_root)
+    overlay_root = data_root / "user"
+    overlay_root.mkdir(parents=True, exist_ok=True)
+    (overlay_root / "sub").mkdir(exist_ok=True)
+    store = TypedArtifactStore(overlay_root)
+    _row(store, "p1", overlay_owner, "mk-p1", source=OVERLAY_SOURCE)
+    if policy == "other_project_grant":
+        other = _registered(tmp_path / "other", data_root)
+        _grant(auth, other, ALICE, data_root, ops=FULL_OPS)
+    if root_kind == "overlay_root":
+        target = overlay_root
+    elif root_kind == "overlay_subdir":
+        target = overlay_root / "sub"
+    else:
+        link = tmp_path / "overlay-link"
+        link.symlink_to(overlay_root)
+        target = link
+    db = overlay_root / ".rush" / "memory.db"
+    before_sha = _sha_file(db)
+    before_tree = _tree(overlay_root)
+    for name, call in _overlay_calls().items():
+        result = call(target, overlay_owner)
+        assert _code_of(result) == "E_PERMISSION", (name, _dump(_rd(result)))
+        assert _reason_of(result) == "overlay_storage_root", name
+        assert "mk-p1" not in _dump(result.get("raw")), name
+        assert "overlay write" not in _dump(result.get("raw")), name
+    assert _sha_file(db) == before_sha
+    assert _tree(overlay_root) == before_tree
+
+
+# --- R12: PR6 mutation set over authorization.py ------------------------------
+
+PR6_PLUGIN = textwrap.dedent(
+    '''
+    """pytest plugin: serve a mutated `rush.memory.authorization` from a file."""
+    import importlib.abc
+    import importlib.util
+    import os
+    import sys
+
+
+    class _MutantFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name != "rush.memory.authorization":
+                return None
+            return importlib.util.spec_from_file_location(name, os.environ["PR6_MUTANT"])
+
+
+    sys.meta_path.insert(0, _MutantFinder())
+    '''
+)
+
+
+def _pr6_denial_if(node: Any) -> bool:
+    """An `if` whose immediate body raises `MemoryPolicyError` or returns a
+    `deny(...)`/`_denied(...)` call."""
+    import ast
+
+    if not isinstance(node, ast.If):
+        return False
+    for stmt in node.body:
+        if isinstance(stmt, ast.Raise):
+            exc = stmt.exc
+            call = exc if isinstance(exc, ast.Call) else None
+            if call is not None and getattr(call.func, "id", "") == "MemoryPolicyError":
+                return True
+        if (
+            isinstance(stmt, ast.Return)
+            and isinstance(stmt.value, ast.Call)
+            and getattr(stmt.value.func, "id", "") in {"deny", "_denied"}
+        ):
+            return True
+    return False
+
+
+def _pr6_sites(tree: Any) -> list[tuple[str, Any, int | None]]:
+    """Deterministic mutation sites over a parsed `authorization.py`:
+    `(kind, node, operand_index)`."""
+    import ast
+
+    sites: list[tuple[str, Any, int | None]] = []
+    resolve = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef) and n.name == "_resolve"
+    )
+
+    def operands(kind: str, expr: Any) -> None:
+        for sub in ast.walk(expr):
+            if isinstance(sub, ast.BoolOp):
+                for i in range(len(sub.values)):
+                    sites.append((kind, sub, i))
+
+    for node in ast.walk(tree):
+        if _pr6_denial_if(node):
+            sites.append(("if_false", node, None))
+    for node in ast.walk(resolve):
+        if isinstance(node, ast.Lambda):
+            sites.append(("lambda_true", node, None))
+            operands("lambda_operand", node.body)
+        if isinstance(node, ast.comprehension):
+            for i, cond in enumerate(node.ifs):
+                sites.append(("comprehension_true", node, i))
+                operands("comprehension_operand", cond)
+        if (
+            isinstance(node, ast.If)
+            and _pr6_denial_if(node)
+            and isinstance(node.test, ast.BoolOp)
+        ):
+            reasons = {
+                getattr(getattr(stmt, "value", None), "args", [None])[0]
+                for stmt in node.body
+                if isinstance(stmt, ast.Return)
+            }
+            texts = {getattr(r, "value", None) for r in reasons}
+            if texts & {"operation_not_granted", "binding_stale"}:
+                operands("stage_operand", node.test)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            for kw in node.keywords:
+                if (
+                    kw.arg == "expected_version"
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "write"
+                ):
+                    sites.append(("cas_expected", kw, None))
+    return sites
+
+
+def _pr6_mutants(source: str) -> list[tuple[str, str]]:
+    """`(label, mutated source)` for every PR6 site of `source`."""
+    import ast
+    import copy
+
+    tree = ast.parse(source)
+    count = len(_pr6_sites(tree))
+    out: list[tuple[str, str]] = []
+    for index in range(count):
+        clone = copy.deepcopy(tree)
+        kind, node, operand = _pr6_sites(clone)[index]
+        line = getattr(node, "lineno", 0)
+        if kind == "if_false":
+            node.test = ast.Constant(False)
+        elif kind == "lambda_true":
+            node.body = ast.Constant(True)
+        elif kind == "comprehension_true":
+            node.ifs[operand] = ast.Constant(True)
+        elif kind == "cas_expected":
+            node.value = ast.BinOp(left=node.value, op=ast.Add(), right=ast.Constant(1))
+        else:
+            replacement = isinstance(node.op, ast.And)
+            node.values[operand] = ast.Constant(replacement)
+        ast.fix_missing_locations(clone)
+        out.append((f"{kind}@{line}#{index}", ast.unparse(clone)))
+    return out
+
+
+def _pr6_run(
+    workdir: Path, label: str, mutated: str, tests: list[str], timeout: float = 300.0
+) -> tuple[set[str], int]:
+    """Run `tests` under the mutated authorization module; the node ids that failed
+    (or errored). A mutant is killed by a test that passed in the unmutated control."""
+    plugin = workdir / "pr6_mutant_plugin.py"
+    plugin.write_text(PR6_PLUGIN, encoding="utf-8")
+    mutant = workdir / f"authorization_{abs(hash(label))}.py"
+    mutant.write_text(mutated, encoding="utf-8")
+    env = dict(os.environ)
+    env["PR6_MUTANT"] = str(mutant)
+    env["PYTHONPATH"] = os.pathsep.join([str(workdir), str(REPO_SRC)])
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "pr6_mutant_plugin",
+            "--tb=no",
+            "-rfE",
+            *tests,
+        ],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+    failed = {
+        line.split(" ", 1)[1].split(" - ", 1)[0].strip()
+        for line in proc.stdout.splitlines()
+        if line.startswith(("FAILED ", "ERROR "))
+    }
+    summary = re.search(r"(\d+) passed", proc.stdout)
+    assert summary is not None, proc.stdout[-400:] + proc.stderr[-400:]
+    return failed, int(summary.group(1))
+
+
+PR6_LEDGER_PACKET = "72-T01"
+PR6_LEDGER_FIELDS = {
+    "guard",
+    "patch",
+    "source_sha256",
+    "control_passed",
+    "control_failed",
+    "killing_test",
+}
+PR6_AUTH_REL = "src/rush/memory/authorization.py"
+
+
+def _pr6_label_guard(label: str) -> str:
+    return f"{PR6_AUTH_REL}::{label}"
+
+
+def _pr6_patch(normalized: str, mutated: str) -> str:
+    """The unified diff between the unmutated and the mutated module, both through
+    `ast.unparse` so the diff holds only the mutation."""
+    import difflib
+
+    return "".join(
+        difflib.unified_diff(
+            normalized.splitlines(keepends=True),
+            mutated.splitlines(keepends=True),
+            f"a/{PR6_AUTH_REL}",
+            f"b/{PR6_AUTH_REL}",
+            n=1,
+        )
+    )
+
+
+def _pr6_ledger_rows() -> list[dict[str, Any]] | None:
+    """The `authorization.py` rows of the G6 ledger's `mutants["72-T01"]`, kept in
+    this worktree's git directory, or `None` when that file does not exist (a CI
+    checkout has none)."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    ledger = Path(proc.stdout.strip()) / "phase72-g6-ledger.json"
+    if proc.returncode != 0 or not ledger.is_file():
+        return None
+    rows = json.loads(ledger.read_text(encoding="utf-8"))["mutants"].get(
+        PR6_LEDGER_PACKET, []
+    )
+    return [
+        row for row in rows if str(row.get("guard", "")).startswith(f"{PR6_AUTH_REL}::")
+    ]
+
+
+def _pr6_ledger_problems(
+    rows: list[dict[str, Any]],
+    expected: dict[str, tuple[str, set[str]]],
+    source_sha256: str,
+) -> list[str]:
+    """What is wrong with the recorded PR6 rows against the current mutants.
+    `expected` maps each current mutant guard to `(patch, test ids that kill it in
+    this run)`. Every current guard needs exactly one row with a nonempty unified
+    patch equal to the current mutation, the current module's source hash, a positive
+    passing control count, no failing control test and a killing test that kills the
+    mutant now."""
+    problems: list[str] = []
+    by_guard: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        by_guard.setdefault(str(row.get("guard")), []).append(row)
+    for guard in sorted(set(by_guard) - set(expected)):
+        problems.append(f"{guard}: a ledger row for a guard that no longer exists")
+    for guard, (patch, killers) in sorted(expected.items()):
+        found = by_guard.get(guard, [])
+        if len(found) != 1:
+            problems.append(f"{guard}: {len(found)} ledger rows, need exactly 1")
+            continue
+        row = found[0]
+        if set(row) != PR6_LEDGER_FIELDS:
+            problems.append(f"{guard}: fields {sorted(row)}")
+            continue
+        if not str(row["patch"]).startswith(f"--- a/{PR6_AUTH_REL}\n"):
+            problems.append(f"{guard}: patch is not a unified diff of {PR6_AUTH_REL}")
+        elif row["patch"] != patch:
+            problems.append(f"{guard}: patch differs from the current mutation")
+        if row["source_sha256"] != source_sha256:
+            problems.append(f"{guard}: source_sha256 is not the current module's")
+        if not (isinstance(row["control_passed"], int) and row["control_passed"] > 0):
+            problems.append(f"{guard}: control_passed {row['control_passed']!r}")
+        if row["control_failed"] != 0:
+            problems.append(f"{guard}: control_failed {row['control_failed']!r}")
+        if row["killing_test"] not in killers:
+            problems.append(f"{guard}: killing_test {row['killing_test']!r}")
+    return problems
+
+
+def test_t01_pr6_ledger_validation_rejects_missing_and_forged_rows() -> None:
+    """spec-tests-6: the ledger audit fails a missing guard row, a duplicate, a stale
+    source hash, an empty or foreign patch, a failing control, a killing test that
+    does not kill the mutant, a stray row and an extra field."""
+    patch = f"--- a/{PR6_AUTH_REL}\n+++ b/{PR6_AUTH_REL}\n@@ -1 +1 @@\n-x\n+y\n"
+    guard = _pr6_label_guard("if_false@1#0")
+    good = {
+        "guard": guard,
+        "patch": patch,
+        "source_sha256": "s",
+        "control_passed": 3,
+        "control_failed": 0,
+        "killing_test": "t::a",
+    }
+    expected = {guard: (patch, {"t::a", "t::b"})}
+    assert _pr6_ledger_problems([good], expected, "s") == []
+    assert _pr6_ledger_problems([], expected, "s")
+    assert _pr6_ledger_problems([good, good], expected, "s")
+    for field, value in (
+        ("patch", ""),
+        ("patch", patch + "x"),
+        ("source_sha256", "other"),
+        ("control_passed", 0),
+        ("control_failed", 1),
+        ("killing_test", "t::c"),
+    ):
+        assert _pr6_ledger_problems([{**good, field: value}], expected, "s"), field
+    stray = {**good, "guard": _pr6_label_guard("if_false@9#9")}
+    assert _pr6_ledger_problems([good, stray], expected, "s")
+    assert _pr6_ledger_problems([{**good, "extra": 1}], expected, "s")
+
+
+@pytest.mark.slow
+def test_t01_authorization_mutation_set_killed(tmp_path: Path) -> None:
+    """R12: every PR6 mutant of `authorization.py` (guards, `checks` lambdas,
+    comprehension filters, stage-13/15 operands, the CAS write) is killed by a test in
+    `tests/test_memory_authorization.py`; a kill counts only for a test that passed in the
+    unmutated control run. The G6 ledger's `mutants["72-T01"]` holds one row per
+    mutant (patch, source hash, control counts, killing test) and is audited against
+    this run: a missing, stale or forged row fails the test. A checkout without the
+    ledger file (CI) audits the run alone."""
+    import ast
+    from concurrent.futures import ThreadPoolExecutor
+
+    source = (REPO_ROOT / "src" / "rush" / "memory" / "authorization.py").read_text(
+        encoding="utf-8"
+    )
+    mutants = _pr6_mutants(source)
+    assert len(mutants) >= 77, "the G1 PR6 set has 77 mutants; new guards only add"
+    tests = ["tests/test_memory_authorization.py"]
+    control_dir = tmp_path / "control"
+    control_dir.mkdir()
+    baseline, control_passed = _pr6_run(control_dir, "control", source, tests)
+    assert baseline == set() and control_passed > 0, baseline
+
+    def run(item: tuple[str, str]) -> tuple[str, set[str]]:
+        label, text = item
+        workdir = tmp_path / label.replace("@", "_").replace("#", "_")
+        workdir.mkdir()
+        return label, _pr6_run(workdir, label, text, tests)[0]
+
+    survivors: list[str] = []
+    killers: dict[str, set[str]] = {}
+    with ThreadPoolExecutor(4) as pool:
+        for label, failed in pool.map(run, mutants):
+            killers[label] = failed - baseline
+            if not killers[label]:
+                survivors.append(label)
+    assert survivors == [], f"PR6 mutants no test kills: {survivors}"
+
+    rows = _pr6_ledger_rows()
+    if rows is None:
+        assert os.environ.get("CI"), "the G6 ledger file is missing"
+        return
+    normalized = ast.unparse(ast.parse(source))
+    expected = {
+        _pr6_label_guard(label): (_pr6_patch(normalized, text), killers[label])
+        for label, text in mutants
+    }
+    sha = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    assert _pr6_ledger_problems(rows, expected, sha) == []
+
+
+# --- R18: D33 classification -------------------------------------------------
+
+
+def test_t01_classification_covers_every_writer(tmp_path: Path) -> None:
+    import ast
+
+    from rush.memory.retrieval import MemoryAccess, evaluate_artifact_visibility
+    from rush.memory.store import INTERNAL_MEMORY_SOURCES
+
+    # The writer inventory: 15 writer constructor sites plus the two row rebuilds.
+    src = REPO_ROOT / "src" / "rush"
+    sites: set[tuple[str, str]] = set()
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        def walk(
+            node: Any, fn: str, rel: str = path.relative_to(src).as_posix()
+        ) -> None:
+            for child in ast.iter_child_nodes(node):
+                inner = (
+                    child.name
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    else fn
+                )
+                if isinstance(child, ast.Call):
+                    func = child.func
+                    name = (
+                        func.id
+                        if isinstance(func, ast.Name)
+                        else func.attr
+                        if isinstance(func, ast.Attribute)
+                        else None
+                    )
+                    if name == "MemoryArtifact":
+                        sites.add((rel, inner))
+                walk(child, inner)
+
+        walk(tree, "<module>")
+    assert sites == {
+        ("memory/checkpoint_journal.py", "_write_handoff_artifact"),
+        ("memory/consolidation.py", "consolidate_episodes"),
+        ("memory/experience.py", "write_observation"),
+        ("memory/experience.py", "record_attempt"),
+        ("memory/experience.py", "record_behavior_success"),
+        ("memory/experience.py", "record_cause_experiment"),
+        ("memory/intent.py", "record_intent"),
+        ("memory/maintenance.py", "_artifact_from_row"),
+        ("memory/migration.py", "write_if_new"),
+        ("memory/recipes.py", "record_recipe"),
+        ("memory/store.py", "_row_to_artifact"),
+        ("plugins/skills_generator.py", "generate_skill_markdown"),
+        ("session_memory.py", "record_turn"),
+        ("token_economy/memory_cache_gate.py", "write_cache_fill"),
+        ("tools/flight_recorder.py", "record_event"),
+        ("tools/memory.py", "_build_artifact"),
+        ("workflows/project_run.py", "build_handoff"),
+    }, "a new MemoryArtifact writer needs a D33 class row below"
+
+    root = _git_repo(tmp_path / "project", {"m.py": KNOWN_SRC})
+    (root / "h.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    store = TypedArtifactStore(root)
+    from rush.memory.recipes import resolve_symbol_source
+
+    helper_ref = {"path": "h.py", "symbol": "helper"}
+    helper = resolve_symbol_source(root, helper_ref)
+    assert helper is not None
+    whole_file = _sha_file(root / "m.py")
+    cases: list[dict[str, Any]] = []
+
+    def case(
+        name: str,
+        expected: str,
+        reasons: tuple[str, ...] = (),
+        *,
+        usable: bool | None = None,
+        informational: list[str] | None = None,
+        **row: Any,
+    ) -> None:
+        cases.append(
+            {
+                "id": f"c-{name}",
+                "expected": expected,
+                "reasons": reasons,
+                "usable": usable,
+                "informational": informational,
+                "row": row,
+            }
+        )
+
+    case(
+        "anchored_whole_file",
+        "current",
+        symbol_ref="m.py::",
+        content_hash=whole_file,
+    )
+    case(
+        "anchored_stale",
+        "stale",
+        ("source_hash_mismatch",),
+        symbol_ref="m.py::",
+        content_hash="0" * 64,
+    )
+    case("preference", "not_applicable", subject="preference")
+    case("active_context", "not_applicable", subject="active_context")
+    for source_name in sorted(INTERNAL_MEMORY_SOURCES):
+        case(
+            f"internal-{source_name}",
+            "not_applicable",
+            source=source_name,
+            subject="episodic",
+        )
+    for source_name in (
+        "session_memory:record_turn",
+        "migration:session_memory",
+        "migration:hook_signatures",
+    ):
+        case(
+            f"session-{source_name}",
+            "not_applicable",
+            source=source_name,
+            subject="episodic",
+        )
+    for kind in ("observation", "intent"):
+        case(
+            f"kind-{kind}",
+            "not_applicable",
+            subject="episodic",
+            content={"kind": kind, "text": "needle"},
+        )
+    case(
+        "kind-consolidated",
+        "not_applicable",
+        subject="episodic",
+        content={"kind": "consolidated_episode_summary", "text": "needle"},
+    )
+    for kind in ("behavior_success", "repair_episode", "cause_experiment"):
+        case(
+            f"kind-{kind}",
+            "not_applicable",
+            subject="episodic",
+            content={"kind": kind, "text": "needle"},
+        )
+    case(
+        "kind-checkpoint-unanchored",
+        "not_applicable",
+        subject="episodic",
+        content={"kind": "checkpoint", "text": "needle"},
+    )
+    recipe_content = {
+        "kind": "recipe",
+        "text": "needle",
+        "helper_ref": helper_ref,
+        "helper_source_hash": helper[1],
+    }
+    case("recipe-current", "current", subject="skill_pattern", content=recipe_content)
+    case(
+        "recipe-changed",
+        "stale",
+        ("recipe_helper_changed",),
+        subject="skill_pattern",
+        content={**recipe_content, "helper_source_hash": "f" * 64},
+    )
+    case(
+        "recipe-unresolved",
+        "unknown",
+        ("recipe_helper_unresolved",),
+        subject="skill_pattern",
+        content={
+            **recipe_content,
+            "helper_ref": {"path": "gone.py", "symbol": "helper"},
+        },
+    )
+    case(
+        "skills-closure",
+        "not_applicable",
+        subject="skill_pattern",
+        source="skills_generator:generate_skill_markdown",
+        content={"text": "needle", "closure_digest": "ab" * 32},
+    )
+    for label, digest in (("missing", None), ("empty", ""), ("not-str", 5)):
+        case(
+            f"skills-closure-{label}",
+            "unknown",
+            ("closure_digest_missing",),
+            subject="skill_pattern",
+            source="skills_generator:generate_skill_markdown",
+            content={"text": "needle", "closure_digest": digest},
+        )
+    for subject in (
+        "domain_knowledge",
+        "skill_pattern",
+        "failure",
+        "architectural_decision",
+    ):
+        case(
+            f"pr1-{subject}",
+            "not_applicable",
+            subject=subject,
+            usable=True,
+            informational=["unanchored_note"],
+        )
+    case("malformed-ref", "unknown", ("symbol_ref_malformed",), symbol_ref="plainname")
+    case(
+        "episodic-unclassified",
+        "unknown",
+        ("unanchored_unclassified",),
+        subject="episodic",
+    )
+
+    for entry in cases:
+        row = dict(entry["row"])
+        row.setdefault("source", "src")
+        _row(store, entry["id"], None, entry["id"], **row)
+        found = store.get_current_row(entry["id"])
+        decision = evaluate_artifact_visibility(
+            store,
+            found,
+            access=MemoryAccess.legacy(root, [row["source"]]),
+            mode="ordinary",
+        )
+        assert decision.visible is True, entry["id"]
+        assert decision.freshness == entry["expected"], (entry["id"], decision)
+        assert decision.reason_codes == entry["reasons"], (entry["id"], decision)
+        usable = entry["usable"]
+        if usable is None:
+            usable = entry["expected"] in {"current", "not_applicable"}
+        assert decision.usable_as_current is usable, (entry["id"], decision)
+        assert decision.reference is not None
+        assert decision.reference.get("reason_codes", []) == (
+            entry["informational"] or []
+        ), entry["id"]
+
+    # A STATED (promoted) row without an anchor is not_applicable too.
+    _row(store, "c-stated", None, "c-stated", source="src")
+    _, promotion = store.promote("c-stated", user_stated=True, expected_version=1)
+    assert promotion.promoted is True
+    stated = evaluate_artifact_visibility(
+        store,
+        store.get_current_row("c-stated"),
+        access=MemoryAccess.legacy(root, ["src"]),
+    )
+    assert (stated.freshness, stated.reason_codes) == ("not_applicable", ())
+
+
+# --- R19: no implicit STATED eviction -----------------------------------------
+
+
+def test_t01_write_never_evicts_stated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _git_repo(tmp_path / "project", {"module.py": KNOWN_SRC})
+    register_project(root, data_root=data_root)
+    module_hash = _sha_file(root / "module.py")
+    store = TypedArtifactStore(root)
+
+    def anchored(
+        artifact_id: str, owner: OwnerScope, flag: bool, source: str
+    ) -> MemoryArtifact:
+        return _row(
+            store,
+            artifact_id,
+            owner,
+            artifact_id,
+            source=source,
+            symbol_ref="module.py::Known",
+            content_hash=module_hash,
+            content={"flag": flag, "text": f"needle {artifact_id}"},
+        )
+
+    anchored("b-stated", ALICE, True, "source-b")
+    _, promotion = store.promote("b-stated", user_stated=True, expected_version=1)
+    assert promotion.promoted is True
+    before = _nn(store.get_current_row("b-stated"))
+    kept = (before["trust_tier"], before["artifact_version"], before["content"])
+    assert kept[0] == "STATED"
+
+    def stated_unchanged() -> None:
+        row = store.get_current_row("b-stated")
+        assert row is not None, "the STATED row was evicted by a conflicting write"
+        assert (row["trust_tier"], row["artifact_version"], row["content"]) == kept
+
+    # A source-A write conflicting with the source-B STATED row: B stays, A is inserted
+    # as its own lower-trust row.
+    anchored("a-new", ALICE, False, "source-a")
+    stated_unchanged()
+    assert _nn(store.get_current("a-new")).trust_tier != "STATED"
+    # A same-owner, same-source conflicting write keeps the STATED row too.
+    anchored("b-new", ALICE, False, "source-b")
+    stated_unchanged()
+    assert store.get_current("b-new") is not None
+
+    # A failing insertion leaves the originals intact.
+    with monkeypatch.context() as patch:
+
+        def broken(*args: Any, **kwargs: Any) -> Any:
+            raise sqlite3.IntegrityError("forced insertion failure")
+
+        patch.setattr(TypedArtifactStore, "_insert_row", broken)
+        with pytest.raises(sqlite3.IntegrityError):
+            anchored("c-fail", ALICE, False, "source-b")
+    stated_unchanged()
+    assert store.get_current("c-fail") is None
+
+    # `ask` over both rows marks each side of the contradiction contested.
+    _grant(auth, root, ALICE, data_root, sources=("source-a", "source-b"), ops=FULL_OPS)
+    both = MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        request={"view": "compact"},
+        owner_scope=ALICE.as_dict(),
+    )
+    by_id = {item["id"]: item for item in _items(both)}
+    assert {"a-new", "b-stated"} <= set(by_id)
+    assert by_id["b-stated"]["trust"] == "STATED"
+    assert by_id["a-new"]["contested"] is True
+    assert by_id["b-stated"]["contested"] is True
+
+    # A row whose contrary peer is in an ungranted source has no `contested` key.
+    _grant(auth, root, ALICE, data_root, sources=("source-a",), ops=FULL_OPS)
+    narrowed = MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        request={"view": "compact"},
+        owner_scope=ALICE.as_dict(),
+    )
+    narrow_ids = {item["id"]: item for item in _items(narrowed)}
+    assert "a-new" in narrow_ids
+    assert "contested" not in narrow_ids["a-new"]
+    assert "b-stated" not in narrow_ids
+
+
+# --- R15: exposure-reducing writes and receipt inspection -----------------------
+
+
+def _insert_receipt(db: Path, operation_id: str, payload: str | None) -> None:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO mutation_receipts "
+            "(operation_id, artifact_id, kind, revision, payload, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (operation_id, "a1", "create", 1, payload, time.time()),
+        )
+        conn.commit()
+
+
+def test_t01_exposure_reducing_runs_in_every_mode(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.handoff import prepare_handoff
+
+    data_root = default_data_root()
+
+    def fixture(name: str) -> tuple[Path, TypedArtifactStore, str]:
+        root = _registered(tmp_path / name, data_root)
+        store = TypedArtifactStore(root)
+        _row(store, "a1", ALICE, f"mk-{name}", source="source-a")
+        session, _cap, _delta = prepare_handoff(
+            store,
+            root=root,
+            audience="codex_cli",
+            granted_ids=["a1"],
+            session_allowlist=["source-a"],
+        )
+        return root, store, session.session_id
+
+    def reduce_exposure(store: TypedArtifactStore, session_id: str) -> None:
+        store.mark_artifact_orphaned("a1")
+        store.revoke_handoff_session(session_id)
+        row = _nn(store.get_current_row("a1"))
+        assert row["orphaned_at"] is not None
+        assert _nn(store.get_handoff_session(session_id))["revoked_at"] is not None
+
+    # legacy
+    root, store, sid = fixture("legacy")
+    reduce_exposure(store, sid)
+
+    # policy with a grant, then with the grant revoked, then an invalid policy
+    root, store, sid = fixture("policy")
+    grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    reduce_exposure(store, sid)
+    root, store, sid = fixture("revoked")
+    revoked_grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    auth.revoke_memory_scope(
+        grant_id=revoked_grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    reduce_exposure(store, sid)
+    assert grant["grant_id"]
+    root, store, sid = fixture("unavailable")
+    auth.policy_path(data_root=data_root).write_bytes(b"{")
+    reduce_exposure(store, sid)
+
+    # lock contention: another thread holds the policy lock; neither call waits on it.
+    held, release = threading.Event(), threading.Event()
+
+    def holder() -> None:
+        with auth.hold_policy_lock(data_root=data_root):
+            held.set()
+            release.wait(30)
+
+    thread = threading.Thread(target=holder)
+    root, store, sid = fixture("contended")
+    auth.policy_path(data_root=data_root).unlink()
+    thread.start()
+    try:
+        assert held.wait(30)
+        runner, box = _run_in_thread(lambda: reduce_exposure(store, sid))
+        runner.join(10)
+        assert not runner.is_alive(), (
+            "an exposure-reducing write waited on the policy lock"
+        )
+        assert "result" in box
+    finally:
+        release.set()
+        thread.join(30)
+
+    # Receipt inspection creates nothing and tells absent from unavailable from present.
+    from rush.memory.store import TypedArtifactStore as Store
+
+    absent_root = tmp_path / "no-store"
+    absent_root.mkdir()
+    before = _tree(absent_root)
+    assert Store.get_receipt_readonly(absent_root, "op-1") == ("absent", None)
+    assert _tree(absent_root) == before
+
+    rec_root = tmp_path / "receipts"
+    rec_root.mkdir()
+    rec_store = Store(rec_root)
+    _row(rec_store, "a1", ALICE, "mk-rec", source="source-a")
+    db = rec_store.db_path
+    rec_store.write(
+        MemoryArtifact(
+            id="w1",
+            family="memory",
+            subject=SUBJECT,  # type: ignore[arg-type]
+            trust_tier="DERIVED",
+            content={"text": "w1"},
+            source="source-a",
+            created_at=time.time(),
+            owner_scope=ALICE,
+        ),
+        receipt_operation_id="op-present",
+    )
+    _insert_receipt(db, "op-null", None)
+    _insert_receipt(db, "op-undecodable", "{not json")
+    snapshot = (_sha_file(db), _tree(db.parent))
+    assert Store.get_receipt_readonly(rec_root, "op-missing") == ("absent", None)
+    state, receipt = Store.get_receipt_readonly(rec_root, "op-present")
+    assert state == "present"
+    assert receipt is not None
+    assert receipt["operation_id"] == "op-present"
+    assert receipt["kind"] == "create"
+    assert receipt["artifact_id"] == "w1"
+    assert Store.get_receipt_readonly(rec_root, "op-null")[0] == "present"
+    assert _nn(Store.get_receipt_readonly(rec_root, "op-null")[1])["payload"] is None
+    assert Store.get_receipt_readonly(rec_root, "op-undecodable") == (
+        "unavailable",
+        None,
+    )
+    assert (_sha_file(db), _tree(db.parent)) == snapshot
+    _no_sidecars(db)
+
+    no_table = tmp_path / "no-table"
+    (no_table / ".rush").mkdir(parents=True)
+    with contextlib.closing(sqlite3.connect(no_table / ".rush" / "memory.db")) as conn:
+        conn.execute("CREATE TABLE other (x)")
+        conn.commit()
+    assert Store.get_receipt_readonly(no_table, "op-1") == ("absent", None)
+    _no_sidecars(no_table / ".rush" / "memory.db")
+
+    corrupt = tmp_path / "corrupt"
+    (corrupt / ".rush").mkdir(parents=True)
+    (corrupt / ".rush" / "memory.db").write_bytes(b"garbage" * 600)
+    assert Store.get_receipt_readonly(corrupt, "op-1") == ("unavailable", None)
+    _no_sidecars(corrupt / ".rush" / "memory.db")
+
+
+def _scan_manifest(root: Path, run_id: str) -> None:
+    manifest_dir = root / ".rush" / "runs" / run_id / "attempts" / "attempt-1"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    finding = {
+        "finding_id": "finding-1",
+        "path": "app.py",
+        "line": 1,
+        "column": 0,
+        "rule": "seeded-rule",
+        "severity": "warn",
+        "message": "issue",
+        "provenance": "review/no-engine",
+    }
+    manifest = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "attempt_id": "attempt-1",
+        "plan_id": "fixture-plan",
+        "run_state": "completed",
+        "aggregate": {"findings": [finding]},
+        "scheduled": [],
+        "totals": {"finding_count": 1},
+    }
+    (manifest_dir / "manifest.json").write_text(
+        json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+
+
+@pytest.mark.usefixtures("hermetic_engine_path")
+@pytest.mark.parametrize("policy_state", ["legacy", "invalid_policy"])
+def test_t01_receipt_inspection_pre72_store(
+    policy_state: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.workflows import project_run
+    from rush.workflows.project_run import (
+        build_handoff,
+        recover_prepared_handoff,
+        status_handoff,
+    )
+
+    registry_root = tmp_path / "rush-data"
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "app.py").write_text("def unreviewed():\n    pass\n", encoding="utf-8")
+    record = register_project(root, data_root=registry_root)
+    root = Path(record.root)
+    _scan_manifest(root, "run-recover")
+    effect_ids = {
+        "artifact_create": "artifact-receipt-1",
+        "session_create": "session-receipt-1",
+        "delivery_transition": "delivery-receipt-1",
+    }
+    handoff = build_handoff(
+        record.project_id,
+        "run-recover",
+        "codex-cli",
+        data_root=registry_root,
+        operation_id="dead-owner-op-1",
+        effect_ids=effect_ids,
+        owner_instance_id="",
+    )
+    assert handoff.state == "prepared"
+    db = root / ".rush" / "memory.db"
+    _drop_payload_columns(db)
+    if policy_state == "invalid_policy":
+        policy = auth.policy_path(data_root=default_data_root())
+        policy.parent.mkdir(parents=True, exist_ok=True)
+        policy.write_bytes(b"{")
+    _no_sidecars(db)
+    snapshot = (_sha_file(db), _tree(root / ".rush"))
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        orphaned_before = conn.execute(
+            "SELECT COUNT(*) FROM memory_artifacts WHERE orphaned_at IS NOT NULL"
+        ).fetchone()[0]
+        revoked_before = conn.execute(
+            "SELECT COUNT(*) FROM memory_handoff_sessions WHERE revoked_at IS NOT NULL"
+        ).fetchone()[0]
+
+    def forbidden(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("recovery must not mark the handoff unrecoverable")
+
+    monkeypatch.setattr(project_run, "_mark_handoff_unrecoverable", forbidden)
+    recovered = recover_prepared_handoff(
+        record.project_id,
+        handoff.handoff_id,
+        claimed_operation_id="dead-owner-op-1",
+        artifact_create_receipt_id=effect_ids["artifact_create"],
+        session_create_receipt_id=effect_ids["session_create"],
+        delivery_receipt_id=effect_ids["delivery_transition"],
+        data_root=registry_root,
+    )
+    assert recovered is None
+    assert (_sha_file(db), _tree(root / ".rush")) == snapshot
+    _no_sidecars(db)
+    assert (
+        status_handoff(record.project_id, handoff.handoff_id, data_root=registry_root)[
+            "state"
+        ]
+        == "prepared"
+    )
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM memory_artifacts WHERE orphaned_at IS NOT NULL"
+            ).fetchone()[0]
+            == orphaned_before
+        )
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM memory_handoff_sessions "
+                "WHERE revoked_at IS NOT NULL"
+            ).fetchone()[0]
+            == revoked_before
+        )
+
+    # A busy store reports `unavailable`: nothing is cleaned up either.
+    monkeypatch.setattr(
+        TypedArtifactStore,
+        "get_receipt_readonly",
+        staticmethod(lambda project_root, operation_id: ("unavailable", None)),
+    )
+    assert (
+        recover_prepared_handoff(
+            record.project_id,
+            handoff.handoff_id,
+            claimed_operation_id="dead-owner-op-1",
+            artifact_create_receipt_id=effect_ids["artifact_create"],
+            session_create_receipt_id=effect_ids["session_create"],
+            delivery_receipt_id=effect_ids["delivery_transition"],
+            data_root=registry_root,
+        )
+        is None
+    )
+
+
+# --- R16/R17: handoff sender binding and receive order ------------------------
+
+
+def _handoff_env(
+    tmp_path: Path, *, ops: tuple[str, ...] = FULL_OPS, grant: bool = True
+) -> tuple[Any, Path, Path, TypedArtifactStore, dict[str, Any] | None]:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    for artifact_id in ("a1", "a2", "a3"):
+        _row(store, artifact_id, ALICE, f"mk-{artifact_id}", source="source-a")
+    issued = _grant(auth, root, ALICE, data_root, ops=ops) if grant else None
+    return auth, data_root, root, store, issued
+
+
+def _prepare_handoff(
+    root: Path, ids: tuple[str, ...] = ("a1", "a2", "a3"), **request: Any
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="handoff",
+        request={
+            "action": "prepare",
+            "receiver_namespace": "source-a",
+            "receiver_audience": "codex_cli",
+            "goal": "sync",
+            "selected_refs": [{"id": i, "version": 1} for i in ids],
+            **request,
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+
+def _session_of(result: Any) -> tuple[str, str]:
+    data = _rd(result)["data"]
+    return data["handoff_id"], data["capability"]
+
+
+def _receive(root: Path, session_id: str, capability: str, **extra: Any) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="receive",
+        request={"session_id": session_id, "capability": capability, **extra},
+    )
+
+
+def _readback(
+    store: TypedArtifactStore, artifact_id: str, version: int = 1
+) -> dict[str, Any]:
+    content = store.get_version_content(artifact_id, version)
+    assert content is not None
+    return {
+        "id": artifact_id,
+        "version": version,
+        "digest": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+
+
+def _sender_columns(db: Path, session_id: str) -> tuple[Any, ...]:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return tuple(
+            conn.execute(
+                "SELECT sender_grant_id, sender_owner_kind, sender_owner_id, "
+                "sender_project_id, sender_worktree_id, sender_policy_revision "
+                "FROM memory_handoff_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        )
+
+
+_SENDER_CASES = [
+    "prepare_needs_write_and_expand",
+    "sender_columns_persisted",
+    "revision_change_still_delivers",
+    "revoked_denies",
+    "new_grant_id_denies",
+    "principal_mismatch",
+    "pre72_null_columns_policy_denies",
+    "pre72_old_schema_policy_denies",
+    "pre72_session_legacy_delivers",
+]
+
+
+@pytest.mark.parametrize("case", _SENDER_CASES)
+def test_t01_handoff_sender_binding(case: str, tmp_path: Path) -> None:
+    if case == "prepare_needs_write_and_expand":
+        auth, data_root, root, store, issued = _handoff_env(
+            tmp_path, ops=("ask", "list", "write")
+        )
+        before = _counts(root)
+        result = _prepare_handoff(root)
+        assert _code_of(result) == "E_PERMISSION"
+        assert _reason_of(result) == "operation_not_granted"
+        assert _counts(root) == before
+        assert issued is not None
+        _grant(auth, root, ALICE, data_root, ops=("ask", "list", "expand"))
+        assert _code_of(_prepare_handoff(root)) == "E_PERMISSION"
+        _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        assert _code_of(_prepare_handoff(root)) == "OK"
+        return
+
+    if case.startswith("pre72"):
+        auth, data_root, root, store, _issued = _handoff_env(tmp_path, grant=False)
+        prepared = _prepare_handoff(root)
+        assert _code_of(prepared) == "OK", _dump(_rd(prepared))
+        sid, cap = _session_of(prepared)
+        if case == "pre72_session_legacy_delivers":
+            delivered = _receive(root, sid, cap)
+            assert _code_of(delivered) == "OK"
+            assert {c["id"] for c in _rd(delivered)["data"]["changes"]} == {
+                "a1",
+                "a2",
+                "a3",
+            }
+            return
+        if case == "pre72_old_schema_policy_denies":
+            with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+                present = {
+                    row[1]
+                    for row in conn.execute(
+                        "PRAGMA table_info(memory_handoff_sessions)"
+                    )
+                }
+                for column in sorted(
+                    present
+                    & {
+                        "sender_grant_id",
+                        "sender_owner_kind",
+                        "sender_owner_id",
+                        "sender_project_id",
+                        "sender_worktree_id",
+                        "sender_policy_revision",
+                    }
+                ):
+                    conn.execute(
+                        f"ALTER TABLE memory_handoff_sessions DROP COLUMN {column}"
+                    )
+                conn.commit()
+        _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        denied = _receive(root, sid, cap)
+        assert _code_of(denied) == "E_PERMISSION"
+        assert _reason_of(denied) == "sender_unbound"
+        assert _rd(denied)["data"].get("next_action") == "re-prepare handoff"
+        assert "mk-a1" not in _dump(_rd(denied))
+        return
+
+    auth, data_root, root, store, issued = _handoff_env(tmp_path)
+    assert issued is not None
+    prepared = _prepare_handoff(root)
+    assert _code_of(prepared) == "OK", _dump(_rd(prepared))
+    sid, cap = _session_of(prepared)
+
+    if case == "sender_columns_persisted":
+        assert _sender_columns(store.db_path, sid) == (
+            issued["grant_id"],
+            "user",
+            "alice",
+            issued["project_id"],
+            issued["worktree_id"],
+            issued["policy_revision"],
+        )
+        return
+    if case == "revision_change_still_delivers":
+        other = _registered(tmp_path / "other", data_root)
+        _grant(auth, other, BOB, data_root, ops=("ask",))
+        assert _revision(auth, data_root) > issued["policy_revision"]
+        delivered = _receive(root, sid, cap)
+        assert _code_of(delivered) == "OK"
+        return
+    if case == "revoked_denies":
+        auth.revoke_memory_scope(
+            grant_id=issued["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        denied = _receive(root, sid, cap)
+        assert _code_of(denied) == "E_PERMISSION"
+        assert _reason_of(denied) == "revoked"
+        assert "a1" not in _dump(_rd(denied)["data"])
+        return
+    if case == "new_grant_id_denies":
+        regrant = _grant(
+            auth, root, ALICE, data_root, ops=("ask", "expand", "list", "write")
+        )
+        assert regrant["grant_id"] != issued["grant_id"]
+        denied = _receive(root, sid, cap)
+        assert _code_of(denied) == "E_PERMISSION"
+        assert _reason_of(denied) == "grant_changed"
+        return
+    assert case == "principal_mismatch"
+    payload = json.loads(auth.policy_path(data_root=data_root).read_text())
+    payload["data"]["grants"][issued["grant_id"]]["principal"] = "uid:999999"
+    auth.policy_path(data_root=data_root).write_text(json.dumps(payload))
+    denied = _receive(root, sid, cap)
+    assert _code_of(denied) == "E_PERMISSION"
+    assert _reason_of(denied) == "principal_mismatch"
+
+
+_BAD_PAGE_SIZES = [0, True, 10**400, float("nan"), "5", 51, -1]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        *(
+            pytest.param(("page_size", v), id=f"page_size-{i}")
+            for i, v in enumerate(_BAD_PAGE_SIZES)
+        ),
+        pytest.param(("cursor", 5), id="cursor-int"),
+        pytest.param(
+            ("revoked_before_ack_commit", None), id="revoked_before_ack_commit"
+        ),
+        pytest.param(("archived_selected_row", None), id="archived_selected_row"),
+        pytest.param(("expired_selected_row", None), id="expired_selected_row"),
+        pytest.param(("tampered_selected_row", None), id="tampered_selected_row"),
+        pytest.param(
+            ("dead_owner_recovery_after_revocation", None),
+            id="dead_owner_recovery_after_revocation",
+        ),
+    ],
+)
+def test_t01_receive_validates_before_ack(
+    case: tuple[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.handoff import recover_session_delta_without_capability
+
+    name, value = case
+    auth, data_root, root, store, issued = _handoff_env(tmp_path)
+    assert issued is not None
+    prepared = _prepare_handoff(root)
+    assert _code_of(prepared) == "OK", _dump(_rd(prepared))
+    sid, cap = _session_of(prepared)
+    ack = [_readback(store, "a1")]
+
+    if name in {"page_size", "cursor"}:
+        extra = {name: value}
+        result = _receive(root, sid, cap, ack=ack, **extra)
+        assert _code_of(result) == "E_INPUT"
+        assert store.get_handoff_receipts(sid) == {}
+        return
+    if name == "revoked_before_ack_commit":
+        real = TypedArtifactStore.acknowledge_handoff
+
+        def revoke_then_ack(self: Any, *args: Any, **kwargs: Any) -> Any:
+            auth.revoke_memory_scope(
+                grant_id=issued["grant_id"],
+                expected_policy_revision=_revision(auth, data_root),
+                consent=True,
+                data_root=data_root,
+            )
+            return real(self, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(TypedArtifactStore, "acknowledge_handoff", revoke_then_ack)
+            result = _receive(root, sid, cap, ack=ack)
+        assert _code_of(result) == "E_PERMISSION"
+        assert store.get_handoff_receipts(sid) == {}
+        return
+    if name == "dead_owner_recovery_after_revocation":
+        auth.revoke_memory_scope(
+            grant_id=issued["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        assert (
+            recover_session_delta_without_capability(
+                store,
+                sid,
+                expected_root=str(root),
+                expected_audience="codex_cli",
+                expected_session_allowlist=["source-a"],
+            )
+            is None
+        )
+        return
+    # A selected row that is archived, expired or tampered voids the whole ack.
+    both = [_readback(store, "a1"), _readback(store, "a2")]
+    if name == "archived_selected_row":
+        store.archive(
+            "a2", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+        )
+    elif name == "expired_selected_row":
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'a2'",
+                (time.time() - 10,),
+            )
+            conn.commit()
+    else:
+        _tamper(store.db_path, "a2")
+    result = _receive(root, sid, cap, ack=both)
+    assert _code_of(result) == "E_NOT_VISIBLE"
+    assert store.get_handoff_receipts(sid) == {}
+
+
+def test_t01_receive_pagination_excludes_hidden_ids(tmp_path: Path) -> None:
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    for artifact_id in ("a-sel", "b-hidden", "c-sel"):
+        _row(store, artifact_id, ALICE, f"mk-{artifact_id}", source="source-a")
+    from rush.memory import authorization as auth
+
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    prepared = _prepare_handoff(root, ids=("a-sel", "b-hidden", "c-sel"))
+    assert _code_of(prepared) == "OK", _dump(_rd(prepared))
+    sid, cap = _session_of(prepared)
+    store.archive(
+        "b-hidden", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+
+    first = _receive(root, sid, cap, page_size=1)
+    assert _code_of(first) == "OK"
+    first_data = _rd(first)["data"]
+    assert [c["id"] for c in first_data["changes"]] == ["a-sel"]
+    assert first_data["cursor"] is not None
+    assert first_data["cursor"] != "b-hidden"
+    second = _receive(root, sid, cap, page_size=1, cursor=first_data["cursor"])
+    second_data = _rd(second)["data"]
+    assert [c["id"] for c in second_data["changes"]] == ["c-sel"]
+    assert second_data["cursor"] is None
+    for page in (first, second):
+        assert "b-hidden" not in _dump(_rd(page))
+        assert "mk-b-hidden" not in _dump(_rd(page))
+
+
+def test_t01_receive_constraints_selected_only(tmp_path: Path) -> None:
+    _auth, _data_root, root, store, issued = _handoff_env(tmp_path)
+    assert issued is not None
+    _row(store, "b-unselected", ALICE, "mk-b", source="source-a")
+    _row(store, "h-archived", ALICE, "mk-h", source="source-a")
+    constraints = {
+        "intent_refs": [
+            {"id": "a1", "version": 1},
+            {"id": "b-unselected", "version": 1},
+            {"id": "h-archived", "version": 1},
+        ],
+        "last_success_refs": [
+            {"behavior_id": "x", "artifact_id": "a1", "artifact_version": 1},
+            {"behavior_id": "y", "artifact_id": "b-unselected", "artifact_version": 1},
+            {"behavior_id": "z", "artifact_id": "h-archived", "artifact_version": 1},
+        ],
+    }
+    prepared = _prepare_handoff(root, ids=("a1", "h-archived"), constraints=constraints)
+    assert _code_of(prepared) == "OK", _dump(_rd(prepared))
+    sid, cap = _session_of(prepared)
+    store.archive(
+        "h-archived", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    delivered = _receive(root, sid, cap)
+    assert _code_of(delivered) == "OK"
+    kept = _rd(delivered)["data"]["constraints"]
+    assert [ref["id"] for ref in kept["intent_refs"]] == ["a1"]
+    assert [ref["artifact_id"] for ref in kept["last_success_refs"]] == ["a1"]
+    assert "b-unselected" not in _dump(kept)
+    assert "h-archived" not in _dump(kept)
+
+
+def _strip_timing(payload: dict[str, Any]) -> dict[str, Any]:
+    cleaned = json.loads(json.dumps(payload))
+    for key in ("duration_ms", "timestamp", "started_at", "finished_at"):
+        cleaned.pop(key, None)
+    return cleaned
+
+
+def test_t01_receive_denial_bodies_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.memory.handoff import SESSION_TTL_SECONDS  # noqa: F401
+
+    _auth, _data_root, root, store, issued = _handoff_env(tmp_path)
+    assert issued is not None
+    prepared = _prepare_handoff(root)
+    sid, cap = _session_of(prepared)
+    revoked_prepared = _prepare_handoff(root)
+    rsid, rcap = _session_of(revoked_prepared)
+    store.revoke_handoff_session(rsid)
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    pre72 = tmp_path / "pre72"
+    pre72.mkdir()
+    pre_store = TypedArtifactStore(pre72)
+    _row(pre_store, "a1", ALICE, "mk-pre", source="source-a")
+    _drop_payload_columns(pre_store.db_path)
+
+    attempts = {
+        "unknown_session": (root, "0" * 32, cap),
+        "wrong_capability": (root, sid, "wrong-capability"),
+        "revoked_session": (root, rsid, rcap),
+        "missing_db": (bare, sid, cap),
+        "pre72_store": (pre72, sid, cap),
+    }
+    mcp_bodies: dict[str, str] = {}
+    cli_bodies: dict[str, str] = {}
+    for label, (path, session_id, capability) in attempts.items():
+        payload = _mcp_memory(
+            path=str(path),
+            operation="receive",
+            request={"session_id": session_id, "capability": capability},
+        )
+        assert payload["raw"]["code"] == "E_PERMISSION", label
+        mcp_bodies[label] = json.dumps(_strip_timing(payload["raw"]), sort_keys=True)
+        request_file = tmp_path / f"{label}.json"
+        request_file.write_text(
+            json.dumps({"session_id": session_id, "capability": capability}),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(path)
+        outcome = CliRunner().invoke(
+            cli, ["memory", "receive", "--input", str(request_file), "--json"]
+        )
+        body = json.loads(outcome.output)
+        cli_bodies[label] = json.dumps(
+            _strip_timing(body.get("raw", body)), sort_keys=True
+        )
+    assert len(set(mcp_bodies.values())) == 1, mcp_bodies
+    assert len(set(cli_bodies.values())) == 1, cli_bodies
+    for body in (*mcp_bodies.values(), *cli_bodies.values()):
+        assert sid not in body and cap not in body and rsid not in body
+
+    # A valid capability on an expired session alone mentions expiry.
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_handoff_sessions SET expires_at = ? WHERE session_id = ?",
+            (time.time() - 5, sid),
+        )
+        conn.commit()
+    expired = _mcp_memory(
+        path=str(root),
+        operation="receive",
+        request={"session_id": sid, "capability": cap},
+    )
+    assert expired["raw"]["code"] == "E_PERMISSION"
+    assert "expired" in json.dumps(expired["raw"]).lower()
+    wrong = _mcp_memory(
+        path=str(root),
+        operation="receive",
+        request={"session_id": sid, "capability": "wrong-capability"},
+    )
+    assert "expired" not in json.dumps(wrong["raw"]).lower()
+
+
+# --- R21: registration marker, `.rush/.gitignore`, missing policy ------------------
+
+MARKER = "memory-policy.required"
+
+
+def _rush_dir(root: Path) -> Path:
+    return root / ".rush"
+
+
+def _git_init_only(root: Path) -> None:
+    _git(root, "init", "--initial-branch=main")
+
+
+def _check_ignore(root: Path, *paths: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "check-ignore", *paths],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _markers(root: Path) -> list[str]:
+    rush = _rush_dir(root)
+    if not rush.is_dir():
+        return []
+    return sorted(n for n in os.listdir(rush) if n.startswith(MARKER))
+
+
+def _marker_project(
+    tmp_path: Path, *, keep_rush: bool = True, git: bool = False
+) -> tuple[Any, Path, Path]:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    if git:
+        _git_init_only(root)
+    if not keep_rush:
+        shutil.rmtree(_rush_dir(root))
+    return auth, data_root, root
+
+
+def _regrant(
+    auth: Any, root: Path, data_root: Path, *, owner: OwnerScope = ALICE
+) -> dict[str, Any]:
+    return auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=["source-a"],
+        allowed_operations=list(FULL_OPS),
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+
+
+def _policy_sha(auth: Any, data_root: Path) -> str | None:
+    path = auth.policy_path(data_root=data_root)
+    return _sha_file(path) if path.exists() else None
+
+
+def _expect_io(auth: Any, root: Path, data_root: Path, **kwargs: Any) -> None:
+    with pytest.raises(auth.MemoryPolicyError) as info:
+        _regrant(auth, root, data_root, **kwargs)
+    assert (info.value.code, info.value.reason) == (
+        "E_POLICY_IO",
+        "registration_marker",
+    )
+
+
+def _mode_of(auth: Any, root: Path) -> tuple[str, Any]:
+    from rush.memory.retrieval import memory_policy_decision
+
+    return memory_policy_decision(root)
+
+
+def _dir_fd_patched(monkeypatch: pytest.MonkeyPatch, wrapper: Any) -> None:
+    """Keep the `dir_fd` branch live once `os.open` is replaced by `wrapper`."""
+    monkeypatch.setattr(os, "open", wrapper)
+    monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {wrapper})
+
+
+def _case_params() -> list[Any]:
+    posix = pytest.mark.posix_only
+    nonroot = pytest.mark.posix_nonroot
+    windows = pytest.mark.windows_only
+    names = [
+        ("create_marker_posix_mode", (posix,)),
+        ("windows_marker_mode", (windows,)),
+        ("replay_recreates_deleted_marker", ()),
+        ("revoke_leaves_marker", ()),
+        ("readonly_root_without_rush", (nonroot,)),
+        ("symlinked_rush_dir", (posix,)),
+        ("git_check_ignore_and_new_gitignore", ()),
+        ("gitignore_append_without_newline", ()),
+        ("gitignore_negation_gains_pattern", ()),
+        ("gitignore_star_untouched", ()),
+        ("replay_recreates_gitignore", ()),
+        ("replay_after_rmtree_rush", ()),
+        ("marker_open_forced_failure", (posix,)),
+        ("gitignore_symlink_to_outside_file", (posix,)),
+        ("gitignore_fifo_never_blocks", (posix,)),
+        ("path_branch_without_nofollow_nonblock", (posix,)),
+        ("dirty_filters_skip_gitignore", ()),
+        ("gitignore_precedes_policy_commit", (posix,)),
+        ("failed_grants_leave_nothing", ()),
+        ("commit_failure_restores_existing_gitignore", ()),
+        ("commit_failure_keeps_appended_user_lines", ()),
+        ("commit_failure_with_other_data_root_marker", ()),
+        ("gitignore_variants_byte_identical", ()),
+        ("gitignore_create_failure_second_run", (posix,)),
+        ("pending_marker_open_failure", (posix,)),
+        ("path_branch_root_vanished", (posix,)),
+        ("path_branch_containment_error", (posix,)),
+        ("written_snapshot_mismatch_keeps_final_marker", ()),
+        ("rename_failure_keeps_pending_marker", (posix,)),
+        ("lone_pending_marker_after_crash", ()),
+        ("second_data_root_keeps_final_marker", ()),
+    ]
+    return [pytest.param(name, id=name, marks=marks) for name, marks in names]
+
+
+@pytest.mark.parametrize("case", _case_params())
+def test_t01_grant_writes_registration_marker(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.memory.authorization as auth
+
+    data_root = default_data_root()
+
+    if case == "create_marker_posix_mode":
+        _a, _d, root = _marker_project(tmp_path)
+        _regrant(auth, root, data_root)
+        marker = _rush_dir(root) / MARKER
+        assert marker.is_file() and marker.stat().st_size == 0
+        assert stat.S_IMODE(marker.stat().st_mode) == 0o600
+        assert _markers(root) == [MARKER]
+        return
+    if case == "windows_marker_mode":
+        _a, _d, root = _marker_project(tmp_path)
+        _regrant(auth, root, data_root)
+        assert (_rush_dir(root) / MARKER).stat().st_mode == 0o100666
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        return
+    if case == "replay_recreates_deleted_marker":
+        _a, _d, root = _marker_project(tmp_path)
+        first = _regrant(auth, root, data_root)
+        (_rush_dir(root) / MARKER).unlink()
+        again = _regrant(auth, root, data_root)
+        assert again["grant_id"] == first["grant_id"]
+        assert _markers(root) == [MARKER]
+        return
+    if case == "revoke_leaves_marker":
+        _a, _d, root = _marker_project(tmp_path)
+        grant = _regrant(auth, root, data_root)
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        assert _markers(root) == [MARKER]
+        return
+    if case == "readonly_root_without_rush":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        sha = _policy_sha(auth, data_root)
+        root.chmod(0o555)
+        try:
+            _expect_io(auth, root, data_root)
+        finally:
+            root.chmod(0o755)
+        assert _policy_sha(auth, data_root) == sha
+        assert auth.load_policy_readonly(data_root=data_root)["grants"] == {}
+        return
+    if case == "symlinked_rush_dir":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _rush_dir(root).symlink_to(outside)
+        sha = _policy_sha(auth, data_root)
+        _expect_io(auth, root, data_root)
+        assert _policy_sha(auth, data_root) == sha
+        assert _tree(outside) == []
+        return
+    if case == "git_check_ignore_and_new_gitignore":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False, git=True)
+        _regrant(auth, root, data_root)
+        check = _check_ignore(root, ".rush/memory-policy.required", ".rush/memory.db")
+        assert check.returncode == 0
+        assert check.stdout.splitlines() == [
+            ".rush/memory-policy.required",
+            ".rush/memory.db",
+        ]
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        return
+    if case in {
+        "gitignore_append_without_newline",
+        "gitignore_negation_gains_pattern",
+        "gitignore_star_untouched",
+    }:
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        existing, expected = {
+            "gitignore_append_without_newline": (
+                b"foo",
+                b"foo\nmemory-policy.required*\n",
+            ),
+            "gitignore_negation_gains_pattern": (
+                b"*\n!memory-policy.required\n",
+                b"*\n!memory-policy.required\nmemory-policy.required*\n",
+            ),
+            "gitignore_star_untouched": (b"*\n", b"*\n"),
+        }[case]
+        (_rush_dir(root) / ".gitignore").write_bytes(existing)
+        _regrant(auth, root, data_root)
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == expected
+        if case == "gitignore_negation_gains_pattern":
+            assert (
+                _check_ignore(root, "-q", ".rush/memory-policy.required").returncode
+                == 0
+            )
+        return
+    if case == "replay_recreates_gitignore":
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        _regrant(auth, root, data_root)
+        (_rush_dir(root) / ".gitignore").unlink()
+        _regrant(auth, root, data_root)
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        return
+    if case == "replay_after_rmtree_rush":
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        _regrant(auth, root, data_root)
+        shutil.rmtree(_rush_dir(root))
+        _regrant(auth, root, data_root)
+        assert _markers(root) == [MARKER]
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        assert _check_ignore(root, "-q", ".rush/memory-policy.required").returncode == 0
+        return
+    if case == "marker_open_forced_failure":
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        _regrant(auth, root, data_root)
+        shutil.rmtree(_rush_dir(root))
+        sha = _policy_sha(auth, data_root)
+        real_open = os.open
+
+        def wrapper(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if os.path.basename(os.fspath(path)) == MARKER:
+                raise OSError("forced")
+            return real_open(path, flags, *args, **kwargs)
+
+        _dir_fd_patched(monkeypatch, wrapper)
+        _expect_io(auth, root, data_root)
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        assert _policy_sha(auth, data_root) == sha
+        return
+    if case == "gitignore_symlink_to_outside_file":
+        _a, _d, root = _marker_project(tmp_path)
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"outside\n")
+        (_rush_dir(root) / ".gitignore").symlink_to(outside)
+        grant = _regrant(auth, root, data_root)
+        assert (
+            grant["grant_id"]
+            in auth.load_policy_readonly(data_root=data_root)["grants"]
+        )
+        assert outside.read_bytes() == b"outside\n"
+        return
+    if case == "gitignore_fifo_never_blocks":
+        _a, _d, root = _marker_project(tmp_path)
+        fifo = _rush_dir(root) / ".gitignore"
+        os.mkfifo(fifo)
+        thread, box = _run_in_thread(lambda: _regrant(auth, root, data_root))
+        try:
+            thread.join(5)
+            alive = thread.is_alive()
+        finally:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                os.close(fd)
+            except OSError:
+                pass
+        thread.join(5)
+        assert not alive, "the grant blocked on a planted FIFO"
+        assert (
+            box["result"]["grant_id"]
+            in auth.load_policy_readonly(data_root=data_root)["grants"]
+        )
+        return
+    if case == "path_branch_without_nofollow_nonblock":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "supports_dir_fd", os.supports_dir_fd - {os.open})
+            patch.delattr(os, "O_NOFOLLOW", raising=False)
+            patch.delattr(os, "O_NONBLOCK", raising=False)
+            _regrant(auth, root, data_root)
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        assert _markers(root) == [MARKER]
+        return
+    if case == "dirty_filters_skip_gitignore":
+        from rush.core.git_sandbox import GitSandbox
+        from rush.patch.sandbox import PatchSandboxManager
+
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        (_rush_dir(root) / ".gitignore").write_bytes(b"foo\n")
+        _git(root, "add", "-f", ".rush/.gitignore", ".rush/project.json")
+        _git(root, "commit", "-m", "fixture")
+        _regrant(auth, root, data_root)
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout
+        assert status == " M .rush/.gitignore\n"
+        manager = PatchSandboxManager(root)
+        sandbox = manager.create_sandbox()
+        manager.cleanup_sandbox(sandbox)
+        with GitSandbox(root):
+            pass
+        return
+    if case == "gitignore_precedes_policy_commit":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        seen: list[list[str]] = []
+        real_cas = auth.CASMapTransaction
+
+        class Spy(real_cas):  # type: ignore[misc, valid-type]
+            def write(self, data: Any, expected_version: int) -> Any:
+                seen.append(sorted(os.listdir(_rush_dir(root))))
+                return super().write(data, expected_version=expected_version)
+
+        monkeypatch.setattr(auth, "CASMapTransaction", Spy)
+        _regrant(auth, root, data_root)
+        assert len(seen) == 1
+        names = seen[0]
+        assert ".gitignore" in names
+        assert any(n.startswith(MARKER + ".pending-") for n in names)
+        return
+    if case == "failed_grants_leave_nothing":
+        from rush.memory.retrieval import memory_policy_mode
+
+        for label in ("stale_revision", "unregistered", "version", "redaction"):
+            sub = tmp_path / label
+            sub.mkdir()
+            data = default_data_root()
+            if label == "unregistered":
+                path = sub.resolve()
+            else:
+                path = _registered(sub, data)
+                shutil.rmtree(_rush_dir(path))
+            before = _tree(path)
+            with monkeypatch.context() as patch:
+                if label == "version":
+                    patch.setattr(
+                        auth,
+                        "_commit",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            auth.MemoryPolicyError("E_VERSION", "cas_conflict")
+                        ),
+                    )
+                if label == "redaction":
+                    patch.setattr(
+                        auth,
+                        "_commit",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            auth.MemoryPolicyError("E_POLICY_REDACTION", "secret")
+                        ),
+                    )
+                revision = 99 if label == "stale_revision" else _revision(auth, data)
+                with pytest.raises(auth.MemoryPolicyError):
+                    auth.grant_memory_scope(
+                        project_root=path,
+                        owner_scope=ALICE,
+                        approved_sources=["source-a"],
+                        allowed_operations=list(FULL_OPS),
+                        expected_policy_revision=revision,
+                        consent=True,
+                        data_root=data,
+                    )
+            assert _tree(path) == before, label
+            assert not (_rush_dir(path) / ".gitignore").exists(), label
+            assert _markers(path) == [], label
+            assert memory_policy_mode(path) == "legacy", label
+        return
+    if case in {
+        "commit_failure_restores_existing_gitignore",
+        "commit_failure_keeps_appended_user_lines",
+        "commit_failure_with_other_data_root_marker",
+    }:
+        _a, _d, root = _marker_project(tmp_path)
+        gitignore = _rush_dir(root) / ".gitignore"
+        gitignore.write_bytes(b"foo")
+        real_commit = auth._commit
+
+        def failing(*args: Any, **kwargs: Any) -> Any:
+            if case == "commit_failure_keeps_appended_user_lines":
+                with open(gitignore, "ab") as fh:
+                    fh.write(b"bar\n")
+            if case == "commit_failure_with_other_data_root_marker":
+                (_rush_dir(root) / f"{MARKER}.pending-{'cd' * 16}").write_bytes(b"")
+            raise auth.MemoryPolicyError("E_VERSION", "cas_conflict")
+
+        monkeypatch.setattr(auth, "_commit", failing)
+        with pytest.raises(auth.MemoryPolicyError) as info:
+            _regrant(auth, root, data_root)
+        assert info.value.code == "E_VERSION"
+        monkeypatch.setattr(auth, "_commit", real_commit)
+        expected = {
+            "commit_failure_restores_existing_gitignore": b"foo",
+            "commit_failure_keeps_appended_user_lines": b"foo\nmemory-policy.required*\nbar\n",
+            "commit_failure_with_other_data_root_marker": b"foo\nmemory-policy.required*\n",
+        }[case]
+        assert gitignore.read_bytes() == expected
+        return
+    if case == "gitignore_variants_byte_identical":
+        _a, _d, root = _marker_project(tmp_path, git=True)
+        gitignore = _rush_dir(root) / ".gitignore"
+        for body in (
+            b"*\r\n",
+            b"# c\nmemory-policy.required*\n\n",
+            b"x\n" * 40000,
+        ):
+            gitignore.write_bytes(body)
+            _regrant(auth, root, data_root)
+            assert gitignore.read_bytes() == body
+            _regrant(auth, root, data_root)
+            assert gitignore.read_bytes() == body
+        return
+    if case == "gitignore_create_failure_second_run":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        real_open = os.open
+        state = {"failed": False}
+
+        def wrapper(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if (
+                not state["failed"]
+                and os.path.basename(os.fspath(path)) == ".gitignore"
+                and flags & os.O_CREAT
+            ):
+                state["failed"] = True
+                raise OSError("forced")
+            return real_open(path, flags, *args, **kwargs)
+
+        seen2: list[list[str]] = []
+        real_cas = auth.CASMapTransaction
+
+        class Spy2(real_cas):  # type: ignore[misc, valid-type]
+            def write(self, data: Any, expected_version: int) -> Any:
+                seen2.append(sorted(os.listdir(_rush_dir(root))))
+                return super().write(data, expected_version=expected_version)
+
+        _dir_fd_patched(monkeypatch, wrapper)
+        monkeypatch.setattr(auth, "CASMapTransaction", Spy2)
+        _regrant(auth, root, data_root)
+        assert state["failed"]
+        assert (_rush_dir(root) / ".gitignore").read_bytes() == b"*\n"
+        assert ".gitignore" in seen2[0]
+        assert any(n.startswith(MARKER + ".pending-") for n in seen2[0])
+        return
+    if case == "pending_marker_open_failure":
+        from rush.memory.retrieval import memory_policy_mode
+
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        real_open = os.open
+
+        def wrapper(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if os.path.basename(os.fspath(path)).startswith(MARKER + ".pending-"):
+                raise OSError("forced")
+            return real_open(path, flags, *args, **kwargs)
+
+        _dir_fd_patched(monkeypatch, wrapper)
+        _expect_io(auth, root, data_root)
+        assert not _rush_dir(root).exists()
+        assert memory_policy_mode(root) == "legacy"
+        return
+    if case in {"path_branch_root_vanished", "path_branch_containment_error"}:
+        from rush.io import physical_paths
+
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        sha = _policy_sha(auth, data_root)
+        monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd - {os.open})
+        canonical = root.resolve()
+        if case == "path_branch_root_vanished":
+            real_init = physical_paths.PhysicalRoot.__init__
+
+            def init(self: Any, root_path: Any) -> None:
+                if Path(root_path).resolve() == canonical:
+                    raise ValueError("vanished")
+                real_init(self, root_path)
+
+            monkeypatch.setattr(physical_paths.PhysicalRoot, "__init__", init)
+        else:
+            real_open_contained = physical_paths.PhysicalRoot.open_contained
+
+            def contained(self: Any, relative_path: Any, purpose: str = "read") -> Any:
+                if self.root_path == canonical:
+                    raise physical_paths.ContainmentError("TEST", "forced", "x")
+                return real_open_contained(self, relative_path, purpose)
+
+            monkeypatch.setattr(
+                physical_paths.PhysicalRoot, "open_contained", contained
+            )
+        _expect_io(auth, root, data_root)
+        assert _policy_sha(auth, data_root) == sha
+        assert auth.load_policy_readonly(data_root=data_root)["grants"] == {}
+        return
+    if case == "written_snapshot_mismatch_keeps_final_marker":
+        _a, _d, root = _marker_project(tmp_path)
+        real_commit = auth._commit
+
+        def landed_then_error(*args: Any, **kwargs: Any) -> None:
+            real_commit(*args, **kwargs)
+            raise auth.MemoryPolicyError("E_POLICY_IO", "written_snapshot_mismatch")
+
+        monkeypatch.setattr(auth, "_commit", landed_then_error)
+        with pytest.raises(auth.MemoryPolicyError) as info:
+            _regrant(auth, root, data_root)
+        assert (info.value.code, info.value.reason) == (
+            "E_POLICY_IO",
+            "written_snapshot_mismatch",
+        )
+        assert _markers(root) == [MARKER]
+        return
+    if case == "rename_failure_keeps_pending_marker":
+        _a, _d, root = _marker_project(tmp_path)
+        real_rename = os.rename
+
+        def failing_rename(src: Any, dst: Any, *args: Any, **kwargs: Any) -> None:
+            if os.path.basename(os.fspath(dst)) == MARKER:
+                raise OSError("forced")
+            real_rename(src, dst, *args, **kwargs)
+
+        monkeypatch.setattr(os, "rename", failing_rename)
+        monkeypatch.setattr(os, "replace", failing_rename)
+        grant = _regrant(auth, root, data_root)
+        assert (
+            grant["grant_id"]
+            in auth.load_policy_readonly(data_root=data_root)["grants"]
+        )
+        names = _markers(root)
+        assert len(names) == 1 and names[0].startswith(MARKER + ".pending-")
+        auth.policy_path(data_root=data_root).unlink()
+        assert _mode_of(auth, root) == ("unavailable", "policy_missing")
+        return
+    if case == "lone_pending_marker_after_crash":
+        _a, _d, root = _marker_project(tmp_path, keep_rush=False)
+        # a project with no grant under an existing policy, and a pending marker only
+        other = _registered(tmp_path / "other", data_root)
+        _regrant(auth, other, data_root)
+        (_rush_dir(root)).mkdir(exist_ok=True)
+        (_rush_dir(root) / f"{MARKER}.pending-{'ab' * 16}").write_bytes(b"")
+        assert _mode_of(auth, root) == ("unavailable", "no_grant")
+        auth.policy_path(data_root=data_root).unlink()
+        assert _mode_of(auth, root) == ("unavailable", "policy_missing")
+        # A simulated crash right after the CAS write: the grant landed, a marker exists.
+        crash_root = _registered(tmp_path / "crash", data_root)
+        real_cas = auth.CASMapTransaction
+
+        class Crash(BaseException):
+            pass
+
+        class Crashing(real_cas):  # type: ignore[misc, valid-type]
+            def write(self, data: Any, expected_version: int) -> Any:
+                super().write(data, expected_version=expected_version)
+                raise Crash
+
+        monkeypatch.setattr(auth, "CASMapTransaction", Crashing)
+        with pytest.raises(Crash):
+            _regrant(auth, crash_root, data_root)
+        assert _markers(crash_root) != []
+        auth.policy_path(data_root=data_root).unlink()
+        assert _mode_of(auth, crash_root) == ("unavailable", "policy_missing")
+        return
+    assert case == "second_data_root_keeps_final_marker"
+    _a, _d, root = _marker_project(tmp_path)
+    second = tmp_path / "second-data"
+    second.mkdir()
+    register_project(root, data_root=second)
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=ALICE,
+        approved_sources=["source-a"],
+        allowed_operations=list(FULL_OPS),
+        expected_policy_revision=0,
+        consent=True,
+        data_root=second,
+    )
+    assert _markers(root) == [MARKER]
+    monkeypatch.setattr(
+        auth,
+        "_commit",
+        lambda *a, **k: (_ for _ in ()).throw(
+            auth.MemoryPolicyError("E_VERSION", "cas_conflict")
+        ),
+    )
+    with pytest.raises(auth.MemoryPolicyError):
+        _regrant(auth, root, data_root)
+    assert _markers(root) == [MARKER]
+
+
+def test_t01_missing_policy_after_registration_never_restores_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import memory_policy_decision, memory_policy_mode
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    assert _markers(root) == [MARKER]
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    auth.policy_path(data_root=data_root).unlink()
+    assert memory_policy_decision(root) == ("unavailable", "policy_missing")
+
+    permissions = ExecutionPermissions(cache_write=True)
+    tool = MemoryTool()
+
+    def routes() -> dict[str, Any]:
+        archive = {"id": "a1", "expected_version": 1, "scope": SUBJECT, "apply": True}
+        return {
+            "ask": lambda: tool.run(
+                root,
+                operation="ask",
+                subject=SUBJECT,
+                query="needle",
+                session_allowlist=["source-a"],
+                request={"view": "compact"},
+            ),
+            "list": lambda: tool.run(
+                root,
+                operation="list",
+                subject=SUBJECT,
+                query="needle",
+                session_allowlist=["source-a"],
+                request={"view": "compact"},
+            ),
+            "expand": lambda: tool.run(
+                root,
+                operation="expand",
+                session_allowlist=["source-a"],
+                request={"id": "a1", "version": 1},
+            ),
+            "related": lambda: tool.run(
+                root,
+                operation="related",
+                session_allowlist=["source-a"],
+                request={"id": "a1", "version": 1},
+            ),
+            "write": lambda: tool.run(
+                root,
+                operation="write",
+                subject=SUBJECT,
+                content={"t": "x"},
+                source="source-a",
+                request={"apply": True},
+                permissions=permissions,
+            ),
+            "edit": lambda: tool.run(
+                root,
+                operation="edit",
+                permissions=permissions,
+                request={**archive, "content": {"text": "changed"}},
+            ),
+            "archive": lambda: tool.run(
+                root, operation="archive", permissions=permissions, request=archive
+            ),
+            "delete": lambda: tool.run(
+                root,
+                operation="delete",
+                permissions=permissions,
+                request={
+                    "artifact_ids": ["a1"],
+                    "expected_revisions": {"a1": 1},
+                    "scope": SUBJECT,
+                    "apply": True,
+                },
+            ),
+        }
+
+    def assert_denied(label: str, reason: str) -> None:
+        before = _effects(root, default_data_root())
+        for name, call in routes().items():
+            result = call()
+            assert _code_of(result) == "E_PERMISSION", (label, name, _dump(_rd(result)))
+            assert _reason_of(result) == reason, (label, name)
+            assert "mk-a1" not in _dump(_rd(result)), (label, name)
+        assert _effects(root, default_data_root()) == before, label
+
+    assert_denied("policy deleted", "policy_missing")
+
+    # The same project under an empty data root, and under one granting only another project.
+    empty = tmp_path / "empty-home"
+    for name, sub in (
+        ("HOME", ""),
+        ("XDG_DATA_HOME", "xdg"),
+        ("LOCALAPPDATA", "local"),
+    ):
+        (empty / sub).mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(name, str(empty / sub))
+    assert default_data_root() != data_root
+    assert memory_policy_decision(root) == ("unavailable", "policy_missing")
+    assert_denied("empty data root", "policy_missing")
+    other_data = default_data_root()
+    other_project = _registered(tmp_path / "other", other_data)
+    _grant(auth, other_project, ALICE, other_data, ops=FULL_OPS)
+    assert memory_policy_decision(root) == ("unavailable", "no_grant")
+    assert_denied("other project granted", "no_grant")
+
+    # A project that was never granted stays legacy.
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    fresh_store = TypedArtifactStore(fresh)
+    _row(fresh_store, "f1", ALICE, "mk-f1", source="source-a")
+    assert memory_policy_mode(fresh) == "legacy"
+    asked = tool.run(
+        fresh,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-a"],
+        request={"view": "compact"},
+    )
+    assert _code_of(asked) == "OK"
+    assert [item["id"] for item in _items(asked)] == ["f1"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("symlink_leaf", id="symlink_leaf", marks=pytest.mark.posix_only),
+        pytest.param(
+            "symlink_parent", id="symlink_parent", marks=pytest.mark.posix_only
+        ),
+        pytest.param("hard_link", id="hard_link", marks=pytest.mark.posix_only),
+        pytest.param("crlf_hash_equal", id="crlf_hash_equal"),
+        pytest.param(
+            "junction_parent",
+            id="windows_junction_parent",
+            marks=pytest.mark.windows_only,
+        ),
+    ],
+)
+def test_t01_source_swap_between_validation_and_open(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.io import physical_paths
+    from rush.memory.recipes import resolve_symbol_source
+    from rush.memory.retrieval import artifact_freshness
+    from rush.memory.trust import read_contained_source, resolve_symbol_ref
+    from rush.tools.api_diff import ApiDiffer
+
+    root = _git_repo(tmp_path / "project", {"sub/a.py": KNOWN_SRC, "b.py": KNOWN_SRC})
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    (outside_dir / "a.py").write_text(KNOWN_SRC, encoding="utf-8")
+    (tmp_path / "outside.py").write_text(KNOWN_SRC, encoding="utf-8")
+    store = TypedArtifactStore(root)
+
+    def row_for(rel: str) -> sqlite3.Row:
+        name = "r-" + rel.replace("/", "-")
+        _row(
+            store,
+            name,
+            None,
+            rel,
+            source="src",
+            symbol_ref=f"{rel}::",
+            content_hash=_sha_file(root / rel),
+        )
+        return _nn(store.get_current_row(name))
+
+    if case == "crlf_hash_equal":
+        crlf = root / "crlf.py"
+        crlf.write_bytes(b"def Known():\r\n    return 1\r\n")
+        text = crlf.read_text(encoding="utf-8")
+        assert read_contained_source(root, "crlf.py") == text
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        _row(
+            store,
+            "r-crlf",
+            None,
+            "crlf",
+            source="src",
+            symbol_ref="crlf.py::",
+            content_hash=digest,
+        )
+        assert artifact_freshness(store, _nn(store.get_current_row("r-crlf"))) == (
+            "current",
+            (),
+        )
+        return
+    if case == "hard_link":
+        os.link(root / "b.py", root / "linked.py")
+        assert os.stat(root / "linked.py").st_nlink == 2
+        row = row_for("linked.py")
+        assert artifact_freshness(store, row) == ("unknown", ("source_unreadable",))
+        assert (
+            resolve_symbol_source(root, {"path": "linked.py", "symbol": "Known"})
+            is None
+        )
+        assert read_contained_source(root, "linked.py") is None
+        return
+
+    rel = "b.py" if case == "symlink_leaf" else "sub/a.py"
+    row = row_for(rel)
+
+    def restore() -> None:
+        target = root / rel
+        if case == "symlink_leaf":
+            if target.is_symlink():
+                target.unlink()
+            target.write_text(KNOWN_SRC, encoding="utf-8")
+        else:
+            sub = root / "sub"
+            if sub.is_symlink():
+                sub.unlink()
+            else:
+                with contextlib.suppress(OSError):
+                    os.rmdir(sub)  # removes a junction; a real, filled dir stays
+            sub.mkdir(exist_ok=True)
+            (sub / "a.py").write_text(KNOWN_SRC, encoding="utf-8")
+
+    def swap() -> None:
+        if case == "symlink_leaf":
+            (root / "b.py").unlink()
+            (root / "b.py").symlink_to(tmp_path / "outside.py")
+        elif case == "symlink_parent":
+            shutil.rmtree(root / "sub")
+            (root / "sub").symlink_to(outside_dir)
+        else:
+            import _winapi  # type: ignore[import-not-found]
+
+            shutil.rmtree(root / "sub")
+            _winapi.CreateJunction(str(outside_dir), str(root / "sub"))  # type: ignore[attr-defined]  # Windows-only API, absent from non-Windows stubs
+
+    real = physical_paths.PhysicalRoot.open_contained
+
+    def swapping(self: Any, relative_path: Any, purpose: str = "read") -> Any:
+        validated = real(self, relative_path, purpose)
+        if sys._getframe(1).f_code.co_name == "open_contained_file":
+            swap()
+        return validated
+
+    def race(consumer: Any) -> Any:
+        restore()
+        with monkeypatch.context() as patch:
+            patch.setattr(physical_paths.PhysicalRoot, "open_contained", swapping)
+            return consumer()
+
+    # No consumer reopens the path by name after validation: audit the real opens.
+    opened: list[Any] = []
+    active = {"on": False}
+
+    def hook(event: str, args: tuple[Any, ...]) -> None:
+        if event == "open" and active["on"]:
+            opened.append(args[0])
+
+    sys.addaudithook(hook)
+    active["on"] = True
+    try:
+        assert race(lambda: read_contained_source(root, rel)) is None
+    finally:
+        active["on"] = False
+    for value in opened:
+        if isinstance(value, int):
+            continue
+        text = os.fspath(value)
+        if os.path.isabs(text):
+            if Path(text).is_relative_to(tmp_path):
+                assert Path(text).is_relative_to(root), text
+        else:
+            assert "/" not in text and "\\" not in text, text
+
+    assert race(lambda: artifact_freshness(store, row)) == (
+        "unknown",
+        ("source_unreadable",),
+    )
+    assert race(lambda: resolve_symbol_ref(f"{rel}::Known", root)) is False
+    assert (
+        race(lambda: resolve_symbol_source(root, {"path": rel, "symbol": "Known"}))
+        is None
+    )
+    # A supplied `source_text` is used as given: the diff never reopens the file.
+    restore()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            Path,
+            "read_text",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("reopened")),
+        )
+        assert (
+            ApiDiffer(project_root=root).diff_symbol(
+                root / rel, "Known", source_text=KNOWN_SRC
+            )
+            is None
+        )
+
+
+# --- R9: D4 internal writers ---------------------------------------------------
+
+_WRITER_NAMES = [
+    "record_turn",
+    "record_fix_attribution",
+    "record_event",
+    "generate_skill_markdown",
+    "write_cache_fill",
+    "save_checkpoint",
+    "write_observation",
+    "record_behavior_success",
+    "record_cause_experiment",
+    "record_attempt",
+    "write_if_new",
+    "migrate_session_memory",
+    "build_handoff",
+]
+
+
+def _writer_param(name: str, mode: str) -> Any:
+    return pytest.param(name, mode, id=f"{name}-{mode}")
+
+
+#: Writers that publish legacy output beside the typed-store row: the grant expires
+#: after authorization and before the row commits, and nothing may be published.
+_EXPIRING_WRITER_SOURCES = {
+    "record_turn": "session_memory:record_turn",
+    "record_event": "flight_recorder:record_event",
+    "save_checkpoint": "checkpoint_journal:save_checkpoint",
+}
+
+
+@pytest.mark.parametrize(
+    ("writer", "mode"),
+    [
+        _writer_param(name, mode)
+        for name in _WRITER_NAMES
+        for mode in ("policy_without_write", "unavailable")
+    ]
+    + [
+        _writer_param(name, "expires_before_commit")
+        for name in _EXPIRING_WRITER_SOURCES
+    ],
+)
+def test_t01_internal_writers_policy_mode(
+    writer: str,
+    mode: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    from rush.memory import authorization as auth
+
+    if writer == "build_handoff":
+        request.getfixturevalue("hermetic_engine_path")
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    (root / "module.py").write_text(KNOWN_SRC, encoding="utf-8")
+    (root / ".rush" / "session_memory.json").write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "tool_name": "t",
+                        "finding_count": 1,
+                        "fixes_applied": 0,
+                        "summary": "legacy turn",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = TypedArtifactStore(root)
+    _row(store, "a1", legacy_owner_scope(root), "mk-a1", source="source-a")
+    owner = legacy_owner_scope(root)
+    expiring = mode == "expires_before_commit"
+    expiry = time.time() + 3600.0
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=[_EXPIRING_WRITER_SOURCES[writer]]
+        if expiring
+        else ["source-a"],
+        allowed_operations=["write"] if expiring else ["ask", "list"],
+        expected_policy_revision=0,
+        consent=True,
+        data_root=data_root,
+        expires_at=expiry if expiring else None,
+    )
+    if mode == "unavailable":
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+    handoff_args: dict[str, Any] = {}
+    if writer == "build_handoff":
+        record = register_project(root, data_root=data_root)
+        _scan_manifest(Path(record.root), "run-denied")
+        handoff_args = {"record": record, "registry": data_root}
+    before = _effects(root, data_root)
+    monkeypatch.chdir(root)
+    if expiring:
+        real_write = TypedArtifactStore.write
+
+        def write_after_expiry(
+            self: TypedArtifactStore, *args: Any, **kwargs: Any
+        ) -> Any:
+            monkeypatch.setattr(auth, "_now", lambda: expiry + 1.0)
+            return real_write(self, *args, **kwargs)
+
+        monkeypatch.setattr(TypedArtifactStore, "write", write_after_expiry)
+
+    from rush.memory import experience, migration
+
+    if writer == "record_turn":
+        from rush.session_memory import SessionMemoryManager
+
+        manager = SessionMemoryManager(root / ".rush" / "session_memory.json")
+        assert manager.record_turn("tool", 1, 0, "summary") is None  # type: ignore[func-returns-value]  # asserts the None return contract
+    elif writer == "record_fix_attribution":
+        from rush import session_memory
+
+        denied = session_memory.record_fix_attribution(root, {"hash": "abc1234"}, "f1")
+        assert denied is session_memory.ATTRIBUTION_DENIED
+    elif writer == "record_event":
+        from rush.tools.flight_recorder import FlightRecorder
+
+        assert FlightRecorder(root).record_event("s1", "evt", {"a": 1}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+        assert not (root / ".rush" / "sessions" / "flights").exists()
+    elif writer == "generate_skill_markdown":
+        from rush.plugins.loader import PluginSpec
+        from rush.plugins.skills_generator import AgentSkillGenerator
+
+        spec = PluginSpec(
+            name="denied-plugin",
+            executable_path=root / "plugin.sh",
+            command=["plugin.sh"],
+            description="d",
+        )
+        markdown = AgentSkillGenerator.generate_skill_markdown(spec)
+        assert isinstance(markdown, str) and "denied-plugin" in markdown
+    elif writer == "write_cache_fill":
+        from rush.token_economy.memory_cache_gate import write_cache_fill
+
+        assert (
+            write_cache_fill(
+                root,
+                "module.py",
+                "Known",
+                {"source_content_hash": _sha_file(root / "module.py"), "text": "p"},
+            )
+            is None
+        )
+    elif writer == "save_checkpoint":
+        from rush.memory.checkpoint_journal import CheckpointJournal
+
+        assert CheckpointJournal(root).save_checkpoint("cp1", {}, []) is None
+        assert not (root / ".rush" / "sessions" / "cp1.json").exists()
+    elif writer == "write_observation":
+        with pytest.raises(experience.MemoryWriteDenied):
+            experience.write_observation(
+                evidence_kind="source_graph",
+                operation_id="op-1",
+                source="invocation:op-1",
+                content={"k": "v"},
+                project_root=root,
+            )
+    elif writer == "record_behavior_success":
+        with pytest.raises(experience.MemoryWriteDenied):
+            experience.record_behavior_success(
+                project_root=root,
+                behavior_id="beh1",
+                conditions={},
+                source="invocation:op-1",
+            )
+    elif writer == "record_cause_experiment":
+        with pytest.raises(experience.MemoryWriteDenied):
+            experience.record_cause_experiment(
+                project_root=root,
+                behavior_id="beh1",
+                baseline_ref={},
+                changed_factor="f",
+                control_receipt_ref=None,
+                outcome_changed=False,
+                source="invocation:op-1",
+            )
+    elif writer == "record_attempt":
+        with pytest.raises(experience.MemoryWriteDenied):
+            experience.record_attempt(
+                project_root=root,
+                symptom="symptom",
+                hypothesis="h",
+                patch_hash=None,
+                conditions={},
+                receipt_ref=None,
+                behavior_ids=[],
+                outcome="untested",
+            )
+    elif writer == "write_if_new":
+        assert (
+            migration.write_if_new(
+                store,
+                family="experience",
+                subject="episodic",
+                content={"k": "v"},
+                source="migration:session_memory",
+                origin_kind="k",
+                origin_id="i",
+            )
+            is None
+        )
+    elif writer == "migrate_session_memory":
+        assert migration.migrate_session_memory(root) == 0
+        assert (root / ".rush" / "session_memory.json").exists()
+        assert not (root / ".rush" / "session_memory.json.migrated").exists()
+    else:
+        from rush.workflows.project_run import ScanHandoffAuthError, build_handoff
+
+        with pytest.raises(ScanHandoffAuthError) as info:
+            build_handoff(
+                handoff_args["record"].project_id,
+                "run-denied",
+                "codex-cli",
+                data_root=handoff_args["registry"],
+            )
+        assert getattr(info.value, "code", None) == "E_PERMISSION"
+    assert _effects(root, data_root) == before, writer
+
+
+# --- R7: dashboard, TUI, telemetry -----------------------------------------------
+
+
+def _find_key(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        if key in value:
+            return value[key]
+        for sub in value.values():
+            found = _find_key(sub, key)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for sub in value:
+            found = _find_key(sub, key)
+            if found is not None:
+                return found
+    return None
+
+
+def test_t01_dashboard_tui_no_ambient_sources(tmp_path: Path) -> None:
+    from rush.dashboard import server
+    from rush.memory import authorization as auth
+    from rush.tui import ProjectState, _memory_sources_and_state
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    record = register_project(root, data_root=data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    _row(store, "b1", ALICE, "mk-b1", source="source-b")
+    _row(store, "bob1", BOB, "mk-bob1", source="source-a")
+    _row(store, "arch", ALICE, "mk-arch", source="source-a")
+    store.archive(
+        "arch", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+
+    def ids(query: dict[str, list[str]]) -> set[str]:
+        return {
+            item["id"]
+            for item in server._build_memory_section(record.project_id, query)["items"]
+        }
+
+    # Legacy (no grant): the whole project, as before.
+    assert ids({}) == {"a1", "b1", "bob1"}
+    assert _memory_sources_and_state(ProjectState(name="p", root=root)) == (
+        ["source-a", "source-b"],
+        None,
+    )
+    legacy_tokens = server._build_tokens_section(record.project_id, {})
+    assert _find_key(legacy_tokens, "memory_events_scope") == "project"
+
+    grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    for query in ({}, {"query": ["needle"]}):
+        assert ids(query) == {"a1"}, query
+        section = server._build_memory_section(record.project_id, query)
+        assert section["known_sources"] == ["source-a"], query
+    assert "arch" not in ids({"include_archived": ["true"]})
+    assert _memory_sources_and_state(ProjectState(name="p", root=root)) == (
+        ["source-a"],
+        None,
+    )
+    assert (
+        _find_key(
+            server._build_tokens_section(record.project_id, {}), "memory_events_scope"
+        )
+        == "authorized"
+    )
+
+    _grant(auth, root, ALICE, data_root, ops=FULL_OPS_HISTORY)
+    assert "arch" in ids({"include_archived": ["true"]})
+    assert grant["grant_id"]
+
+
+def _record_event(
+    root: Path,
+    tokens: int,
+    event_id: str,
+    *,
+    kind: str = "retrieval",
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+    request_id: str | None = None,
+    stamp: int | None = None,
+) -> None:
+    from rush.token_economy.telemetry import TelemetryStore
+
+    telemetry = TelemetryStore(root)
+    extra: dict[str, Any] = {}
+    if owner is not None:
+        extra = {
+            "owner_scope_kind": owner.kind,
+            "owner_scope_id": owner.id,
+            "sources_json": json.dumps(sorted(sources or [])),
+        }
+    assert telemetry.record_memory_event(
+        kind,
+        tokens,
+        request_id=request_id or event_id,
+        event_id=event_id,
+        cache_write=True,
+        **extra,
+    )
+    if stamp is not None:
+        with contextlib.closing(sqlite3.connect(telemetry.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_events SET timestamp = ? WHERE event_id = ?",
+                (stamp, event_id),
+            )
+            conn.commit()
+
+
+def _list_access(
+    root: Path,
+    owner: OwnerScope,
+    sources: list[str] | None = None,
+    *,
+    data_root: Path | None = None,
+) -> Any:
+    from rush.memory.retrieval import MemoryAccess
+
+    access = MemoryAccess.resolve(
+        root,
+        operation="list",
+        owner_scope=owner,
+        requested_sources=sources or (),
+        data_root=data_root,
+    )
+    assert access is not None, (owner, sources)
+    return access
+
+
+def test_t01_telemetry_scoped_by_owner_source(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.token_economy.telemetry import (
+        read_artifact_expansion_receipts_readonly,
+        read_memory_event_totals_readonly,
+    )
+    from rush.workflows.projects import root_token_usage
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _grant(auth, root, ALICE, data_root, sources=("source-a",), ops=FULL_OPS)
+    _grant(auth, root, BOB, data_root, sources=("source-b",), ops=FULL_OPS)
+    _record_event(
+        root, 1, "alice-1", owner=ALICE, sources=["source-a"], stamp=1_700_000_000
+    )
+    _record_event(
+        root, 500, "bob-1", owner=BOB, sources=["source-b"], stamp=1_600_000_000
+    )
+    _record_event(root, 7, "null-1", stamp=1_800_000_000)
+    _record_event(
+        root,
+        2,
+        "alice-x",
+        kind="expansion",
+        owner=ALICE,
+        sources=["source-a"],
+        request_id="x:1:alice",
+    )
+    _record_event(
+        root,
+        3,
+        "bob-x",
+        kind="expansion",
+        owner=BOB,
+        sources=["source-b"],
+        request_id="x:1:bob",
+    )
+    kinds = ("retrieval", "expansion")
+    alice = _list_access(root, ALICE, data_root=data_root)
+
+    totals = read_memory_event_totals_readonly(root, kinds, access=alice)
+    assert totals["retrieval"] == 1
+    legacy_totals = read_memory_event_totals_readonly(root, kinds)
+    assert legacy_totals["retrieval"] == 508
+
+    receipts = read_artifact_expansion_receipts_readonly(root, "x", 1, access=alice)
+    assert [r["tokens"] for r in receipts] == [2]
+    legacy_receipts = read_artifact_expansion_receipts_readonly(root, "x", 1)
+    assert sorted(r["tokens"] for r in legacy_receipts) == [2, 3]
+
+    usage = root_token_usage(root, access=alice)
+    assert usage["cache_hits"]["by_kind"]["retrieval"] == 1
+    # R7: the bounds cover exactly Alice's two counted events -- alice-1 (fixed
+    # 2023-11-14 stamp) and alice-x (recorded now); Bob's and the NULL row's times
+    # (2020, 2027) are excluded.
+    interval = usage["interval"]
+    assert interval["earliest"].startswith("2023-11-14")
+    latest = datetime.datetime.fromisoformat(interval["latest"])
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=datetime.UTC)
+    assert abs((datetime.datetime.now(datetime.UTC) - latest).total_seconds()) < 600
+    legacy_usage = root_token_usage(root)
+    assert legacy_usage["cache_hits"]["by_kind"]["retrieval"] == 508
+
+    # A pre-75 tokens.db without the attribution columns yields empty scoped totals and
+    # is never migrated by a reader.
+    old_root = _registered(tmp_path / "old", data_root)
+    _grant(auth, old_root, ALICE, data_root, sources=("source-a",), ops=FULL_OPS)
+    telemetry_db = old_root / ".rush" / "telemetry" / "tokens.db"
+    telemetry_db.parent.mkdir(parents=True)
+    with contextlib.closing(sqlite3.connect(telemetry_db)) as conn:
+        conn.execute(
+            "CREATE TABLE memory_events (invocation_id TEXT NOT NULL, event_id TEXT NOT NULL,"
+            " kind TEXT NOT NULL, tokens INTEGER NOT NULL, timestamp INTEGER NOT NULL,"
+            " request_id TEXT NOT NULL, project_id TEXT NOT NULL DEFAULT 'unscoped',"
+            " run_id TEXT NOT NULL DEFAULT 'unscoped', agent_id TEXT NOT NULL DEFAULT 'unscoped',"
+            " session_id TEXT NOT NULL DEFAULT 'unscoped', PRIMARY KEY (invocation_id, event_id))"
+        )
+        conn.execute(
+            "INSERT INTO memory_events VALUES ('i','e','retrieval',9,1,'r','p','r','a','s')"
+        )
+        conn.commit()
+    before = _sha_file(telemetry_db)
+    old_access = _list_access(old_root, ALICE, data_root=data_root)
+    old_totals = read_memory_event_totals_readonly(old_root, kinds, access=old_access)
+    assert sum(old_totals.values()) == 0
+    assert _sha_file(telemetry_db) == before
+    _no_sidecars(telemetry_db)
+    assert sorted(p.name for p in telemetry_db.parent.iterdir()) == ["tokens.db"]
+
+
+def test_t01_telemetry_family_sources(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.token_economy.telemetry import (
+        read_artifact_expansion_receipts_readonly,
+        read_memory_event_totals_readonly,
+    )
+    from rush.workflows import projects
+    from rush.workflows.projects import root_token_usage
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _grant(auth, root, ALICE, data_root, sources=("intent:*", "source-a"), ops=FULL_OPS)
+    events = [
+        ("e-a", 1, ["source-a"]),
+        ("e-i1", 3, ["intent:i1"]),
+        ("e-star", 5, ["intent:*"]),
+        ("e-recipe", 11, ["recipe:r1"]),
+        ("e-mixed", 13, ["intent:i2", "source-b"]),
+        ("e-empty-suffix", 17, ["intent:"]),
+    ]
+    for event_id, tokens, sources in events:
+        _record_event(root, tokens, event_id, owner=ALICE, sources=sources)
+    _record_event(root, 7, "e-null")
+    _record_event(root, 500, "e-bob", owner=BOB, sources=["source-b"])
+    _record_event(
+        root,
+        21,
+        "x-i1",
+        kind="expansion",
+        owner=ALICE,
+        sources=["intent:i1"],
+        request_id="x:1:i1",
+    )
+    _record_event(
+        root,
+        23,
+        "x-mixed",
+        kind="expansion",
+        owner=ALICE,
+        sources=["intent:i2", "source-b"],
+        request_id="x:1:mixed",
+    )
+
+    wide = _list_access(root, ALICE, ["intent:*", "source-a"], data_root=data_root)
+    narrow = _list_access(root, ALICE, ["intent:i1"], data_root=data_root)
+    family_only = _list_access(root, ALICE, ["intent:*"], data_root=data_root)
+
+    def retrieval(access: Any) -> int:
+        return read_memory_event_totals_readonly(root, ("retrieval",), access=access)[
+            "retrieval"
+        ]
+
+    assert retrieval(wide) == 9
+    assert retrieval(narrow) == 3
+    assert retrieval(family_only) == 8
+    for access, expected in ((wide, 9), (narrow, 3), (family_only, 8)):
+        assert (
+            projects._readonly_memory_event_totals(root, {}, access=access)["retrieval"]
+            == expected
+        )
+        assert (
+            root_token_usage(root, access=access)["cache_hits"]["by_kind"]["retrieval"]
+            == expected
+        )
+        count, times = projects._readonly_telemetry_scope(
+            root, {}, ["run_id"], access=access
+        )
+        assert count >= 0 and isinstance(times, list)
+
+    receipts = read_artifact_expansion_receipts_readonly(root, "x", 1, access=wide)
+    assert sorted(r["tokens"] for r in receipts) == [21]
+
+
+def test_t01_token_usage_cache_keyed_by_access(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.workflows.projects import root_token_usage
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _record_event(root, 1, "alice-1", owner=ALICE, sources=["source-a"])
+    _record_event(root, 500, "bob-1", owner=BOB, sources=["source-b"])
+    _record_event(root, 7, "null-1")
+
+    def retrieval(access: Any = None) -> int:
+        usage = root_token_usage(root, access=access)
+        return usage["cache_hits"]["by_kind"]["retrieval"]
+
+    # Legacy first: 508 is cached; enrolment must not be served that cached total.
+    assert retrieval() == 508
+    _grant(auth, root, ALICE, data_root, sources=("source-a",), ops=FULL_OPS)
+    _grant(auth, root, BOB, data_root, sources=("source-b",), ops=FULL_OPS)
+    alice = _list_access(root, ALICE, data_root=data_root)
+    bob = _list_access(root, BOB, data_root=data_root)
+    assert retrieval(alice) == 1
+    assert retrieval(bob) == 500
+    assert retrieval(alice) == 1
+    assert retrieval() == 508
+
+
+# --- R23: every writer source is grantable -------------------------------------------
+
+
+def test_t01_writer_sources_grantable_policy_mode(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory import experience
+    from rush.memory.authorization import source_granted, writer_source_catalog
+    from rush.memory.intent import intent_evidence
+    from rush.memory.recipes import resolve_recipe
+    from rush.memory.retrieval import MemoryAccess, recall_page
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    (root / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    assert not (root / ".rush" / "memory.db").exists()
+    catalog = writer_source_catalog(root)
+    assert catalog == [
+        "session_memory:record_turn",
+        "provenance_ai:attribution_link",
+        "flight_recorder:record_event",
+        "skills_generator:generate_skill_markdown",
+        "context_pack",
+        "checkpoint_journal:save_checkpoint",
+        "migration:preference_store",
+        "migration:invariant_graph",
+        "migration:merkle_invalidator",
+        "migration:checkpoint_journal",
+        "migration:failure_ledger",
+        "migration:patch_memory",
+        "migration:flight_recorder",
+        "migration:hook_signatures",
+        "migration:session_memory",
+        str(root.resolve()),
+        "intent:*",
+        "recipe:*",
+        "repair_attempt:*",
+        "invocation:*",
+        "verify_attempt:*",
+    ]
+    owner = legacy_owner_scope(root)
+    ops = ["ask", "bootstrap", "expand", "list", "write"]
+    first = auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=catalog,
+        allowed_operations=ops,
+        expected_policy_revision=0,
+        consent=True,
+        data_root=data_root,
+    )
+    assert first["approved_sources"] == sorted(catalog)
+    tool = MemoryTool()
+    permissions = ExecutionPermissions(cache_write=True)
+
+    # MemoryTool writers, including an intent created after the grant.
+    created = tool.run(
+        root,
+        operation="intent",
+        request={
+            "action": "create",
+            "intent_id": "i-after",
+            "behavior_id": "beh-after",
+        },
+        permissions=permissions,
+    )
+    assert _code_of(created) == "OK", _dump(_rd(created))
+    recorded = tool.run(
+        root,
+        operation="recipe",
+        request={
+            "action": "record",
+            "recipe_id": "r1",
+            "helper_ref": {"path": "helper.py", "symbol": "helper"},
+        },
+        permissions=permissions,
+    )
+    assert _code_of(recorded) == "OK", _dump(_rd(recorded))
+    # D4 writers.
+    written = experience.write_observation(
+        evidence_kind="source_graph",
+        operation_id="op-1",
+        source="invocation:op-1",
+        content={"k": "v"},
+        project_root=root,
+    )
+    assert written is not None
+    attempt = experience.record_attempt(
+        project_root=root,
+        symptom="symptomx",
+        hypothesis="h",
+        patch_hash=None,
+        conditions={},
+        receipt_ref=None,
+        behavior_ids=[],
+        outcome="untested",
+    )
+    assert attempt.source == "repair_attempt:symptomx"
+    from rush.session_memory import SessionMemoryManager
+    from rush.tools.flight_recorder import FlightRecorder
+
+    SessionMemoryManager(root / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "summary"
+    )
+    assert FlightRecorder(root).record_event("s1", "evt", {"a": 1}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+
+    # Everything reads back with the resolved access.
+    assert [
+        ref["intent_id"]
+        for ref in intent_evidence(project_root=root, behavior_ids=["beh-after"])
+    ] == ["i-after"]
+    assert resolve_recipe(project_root=root, recipe_id="r1")["usable"] is True
+    access = MemoryAccess.resolve(
+        root,
+        operation="ask",
+        owner_scope=owner,
+        requested_sources=["invocation:op-1"],
+        data_root=data_root,
+    )
+    assert access is not None
+    store, state = TypedArtifactStore.open_readonly_view(root)
+    assert store is not None, state
+    try:
+        page = recall_page(store, subject="episodic", query="op-1", access=access)
+        assert written.id in _ids(page)
+    finally:
+        store.close()
+
+    # A grant without `intent:*` refuses an intent create with zero rows.
+    narrow_root = _registered(tmp_path / "narrow", data_root)
+    narrow_owner = legacy_owner_scope(narrow_root)
+    narrow_sources = [s for s in writer_source_catalog(narrow_root) if s != "intent:*"]
+    auth.grant_memory_scope(
+        project_root=narrow_root,
+        owner_scope=narrow_owner,
+        approved_sources=narrow_sources,
+        allowed_operations=ops,
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    denied = tool.run(
+        narrow_root,
+        operation="intent",
+        request={"action": "create", "intent_id": "i-no", "behavior_id": "b"},
+        permissions=permissions,
+    )
+    assert _code_of(denied) == "E_PERMISSION"
+    assert _reason_of(denied) == "source_not_granted"
+    assert _counts(narrow_root).get("memory_artifacts", 0) == 0
+
+    # Pattern sources are refused at the grant and the write boundary.
+    for bad in (["intent*"], ["unknown:*"], ["*"]):
+        with pytest.raises(auth.MemoryPolicyError) as info:
+            auth.grant_memory_scope(
+                project_root=root,
+                owner_scope=owner,
+                approved_sources=bad,
+                allowed_operations=ops,
+                expected_policy_revision=_revision(auth, data_root),
+                consent=True,
+                data_root=data_root,
+            )
+        assert (info.value.code, info.value.reason) == ("E_INPUT", "approved_sources")
+    assert source_granted("intent:", ["intent:*"]) is False
+    assert source_granted("recipe:x", ["intent:*"]) is False
+    wildcard_write = tool.run(
+        root,
+        operation="write",
+        subject=SUBJECT,
+        content={"t": "x"},
+        source="a*b",
+        owner_scope=owner.as_dict(),
+        request={"apply": True},
+        permissions=permissions,
+    )
+    assert _code_of(wildcard_write) == "E_INPUT"
+
+
+# --- R24: store binding and row MACs -------------------------------------------------
+
+
+ROW_MAC_COLUMN_NAMES = (
+    "id",
+    "family",
+    "subject",
+    "trust_tier",
+    "content",
+    "source",
+    "symbol_ref",
+    "content_hash",
+    "owner_scope_kind",
+    "owner_scope_id",
+    "origin_kind",
+    "origin_id",
+)
+_INSERT_RE = re.compile(
+    r"(?is)\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO)\s+"
+    r"(?P<table>memory_artifacts\b|\{\})\s*(?P<rest>.*)"
+)
+_UPDATE_RE = re.compile(
+    r"(?is)\bUPDATE(?:\s+OR\s+\w+)?\s+(?P<table>memory_artifacts\b|\{\})\s+SET\b"
+    r"(?P<rest>.*)"
+)
+
+
+def _sql_constants(source: str) -> list[tuple[int, str, bool]]:
+    """`(line, text, composed)` for every string constant of `source`; f-string
+    constant parts are joined with each formatted value read as `{}`; `composed` is True
+    when the string is an operand of `+`/`%` or the receiver of `.format`/`.join`."""
+    import ast
+
+    tree = ast.parse(source)
+    parents: dict[int, Any] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    out: list[tuple[int, str, bool]] = []
+    for node in ast.walk(tree):
+        text: str | None = None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if isinstance(parents.get(id(node)), ast.JoinedStr):
+                continue
+            text = node.value
+        elif isinstance(node, ast.JoinedStr):
+            text = "".join(
+                cast(str, part.value) if isinstance(part, ast.Constant) else "{}"
+                for part in node.values
+            )
+        if text is None:
+            continue
+        parent = parents.get(id(node))
+        composed = (
+            isinstance(parent, ast.BinOp) and isinstance(parent.op, (ast.Add, ast.Mod))
+        ) or (isinstance(parent, ast.Attribute) and parent.attr in {"format", "join"})
+        out.append((cast("ast.expr", node).lineno, text, bool(composed)))
+    return out
+
+
+def _row_mac_violations(sources: dict[str, str]) -> list[str]:
+    """R24 write-site rule: every SQL string writing a `ROW_MAC_COLUMNS` member of
+    `memory_artifacts` also names `row_mac`."""
+    bad: list[str] = []
+    for rel, source in sources.items():
+        for line, text, composed in _sql_constants(source):
+            insert = _INSERT_RE.search(text)
+            update = _UPDATE_RE.search(text)
+            if insert is None and update is None:
+                continue
+            where = f"{rel}:{line}"
+            if composed:
+                bad.append(f"{where}: composed SQL")
+                continue
+            if insert is not None:
+                rest = insert.group("rest").lstrip()
+                if not rest.startswith("("):
+                    bad.append(f"{where}: INSERT without a literal column list")
+                    continue
+                columns_text = rest[1 : rest.index(")")]
+                if "{}" in columns_text:
+                    bad.append(f"{where}: formatted column list")
+                    continue
+                names = {c.strip() for c in columns_text.split(",")}
+            else:
+                assert update is not None
+                targets_text = re.split(r"(?i)\bWHERE\b", update.group("rest"))[0]
+                if "{}" in re.sub(r"=\s*\{\}", "=", targets_text) or re.search(
+                    r"\{\}\s*=", targets_text
+                ):
+                    bad.append(f"{where}: formatted SET targets")
+                    continue
+                names = set(re.findall(r"(\w+)\s*=", targets_text))
+            if names & set(ROW_MAC_COLUMN_NAMES) and "row_mac" not in names:
+                bad.append(
+                    f"{where}: writes {sorted(names & set(ROW_MAC_COLUMN_NAMES))} without row_mac"
+                )
+    return sorted(bad)
+
+
+def test_t01_row_mac_every_write_site() -> None:
+    src = REPO_ROOT / "src" / "rush"
+    sources = {
+        path.relative_to(src).as_posix(): path.read_text(encoding="utf-8")
+        for path in sorted(src.rglob("*.py"))
+    }
+    # The scanner itself: covered writers without `row_mac`, composed SQL, formatted
+    # targets and column-less inserts fail; a covered writer naming `row_mac` and an
+    # uncovered one pass.
+    probe = {
+        "bad_insert.py": 'X = "INSERT INTO memory_artifacts (id, content) VALUES (?, ?)"\n',
+        "good_insert.py": 'X = "INSERT INTO memory_artifacts (id, content, row_mac) VALUES (?,?,?)"\n',
+        "bad_update.py": 'X = "UPDATE memory_artifacts SET trust_tier = ? WHERE id = ?"\n',
+        "good_update.py": 'X = "UPDATE memory_artifacts SET trust_tier = ?, row_mac = ? WHERE id = ?"\n',
+        "uncovered.py": 'X = "UPDATE memory_artifacts SET payload_hash = ? WHERE id = ?"\n',
+        "composed.py": 'X = "INSERT INTO memory_artifacts " + "(id) VALUES (?)"\n',
+        "fmt_table.py": 'T = "memory_artifacts"\nX = f"UPDATE {T} SET trust_tier = ? WHERE id = ?"\n',
+        "no_columns.py": 'X = "INSERT INTO memory_artifacts SELECT * FROM other"\n',
+    }
+    flagged = {entry.split(":")[0] for entry in _row_mac_violations(probe)}
+    assert flagged == {
+        "bad_insert.py",
+        "bad_update.py",
+        "composed.py",
+        "fmt_table.py",
+        "no_columns.py",
+    }
+    assert _row_mac_violations(sources) == []
+
+    from rush.memory import store as store_module
+
+    assert tuple(store_module.ROW_MAC_COLUMNS) == ROW_MAC_COLUMN_NAMES
+
+
+def _binding(root: Path) -> str:
+    from rush.memory.store import store_binding
+
+    db = root / ".rush" / "memory.db"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return str(store_binding(conn, root))
+
+
+def _bind_outcome(call: Any) -> tuple[Any, dict[str, Any]]:
+    """Normalize `bind_store` errors: a returned `{code, ...}` dict or a raised error
+    carrying `.code` (and optionally `.reason`/`.field`)."""
+    try:
+        result = call()
+    except Exception as exc:  # noqa: BLE001 - the contract names the code, not the type
+        code = getattr(exc, "code", None)
+        assert code is not None, repr(exc)
+        return code, {
+            "reason": getattr(exc, "reason", None),
+            "field": getattr(exc, "field", None),
+            "message": str(exc),
+        }
+    if isinstance(result, dict) and "code" in result:
+        return result["code"], result
+    return "OK", result
+
+
+def _preview(root: Path) -> dict[str, Any]:
+    return TypedArtifactStore.bind_store(root, approve=False)
+
+
+def _plant(tmp_path: Path, mode: str) -> tuple[Path, Path, str]:
+    """An attacker project with a bound store whose row was forged to STATED by SQL,
+    copied into a fresh victim project that shares the data root (and so the key)."""
+    from rush.memory import authorization as auth
+    from rush.memory.store import compute_content_signature
+
+    data_root = default_data_root()
+    attacker = _registered(tmp_path / "attacker", data_root)
+    store = TypedArtifactStore(attacker)
+    _row(store, "planted", None, "mk-planted", source="planted-source")
+    content = json.loads(
+        _nn(store.get_current_row("planted"))["content"]
+    )  # exact stored shape
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET trust_tier = 'STATED', signature = ?, "
+            "owner_scope_kind = NULL, owner_scope_id = NULL WHERE id = 'planted'",
+            (compute_content_signature(content),),
+        )
+        conn.commit()
+    victim = _registered(tmp_path / "victim", data_root)
+    (victim / ".rush").mkdir(exist_ok=True)
+    shutil.copyfile(store.db_path, victim / ".rush" / "memory.db")
+    if mode == "policy":
+        owner = legacy_owner_scope(victim)
+        auth.grant_memory_scope(
+            project_root=victim,
+            owner_scope=owner,
+            approved_sources=["planted-source"],
+            allowed_operations=list(FULL_OPS_HISTORY),
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    return attacker, victim, "planted-source"
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t01_planted_store_not_authoritative(mode: str, tmp_path: Path) -> None:
+    from rush.memory.retrieval import (
+        MemoryAccess,
+        evaluate_artifact_visibility,
+        recall_page,
+    )
+
+    attacker, victim, source = _plant(tmp_path, mode)
+    db = victim / ".rush" / "memory.db"
+    with (
+        contextlib.closing(sqlite3.connect(db)) as victim_conn,
+        contextlib.closing(
+            sqlite3.connect(attacker / ".rush" / "memory.db")
+        ) as attacker_conn,
+    ):
+        query = "SELECT store_id, mac FROM memory_store_binding"
+        assert (
+            victim_conn.execute(query).fetchall()
+            == attacker_conn.execute(query).fetchall()
+        )
+    assert _binding(victim) == "unbound"
+
+    view, state = TypedArtifactStore.open_readonly_view(victim)
+    assert view is not None, state
+    try:
+        if mode == "legacy":
+            access = MemoryAccess.legacy(victim, [source])
+            page = recall_page(
+                view, subject=SUBJECT, query="needle", session_allowlist=[source]
+            )
+        else:
+            resolved = MemoryAccess.resolve(
+                victim,
+                operation="ask",
+                owner_scope=legacy_owner_scope(victim),
+                data_root=default_data_root(),
+            )
+            assert resolved is not None
+            access = resolved
+            page = recall_page(view, subject=SUBJECT, query="needle", access=access)
+        assert [i for i in page["items"] if i.get("trust") == "STATED"] == []
+        row = view.get_current_row("planted")
+        assert evaluate_artifact_visibility(view, row, access=access).visible is False
+        historical_access = (
+            access
+            if mode == "legacy"
+            else MemoryAccess.resolve_with_reason(
+                victim,
+                operation="list",
+                historical=True,
+                owner_scope=legacy_owner_scope(victim),
+                data_root=default_data_root(),
+            )[0]
+        )
+        assert historical_access is not None
+        decision = evaluate_artifact_visibility(
+            view, row, access=historical_access, mode="historical"
+        )
+        assert "store_unbound" in decision.reason_codes
+        assert decision.usable_as_current is False
+    finally:
+        view.close()
+
+    # The preview is read-only and reports the counts.
+    before = _sha_file(db)
+    preview = _preview(victim)
+    assert preview["store_binding"] == "unbound"
+    assert preview["stated_rows"] == 1
+    assert preview["unbound_rows"] == _table_counts(db)["memory_artifacts"]
+    assert re.fullmatch(r"[0-9a-f]{64}", preview["binding_digest"])
+    assert _sha_file(db) == before
+    _no_sidecars(db)
+
+    code, data = _bind_outcome(
+        lambda: TypedArtifactStore.bind_store(victim, approve=True)
+    )
+    assert code == "E_INPUT"
+    assert data.get(
+        "field"
+    ) == "expected_binding_digest" or "expected_binding_digest" in _dump(data)
+    assert _sha_file(db) == before
+    # A row inserted by SQL since the preview changes the digest: store_changed, no bytes.
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO memory_artifacts (id, family, subject, trust_tier, content, "
+            "source, created_at) VALUES ('late', 'memory', 'domain_knowledge', 'DERIVED', "
+            "'{\"t\": 1}', 'planted-source', 1.0)"
+        )
+        conn.commit()
+    stale_bytes = _sha_file(db)
+    code, data = _bind_outcome(
+        lambda: TypedArtifactStore.bind_store(
+            victim, approve=True, expected_binding_digest=preview["binding_digest"]
+        )
+    )
+    assert code == "E_VERSION"
+    assert data.get("reason") == "store_changed" or "store_changed" in _dump(data)
+    assert _sha_file(db) == stale_bytes
+    fresh = _preview(victim)
+    TypedArtifactStore.bind_store(
+        victim, approve=True, expected_binding_digest=fresh["binding_digest"]
+    )
+    assert _binding(victim) == "bound"
+    view, _state = TypedArtifactStore.open_readonly_view(victim)
+    assert view is not None
+    try:
+        if mode == "legacy":
+            page = recall_page(
+                view, subject=SUBJECT, query="needle", session_allowlist=[source]
+            )
+            assert any(i.get("trust") == "STATED" for i in page["items"])
+    finally:
+        view.close()
+
+    # An unmodified copy of a bound store's file moved over the same path is unbound.
+    bound_copy = tmp_path / "bound-copy.db"
+    shutil.copyfile(db, bound_copy)
+    inode = db.stat().st_ino
+    os.replace(bound_copy, db)
+    assert db.stat().st_ino != inode
+    assert _binding(victim) == "unbound"
+
+
+def _tamper_fixture(tmp_path: Path) -> tuple[Path, TypedArtifactStore]:
+    data_root = default_data_root()
+    root = _git_repo(tmp_path / "project", {"mod.py": "def helper():\n    return 1\n"})
+    register_project(root, data_root=data_root)
+    store = TypedArtifactStore(root)
+    digest = _sha_file(root / "mod.py")
+    owner = legacy_owner_scope(root)
+    for artifact_id in ("s1", "s3"):
+        _row(
+            store,
+            artifact_id,
+            owner,
+            artifact_id,
+            source="src",
+            symbol_ref="mod.py::helper",
+            content_hash=digest,
+            content={"flag": artifact_id == "s1", "text": f"needle {artifact_id}"},
+        )
+        _, promotion = store.promote(artifact_id, user_stated=True, expected_version=1)
+        assert promotion.promoted is True, artifact_id
+    for artifact_id in ("s2", "d1", "d2", "c"):
+        _row(store, artifact_id, owner, artifact_id, source="src")
+    return root, store
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t01_row_mac_tamper_in_bound_store(mode: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import (
+        MemoryAccess,
+        evaluate_artifact_visibility,
+        expand_artifact,
+        recall_page,
+    )
+    from rush.memory.store import (
+        VersionConflictError,
+        compute_content_signature,
+        payload_digest,
+    )
+
+    data_root = default_data_root()
+    root, store = _tamper_fixture(tmp_path)
+    owner = legacy_owner_scope(root)
+    assert _binding(root) == "bound"
+    db = store.db_path
+    if mode == "policy":
+        auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=owner,
+            approved_sources=["src", "fresh-src"],
+            allowed_operations=list(FULL_OPS_HISTORY),
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        access = MemoryAccess.resolve(
+            root, operation="ask", owner_scope=owner, data_root=data_root
+        )
+        expand_access = MemoryAccess.resolve(
+            root, operation="expand", owner_scope=owner, data_root=data_root
+        )
+        history_access = MemoryAccess.resolve_with_reason(
+            root,
+            operation="list",
+            historical=True,
+            owner_scope=owner,
+            data_root=data_root,
+        )[0]
+    else:
+        access = MemoryAccess.legacy(root, ["src", "fresh-src"])
+        expand_access = access
+        history_access = access
+    assert (
+        access is not None and expand_access is not None and history_access is not None
+    )
+
+    # Tamper a copy of the bytes, then write the copy back in place (same inode).
+    raw = db.read_bytes()
+    inode = db.stat().st_ino
+    copy = tmp_path / "tampered.db"
+    copy.write_bytes(raw)
+    new_text = json.dumps({"flag": False, "text": "needle rewritten"})
+    with contextlib.closing(sqlite3.connect(copy)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET trust_tier = 'STATED', signature = ? WHERE id = 's2'",
+            (compute_content_signature({"text": "needle s2"}),),
+        )
+        conn.row_factory = sqlite3.Row
+        c_row = conn.execute("SELECT * FROM memory_artifacts WHERE id = 'c'").fetchone()
+        base = dict(zip(c_row.keys(), tuple(c_row), strict=True))
+        base.update(id="i1", source="fresh-src", artifact_version=1, row_mac=None)
+        columns = ", ".join(base)
+        conn.execute(
+            f"INSERT INTO memory_artifacts ({columns}) VALUES ({', '.join('?' for _ in base)})",
+            list(base.values()),
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET origin_kind = 'x', origin_id = 'y' WHERE id = 'd1'"
+        )
+        for artifact_id in ("s3", "d2"):
+            version = conn.execute(
+                "SELECT artifact_version FROM memory_artifacts WHERE id = ?",
+                (artifact_id,),
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+                "WHERE artifact_id = ? AND artifact_version = ?",
+                (new_text, payload_digest(new_text), artifact_id, version),
+            )
+        conn.commit()
+    with open(db, "r+b") as fh:
+        fh.write(copy.read_bytes())
+        fh.truncate()
+    assert db.stat().st_ino == inode
+    assert _binding(root) == "bound"
+
+    view, state = TypedArtifactStore.open_readonly_view(root)
+    assert view is not None, state
+    try:
+
+        def decision(
+            artifact_id: str, mode_name: VisibilityMode = "ordinary", acc: Any = access
+        ) -> Any:
+            return evaluate_artifact_visibility(
+                _nn(view),
+                _nn(view).get_current_row(artifact_id),
+                access=acc,
+                mode=mode_name,
+            )
+
+        s2 = decision("s2")
+        assert s2.visible is False
+        s2_hist = decision("s2", "historical", history_access)
+        assert "store_unbound" in s2_hist.reason_codes
+        assert decision("s1").usable_as_current is True
+        assert (
+            decision("s3").visible is True
+        )  # its row is bound; the versions bytes are not
+        assert decision("d1").reference["store_binding"] == "unbound"
+        assert decision("d2").reference.get("store_binding") != "unbound"
+        assert decision("i1").reference["store_binding"] == "unbound"
+        page = recall_page(view, subject=SUBJECT, query="needle", access=access)
+        by_id = {item["id"]: item for item in page["items"]}
+        assert "s2" not in by_id
+        assert by_id["i1"]["store_binding"] == "unbound"
+        assert "s1" in by_id and by_id["s1"]["trust"] == "STATED"
+        assert "needle rewritten" not in _dump(page)
+        for historical in (False, True):
+            denied = expand_artifact(
+                view,
+                artifact_id="s3",
+                version=1,
+                access=history_access if historical else expand_access,
+                **cast("dict[str, Any]", {"mode": "historical"} if historical else {}),
+            )
+            assert denied["code"] == "E_NOT_VISIBLE", historical
+        allowed = expand_artifact(
+            view, artifact_id="d2", version=1, access=expand_access
+        )
+        assert allowed["code"] == "OK"
+        assert _find_key(allowed, "store_binding") == "unbound"
+        assert base64.b64decode(allowed["content_base64"]) == new_text.encode("utf-8")
+    finally:
+        view.close()
+
+    # An edit of an unbound row leaves its MAC NULL; an edit of a bound row keeps the
+    # old version's bytes labelled unbound and the new current version clean.
+    store.edit(
+        "s2",
+        {"text": "edited"},
+        expected_version=1,
+        scope=SUBJECT,
+        owner_scope=owner,
+        apply=True,
+    )
+    assert _nn(store.get_current_row("s2"))["row_mac"] is None
+    store.edit(
+        "c",
+        {"text": "edited c"},
+        expected_version=1,
+        scope=SUBJECT,
+        owner_scope=owner,
+        apply=True,
+    )
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    assert view is not None
+    try:
+        old_version = expand_artifact(
+            view, artifact_id="c", version=1, access=history_access, mode="historical"
+        )
+        assert _find_key(old_version, "store_binding") == "unbound"
+        new_version = expand_artifact(
+            view, artifact_id="c", version=2, access=expand_access
+        )
+        assert new_version["code"] == "OK"
+        assert _find_key(new_version, "store_binding") is None
+    finally:
+        view.close()
+
+    if mode == "legacy":
+        with pytest.raises(VersionConflictError) as info:
+            store.promote(
+                "c",
+                user_stated=False,
+                candidate_refs=[{"id": "i1", "version": 1, "source": "fresh-src"}],
+                owner_scope=owner,
+            )
+        assert info.value.code == "E_VERSION"
+        row = _nn(store.get_current_row("c"))
+        assert row["trust_tier"] != "STATED"
+
+
+_STORE_KEY_CASES = [
+    "new_store_binding_row_and_row_macs",
+    "temp_unlink_retry_succeeds",
+    "temp_unlink_always_fails_keeps_one_temp",
+    "another_home_sees_unbound",
+    "key_independent_of_access_data_root",
+    "darwin_case_swapped_root_stays_bound",
+    "other_platform_root_text",
+    "key_is_a_symlink",
+    "key_owned_by_another_uid",
+    "key_mode_0644",
+    "key_31_bytes",
+    "tracked_db_replaces_ignored_db",
+    "key_cannot_be_created",
+]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            c,
+            id=c,
+            marks=(
+                [pytest.mark.posix_only]
+                if c
+                in {
+                    "key_is_a_symlink",
+                    "key_owned_by_another_uid",
+                    "key_mode_0644",
+                    "key_31_bytes",
+                }
+                else [pytest.mark.posix_nonroot]
+                if c == "key_cannot_be_created"
+                else []
+            ),
+        )
+        for c in _STORE_KEY_CASES
+    ],
+)
+def test_t01_store_binding_key_and_mac(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory import store as store_module
+    from rush.memory.retrieval import MemoryAccess, recall_page
+
+    data_root = default_data_root()
+    key_dir = data_root / "user" / ".rush"
+    key = key_dir / "memory_store.key"
+
+    def new_project(name: str = "project") -> tuple[Path, TypedArtifactStore]:
+        path = tmp_path / name
+        path.mkdir()
+        project_store = TypedArtifactStore(path)
+        _row(project_store, "r1", None, "mk-r1", source="src")
+        return path.resolve(), project_store
+
+    if case == "new_store_binding_row_and_row_macs":
+        root, store = new_project()
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            binding_rows = conn.execute(
+                "SELECT id, store_id, mac FROM memory_store_binding"
+            ).fetchall()
+            macs = conn.execute("SELECT row_mac FROM memory_artifacts").fetchall()
+        assert len(binding_rows) == 1 and binding_rows[0][0] == 1
+        assert re.fullmatch(r"[0-9a-f]{32}", binding_rows[0][1])
+        assert all(m[0] for m in macs)
+        assert _binding(root) == "bound"
+        assert key.is_file() and key.stat().st_size == 32
+        assert stat.S_IMODE(key.stat().st_mode) == 0o600 if os.name == "posix" else True
+        assert (root / ".rush" / ".gitignore").read_bytes() == b"*\n"
+        assert [
+            p.name
+            for p in key_dir.iterdir()
+            if p.name.startswith("memory_store.key.tmp-")
+        ] == []
+        return
+    if case in {
+        "temp_unlink_retry_succeeds",
+        "temp_unlink_always_fails_keeps_one_temp",
+    }:
+        real_unlink = os.unlink
+        state = {"n": 0}
+
+        def flaky(path: Any, *args: Any, **kwargs: Any) -> None:
+            if os.path.basename(os.fspath(path)).startswith("memory_store.key.tmp-"):
+                state["n"] += 1
+                if case == "temp_unlink_always_fails_keeps_one_temp" or state["n"] <= 3:
+                    raise PermissionError("forced")
+            real_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "unlink", flaky)
+        root, store = new_project()
+        assert _binding(root) == "bound"
+        temps = [
+            p for p in key_dir.iterdir() if p.name.startswith("memory_store.key.tmp-")
+        ]
+        if case == "temp_unlink_retry_succeeds":
+            assert temps == []
+        else:
+            assert len(temps) == 1
+            assert temps[0].stat().st_ino == key.stat().st_ino
+        return
+    if case == "another_home_sees_unbound":
+        root, store = new_project()
+        assert _binding(root) == "bound"
+        other_home = tmp_path / "other-home"
+        for name, sub in (
+            ("HOME", ""),
+            ("XDG_DATA_HOME", "xdg"),
+            ("LOCALAPPDATA", "local"),
+        ):
+            (other_home / sub).mkdir(parents=True, exist_ok=True)
+            monkeypatch.setenv(name, str(other_home / sub))
+        assert default_data_root() != data_root
+        assert _binding(root) == "unbound"
+        return
+    if case == "key_independent_of_access_data_root":
+        user_data = tmp_path / "user-data"
+        root = _registered(tmp_path / "project", user_data)
+        store = TypedArtifactStore(root)
+        _row(store, "s1", legacy_owner_scope(root), "mk-s1", source="src")
+        _, promotion = store.promote("s1", user_stated=True, expected_version=1)
+        assert promotion.promoted is True
+        auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=["src"],
+            allowed_operations=list(FULL_OPS),
+            expected_policy_revision=0,
+            consent=True,
+            data_root=user_data,
+        )
+        access = MemoryAccess.resolve(
+            root,
+            operation="ask",
+            owner_scope=legacy_owner_scope(root),
+            data_root=user_data,
+        )
+        assert access is not None and access.data_root == user_data
+        view, view_state = TypedArtifactStore.open_readonly_view(root)
+        assert view is not None, view_state
+        try:
+            page = recall_page(view, subject=SUBJECT, query="needle", access=access)
+        finally:
+            view.close()
+        assert [i["trust"] for i in page["items"]] == ["STATED"]
+        assert (
+            key.exists()
+            and not (user_data / "user" / ".rush" / "memory_store.key").exists()
+        )
+        return
+    if case == "darwin_case_swapped_root_stays_bound":
+        if sys.platform != "darwin":
+            assert store_module._binding_root_text(tmp_path.resolve()) == str(
+                tmp_path.resolve()
+            )
+            return
+        root, store = new_project("CaseProject")
+        swapped = root.parent / root.name.swapcase()
+        assert swapped.exists() and swapped.stat().st_ino == root.stat().st_ino
+        reopened = TypedArtifactStore(swapped)
+        assert reopened.db_path.exists()
+        assert _binding(swapped) == "bound"
+        assert store_module._listed_case_path(
+            swapped
+        ) == store_module._listed_case_path(root)
+        return
+    if case == "other_platform_root_text":
+        root, _store = new_project()
+        if sys.platform != "darwin":
+            assert store_module._binding_root_text(root.resolve()) == str(
+                root.resolve()
+            )
+        else:
+            assert store_module._binding_root_text(
+                root.resolve()
+            ) == store_module._listed_case_path(root.resolve())
+        return
+    if case in {
+        "key_is_a_symlink",
+        "key_owned_by_another_uid",
+        "key_mode_0644",
+        "key_31_bytes",
+    }:
+        root, store = new_project()
+        assert _binding(root) == "bound"
+        original = key.read_bytes()
+        if case == "key_is_a_symlink":
+            target = tmp_path / "real.key"
+            target.write_bytes(original)
+            key.unlink()
+            key.symlink_to(target)
+        elif case == "key_owned_by_another_uid":
+            monkeypatch.setattr(
+                store_module.os, "geteuid", lambda: os.getuid() + 4242, raising=False
+            )
+        elif case == "key_mode_0644":
+            key.chmod(0o644)
+        else:
+            key.write_bytes(original[:31])
+        assert _binding(root) == "unbound"
+        return
+    if case == "tracked_db_replaces_ignored_db":
+        root, store = new_project()
+        _upstream, upstream_store = new_project("upstream")
+        # a different bound store's file replaces the ignored one (a `git pull` of a tracked db)
+        shutil.copyfile(upstream_store.db_path, store.db_path)
+        assert _binding(root) == "unbound"
+        return
+    assert case == "key_cannot_be_created"
+    key_dir.mkdir(parents=True, exist_ok=True)
+    key_dir.chmod(0o555)
+    try:
+        path = tmp_path / "project"
+        path.mkdir()
+        store = TypedArtifactStore(path)
+        written = _row(store, "r1", None, "mk-r1", source="src")
+        assert written is not None
+        root = path.resolve()
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            assert (
+                conn.execute("SELECT COUNT(*) FROM memory_store_binding").fetchone()[0]
+                == 0
+            )
+        assert _binding(root) == "unbound"
+        preview = _preview(root)
+        before = _sha_file(store.db_path)
+        code, data = _bind_outcome(
+            lambda: TypedArtifactStore.bind_store(
+                root, approve=True, expected_binding_digest=preview["binding_digest"]
+            )
+        )
+        assert code == "E_UNAVAILABLE"
+        assert data.get(
+            "reason"
+        ) == "store_key_unavailable" or "store_key_unavailable" in _dump(data)
+        assert _sha_file(store.db_path) == before
+    finally:
+        key_dir.chmod(0o700)
+
+
+def _windows_cases() -> list[Any]:
+    names = [
+        "windows_create_reopen",
+        "windows_foreign_owner",
+        "windows_broad_access",
+        "windows_reparse",
+        "windows_shared_read",
+        "windows_unavailable_key",
+    ]
+    return [pytest.param(n, id=n, marks=pytest.mark.windows_only) for n in names]
+
+
+@pytest.mark.parametrize("case", _windows_cases())
+def test_t01_store_binding_key_windows_native(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    key_dir = data_root / "user" / ".rush"
+    key = key_dir / "memory_store.key"
+
+    def make(name: str = "project") -> Path:
+        path = tmp_path / name
+        path.mkdir()
+        project_store = TypedArtifactStore(path)
+        _row(project_store, "r1", None, "mk-r1", source="src")
+        return path.resolve()
+
+    if case == "windows_create_reopen":
+        root = make()
+        assert key.stat().st_size == 32
+        first = key.read_bytes()
+        sid = auth._windows_sid_principal().removeprefix("sid:")
+        acl = subprocess.run(
+            ["icacls", str(key)], capture_output=True, text=True, check=True
+        ).stdout
+        assert sid in acl and "S-1-5-18" in acl or "SYSTEM" in acl
+        assert "Everyone" not in acl and "Users" not in acl
+        TypedArtifactStore(root)
+        assert key.read_bytes() == first
+        assert _binding(root) == "bound"
+        return
+    if case == "windows_foreign_owner":
+        root = make()
+        monkeypatch.setattr(
+            auth, "_windows_sid_principal", lambda: "sid:S-1-5-21-1-2-3-1001"
+        )
+        assert _binding(root) == "unbound"
+        return
+    if case == "windows_broad_access":
+        root = make()
+        subprocess.run(
+            ["icacls", str(key), "/grant", "*S-1-1-0:R"],
+            check=True,
+            capture_output=True,
+        )
+        assert _binding(root) == "unbound"
+        return
+    if case == "windows_reparse":
+        import _winapi  # type: ignore[import-not-found]
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "memory_store.key").write_bytes(os.urandom(32))
+        shutil.rmtree(key_dir)
+        _winapi.CreateJunction(str(outside), str(key_dir))  # type: ignore[attr-defined]  # Windows-only API, absent from non-Windows stubs
+        root = make()
+        assert _binding(root) == "unbound"
+        assert sorted(p.name for p in outside.iterdir()) == ["memory_store.key"]
+        return
+    if case == "windows_shared_read":
+        root = make()
+        real_read = os.read
+        state = {"linked": False}
+
+        def reading(fd: int, n: int) -> bytes:
+            if not state["linked"]:
+                state["linked"] = True
+                alias = key_dir / f"memory_store.key.tmp-{uuid_hex()}"
+                os.link(key, alias)
+                os.unlink(alias)
+            return real_read(fd, n)
+
+        def uuid_hex() -> str:
+            import uuid as _uuid
+
+            return _uuid.uuid4().hex
+
+        monkeypatch.setattr(os, "read", reading)
+        assert _binding(root) == "bound"
+        assert state["linked"], "the key read never ran"
+        return
+    assert case == "windows_unavailable_key"
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    path = tmp_path / "project"
+    path.mkdir()
+    store = TypedArtifactStore(path)
+    assert _row(store, "r1", None, "mk-r1", source="src") is not None
+    assert _binding(path.resolve()) == "unbound"
+
+
+# --- G2: route x dimension matrix (R2, R22) ------------------------------------------
+#
+# One parametrized matrix, `test_t01_fix_policy_mode_matrix`. Every entry point of the
+# plan's 2.3 inventory is a `_G2Route` carrying its transport token (`inproc`, `mcp`,
+# `bridge`, `cli`, `dashboard`, `tui`, `internal`). Each route is crossed with:
+#   - the eight policy rows (access x policy_state x grant_ops, plus revoked grants,
+#     ungranted sources and an omitted owner);
+#   - the overlay access row (the existing `owner_scope` input carrying the user-overlay
+#     owner; producer 72-T05);
+#   - every value of each dimension the route natively varies along (mode, representation,
+#     retrieval, store, apply, cache_write, row_state, ack, capability_ids), each with an
+#     exact expectation, and ONE strictness cell for each dimension it does not (a
+#     strict-model `E_INPUT` where the transport has the field, a byte-identity assertion
+#     where it does not).
+# `rejected`/`pending` rows and the later-producer operations are producer-labelled cells
+# (`...-producer-<task id>`).
+
+POLICY_REASONS = frozenset(
+    {
+        "revoked",
+        "owner_required",
+        "source_not_granted",
+        "operation_not_granted",
+        "policy_invalid",
+        "policy_missing",
+        "no_grant",
+        "project_not_registered",
+        "lock_unavailable",
+        "policy_mode_changed",
+        "owner_not_granted",
+    }
+)
+
+G2_DIMENSIONS: dict[str, tuple[str, ...]] = {
+    "access": ("policy", "legacy_allowlist", "overlay"),
+    "policy_state": ("missing_no_marker", "missing_marker", "ok", "invalid"),
+    "mode": ("ordinary", "inspect", "historical"),
+    "representation": ("base64", "utf8"),
+    "retrieval": ("lexical", "hybrid"),
+    "store": ("present", "absent", "old_schema"),
+    "apply": ("preview", "apply"),
+    "cache_write": ("on", "off"),
+    "grant_ops": ("exact", "missing_one"),
+    "row_state": ("active", "archived", "expired", "rejected", "pending", "tampered"),
+    "ack": ("ack", "no_ack"),
+    "capability_ids": ("selected", "unselected"),
+}
+#: Dimension values whose lifecycle does not exist yet at this HEAD: `value -> producer`.
+G2_PRODUCER_VALUES = {
+    ("row_state", "rejected"): "72-T05",
+    ("row_state", "pending"): "72-T05",
+}
+#: The dimensions crossed by dimension rows (access, policy_state and grant_ops are the
+#: policy rows; a route whose own selector carries `apply` skips that dimension).
+G2_ROW_DIMENSIONS = (
+    "mode",
+    "representation",
+    "retrieval",
+    "store",
+    "apply",
+    "cache_write",
+    "row_state",
+    "ack",
+    "capability_ids",
+)
+G2_POLICY_ROWS = (
+    "access-policy-policy_state-ok-grant_ops-exact",
+    "access-policy-policy_state-ok-grant-revoked",
+    "access-legacy_allowlist-policy_state-ok-source-ungranted",
+    "access-policy-policy_state-ok-owner-omitted",
+    "access-policy-policy_state-invalid",
+    "access-legacy_allowlist-policy_state-missing_no_marker",
+    "access-policy-policy_state-ok-grant_ops-missing_one",
+    "access-policy-policy_state-missing_marker",
+)
+G2_OVERLAY_ROW = "access-overlay-producer-72-T05"
+_G2_MARKER = re.compile(r"mk-[a-z0-9]+")
+G2_ACTIVE = frozenset({"mk-a1", "mk-a2"})
+G2_EXCLUDED = frozenset({"mk-x1", "mk-arch", "mk-exp", "mk-tam"})
+#: row_state value -> the fixture row that is in that state
+G2_STATE_ROW = {
+    "active": "a1",
+    "archived": "arch",
+    "expired": "exp",
+    "tampered": "tam",
+}
+
+
+@dataclasses.dataclass
+class _G2Env:
+    root: Path
+    data_root: Path
+    store: TypedArtifactStore | None
+    auth: Any
+    tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch
+    grant: dict[str, Any] | None = None
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Cell:
+    """What one matrix row changes about a route call."""
+
+    row: str
+    owner: OwnerScope | None = ALICE
+    allow: list[str] | None = None
+    source: str = "source-a"
+    cache_write: bool | None = None  # None: the route's own default
+    mode: str | None = None
+    representation: str | None = None
+    retrieval: str | None = None
+    store: str = "present"
+    ack: str | None = None
+    capability_ids: str | None = None
+    row_state: str | None = None
+    apply: str | None = None
+
+    @property
+    def target(self) -> str:
+        """The fixture row a row_state cell addresses."""
+        return G2_STATE_ROW.get(self.row_state or "active", "a1")
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Out:
+    """A route outcome normalized across transports: its `code`/`reason` when it has
+    them, the fixture markers it revealed, and how many memory rows it committed."""
+
+    code: str | None
+    reason: str | None = None
+    shown: frozenset[str] = frozenset()
+    committed: int = 0
+    body: Any = None
+    status: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Expect:
+    """The exact outcome of one dimension cell."""
+
+    codes: frozenset[str | None]
+    show: frozenset[str] = frozenset()
+    exact: frozenset[str] | None = None  # when set: the revealed markers, exactly
+    hide: frozenset[str] = frozenset()
+    committed: int | None = None
+    same: bool = True  # the whole effects snapshot stays byte-identical
+    memory_same: bool = True  # memory.db bytes stay identical
+    absent: tuple[str, ...] = ()  # project-relative paths that must not exist
+    status: str | None = None
+    check: Any = None  # (env, cell, out) -> None, extra exact assertions
+
+
+def _ex(
+    *codes: str | None,
+    show: Any = (),
+    exact: Any = None,
+    hide: Any = (),
+    committed: int | None = None,
+    same: bool = True,
+    memory_same: bool = True,
+    absent: tuple[str, ...] = (),
+    status: str | None = None,
+    check: Any = None,
+) -> _G2Expect:
+    return _G2Expect(
+        codes=frozenset(codes or ("OK",)),
+        show=frozenset(show),
+        exact=None if exact is None else frozenset(exact),
+        hide=frozenset(hide),
+        committed=committed,
+        same=same,
+        memory_same=memory_same,
+        absent=absent,
+        status=status,
+        check=check,
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Route:
+    transport: str
+    key: str  # canonical route key of the plan's 2.3 inventory
+    cell: str  # route-intrinsic selectors (operation, action, apply)
+    op: str  # the primary grant operation (D2)
+    call: Any  # (env, cell) -> _G2Out
+    #: dimension -> {value: _G2Expect} this route natively varies along
+    supports: Any = dataclasses.field(default_factory=dict)
+    takes_allowlist: bool = False
+    takes_owner: bool = True
+    missing_ops: tuple[str, ...] | None = None
+    setup: Any = None
+    #: codes of a route that reached its own outcome (never an authorization denial)
+    ok_codes: frozenset[str | None] = frozenset({"OK"})
+    #: whether denial is an `E_PERMISSION` code (else: nothing revealed, nothing written)
+    coded: bool = True
+    owner_required: bool = False
+    writer_family: str | None = None
+    #: success oracle: (env, cell, out, before) -> None, asserting the exact outcome
+    check_ok: Any = None
+    #: legacy-mode oracle (same signature)
+    check_legacy: Any = None
+    #: the exact outcome of the `source-ungranted` row for a reader that narrows the
+    #: grant itself and answers "unknown" instead of a denial
+    ungranted: Any = None
+    #: strict-model `E_INPUT` carrier: (env, cell, dim, value) -> _G2Out
+    carry: Any = None
+    #: the dimensions `carry` applies to (None: every one)
+    carry_dims: frozenset[str] | None = None
+    #: reads and previews: the baseline may be called repeatedly
+    idempotent: bool = True
+    #: inventory pairs `(module, function)` this route exercises
+    covers: tuple[tuple[str, str], ...] = ()
+    #: only these rows exist (producer-labelled routes)
+    rows_only: tuple[str, ...] | None = None
+    #: the route's own selector already carries `apply`
+    intrinsic_apply: bool = False
+    #: sources the grant must approve for the route to see/write its rows
+    grant_sources: tuple[str | Callable[[Path], str], ...] = ()
+    #: whose grant the route runs under: "alice" (tool routes) or "project" (the
+    #: legacy project owner that internal writers and legacy-file readers carry)
+    grant_owner: str = "alice"
+    #: the route always declares its owner, so a second owner's grant changes nothing
+    owner_fixed: bool = False
+    #: fixture state written in legacy mode, before any grant exists
+    pre_setup: Any = None
+    #: replaces the policy/overlay row assertions: (route, row, env, cell, out) -> None
+    custom_policy: Any = None
+    #: a reader that is not memory-gated: every row reveals exactly this set
+    ungated: frozenset[str] | None = None
+    #: the denial reason of the `owner-omitted` row when the transport itself defaults
+    #: the owner (the CLI falls back to the project owner, which holds no grant)
+    owner_omitted_reason: str | None = None
+    #: project-relative path prefixes the route's own constructor (re)creates; the
+    #: effects comparison ignores them
+    ignore: tuple[str, ...] = ()
+    #: data-root-relative prefixes the route's own fixture (re)creates (a dashboard
+    #: context's ledger and owner locks); the effects comparison ignores them
+    ignore_data: tuple[str, ...] = ()
+    #: the route's denial legitimately runs the exposure-reducing cleanup (R15), which
+    #: writes the memory db; the comparison ignores the db, its counts and its tree entry
+    ignore_db: bool = False
+    #: fixture state for the overlay row, taken before its baseline: `(env) -> None`
+    overlay_setup: Any = None
+
+    @property
+    def ident(self) -> str:
+        return f"{self.transport}.{self.cell}"
+
+    @property
+    def sourced(self) -> bool:
+        return self.writer_family is not None or bool(self.grant_sources)
+
+
+def _g2_permissions(
+    cell: _G2Cell, *, default_cache_write: bool = True
+) -> ExecutionPermissions:
+    cache_write = default_cache_write if cell.cache_write is None else cell.cache_write
+    return ExecutionPermissions(
+        cache_write=cache_write,
+        artifact_write=True,
+        build=True,
+        network=cell.retrieval == "hybrid",
+    )
+
+
+def _g2_perm(**extra: bool) -> ExecutionPermissions:
+    return ExecutionPermissions(
+        cache_write=True, artifact_write=True, build=True, **extra
+    )
+
+
+def _g2_owner(owner: OwnerScope | None) -> dict[str, str] | None:
+    return owner.as_dict() if owner is not None else None
+
+
+def _g2_markers(value: Any) -> frozenset[str]:
+    return frozenset(_G2_MARKER.findall(_dump(value)))
+
+
+def _g2_count(env: _G2Env) -> int:
+    db = env.root / ".rush" / "memory.db"
+    return _table_counts(db).get("memory_artifacts", 0) if db.exists() else 0
+
+
+def _g2_row(env: _G2Env, artifact_id: str) -> Any:
+    view, _state = TypedArtifactStore.open_readonly_view(env.root)
+    if view is None:
+        return None
+    try:
+        return view.get_current_row(artifact_id)
+    finally:
+        view.close()
+
+
+def _g2_snapshot(env: _G2Env) -> dict[str, Any]:
+    db = env.root / ".rush" / "memory.db"
+    counts = _table_counts(db) if db.exists() else {}
+    versions: dict[str, int] = {}
+    if db.exists():
+        for artifact_id in ("a1", "a2"):
+            row = _g2_row(env, artifact_id)
+            if row is not None:
+                versions[artifact_id] = int(row["artifact_version"])
+    return {"counts": counts, "versions": versions}
+
+
+def _g2_out_from_tool(result: Any) -> _G2Out:
+    raw = _rd(result)
+    code = raw.get("code") if isinstance(raw, dict) else None
+    reason = _reason_of(raw) if isinstance(raw, dict) else None
+    status = result.get("status") if hasattr(result, "get") else None
+    return _G2Out(code, reason, _g2_markers(result), 0, result, status)
+
+
+def _g2_parse_row(row: str) -> _G2Cell:
+    """The cell options a matrix row id selects."""
+    base = _G2Cell(row=row)
+    if row.endswith("owner-omitted"):
+        return dataclasses.replace(base, owner=None)
+    if row.endswith("source-ungranted"):
+        return dataclasses.replace(base, allow=["source-x"])
+    if "missing_no_marker" in row:
+        return dataclasses.replace(base, allow=["source-a"])
+    if row == G2_OVERLAY_ROW or row in G2_POLICY_ROWS:
+        return base
+    for dim in G2_ROW_DIMENSIONS:
+        prefix = f"{dim}-"
+        if row.startswith(prefix):
+            value = row[len(prefix) :].split("-producer-")[0]
+            if dim == "cache_write":
+                return dataclasses.replace(base, cache_write=value == "on")
+            if dim == "store":
+                return dataclasses.replace(base, store=value)
+            return dataclasses.replace(base, **cast("dict[str, Any]", {dim: value}))
+    return base
+
+
+def _g2_split(row: str) -> tuple[str, str]:
+    dim, _, value = row.partition("-")
+    return dim, value.split("-producer-")[0]
+
+
+def _g2_rows(route: _G2Route) -> list[str]:
+    """Every matrix row of `route`."""
+    if route.rows_only is not None:
+        return list(route.rows_only)
+    rows = [*G2_POLICY_ROWS, G2_OVERLAY_ROW]
+    for dim in G2_ROW_DIMENSIONS:
+        if dim == "apply" and route.intrinsic_apply:
+            continue
+        supported = route.supports.get(dim)
+        if supported:
+            rows.extend(f"{dim}-{value}" for value in supported)
+            if dim == "row_state":
+                rows.extend(
+                    f"{dim}-{value}-producer-{producer}"
+                    for (d, value), producer in G2_PRODUCER_VALUES.items()
+                    if d == dim
+                )
+        else:
+            values = [
+                v for v in G2_DIMENSIONS[dim] if (dim, v) not in G2_PRODUCER_VALUES
+            ]
+            rows.append(f"{dim}-{'absent' if dim == 'store' else values[-1]}")
+    return rows
+
+
+# --- G2 routes: the `MemoryTool` operations (in-process) -----------------------------
+#
+# Each `_G2Spec` describes one operation + action once; `_g2_inproc`, `_g2_mcp` and
+# `_g2_cli` derive the same route over the three transports that carry it.
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Spec:
+    key: str
+    cell: str
+    op: str  # the primary grant operation (D2)
+    operation: MemoryOperation  # the MemoryTool operation
+    kwargs: Any  # (env, cell) -> MemoryTool.run kwargs, without `permissions`
+    perm: bool = False  # whether the call carries execution permissions
+    default_cache_write: bool = True
+    allowlist: bool = False
+    supports: Any = dataclasses.field(default_factory=dict)
+    missing_ops: tuple[str, ...] | None = None
+    ok_codes: frozenset[str | None] = frozenset({"OK"})
+    owner_required: bool = False
+    writer_family: str | None = None
+    check_ok: Any = None
+    check_legacy: Any = None
+    ungranted: Any = None
+    setup: Any = None
+    idempotent: bool = True
+    intrinsic_apply: bool = False
+    covers: tuple[tuple[str, str], ...] = ()
+    #: request keys the operation's strict model accepts (the strictness carrier)
+    request_strict: bool = False
+    #: the request a strictness carrier starts from
+    carry_base: Any = None
+    #: the dimensions the strictness carrier applies to (None: every one)
+    carry_dims: frozenset[str] | None = None
+
+
+def _g2_shown(env: _G2Env, expect: Any) -> None:
+    return None
+
+
+def _store_dims(
+    *,
+    absent: _G2Expect,
+    old_schema: _G2Expect,
+    cache_on: _G2Expect | None = None,
+    cache_off: _G2Expect | None = None,
+) -> dict[str, dict[str, _G2Expect]]:
+    out: dict[str, dict[str, _G2Expect]] = {
+        "store": {"absent": absent, "old_schema": old_schema}
+    }
+    if cache_on is not None and cache_off is not None:
+        out["cache_write"] = {"on": cache_on, "off": cache_off}
+    return out
+
+
+def _g2_page_supports(
+    *, historical: bool, codes: tuple[str | None, ...]
+) -> dict[str, dict[str, _G2Expect]]:
+    """ask / recall / list over the fixture: the exact markers each cell reveals."""
+    shown = G2_ACTIVE | ({"mk-arch", "mk-exp"} if historical else frozenset())
+    base = _ex(*codes, show=shown, hide={"mk-x1"})
+    supports: dict[str, dict[str, _G2Expect]] = {
+        "mode": {
+            ("historical" if historical else "inspect"): base,
+        },
+        "store": {
+            "absent": _ex(*codes, exact=(), absent=(".rush/memory.db",)),
+            "old_schema": _ex("E_MIGRATION", *([None] if historical else []), exact=()),
+        },
+        "cache_write": {
+            "on": _ex(*codes, show=shown, hide={"mk-x1"}, same=False),
+            "off": _ex(*codes, show=shown, hide={"mk-x1"}),
+        },
+        "row_state": {
+            "active": _ex(*codes, show={"mk-a1"}),
+            "archived": (
+                _ex(*codes, show={"mk-arch"})
+                if historical
+                else _ex(*codes, hide={"mk-arch"})
+            ),
+            "expired": (
+                _ex(*codes, show={"mk-exp"})
+                if historical
+                else _ex(*codes, hide={"mk-exp"})
+            ),
+            "tampered": (
+                _ex(*codes, show={"mk-tam"})
+                if historical
+                else _ex(*codes, hide={"mk-tam"})
+            ),
+        },
+    }
+    if not historical:
+        supports["retrieval"] = {
+            "lexical": _ex(*codes, exact=G2_ACTIVE),
+            "hybrid": _ex(*codes, "E_EMBEDDING_UNAVAILABLE", exact=G2_ACTIVE),
+        }
+    return supports
+
+
+def _g2_compact(operation: str, query: str):
+    def kwargs(env: _G2Env, cell: _G2Cell) -> dict[str, Any]:
+        request: dict[str, Any] = {"view": "compact"}
+        if cell.retrieval == "hybrid":
+            request["retrieval"] = "hybrid"
+        return {
+            "subject": SUBJECT,
+            "query": query,
+            "session_allowlist": cell.allow,
+            "owner_scope": _g2_owner(cell.owner),
+            "request": request,
+        }
+
+    return kwargs
+
+
+def _g2_ok_markers(expected: frozenset[str]):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.shown == expected, (sorted(out.shown), sorted(expected))
+        assert out.committed == 0
+
+    return check
+
+
+def _g2_ok_page(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    raw = _rd(out.body)
+    assert out.shown == G2_ACTIVE, sorted(out.shown)
+    assert sorted(_ids(raw["data"])) == ["a1", "a2"], raw
+    assert all(item["version"] == 1 for item in raw["data"]["items"])
+    assert out.committed == 0
+
+
+def _g2_ok_list_hist(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert {"mk-a1", "mk-a2", "mk-arch", "mk-exp"} <= out.shown, sorted(out.shown)
+    assert "mk-x1" not in out.shown
+    assert out.committed == 0
+
+
+def _g2_expand_target(cell: _G2Cell) -> str:
+    return cell.target
+
+
+def _g2_decode_expand(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _rd(out.body)["data"]
+    if cell.representation == "utf8":
+        text = data.get("content_utf8") or data.get("content_text") or data.get("text")
+        assert text is not None, sorted(data)
+    else:
+        text = base64.b64decode(data["content_base64"]).decode("utf-8")
+    assert f"needle mk-{cell.target}" in text, text
+
+
+def _g2_expand_supports() -> dict[str, dict[str, _G2Expect]]:
+    gone = _ex("E_NOT_VISIBLE", exact=())
+    return {
+        "representation": {
+            "base64": _ex("OK", check=_g2_decode_expand),
+            "utf8": _ex("OK", check=_g2_decode_expand),
+        },
+        "store": {
+            "absent": _ex("E_NOT_VISIBLE", exact=(), absent=(".rush/memory.db",)),
+            "old_schema": _ex("E_MIGRATION", exact=()),
+        },
+        "cache_write": {
+            "on": _ex("OK", same=False, check=_g2_decode_expand),
+            "off": _ex("OK", check=_g2_decode_expand),
+        },
+        "row_state": {
+            "active": _ex("OK", check=_g2_decode_expand),
+            "archived": gone,
+            "expired": gone,
+            "tampered": gone,
+        },
+    }
+
+
+def _g2_expand_kwargs(env: _G2Env, cell: _G2Cell) -> dict[str, Any]:
+    request: dict[str, Any] = {"id": cell.target, "version": 1}
+    if cell.representation:
+        request["representation"] = cell.representation
+    return {
+        "session_allowlist": cell.allow,
+        "owner_scope": _g2_owner(cell.owner),
+        "request": request,
+    }
+
+
+def _g2_ok_expand(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    _g2_decode_expand(env, cell, out, before)
+    assert out.committed == 0
+
+
+def _g2_related_supports() -> dict[str, dict[str, _G2Expect]]:
+    return {
+        "store": {
+            "absent": _ex("E_NOT_VISIBLE", exact=(), absent=(".rush/memory.db",)),
+            "old_schema": _ex("E_MIGRATION", exact=()),
+        },
+        "cache_write": {"on": _ex("OK", same=False), "off": _ex("OK")},
+        "row_state": {
+            "active": _ex("OK"),
+            "archived": _ex("E_NOT_VISIBLE", exact=()),
+            "expired": _ex("OK", exact=()),
+            "tampered": _ex("OK", exact=()),
+        },
+    }
+
+
+def _g2_related_kwargs(env: _G2Env, cell: _G2Cell) -> dict[str, Any]:
+    return {
+        "session_allowlist": cell.allow,
+        "owner_scope": _g2_owner(cell.owner),
+        "request": {"id": cell.target, "version": 1},
+    }
+
+
+# --- mutation oracles ----------------------------------------------------------------
+
+
+def _g2_write_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        if not apply:
+            assert raw["apply"] is False and "draft" in raw, raw
+            assert out.committed == 0
+            return
+        assert out.committed == 1
+        saved = _g2_row(env, raw["id"])
+        assert saved is not None
+        assert saved["source"] == cell.source
+        assert json.loads(saved["content"]) == {"text": "needle w"}
+        assert saved["artifact_version"] == 1
+        # The CLI carries no owner flag: outside policy mode its write belongs to the
+        # project owner; every other transport names the owner in the request.
+        owner = (
+            legacy_owner_scope(env.root)
+            if env.extra.get("transport") == "cli" and "missing_no_marker" in cell.row
+            else ALICE
+        )
+        assert (saved["owner_scope_kind"], saved["owner_scope_id"]) == (
+            owner.kind,
+            owner.id,
+        )
+
+    return check
+
+
+def _g2_promote_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        if not apply:
+            assert raw["apply"] is False, raw
+            assert out.committed == 0
+            return
+        assert raw["promoted"] is True and raw["new_tier"] == "STATED", raw
+        assert out.committed == 1
+        saved = _g2_row(env, raw["artifact"]["id"])
+        assert saved is not None and saved["trust_tier"] == "STATED"
+        assert saved["source"] == cell.source
+
+    return check
+
+
+def _g2_edit_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        assert out.committed == 0
+        if not apply:
+            assert raw["data"]["applied"] is False
+            assert raw["data"]["revision"] == 1
+            return
+        assert raw["data"]["applied"] is True
+        row = _g2_row(env, "a1")
+        assert row["artifact_version"] == 2
+        assert json.loads(row["content"]) == {"text": "needle edited"}
+
+    return check
+
+
+def _g2_archive_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        assert out.committed == 0
+        if not apply:
+            assert raw["data"]["applied"] is False
+            return
+        assert raw["data"]["applied"] is True
+        row = _g2_row(env, "a1")
+        assert row["artifact_version"] == 2 and row["archived_at"] is not None
+
+    return check
+
+
+def _g2_delete_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        data = raw["data"]
+        assert [item["id"] for item in data["affected"]] == ["a2"], data
+        if not apply:
+            assert data["applied"] is False
+            assert out.committed == 0
+            return
+        assert data["applied"] is True
+        assert out.committed == -1
+        assert _g2_row(env, "a2") is None
+
+    return check
+
+
+def _g2_maintain_check(apply: bool):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        raw = _rd(out.body)
+        assert raw["task"] == "staleness_sweep", raw
+        if apply:
+            assert raw["processed"] == 0 and list(raw["errors"]) == [], raw
+        else:
+            assert raw["apply"] is False and raw["candidate_ids"] == [], raw
+        assert out.committed == 0
+
+    return check
+
+
+def _g2_mutation_dims(
+    apply: bool,
+    *,
+    check: Any,
+    absent_code: str | None = "OK",
+    absent_committed: int = 0,
+    old_code: str | None = "OK",
+) -> dict[str, dict[str, _G2Expect]]:
+    if not apply:
+        return {
+            "store": {
+                "absent": _ex(absent_code, absent=(".rush/memory.db",)),
+                "old_schema": _ex(old_code),
+            },
+            "cache_write": {"on": _ex("OK", None), "off": _ex("OK", None)},
+        }
+    return {
+        "store": {
+            "absent": _ex(
+                absent_code,
+                committed=absent_committed,
+                same=False,
+                memory_same=False,
+                check=check if absent_code in ("OK", None) else None,
+            ),
+            "old_schema": _ex(old_code, same=False, memory_same=False, check=check),
+        },
+        "cache_write": {
+            "on": _ex("OK", None, same=False, memory_same=False, check=check),
+            "off": _ex(None, status="skipped", committed=0),
+        },
+    }
+
+
+# --- remaining `MemoryTool` operations ------------------------------------------------
+
+
+def _g2_relations(env: _G2Env) -> int:
+    db = env.root / ".rush" / "memory.db"
+    return _table_counts(db).get("memory_relations", 0) if db.exists() else 0
+
+
+def _g2_link_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _rd(out.body)["data"]
+    assert isinstance(data["sequence"], int) and data["sequence"] >= 1, data
+    assert _g2_relations(env) == before["counts"].get("memory_relations", 0) + 1
+    assert out.committed == 0
+
+
+def _g2_nothing_committed(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.committed == 0
+
+
+def _g2_consolidate_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    raw = _rd(out.body)
+    assert raw["code"] == "E_INPUT", raw
+    assert raw["data"] == {"message": "no episodes found for symptom 'needle'"}, raw
+    assert out.committed == 0
+
+
+def _g2_related_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _rd(out.body)["data"]
+    assert data["items"] == [
+        {"id": "a2", "version": 1, "kind": "depends_on", "direction": "outgoing"}
+    ], data
+    assert data["complete"] is True, data
+    assert out.committed == 0
+
+
+def _g2_related_setup(env: _G2Env) -> None:
+    """Two outgoing relations from `a1`: to `a2` (source-a, granted) and to `x1`
+    (source-x, never granted), so a related oracle can tell a granted neighbour from a
+    foreign one."""
+    with contextlib.closing(sqlite3.connect(_nn(env.store).db_path)) as conn:
+        conn.executemany(
+            "INSERT INTO memory_relations (source_id, source_version, target_id, "
+            "target_version, kind, created_at) "
+            "VALUES ('a1', 1, ?, 1, 'depends_on', 1.0)",
+            [("a2",), ("x1",)],
+        )
+        conn.commit()
+
+
+def _g2_verify_attempt_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    assert out.status == "skipped" and out.committed == 0, (out.status, out.code)
+
+
+def _g2_prepare_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _rd(out.body)["data"]
+    assert sorted(data) == [
+        "evidence_refs",
+        "failures",
+        "intent_evidence",
+        "untested_hypotheses",
+        "verified_repairs",
+    ], sorted(data)
+    assert out.committed == 0
+
+
+def _g2_plan_checks_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _rd(out.body)["data"]
+    assert data["required_ids"] == ["c1"], data
+    assert [check["ids"] for check in data["checks"]] == [["c1"]], data
+    assert out.committed == 0
+
+
+def _g2_last_success_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _rd(out.body)["data"]
+    assert data["baseline_ref"] is None and data["cause_state"], data
+    assert out.committed == 0
+
+
+def _g2_read_dims(
+    check: Any, *, cache_write_changes: bool = False
+) -> dict[str, dict[str, _G2Expect]]:
+    """A read-shaped operation (never writes `memory.db`): absent, old-schema and
+    cache_write cells all reach the same outcome."""
+    return {
+        "store": {
+            "absent": _ex("OK", absent=(".rush/memory.db",), check=check),
+            "old_schema": _ex("OK", check=check),
+        },
+        "cache_write": {
+            "on": _ex("OK", same=not cache_write_changes, check=check),
+            "off": _ex("OK", check=check),
+        },
+    }
+
+
+def _g2_more_specs() -> list[_G2Spec]:
+    specs: list[_G2Spec] = []
+
+    def add(**kwargs: Any) -> None:
+        specs.append(_G2Spec(**kwargs))
+
+    link_request = {
+        "source_id": "a1",
+        "source_version": 1,
+        "target_id": "a2",
+        "target_version": 1,
+        "kind": "depends_on",
+    }
+    add(
+        key="link",
+        cell="link",
+        op="write",
+        operation="link",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": dict(link_request),
+        },
+        perm=True,
+        supports={
+            "store": {
+                "absent": _ex("E_INPUT", same=False, memory_same=False),
+                "old_schema": _ex(
+                    "OK", same=False, memory_same=False, check=_g2_link_check
+                ),
+            },
+            "cache_write": {
+                "on": _ex("OK", same=False, memory_same=False, check=_g2_link_check),
+                "off": _ex("E_PERMISSION"),
+            },
+        },
+        check_ok=_g2_link_check,
+        check_legacy=_g2_link_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(("tools/memory.py", "_link"),),
+    )
+    add(
+        key="consolidate",
+        cell="consolidate",
+        op="write",
+        operation="consolidate",
+        kwargs=lambda env, cell: {
+            "session_allowlist": cell.allow or ["source-a"],
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {"symptom": "needle"},
+        },
+        perm=True,
+        allowlist=True,
+        ok_codes=frozenset({"E_INPUT"}),
+        supports={
+            "store": {
+                "absent": _ex("E_INPUT", same=False, memory_same=False),
+                "old_schema": _ex("E_INPUT", same=False, memory_same=False),
+            },
+            "cache_write": {
+                "on": _ex("E_INPUT"),
+                "off": _ex("E_PERMISSION"),
+            },
+        },
+        check_ok=_g2_consolidate_check,
+        check_legacy=_g2_consolidate_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(("tools/memory.py", "_consolidate"),),
+    )
+    for apply in (False, True):
+        label = "apply" if apply else "preview"
+        add(
+            key="write",
+            cell=f"write-apply-{label}",
+            op="write" if apply else "list",
+            operation="write",
+            kwargs=lambda env, cell, apply=apply: {
+                "subject": SUBJECT,
+                "content": {"text": "needle w"},
+                "source": cell.source,
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {"apply": apply},
+            },
+            perm=True,
+            ok_codes=frozenset({None}),
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex(None, absent=(".rush/memory.db",)),
+                        "old_schema": _ex(None),
+                    },
+                    "cache_write": {"on": _ex(None), "off": _ex(None)},
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_write_check(True),
+                        ),
+                        "old_schema": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_write_check(True),
+                        ),
+                    },
+                    "cache_write": {
+                        "on": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_write_check(True),
+                        ),
+                        "off": _ex(None, status="skipped", committed=0),
+                    },
+                }
+            ),
+            check_ok=_g2_write_check(apply),
+            check_legacy=_g2_write_check(apply),
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(("tools/memory.py", "_run_write"),),
+        )
+        add(
+            key="edit",
+            cell=f"edit-apply-{label}",
+            op="write" if apply else "list",
+            operation="edit",
+            kwargs=lambda env, cell, apply=apply: {
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {
+                    "id": "a1",
+                    "expected_version": 1,
+                    "scope": SUBJECT,
+                    "content": {"text": "needle edited"},
+                    "apply": apply,
+                    "owner_scope": _g2_owner(cell.owner),
+                },
+            },
+            perm=True,
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex("E_INPUT", absent=(".rush/memory.db",)),
+                        "old_schema": _ex("OK", check=_g2_edit_check(False)),
+                    },
+                    "cache_write": {
+                        "on": _ex("OK", check=_g2_edit_check(False)),
+                        "off": _ex("OK", check=_g2_edit_check(False)),
+                    },
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex("E_INPUT", same=False, memory_same=False),
+                        "old_schema": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_edit_check(True),
+                        ),
+                    },
+                    "cache_write": {
+                        "on": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_edit_check(True),
+                        ),
+                        "off": _ex("E_PERMISSION"),
+                    },
+                }
+            ),
+            check_ok=_g2_edit_check(apply),
+            check_legacy=_g2_edit_check(apply),
+            request_strict=True,
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(
+                ("tools/memory.py", "_edit_or_archive"),
+                ("tools/memory.py", "_with_mutation_view"),
+                ("tools/memory.py", "_memory_attribution"),
+            ),
+        )
+        add(
+            key="archive",
+            cell=f"archive-apply-{label}",
+            op="write" if apply else "list",
+            operation="archive",
+            kwargs=lambda env, cell, apply=apply: {
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {
+                    "id": "a1",
+                    "expected_version": 1,
+                    "scope": SUBJECT,
+                    "apply": apply,
+                    "owner_scope": _g2_owner(cell.owner),
+                },
+            },
+            perm=True,
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex("E_INPUT", absent=(".rush/memory.db",)),
+                        "old_schema": _ex("OK", check=_g2_archive_check(False)),
+                    },
+                    "cache_write": {
+                        "on": _ex("OK", check=_g2_archive_check(False)),
+                        "off": _ex("OK", check=_g2_archive_check(False)),
+                    },
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex("E_INPUT", same=False, memory_same=False),
+                        "old_schema": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_archive_check(True),
+                        ),
+                    },
+                    "cache_write": {
+                        "on": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_archive_check(True),
+                        ),
+                        "off": _ex("E_PERMISSION"),
+                    },
+                }
+            ),
+            check_ok=_g2_archive_check(apply),
+            check_legacy=_g2_archive_check(apply),
+            request_strict=True,
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(("tools/memory.py", "_edit_or_archive"),),
+        )
+        add(
+            key="delete",
+            cell=f"delete-apply-{label}",
+            op="write" if apply else "list",
+            operation="delete",
+            kwargs=lambda env, cell, apply=apply: {
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {
+                    "artifact_ids": ["a2"],
+                    "expected_revisions": {"a2": 1},
+                    "scope": SUBJECT,
+                    "apply": apply,
+                    "owner_scope": _g2_owner(cell.owner),
+                },
+            },
+            perm=True,
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex("E_INPUT", absent=(".rush/memory.db",)),
+                        "old_schema": _ex("E_MIGRATION"),
+                    },
+                    "cache_write": {
+                        "on": _ex("OK", check=_g2_delete_check(False)),
+                        "off": _ex("OK", check=_g2_delete_check(False)),
+                    },
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex("E_INPUT", same=False, memory_same=False),
+                        "old_schema": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_delete_check(True),
+                        ),
+                    },
+                    "cache_write": {
+                        "on": _ex(
+                            "OK",
+                            same=False,
+                            memory_same=False,
+                            check=_g2_delete_check(True),
+                        ),
+                        "off": _ex("E_PERMISSION"),
+                    },
+                }
+            ),
+            check_ok=_g2_delete_check(apply),
+            check_legacy=_g2_delete_check(apply),
+            request_strict=True,
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(("tools/memory.py", "_run_delete"),),
+        )
+        add(
+            key="promote",
+            cell=f"promote-apply-{label}",
+            op="write" if apply else "list",
+            operation="promote",
+            kwargs=lambda env, cell, apply=apply: {
+                "subject": SUBJECT,
+                "content": {"text": "needle p"},
+                "source": cell.source,
+                "user_stated": True,
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {"apply": apply},
+            },
+            perm=True,
+            ok_codes=frozenset({None}),
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex(None, absent=(".rush/memory.db",)),
+                        "old_schema": _ex(None),
+                    },
+                    "cache_write": {"on": _ex(None), "off": _ex(None)},
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_promote_check(True),
+                        ),
+                        "old_schema": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_promote_check(True),
+                        ),
+                    },
+                    "cache_write": {
+                        "on": _ex(
+                            None,
+                            committed=1,
+                            same=False,
+                            memory_same=False,
+                            check=_g2_promote_check(True),
+                        ),
+                        "off": _ex(None, status="skipped", committed=0),
+                    },
+                }
+            ),
+            check_ok=_g2_promote_check(apply),
+            check_legacy=_g2_promote_check(apply),
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(
+                ("tools/memory.py", "_run_promote"),
+                ("tools/memory.py", "_promote_source_conflict"),
+            ),
+        )
+        add(
+            key="maintain",
+            cell=f"maintain-apply-{label}",
+            op="write" if apply else "list",
+            operation="maintain",
+            kwargs=lambda env, cell, apply=apply: {
+                "task": "staleness_sweep",
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {"apply": apply},
+            },
+            perm=True,
+            ok_codes=frozenset({None}),
+            owner_required=True,
+            supports=(
+                {
+                    "store": {
+                        "absent": _ex(None, absent=(".rush/memory.db",)),
+                        "old_schema": _ex(None),
+                    },
+                    "cache_write": {"on": _ex(None), "off": _ex(None)},
+                }
+                if not apply
+                else {
+                    "store": {
+                        "absent": _ex(None, same=False, memory_same=False),
+                        "old_schema": _ex(None, same=False, memory_same=False),
+                    },
+                    "cache_write": {
+                        "on": _ex(None, same=False, memory_same=False),
+                        "off": _ex(None, status="skipped", committed=0),
+                    },
+                }
+            ),
+            check_ok=_g2_maintain_check(apply),
+            check_legacy=_g2_maintain_check(apply),
+            idempotent=not apply,
+            intrinsic_apply=True,
+            covers=(
+                ("tools/memory.py", "_run_maintain"),
+                ("memory/maintenance.py", "run_maintenance_cycle"),
+                ("memory/maintenance.py", "preview_maintenance_candidates"),
+                ("memory/maintenance.py", "_revision_conflicts"),
+                ("memory/expiry.py", "sweep_reviewed_expired"),
+            ),
+        )
+    add(
+        key="verify_attempt",
+        cell="verify_attempt",
+        op="write",
+        operation="verify_attempt",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "attempt_id": "att-1",
+                "behavior_ids": ["b1"],
+                "contract": {},
+                "patch": "not a patch",
+                "declared_permissions": [],
+            },
+        },
+        perm=True,
+        ok_codes=frozenset({None}),
+        supports={
+            "store": {
+                "absent": _ex(None, status="skipped", absent=(".rush/memory.db",)),
+                "old_schema": _ex(None, status="skipped"),
+            },
+            "cache_write": {
+                "on": _ex(None, status="skipped"),
+                "off": _ex(None, status="skipped"),
+            },
+        },
+        check_ok=_g2_verify_attempt_check,
+        check_legacy=_g2_verify_attempt_check,
+        request_strict=True,
+        covers=(("memory/verification.py", "verify_attempt"),),
+    )
+    for operation in ("prepare", "resume"):
+        add(
+            key=operation,
+            cell=operation,
+            op="ask",
+            operation=operation,
+            kwargs=lambda env, cell: {
+                "session_allowlist": cell.allow,
+                "owner_scope": _g2_owner(cell.owner),
+                "request": {"task": "fix", "conditions": {}, "query": "needle"},
+            },
+            allowlist=True,
+            supports=_g2_read_dims(_g2_prepare_check),
+            check_ok=_g2_prepare_check,
+            check_legacy=_g2_prepare_check,
+            request_strict=True,
+        )
+    add(
+        key="plan_checks",
+        cell="plan_checks",
+        op="ask",
+        operation="plan_checks",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "changed_targets": [{"id": "t1"}],
+                "required_checks": [{"id": "c1"}],
+                "environment": {},
+            },
+        },
+        supports=_g2_read_dims(_g2_plan_checks_check),
+        check_ok=_g2_plan_checks_check,
+        check_legacy=_g2_plan_checks_check,
+        request_strict=True,
+    )
+    add(
+        key="last_success_diagnose",
+        cell="last_success_diagnose",
+        op="ask",
+        operation="last_success_diagnose",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {"behavior_id": "b1", "conditions": {}},
+        },
+        supports=_g2_read_dims(_g2_last_success_check),
+        check_ok=_g2_last_success_check,
+        check_legacy=_g2_last_success_check,
+        request_strict=True,
+        covers=(("memory/experience.py", "compare_last_success"),),
+    )
+    return specs
+
+
+# --- intent / recipe / handoff / receive ----------------------------------------------
+
+
+def _g2_setup_intent(env: _G2Env) -> None:
+    from rush.memory.intent import record_intent
+
+    record_intent(
+        project_root=env.root,
+        intent_id="i-g2",
+        behavior_id="b-g2",
+        owner_scope=ALICE,
+    )
+
+
+def _g2_setup_statement(env: _G2Env) -> None:
+    """A currently-STATED statement row `stm` for `supersede`."""
+    _g2_setup_intent(env)
+    assert env.store is not None
+    _row(env.store, "stm", ALICE, "mk-stm", source="source-a")
+    env.store.promote("stm", user_stated=True)
+    env.extra["statement_version"] = _nn(env.store.get_current("stm")).artifact_version
+
+
+def _g2_setup_recipe(env: _G2Env) -> None:
+    from rush.memory.recipes import record_recipe
+
+    record_recipe(
+        project_root=env.root,
+        recipe_id="r-g2",
+        helper_ref={"path": "helper.py", "symbol": "helper"},
+        owner_scope=ALICE,
+    )
+    assert env.store is not None
+    env.store.write(
+        MemoryArtifact(
+            id="rcpt",
+            family="memory",
+            subject=SUBJECT,  # type: ignore[arg-type]
+            trust_tier="DERIVED",
+            content={"evidence_kind": "sandbox_verification", "outcome": "completed"},
+            source="source-a",
+            created_at=1.0,
+            owner_scope=ALICE,
+        )
+    )
+
+
+def _g2_data(out: _G2Out) -> dict[str, Any]:
+    return _rd(out.body).get("data") or {}
+
+
+def _g2_intent_check(version: int, status: str):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        data = _g2_data(out)
+        assert data["intent_id"] == "i-g2" and data["version"] == version, data
+        assert data["status"] == status, data
+
+    return check
+
+
+def _g2_intent_row(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    row = _g2_row(env, "i-g2")
+    assert row is not None and row["source"] == "intent:i-g2"
+    assert (row["owner_scope_kind"], row["owner_scope_id"]) == (ALICE.kind, ALICE.id)
+
+
+def _g2_intent_create_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    _g2_intent_check(1, "candidate")(env, cell, out, before)
+    _g2_intent_row(env, cell, out, before)
+    assert out.committed == 1
+
+
+def _g2_intent_create_legacy(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    """Legacy mode: a transport with no owner input writes under the project owner."""
+    _g2_intent_check(1, "candidate")(env, cell, out, before)
+    row = _g2_row(env, "i-g2")
+    assert row is not None and row["source"] == "intent:i-g2"
+    assert out.committed == 1
+
+
+def _g2_intent_confirm_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    _g2_intent_check(2, "candidate")(env, cell, out, before)
+    assert out.committed == 0
+    assert _g2_row(env, "i-g2")["artifact_version"] == 2
+
+
+def _g2_intent_supersede_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert data["intent_id"] == "i-g2", data
+    assert _g2_row(env, "i-g2")["artifact_version"] >= 2
+
+
+def _g2_intent_unresolved(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _g2_data(out)
+    assert data["intent_id"] == "i-g2" and data["behavior_id"] == "b-g2", data
+    assert out.committed == 0
+
+
+def _g2_recipe_record_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert data["recipe_id"] == "r-g2" and data["version"] == 1, data
+    row = _g2_row(env, "r-g2")
+    assert row is not None and row["source"] == "recipe:r-g2"
+    assert out.committed == 1
+
+
+def _g2_recipe_resolve_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert data["usable"] is True and data["recipe_id"] == "r-g2", data
+    assert data["current_helper"]["helper_ref"] == {
+        "path": "helper.py",
+        "symbol": "helper",
+    }
+    assert out.committed == 0
+
+
+def _g2_recipe_outcome_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert data["passed"] is True and data["outcomes_count"] == 1, data
+    assert _g2_row(env, "r-g2")["artifact_version"] == 2
+    assert out.committed == 0
+
+
+def _g2_handoff_prepare_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    data = _g2_data(out)
+    assert data["handoff_id"] and data["capability"] and data["expires_at"], sorted(
+        data
+    )
+    sessions = _g2_sessions(env)
+    assert sessions == before["counts"].get("memory_handoff_sessions", 0) + 1
+    assert out.committed == 0
+
+
+def _g2_sessions(env: _G2Env) -> int:
+    db = env.root / ".rush" / "memory.db"
+    return _table_counts(db).get("memory_handoff_sessions", 0) if db.exists() else 0
+
+
+def _g2_unknown(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """A reader that cannot see the row answers "unknown" and reveals nothing."""
+    assert out.code == "E_INPUT" and not out.shown, (out.code, out.reason)
+    assert "unknown" in _g2_data(out)["message"], _g2_data(out)
+    assert out.committed == 0
+
+
+def _g2_unavailable(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    message = _g2_data(out)["message"]
+    assert "is not yet implemented" in message, message
+    assert out.committed == 0
+
+
+def _g2_intent_dims(
+    *,
+    absent: _G2Expect,
+    old_schema: _G2Expect,
+    on: _G2Expect,
+    off: _G2Expect,
+) -> dict[str, dict[str, _G2Expect]]:
+    return {
+        "store": {"absent": absent, "old_schema": old_schema},
+        "cache_write": {"on": on, "off": off},
+    }
+
+
+def _g2_handoff_request(action: str):
+    return lambda env, cell: {
+        "owner_scope": _g2_owner(cell.owner),
+        "request": {
+            "action": action,
+            "receiver_namespace": "source-a",
+            "receiver_audience": "codex_cli",
+            "goal": "g",
+            "selected_refs": [{"id": "a1", "version": 1}],
+            "handoff_id": "h-none",
+        }
+        if action == "prepare"
+        else {"action": action, "handoff_id": "h-none"},
+    }
+
+
+def _g2_workflow_specs() -> list[_G2Spec]:
+    specs: list[_G2Spec] = []
+
+    def add(**kwargs: Any) -> None:
+        specs.append(_G2Spec(**kwargs))
+
+    changed: dict[str, Any] = {"same": False, "memory_same": False}
+    # --- intent ---
+    add(
+        key="intent",
+        cell="intent-action-create",
+        op="write",
+        operation="intent",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {"action": "create", "intent_id": "i-g2", "behavior_id": "b-g2"},
+        },
+        perm=True,
+        writer_family="intent:*",
+        supports=_g2_intent_dims(
+            absent=_ex("OK", committed=1, check=_g2_intent_create_check, **changed),
+            old_schema=_ex("OK", committed=1, check=_g2_intent_create_check, **changed),
+            on=_ex("OK", committed=1, check=_g2_intent_create_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_intent_create_check,
+        check_legacy=_g2_intent_create_legacy,
+        request_strict=True,
+        idempotent=False,
+        covers=(
+            ("tools/memory.py", "_intent"),
+            ("memory/intent.py", "record_intent"),
+        ),
+    )
+    add(
+        key="intent",
+        cell="intent-action-confirm",
+        op="write",
+        operation="intent",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "action": "confirm",
+                "intent_id": "i-g2",
+                "expected_version": 1,
+            },
+        },
+        perm=True,
+        writer_family="intent:*",
+        setup=_g2_setup_intent,
+        supports=_g2_intent_dims(
+            absent=_ex("E_VERSION", **changed),
+            old_schema=_ex("OK", check=_g2_intent_confirm_check, **changed),
+            on=_ex("OK", check=_g2_intent_confirm_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_intent_confirm_check,
+        check_legacy=_g2_intent_confirm_check,
+        request_strict=True,
+        idempotent=False,
+    )
+    add(
+        key="intent",
+        cell="intent-action-supersede",
+        op="write",
+        operation="intent",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "action": "supersede",
+                "intent_id": "i-g2",
+                "expected_version": 1,
+                "new_statement_ref": {
+                    "id": "stm",
+                    "version": env.extra.get("statement_version", 2),
+                },
+            },
+        },
+        perm=True,
+        writer_family="intent:*",
+        setup=_g2_setup_statement,
+        supports=_g2_intent_dims(
+            absent=_ex("E_INPUT", **changed),
+            old_schema=_ex("OK", check=_g2_intent_supersede_check, **changed),
+            on=_ex("OK", check=_g2_intent_supersede_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_intent_supersede_check,
+        check_legacy=_g2_intent_supersede_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(
+            ("memory/intent.py", "supersede_intent"),
+            ("memory/intent.py", "_resolve_authorized_statement"),
+        ),
+    )
+    add(
+        key="intent",
+        cell="intent-action-check",
+        op="ask",
+        operation="intent",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {"action": "check", "intent_id": "i-g2"},
+        },
+        writer_family="intent:*",
+        setup=_g2_setup_intent,
+        ok_codes=frozenset({"UNRESOLVED"}),
+        supports=_g2_intent_dims(
+            absent=_ex("E_INPUT", absent=(".rush/memory.db",)),
+            old_schema=_ex("E_INPUT"),
+            on=_ex("UNRESOLVED", same=False),
+            off=_ex("UNRESOLVED"),
+        ),
+        check_ok=_g2_intent_unresolved,
+        check_legacy=_g2_unknown,
+        ungranted=_ex("E_INPUT"),
+        request_strict=True,
+        covers=(("memory/intent.py", "check_intent"),),
+    )
+    # --- recipe ---
+    add(
+        key="recipe",
+        cell="recipe-action-record",
+        op="write",
+        operation="recipe",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "action": "record",
+                "recipe_id": "r-g2",
+                "helper_ref": {"path": "helper.py", "symbol": "helper"},
+            },
+        },
+        perm=True,
+        writer_family="recipe:*",
+        supports=_g2_intent_dims(
+            absent=_ex("OK", committed=1, check=_g2_recipe_record_check, **changed),
+            old_schema=_ex("OK", committed=1, check=_g2_recipe_record_check, **changed),
+            on=_ex("OK", committed=1, check=_g2_recipe_record_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_recipe_record_check,
+        check_legacy=_g2_recipe_record_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(("memory/recipes.py", "record_recipe"),),
+    )
+    add(
+        key="recipe",
+        cell="recipe-action-resolve",
+        op="ask",
+        operation="recipe",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {"action": "resolve", "recipe_id": "r-g2"},
+        },
+        writer_family="recipe:*",
+        setup=_g2_setup_recipe,
+        supports=_g2_intent_dims(
+            absent=_ex("E_INPUT", absent=(".rush/memory.db",)),
+            old_schema=_ex("E_INPUT"),
+            on=_ex("OK", same=False, check=_g2_recipe_resolve_check),
+            off=_ex("OK", check=_g2_recipe_resolve_check),
+        ),
+        check_ok=_g2_recipe_resolve_check,
+        check_legacy=_g2_unknown,
+        ungranted=_ex("E_INPUT"),
+        request_strict=True,
+        covers=(("memory/recipes.py", "resolve_recipe"),),
+    )
+    add(
+        key="recipe",
+        cell="recipe-action-outcome",
+        op="write",
+        operation="recipe",
+        kwargs=lambda env, cell: {
+            "owner_scope": _g2_owner(cell.owner),
+            "request": {
+                "action": "outcome",
+                "recipe_id": "r-g2",
+                "recipe_version": 1,
+                "patch_hash": "h",
+                "verifier_receipt_ref": {"id": "rcpt", "version": 1},
+            },
+        },
+        perm=True,
+        writer_family="recipe:*",
+        setup=_g2_setup_recipe,
+        supports=_g2_intent_dims(
+            absent=_ex("E_INPUT", **changed),
+            old_schema=_ex("OK", check=_g2_recipe_outcome_check, **changed),
+            on=_ex("OK", check=_g2_recipe_outcome_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_recipe_outcome_check,
+        check_legacy=_g2_recipe_outcome_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(("memory/recipes.py", "record_recipe_outcome"),),
+    )
+    # --- handoff ---
+    add(
+        key="handoff",
+        cell="handoff-action-prepare",
+        op="write",
+        operation="handoff",
+        kwargs=_g2_handoff_request("prepare"),
+        perm=True,
+        missing_ops=("expand",),
+        supports=_g2_intent_dims(
+            absent=_ex("OK", check=_g2_handoff_prepare_check, **changed),
+            old_schema=_ex("OK", check=_g2_handoff_prepare_check, **changed),
+            on=_ex("OK", check=_g2_handoff_prepare_check, **changed),
+            off=_ex("E_PERMISSION"),
+        ),
+        check_ok=_g2_handoff_prepare_check,
+        check_legacy=_g2_handoff_prepare_check,
+        request_strict=True,
+        idempotent=False,
+        covers=(("tools/memory.py", "_handoff"),),
+    )
+    for action in ("dispatch", "status"):
+        add(
+            key="handoff",
+            cell=f"handoff-action-{action}",
+            op="write",
+            operation="handoff",
+            kwargs=_g2_handoff_request(action),
+            perm=True,
+            missing_ops=("expand",),
+            ok_codes=frozenset({"E_UNAVAILABLE"}),
+            supports=_g2_intent_dims(
+                absent=_ex("E_UNAVAILABLE", absent=(".rush/memory.db",)),
+                old_schema=_ex("E_UNAVAILABLE"),
+                on=_ex("E_UNAVAILABLE"),
+                off=_ex("E_PERMISSION"),
+            ),
+            check_ok=_g2_unavailable,
+            check_legacy=_g2_unavailable,
+            request_strict=True,
+        )
+    return specs
+
+
+# --- receive --------------------------------------------------------------------------
+
+
+def _g2_setup_receive(env: _G2Env) -> None:
+    cell = env.extra.get("cell")
+    target = cell.target if cell is not None else "a1"
+    prepared = _prepare_handoff(env.root, ids=(target,))
+    if _code_of(prepared) == "OK":
+        env.extra["session"] = _session_of(prepared)
+
+
+def _g2_receive_kwargs(env: _G2Env, cell: _G2Cell) -> dict[str, Any]:
+    session_id, capability = env.extra.get("session", ("0" * 32, "unprepared"))
+    request: dict[str, Any] = {"session_id": session_id, "capability": capability}
+    if cell.ack == "ack":
+        first = _receive(env.root, session_id, capability)
+        changes = _rd(first).get("data", {}).get("changes") or []
+        view, _state = TypedArtifactStore.open_readonly_view(env.root)
+        try:
+            request["ack"] = [
+                _readback(_nn(view), change["id"], change["version"])
+                for change in changes
+            ]
+        finally:
+            if view is not None:
+                view.close()
+    return {"owner_scope": _g2_owner(cell.owner), "request": request}
+
+
+def _g2_receive_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    data = _g2_data(out)
+    ids = [change["id"] for change in data["changes"]]
+    if cell.ack == "ack":
+        assert ids == [], data
+    else:
+        assert ids == [cell.target], data
+    assert data["audience"] == "codex_cli" and out.committed == 0, data
+
+
+def _g2_receive_gone(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert _g2_data(out)["changes"] == []
+
+
+def _g2_receive_spec() -> _G2Spec:
+    return _G2Spec(
+        key="receive",
+        cell="receive",
+        op="expand",
+        operation="receive",
+        kwargs=_g2_receive_kwargs,
+        setup=_g2_setup_receive,
+        supports={
+            "ack": {
+                "no_ack": _ex("OK", check=_g2_receive_check),
+                "ack": _ex(
+                    "OK", same=False, memory_same=False, check=_g2_receive_check
+                ),
+            },
+            "store": {
+                "absent": _ex("E_PERMISSION", absent=(".rush/memory.db",)),
+                "old_schema": _ex("E_PERMISSION"),
+            },
+            "row_state": {
+                "active": _ex("OK", check=_g2_receive_check),
+                "archived": _ex("OK", check=_g2_receive_gone),
+                "expired": _ex("OK", check=_g2_receive_gone),
+                "tampered": _ex("OK", check=_g2_receive_gone),
+            },
+        },
+        check_ok=_g2_receive_check,
+        check_legacy=_g2_receive_check,
+        request_strict=True,
+        covers=(("tools/memory.py", "_receive"),),
+    )
+
+
+def _g2_all_specs() -> list[_G2Spec]:
+    return [
+        *_g2_specs(),
+        *_g2_more_specs(),
+        *_g2_workflow_specs(),
+        _g2_receive_spec(),
+    ]
+
+
+# --- the same operations over MCP and the CLI ------------------------------------------
+
+_G2_CLI_FLAGS = (
+    ("cache_write", "--allow-cache-write"),
+    ("artifact_write", "--allow-artifact-write"),
+    ("build", "--allow-build"),
+    ("network", "--allow-network"),
+)
+
+
+def _g2_flags(permissions: ExecutionPermissions | None) -> list[str]:
+    if permissions is None:
+        return []
+    return [
+        flag for attribute, flag in _G2_CLI_FLAGS if getattr(permissions, attribute)
+    ]
+
+
+def _g2_spec_permissions(spec: _G2Spec, cell: _G2Cell) -> ExecutionPermissions | None:
+    if spec.perm or cell.cache_write is not None or cell.retrieval == "hybrid":
+        return _g2_permissions(cell, default_cache_write=spec.default_cache_write)
+    return None
+
+
+_G2_MCP_SERVER: list[Any] = []
+
+
+def _g2_mcp_call(**arguments: Any) -> dict[str, Any]:
+    """`_mcp_memory` over one server built once (building it dominates a call)."""
+    import asyncio
+
+    from rush.mcp import build_server
+
+    if not _G2_MCP_SERVER:
+        _G2_MCP_SERVER.append(build_server())
+    server = _G2_MCP_SERVER[0]
+
+    async def _call() -> Any:
+        return await server.call_tool("rush_memory", arguments)
+
+    result = asyncio.run(_call())
+    return json.loads(result.content[0].text)
+
+
+def _g2_payload_out(payload: Any) -> _G2Out:
+    """Normalize a transport payload (`{status, raw, ...}`) like a ToolResult."""
+    return _g2_out_from_tool(payload)
+
+
+def _g2_mcp_fields(spec: _G2Spec) -> frozenset[str]:
+    """The top-level fields the strict MCP model of `spec`'s operation accepts."""
+    from rush.mcp_support import request_models as models
+
+    named = models._SPECS["rush_memory"].named
+    compact = (
+        spec.operation == "list"
+        and spec.carry_base is None
+        and not spec.cell.endswith("historical")
+    )
+    key = "list:compact" if compact else spec.operation
+    return frozenset(named[key].model_fields) - {"path", "operation"}
+
+
+def _g2_mcp_arguments(
+    env: _G2Env, spec: _G2Spec, cell: _G2Cell, **extra: Any
+) -> dict[str, Any]:
+    fields = _g2_mcp_fields(spec)
+    kwargs = spec.kwargs(env, cell)
+    if not spec.allowlist:
+        kwargs.pop("session_allowlist", None)
+    arguments: dict[str, Any] = {"path": str(env.root), "operation": spec.operation}
+    arguments.update({k: v for k, v in kwargs.items() if v is not None and k in fields})
+    permissions = _g2_spec_permissions(spec, cell)
+    if permissions is not None:
+        for attribute, flag in _G2_CLI_FLAGS:
+            if getattr(permissions, attribute) and "allow_" + attribute in fields:
+                arguments["allow_" + attribute] = True
+    arguments.update(extra)
+    return arguments
+
+
+def _g2_mcp(spec: _G2Spec) -> _G2Route | None:
+    fields = _g2_mcp_fields(spec)
+    # MCP `write`/`promote`/`maintain` have no `request`: they have no preview form.
+    if (
+        spec.intrinsic_apply
+        and "request" not in fields
+        and spec.cell.endswith("preview")
+    ):
+        return None
+
+    def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        return _g2_payload_out(_g2_mcp_call(**_g2_mcp_arguments(env, spec, cell)))
+
+    def carry(env: _G2Env, cell: _G2Cell, dim: str, value: str) -> _G2Out:
+        # The strict model forbids any field it does not define.
+        return _g2_payload_out(
+            _g2_mcp_call(**_g2_mcp_arguments(env, spec, cell, **{dim: value}))
+        )
+
+    return _G2Route(
+        transport="mcp",
+        key=spec.key,
+        cell=spec.cell,
+        op=spec.op,
+        call=call,
+        supports=spec.supports,
+        takes_allowlist=spec.allowlist,
+        takes_owner="owner_scope" in fields,
+        missing_ops=spec.missing_ops,
+        setup=spec.setup,
+        ok_codes=spec.ok_codes,
+        owner_required=spec.owner_required and "owner_scope" in fields,
+        writer_family=spec.writer_family,
+        check_ok=spec.check_ok,
+        check_legacy=spec.check_legacy,
+        ungranted=spec.ungranted,
+        carry=carry,
+        idempotent=spec.idempotent,
+        intrinsic_apply=spec.intrinsic_apply,
+    )
+
+
+# --- the restricted bridge (`rush_memory_bridge`) ---------------------------------------
+
+#: the operations a `--memory-session` receiver serves (`_MEMORY_BRIDGE_OPERATIONS`)
+_G2_BRIDGE_OPERATIONS = ("receive", "expand", "related", "resume")
+#: dimensions that need execution permissions, which the bridge never carries
+_G2_BRIDGE_NO_PERMISSIONS = ("cache_write", "retrieval")
+
+
+def _g2_bridge_policy(
+    route: _G2Route, row: str, env: _G2Env, cell: _G2Cell, out: _G2Out
+) -> None:
+    """The bridge's policy and overlay rows: its allowlist comes from the prepared
+    session, so an ungranted allowlist changes nothing; its request names no owner, so
+    two owners' grants on the project deny it (`owner_required`, never a silently
+    chosen owner); a store with no readable session is the one constant denial."""
+    detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
+    assert out.committed == 0, detail
+    if row == G2_OVERLAY_ROW:
+        assert out.code == "E_PERMISSION" and not out.shown, detail
+        return
+    for suffix, reason in _G2_DENIAL_REASONS.items():
+        if row.endswith(suffix):
+            _g2_assert_denied(route, row, out, reason)
+            return
+    assert out.code in route.ok_codes, detail
+    assert out.reason not in POLICY_REASONS, detail
+    if route.check_ok is not None:
+        route.check_ok(env, cell, out, _g2_snapshot(env))
+
+
+def _g2_bridge(spec: _G2Spec) -> _G2Route:
+    """`spec`'s operation over the restricted bridge: one prepared handoff session
+    (`session_id` + `capability`) fixes the allowlist and the sender, so the request
+    carries neither `session_allowlist` nor `owner_scope`."""
+
+    def bridge(env: _G2Env) -> Any:
+        from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+        session_id, capability = env.extra.get("session", ("0" * 32, "unprepared"))
+        return build_memory_bridge_handler(
+            root=env.root, session_id=session_id, capability=capability
+        )
+
+    def setup(env: _G2Env) -> None:
+        if spec.setup is not None:
+            spec.setup(env)
+        if "session" not in env.extra:
+            _g2_setup_receive(env)
+
+    def send(env: _G2Env, request: dict[str, Any]) -> _G2Out:
+        return _g2_out_from_tool({"raw": bridge(env)(spec.operation, request)})
+
+    def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        return send(env, dict(spec.kwargs(env, cell).get("request") or {}))
+
+    def carry(env: _G2Env, cell: _G2Cell, dim: str, value: str) -> _G2Out:
+        request = dict(spec.carry_base or spec.kwargs(env, cell).get("request") or {})
+        request[dim] = value
+        return send(env, request)
+
+    supports = {
+        dim: expectations
+        for dim, expectations in spec.supports.items()
+        if dim not in (*_G2_BRIDGE_NO_PERMISSIONS, "store")
+    }
+    supports["store"] = {
+        "absent": _ex("E_PERMISSION", absent=(".rush/memory.db",)),
+        "old_schema": _ex("E_PERMISSION"),
+    }
+    return _G2Route(
+        transport="bridge",
+        key=spec.key,
+        cell=spec.cell,
+        op=spec.op,
+        call=call,
+        supports=supports,
+        takes_owner=False,
+        missing_ops=spec.missing_ops,
+        setup=setup,
+        ok_codes=spec.ok_codes,
+        check_ok=spec.check_ok,
+        check_legacy=spec.check_legacy,
+        carry=carry if spec.request_strict else None,
+        idempotent=spec.idempotent,
+        covers=(("mcp_support/tool_registry.py", "rush_memory_bridge"),),
+        owner_fixed=True,
+        custom_policy=_g2_bridge_policy,
+    )
+
+
+#: operations a later task adds, with the producing task: until it lands the operation
+#: is unknown, so a request is refused and creates nothing
+_G2_PRODUCER_OPERATIONS = (
+    ("history", "72-T06"),
+    ("explain", "72-T06"),
+    ("import", "72-T06"),
+    ("preference", "72-T05"),
+    ("capsule", "73-T09"),
+)
+
+
+def _g2_producer_routes() -> list[_G2Route]:
+    routes: list[_G2Route] = []
+    for operation, producer in _G2_PRODUCER_OPERATIONS:
+
+        def inproc(env: _G2Env, cell: _G2Cell, operation: str = operation) -> _G2Out:
+            return _g2_out_from_tool(
+                MemoryTool().run(env.root, operation=operation, request={})  # type: ignore[arg-type]
+            )
+
+        def mcp(env: _G2Env, cell: _G2Cell, operation: str = operation) -> _G2Out:
+            return _g2_payload_out(
+                _g2_mcp_call(path=str(env.root), operation=operation, request={})
+            )
+
+        for transport, call in (("inproc", inproc), ("mcp", mcp)):
+            routes.append(
+                _G2Route(
+                    transport=transport,
+                    key=operation,
+                    cell=f"{operation}-producer",
+                    op="ask",
+                    call=call,
+                    rows_only=(f"operation-absent-producer-{producer}",),
+                )
+            )
+    return routes
+
+
+#: operations whose CLI leaf takes the request as `--input` JSON
+_G2_CLI_GENERIC = {
+    "expand": "expand",
+    "link": "link",
+    "related": "related",
+    "consolidate": "consolidate",
+    "verify_attempt": "verify-attempt",
+    "prepare": "prepare",
+    "resume": "resume",
+    "intent": "intent",
+    "recipe": "recipe",
+    "plan_checks": "plan-checks",
+    "last_success_diagnose": "last-success-diagnose",
+    "handoff": "handoff",
+    "receive": "receive",
+    "delete": "delete",
+    "edit": "edit",
+    "archive": "archive",
+}
+
+
+def _g2_cli_invoke(env: _G2Env, args: list[str]) -> _G2Out:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    env.monkeypatch.chdir(env.root)
+    outcome = CliRunner().invoke(cli, args)
+    try:
+        payload = json.loads(outcome.output)
+    except ValueError:
+        return _G2Out(
+            None, None, _g2_markers(outcome.output), 0, outcome.output, "error"
+        )
+    return _g2_payload_out(payload)
+
+
+def _g2_cli_generic(spec: _G2Spec) -> _G2Route:
+    leaf = _G2_CLI_GENERIC[spec.operation]
+
+    def args_for(
+        env: _G2Env, cell: _G2Cell, request_extra: dict[str, Any]
+    ) -> list[str]:
+        kwargs = spec.kwargs(env, cell)
+        request = {**(kwargs.get("request") or {}), **request_extra}
+        path = env.tmp_path / f"cli-{leaf}.json"
+        path.write_text(json.dumps(request), encoding="utf-8")
+        args = ["memory", leaf, "--input", str(path), "--json"]
+        for source in kwargs.get("session_allowlist") or []:
+            args.extend(["--session", source])
+        args.extend(_g2_flags(_g2_spec_permissions(spec, cell)))
+        return args
+
+    def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        return _g2_cli_invoke(env, args_for(env, cell, {}))
+
+    def carry(env: _G2Env, cell: _G2Cell, dim: str, value: str) -> _G2Out:
+        return _g2_cli_invoke(env, args_for(env, cell, {dim: value}))
+
+    return _G2Route(
+        transport="cli",
+        key=spec.key,
+        cell=spec.cell,
+        op=spec.op,
+        call=call,
+        supports=spec.supports,
+        takes_allowlist=spec.allowlist,
+        takes_owner=False,
+        missing_ops=spec.missing_ops,
+        setup=spec.setup,
+        ok_codes=spec.ok_codes,
+        owner_required=False,
+        writer_family=spec.writer_family,
+        check_ok=spec.check_ok,
+        check_legacy=spec.check_legacy,
+        ungranted=spec.ungranted,
+        carry=carry if spec.request_strict else None,
+        idempotent=spec.idempotent,
+        intrinsic_apply=spec.intrinsic_apply,
+    )
+
+
+def _g2_cli_explicit_routes() -> list[_G2Route]:
+    """The six `rush memory <leaf>` commands with their own argument shape."""
+    routes: list[_G2Route] = []
+    legacy_codes = ("OK", None)
+
+    def page_supports(historical: bool) -> dict[str, dict[str, _G2Expect]]:
+        shown = G2_ACTIVE | ({"mk-arch", "mk-exp"} if historical else frozenset())
+        base = _ex(*legacy_codes, show=shown, hide={"mk-x1"})
+        return {
+            "mode": {("historical" if historical else "ordinary"): base},
+            "store": {
+                "absent": _ex(*legacy_codes, exact=(), absent=(".rush/memory.db",)),
+                "old_schema": _ex(*legacy_codes, "E_MIGRATION", exact=()),
+            },
+            "row_state": {
+                "active": _ex(*legacy_codes, show={"mk-a1"}),
+                "archived": (
+                    _ex(*legacy_codes, show={"mk-arch"})
+                    if historical
+                    else _ex(*legacy_codes, hide={"mk-arch"})
+                ),
+                "expired": (
+                    _ex(*legacy_codes, show={"mk-exp"})
+                    if historical
+                    else _ex(*legacy_codes, hide={"mk-exp"})
+                ),
+                "tampered": (
+                    _ex(*legacy_codes, show={"mk-tam"})
+                    if historical
+                    else _ex(*legacy_codes, hide={"mk-tam"})
+                ),
+            },
+        }
+
+    def shown_exact(expected: frozenset[str]):
+        def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+            assert out.shown == expected, (sorted(out.shown), sorted(expected))
+            assert out.committed == 0
+
+        return check
+
+    for leaf, historical in (("ask", False), ("recall", False), ("list", False)):
+
+        def call(
+            env: _G2Env, cell: _G2Cell, leaf: str = leaf, historical: bool = historical
+        ) -> _G2Out:
+            args = ["memory", leaf, SUBJECT, "needle"]
+            for source in cell.allow or ():
+                args.extend(["--session", source])
+            args.append("--json")
+            return _g2_cli_invoke(env, args)
+
+        routes.append(
+            _G2Route(
+                transport="cli",
+                key=leaf,
+                cell=leaf,
+                op="ask" if leaf != "list" else "list",
+                call=call,
+                supports=page_supports(False),
+                takes_allowlist=True,
+                takes_owner=False,
+                ok_codes=frozenset(legacy_codes),
+                check_ok=shown_exact(G2_ACTIVE),
+                check_legacy=shown_exact(G2_ACTIVE),
+                covers=(("cli.py", "memory_ask_cmd"),) if leaf == "ask" else (),
+            )
+        )
+
+    def list_historical(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        args = ["memory", "list", SUBJECT, "needle", "--include-archived", "--json"]
+        for source in cell.allow or ():
+            args.extend(["--session", source])
+        return _g2_cli_invoke(env, args)
+
+    routes.append(
+        _G2Route(
+            transport="cli",
+            key="list",
+            cell="list-mode-historical",
+            op="list",
+            call=list_historical,
+            supports=page_supports(True),
+            takes_allowlist=True,
+            takes_owner=False,
+            missing_ops=("history",),
+            ok_codes=frozenset(legacy_codes),
+            check_ok=_g2_ok_list_hist,
+            check_legacy=_g2_ok_list_hist,
+        )
+    )
+
+    def write_call(apply: bool):
+        def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+            args = [
+                "memory",
+                "write",
+                SUBJECT,
+                cell.source,
+                "--content",
+                json.dumps({"text": "needle w"}),
+                "--json",
+            ]
+            if cell.cache_write is not False:
+                args.append("--allow-cache-write")
+            return _g2_cli_invoke(env, args)
+
+        return call
+
+    def promote_call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        args = [
+            "memory",
+            "promote",
+            SUBJECT,
+            cell.source,
+            "--content",
+            json.dumps({"text": "needle p"}),
+            "--user-stated",
+            "--json",
+        ]
+        if cell.cache_write is not False:
+            args.append("--allow-cache-write")
+        return _g2_cli_invoke(env, args)
+
+    def maintain_call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        args = ["memory", "maintain", "--task", "staleness_sweep"]
+        if cell.owner is not None:
+            args += ["--owner-kind", cell.owner.kind, "--owner-id", cell.owner.id]
+        args.append("--json")
+        if cell.cache_write is not False:
+            args.append("--allow-cache-write")
+        return _g2_cli_invoke(env, args)
+
+    applied: dict[str, Any] = {"same": False, "memory_same": False}
+    routes.append(
+        _G2Route(
+            transport="cli",
+            key="write",
+            cell="write-apply-apply",
+            op="write",
+            call=write_call(True),
+            supports={
+                "store": {
+                    "absent": _ex(
+                        None,
+                        committed=1,
+                        check=_g2_write_check(True),
+                        **applied,
+                    ),
+                    "old_schema": _ex(
+                        None,
+                        committed=1,
+                        check=_g2_write_check(True),
+                        **applied,
+                    ),
+                },
+                "cache_write": {
+                    "on": _ex(
+                        None, committed=1, check=_g2_write_check(True), **applied
+                    ),
+                    "off": _ex(None, status="skipped", committed=0),
+                },
+            },
+            takes_owner=False,
+            ok_codes=frozenset({None}),
+            check_ok=_g2_write_check(True),
+            check_legacy=_g2_write_check(True),
+            idempotent=False,
+            intrinsic_apply=True,
+        )
+    )
+    routes.append(
+        _G2Route(
+            transport="cli",
+            key="promote",
+            cell="promote-apply-apply",
+            op="write",
+            call=promote_call,
+            supports={
+                "store": {
+                    "absent": _ex(
+                        None, committed=1, check=_g2_promote_check(True), **applied
+                    ),
+                    "old_schema": _ex(
+                        None, committed=1, check=_g2_promote_check(True), **applied
+                    ),
+                },
+                "cache_write": {
+                    "on": _ex(
+                        None, committed=1, check=_g2_promote_check(True), **applied
+                    ),
+                    "off": _ex(None, status="skipped", committed=0),
+                },
+            },
+            takes_owner=False,
+            ok_codes=frozenset({None}),
+            check_ok=_g2_promote_check(True),
+            check_legacy=_g2_promote_check(True),
+            idempotent=False,
+            intrinsic_apply=True,
+        )
+    )
+    routes.append(
+        _G2Route(
+            transport="cli",
+            key="maintain",
+            cell="maintain-apply-apply",
+            op="write",
+            call=maintain_call,
+            supports={
+                "store": {
+                    "absent": _ex(None, **applied),
+                    "old_schema": _ex(None, **applied),
+                },
+                "cache_write": {
+                    "on": _ex(None, **applied),
+                    "off": _ex(None, status="skipped", committed=0),
+                },
+            },
+            ok_codes=frozenset({None}),
+            check_ok=_g2_maintain_check(True),
+            check_legacy=_g2_maintain_check(True),
+            idempotent=False,
+            intrinsic_apply=True,
+            owner_omitted_reason="owner_not_granted",
+        )
+    )
+    return routes
+
+
+# --- internal routes: the D4 writers ---------------------------------------------------
+
+
+def _g2_guarded(call: Any) -> _G2Out:
+    """Run an internal call, turning a `MemoryWriteDenied` into an `E_PERMISSION`."""
+    from rush.memory import experience
+
+    try:
+        value = call()
+    except experience.MemoryWriteDenied as exc:
+        return _G2Out("E_PERMISSION", exc.reason, frozenset(), 0, None)
+    return _G2Out(None, None, _g2_markers(repr(value)), 0, value)
+
+
+def _g2_committed(count: int):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.committed == count, (out.committed, count)
+
+    return check
+
+
+def _g2_writer_dims(
+    check: Any, *, committed: int = 1
+) -> dict[str, dict[str, _G2Expect]]:
+    changed: dict[str, Any] = {"same": False, "memory_same": False}
+    return {
+        "store": {
+            "absent": _ex(None, committed=committed, check=check, **changed),
+            "old_schema": _ex(None, committed=committed, check=check, **changed),
+        },
+    }
+
+
+def _g2_writer(
+    key: str,
+    cell: str,
+    source: str,
+    call: Any,
+    *,
+    covers: tuple[tuple[str, str], ...],
+    check: Any = None,
+    committed: int = 1,
+    pre_setup: Any = None,
+    sources: tuple[str | Callable[[Path], str], ...] | None = None,
+    supports: Any = None,
+    check_legacy: Any = None,
+) -> _G2Route:
+    check = check or _g2_committed(committed)
+    return _G2Route(
+        transport="internal",
+        key=key,
+        cell=cell,
+        op="write",
+        call=lambda env, c: _g2_guarded(lambda: call(env, c)),
+        supports=supports
+        if supports is not None
+        else _g2_writer_dims(check, committed=committed),
+        takes_owner=False,
+        coded=False,
+        ok_codes=frozenset({None}),
+        grant_sources=sources if sources is not None else (source,),
+        grant_owner="project",
+        owner_fixed=True,
+        check_ok=check,
+        check_legacy=check_legacy or check,
+        idempotent=False,
+        pre_setup=pre_setup,
+        covers=covers,
+    )
+
+
+def _g2_session_turn(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.session_memory import SessionMemoryManager
+
+    env.monkeypatch.chdir(env.root)
+    return SessionMemoryManager(env.root / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "summary"
+    )
+
+
+def _g2_session_turn_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    assert out.committed == 1
+    records = json.loads((env.root / ".rush" / "session_memory.json").read_text())
+    assert records["records"][-1]["tool_name"] == "tool"
+
+
+def _g2_attribution(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush import session_memory
+
+    result = session_memory.record_fix_attribution(env.root, {"hash": "abc1234"}, "f1")
+    if result is session_memory.ATTRIBUTION_DENIED:
+        raise _g2_denied_write("policy")
+    return result
+
+
+def _g2_denied_write(reason: str) -> Exception:
+    from rush.memory import experience
+
+    return experience.MemoryWriteDenied("E_PERMISSION", reason)
+
+
+def _g2_flight(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.tools.flight_recorder import FlightRecorder
+
+    return FlightRecorder(env.root).record_event("s1", "evt", {"a": 1})
+
+
+def _g2_flight_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.committed == 1
+    lines = (env.root / ".rush" / "sessions" / "flights" / "s1.jsonl").read_text()
+    assert json.loads(lines.splitlines()[-1])["event_type"] == "evt"
+
+
+def _g2_skill(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.plugins.loader import PluginSpec
+    from rush.plugins.skills_generator import AgentSkillGenerator
+
+    env.monkeypatch.chdir(env.root)
+    spec = PluginSpec(
+        name="g2-plugin",
+        executable_path=env.root / "plugin.sh",
+        command=["plugin.sh"],
+        description="d",
+    )
+    markdown = AgentSkillGenerator.generate_skill_markdown(spec)
+    assert isinstance(markdown, str) and "g2-plugin" in markdown
+    return None
+
+
+def _g2_cache_fill(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.token_economy.memory_cache_gate import write_cache_fill
+
+    module = env.root / "module.py"
+    digest = _sha_file(module) if module.exists() else "0" * 64
+    return write_cache_fill(
+        env.root, "module.py", "Known", {"source_content_hash": digest, "text": "p"}
+    )
+
+
+def _g2_cache_pre(env: _G2Env) -> None:
+    (env.root / "module.py").write_text(KNOWN_SRC, encoding="utf-8")
+
+
+def _g2_checkpoint(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.checkpoint_journal import CheckpointJournal
+
+    return CheckpointJournal(env.root).save_checkpoint("cp1", {}, [])
+
+
+def _g2_checkpoint_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.committed == 1
+    assert (env.root / ".rush" / "sessions" / "cp1.json").is_file()
+
+
+def _g2_experience(name: str):
+    def call(env: _G2Env, cell: _G2Cell) -> Any:
+        from rush.memory import experience
+
+        if name == "write_observation":
+            return experience.write_observation(
+                evidence_kind="source_graph",
+                operation_id="op-1",
+                source="invocation:op-1",
+                content={"k": "v"},
+                project_root=env.root,
+            )
+        if name == "record_behavior_success":
+            return experience.record_behavior_success(
+                project_root=env.root,
+                behavior_id="beh1",
+                conditions={},
+                source="invocation:op-1",
+            )
+        if name == "record_cause_experiment":
+            return experience.record_cause_experiment(
+                project_root=env.root,
+                behavior_id="beh1",
+                baseline_ref={},
+                changed_factor="f",
+                control_receipt_ref=None,
+                outcome_changed=False,
+                source="invocation:op-1",
+            )
+        return experience.record_attempt(
+            project_root=env.root,
+            symptom="symptomx",
+            hypothesis="h",
+            patch_hash=None,
+            conditions={},
+            receipt_ref=None,
+            behavior_ids=[],
+            outcome="untested",
+        )
+
+    return call
+
+
+def _g2_needs_store(setup: Any):
+    """A legacy-file fixture that also creates typed rows: skipped for `store-absent`."""
+
+    def guarded(env: _G2Env) -> None:
+        if env.extra["cell"].store != "absent":
+            setup(env)
+
+    return guarded
+
+
+def _g2_migration(name: str, setup: Any, count: int = 1):
+    def call(env: _G2Env, cell: _G2Cell) -> Any:
+        from rush.memory import migration
+
+        return getattr(migration, name)(env.root)
+
+    return call, setup, count
+
+
+def _g2_setup_pref(env: _G2Env) -> None:
+    from rush.memory.preference_store import PreferenceStore
+
+    PreferenceStore(env.root).set("editor.theme", "dark")
+
+
+def _g2_setup_invariant(env: _G2Env) -> None:
+    from rush.memory.invariant_graph import InvariantGraph
+
+    InvariantGraph(env.root).add_invariant("INV-001", "mk-inv description", "why")
+
+
+def _g2_setup_checkpoint(env: _G2Env) -> None:
+    from rush.memory.checkpoint_journal import CheckpointJournal
+
+    (env.root / ".rush" / "sessions").mkdir(parents=True, exist_ok=True)
+    CheckpointJournal(env.root).save_checkpoint("good_ckpt", {"stage": "p61"}, [])
+
+
+def _g2_setup_failure(env: _G2Env) -> None:
+    from rush.memory.failure_ledger import FailureLedger
+
+    FailureLedger(env.root).record_failure(
+        "--- a/x.py\n+++ b/x.py\n- old\n+ broken", "SyntaxError mk-failure"
+    )
+
+
+def _g2_setup_patch(env: _G2Env) -> None:
+    from rush.patch.memory import PatchMemoryStore
+
+    PatchMemoryStore(env.root).record_success(
+        "--- a/x.py\n+++ b/x.py\n- old\n+ broken", "x.py", "--- fix mk-patch ---"
+    )
+
+
+def _g2_setup_flight(env: _G2Env) -> None:
+    from rush.tools.flight_recorder import FlightRecorder
+
+    FlightRecorder(env.root).record_event("session-abc", "TOOL_CALL", {"tool": "t"})
+
+
+def _g2_setup_hooks(env: _G2Env) -> None:
+    from rush.hook.tamper_detector import HookTamperDetector
+
+    hooks = env.root / ".git" / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    (hooks / "pre-commit").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    HookTamperDetector(env.root).record_signatures()
+
+
+def _g2_setup_session_file(env: _G2Env) -> None:
+    (env.root / ".rush").mkdir(exist_ok=True)
+    (env.root / ".rush" / "session_memory.json").write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "tool_name": "t",
+                        "finding_count": 1,
+                        "fixes_applied": 0,
+                        "summary": "legacy turn mk-legacy",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _g2_setup_merkle(env: _G2Env) -> None:
+    from rush.memory.merkle_invalidator import MerkleInvalidator
+
+    MerkleInvalidator(env.root).check_and_update("module.py::Known", KNOWN_SRC)
+
+
+def _g2_writer_routes() -> list[_G2Route]:
+    routes = [
+        _g2_writer(
+            "session_memory",
+            "session_memory-record_turn",
+            "session_memory:record_turn",
+            _g2_session_turn,
+            covers=(("session_memory.py", "record_turn"),),
+            check=_g2_session_turn_check,
+        ),
+        _g2_writer(
+            "session_memory",
+            "session_memory-record_fix_attribution",
+            "provenance_ai:attribution_link",
+            _g2_attribution,
+            covers=(("session_memory.py", "record_fix_attribution"),),
+        ),
+        _g2_writer(
+            "flight_recorder",
+            "flight_recorder-record_event",
+            "flight_recorder:record_event",
+            _g2_flight,
+            covers=(("tools/flight_recorder.py", "record_event"),),
+            check=_g2_flight_check,
+        ),
+        _g2_writer(
+            "skills_generator",
+            "skills_generator-generate_skill_markdown",
+            "skills_generator:generate_skill_markdown",
+            _g2_skill,
+            covers=(("plugins/skills_generator.py", "generate_skill_markdown"),),
+        ),
+        _g2_writer(
+            "cache_gate",
+            "cache_gate-write_cache_fill",
+            "context_pack",
+            _g2_cache_fill,
+            covers=(("token_economy/memory_cache_gate.py", "write_cache_fill"),),
+            pre_setup=_g2_cache_pre,
+        ),
+        _g2_writer(
+            "checkpoint_journal",
+            "checkpoint_journal-save_checkpoint",
+            "checkpoint_journal:save_checkpoint",
+            _g2_checkpoint,
+            covers=(("memory/checkpoint_journal.py", "_write_handoff_artifact"),),
+            check=_g2_checkpoint_check,
+        ),
+    ]
+    for name, family in (
+        ("write_observation", "invocation:*"),
+        ("record_behavior_success", "invocation:*"),
+        ("record_cause_experiment", "invocation:*"),
+        ("record_attempt", "repair_attempt:*"),
+    ):
+        routes.append(
+            _g2_writer(
+                "experience",
+                f"experience-{name}",
+                family,
+                _g2_experience(name),
+                covers=(("memory/experience.py", name),),
+            )
+        )
+    migrations = [
+        ("migrate_session_memory", "session_memory", _g2_setup_session_file, 1),
+        ("migrate_preference_store", "preference_store", _g2_setup_pref, 1),
+        ("migrate_invariant_graph", "invariant_graph", _g2_setup_invariant, 1),
+        ("migrate_checkpoint_journal", "checkpoint_journal", _g2_setup_checkpoint, 1),
+        ("migrate_failure_ledger", "failure_ledger", _g2_setup_failure, 1),
+        ("migrate_patch_memory", "patch_memory", _g2_setup_patch, 1),
+        ("migrate_flight_recorder", "flight_recorder", _g2_setup_flight, 1),
+        ("migrate_hook_signatures", "hook_signatures", _g2_setup_hooks, 1),
+        ("migrate_merkle_invalidator", "merkle_invalidator", _g2_setup_merkle, 1),
+    ]
+    for function, source, setup, count in migrations:
+        call, pre, expected = _g2_migration(function, _g2_needs_store(setup), count)
+        routes.append(
+            _g2_writer(
+                "migration",
+                f"migration-{function}",
+                f"migration:{source}",
+                call,
+                covers=(("memory/migration.py", function),),
+                pre_setup=pre,
+                check=_g2_migrated(expected),
+                supports={
+                    "store": {
+                        "absent": _ex(None, committed=0, absent=(".rush/memory.db",)),
+                        "old_schema": _ex(
+                            None,
+                            committed=expected,
+                            same=False,
+                            memory_same=False,
+                        ),
+                    }
+                },
+            )
+        )
+    return routes
+
+
+def _g2_migrated(expected: int):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.body == expected, (out.body, expected)
+        assert out.committed >= 1
+
+    return check
+
+
+# --- internal routes: readers of stored rows -------------------------------------------
+
+
+def _g2_reading(env: _G2Env, call: Any, shows: Any) -> _G2Out:
+    """Run an internal reader; `shows(value)` names what the value revealed."""
+    value = call(env)
+    return _G2Out(None, None, frozenset(shows(value)), 0, value)
+
+
+def _g2_reader_dims(
+    *,
+    ok: frozenset[str],
+    independent_of_store: bool = False,
+    old_schema_reads: bool = False,
+) -> dict[str, dict[str, _G2Expect]]:
+    """A reader's `store` cells: an absent store reveals nothing and creates nothing, an
+    old-schema store reveals nothing and is never migrated by a read."""
+    if old_schema_reads:
+        # A legacy store predating the payload columns still yields its origin rows.
+        return {
+            "store": {
+                "absent": _ex(None, exact=(), absent=(".rush/memory.db",)),
+                "old_schema": _ex(None, exact=ok),
+            }
+        }
+    if independent_of_store:
+        return {
+            "store": {
+                "absent": _ex(None, exact=ok, absent=(".rush/memory.db",)),
+                "old_schema": _ex(None, exact=ok),
+            }
+        }
+    return {
+        "store": {
+            "absent": _ex(None, exact=(), absent=(".rush/memory.db",)),
+            "old_schema": _ex(None, exact=()),
+        }
+    }
+
+
+def _g2_shown_exact(expected: frozenset[str], committed: int = 0):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.shown == expected, (sorted(out.shown), sorted(expected))
+        assert out.committed == committed
+
+    return check
+
+
+def _g2_reader(
+    key: str,
+    cell: str,
+    call: Any,
+    shows: Any,
+    expected: frozenset[str],
+    *,
+    covers: tuple[tuple[str, str], ...],
+    sources: tuple[str, ...] = (),
+    owner: str = "alice",
+    pre_setup: Any = None,
+    legacy: frozenset[str] | None = None,
+    independent_of_store: bool = False,
+    op: str = "ask",
+    takes_owner: bool = False,
+    old_schema_reads: bool = False,
+    ignore: tuple[str, ...] = (),
+) -> _G2Route:
+    return _G2Route(
+        transport="internal",
+        key=key,
+        cell=cell,
+        op=op,
+        call=lambda env, c: _g2_reading(env, call, shows),
+        supports=_g2_reader_dims(
+            ok=expected,
+            independent_of_store=independent_of_store,
+            old_schema_reads=old_schema_reads,
+        ),
+        takes_owner=takes_owner,
+        coded=False,
+        ok_codes=frozenset({None}),
+        grant_sources=sources,
+        grant_owner=owner,
+        check_ok=_g2_shown_exact(expected),
+        check_legacy=_g2_shown_exact(expected if legacy is None else legacy),
+        pre_setup=pre_setup,
+        covers=covers,
+        ignore=ignore,
+    )
+
+
+def _g2_markers_of(value: Any) -> frozenset[str]:
+    return _g2_markers(repr(value))
+
+
+# --- seeds -----------------------------------------------------------------------------
+
+
+def _g2_pre_module(env: _G2Env) -> None:
+    (env.root / "module.py").write_text(KNOWN_SRC, encoding="utf-8")
+    if not (env.root / ".git").exists():
+        _git(env.root, "init", "--initial-branch=main")
+        _git(env.root, "add", "module.py")
+        _git(env.root, "commit", "-m", "fixture")
+
+
+def _g2_pre_anchor_pack(env: _G2Env) -> None:
+    _g2_pre_module(env)
+    if env.store is not None:
+        _anchor_pack(env.store, "c-alice", ALICE, _sha_file(env.root / "module.py"))
+
+
+def _g2_pre_anchor_failure(env: _G2Env) -> None:
+    _g2_pre_module(env)
+    if env.store is not None:
+        _anchor_failure(env.store, "f-alice", ALICE, _sha_file(env.root / "module.py"))
+
+
+def _g2_pre_checkpoint(env: _G2Env) -> None:
+    from rush.memory.checkpoint_journal import CheckpointJournal
+    from rush.memory.migration import migrate_checkpoint_journal
+
+    if env.extra["cell"].store == "absent":
+        return
+    CheckpointJournal(env.root).save_checkpoint(
+        "good_ckpt",
+        {
+            "note": "mk-cp",
+            "handoff": {
+                "target_provider": "codex",
+                "current_goal": "mk-cp",
+                "open_work": [],
+            },
+        },
+        [],
+    )
+    migrate_checkpoint_journal(env.root)
+
+
+def _g2_pre_turn(env: _G2Env) -> None:
+    from rush.session_memory import SessionMemoryManager
+
+    if env.extra["cell"].store == "absent":
+        return
+    SessionMemoryManager(env.root / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "mk-turn summary"
+    )
+
+
+def _g2_pre_attribution(env: _G2Env) -> None:
+    from rush import session_memory
+
+    if env.extra["cell"].store != "absent":
+        session_memory.record_fix_attribution(env.root, {"hash": "mk-abc1234"}, "f1")
+
+
+def _g2_pre_flight(env: _G2Env) -> None:
+    from rush.memory.migration import migrate_flight_recorder
+    from rush.tools.flight_recorder import FlightRecorder
+
+    if env.extra["cell"].store == "absent":
+        return
+    FlightRecorder(env.root).record_event("s1", "evt", {"a": "mk-flight"})
+    migrate_flight_recorder(env.root)
+
+
+def _g2_pre_patch(env: _G2Env) -> None:
+    from rush.patch.memory import PatchMemoryStore
+
+    PatchMemoryStore(env.root).record_success("sig", "x.py", "--- fix mk-patch ---")
+
+
+def _g2_pre_invariant(env: _G2Env) -> None:
+    from rush.memory.invariant_graph import InvariantGraph
+    from rush.memory.migration import migrate_invariant_graph
+
+    if env.extra["cell"].store == "absent":
+        return
+    InvariantGraph(env.root).add_invariant("INV-001", "mk-inv description", "why")
+    migrate_invariant_graph(env.root)
+
+
+def _g2_pre_hooks(env: _G2Env) -> None:
+    from rush.memory.migration import migrate_hook_signatures
+
+    if env.extra["cell"].store == "absent":
+        return
+    _g2_setup_hooks(env)
+    migrate_hook_signatures(env.root)
+
+
+def _g2_pre_pref(env: _G2Env) -> None:
+    from rush.memory.migration import migrate_preference_store
+    from rush.memory.preference_store import PreferenceStore
+
+    if env.extra["cell"].store == "absent":
+        return
+    PreferenceStore(env.root).set("editor.theme", "mk-pref")
+    migrate_preference_store(env.root)
+
+
+def _g2_pre_events(env: _G2Env) -> None:
+    _record_event(env.root, 1, "alice-1", owner=ALICE, sources=["source-a"])
+    _record_event(env.root, 500, "bob-1", owner=BOB, sources=["source-b"])
+    _record_event(
+        env.root,
+        2,
+        "alice-x",
+        kind="expansion",
+        owner=ALICE,
+        sources=["source-a"],
+        request_id="x:1:alice",
+    )
+
+
+def _g2_pre_project_events(env: _G2Env) -> None:
+    """`_g2_pre_events`, recorded under the project's registered id (the dashboard
+    totals only its own project's events)."""
+    _g2_pre_events(env)
+    from rush.token_economy.telemetry import TelemetryStore
+
+    with contextlib.closing(sqlite3.connect(TelemetryStore(env.root).db_path)) as conn:
+        conn.execute("UPDATE memory_events SET project_id = ?", (_g2_project_id(env),))
+        conn.commit()
+
+
+# --- readers ---------------------------------------------------------------------------
+
+
+def _g2_hit_shows(result: Any) -> set[str]:
+    return {f"hit:{result.artifact_id}"} if result.hit else set()
+
+
+def _g2_review_shows(result: Any) -> set[str]:
+    memory = (result.get("metadata") or {}).get("memory") or {}
+    return {f"used:{entry['id']}" for entry in memory.get("used", [])}
+
+
+def _g2_status_shows(value: dict[str, Any]) -> set[str]:
+    return (
+        {f"count:{value['useful_count']}"} if value["state"] == "available" else set()
+    )
+
+
+def _g2_names(value: Any) -> set[str]:
+    if isinstance(value, dict):
+        return {f"cp:{value.get('name')}"}
+    return {f"cp:{item.get('name')}" for item in value or [] if isinstance(item, dict)}
+
+
+def _g2_reader_routes() -> list[_G2Route]:
+    from rush.memory.checkpoint_journal import CheckpointJournal
+    from rush.memory.invariant_graph import InvariantGraph
+    from rush.memory.preference_store import (
+        PreferenceStore,
+        get_preference_readonly,
+    )
+    from rush.patch.memory import PatchMemoryStore
+    from rush.session_memory import SessionMemoryManager, find_attribution_link
+    from rush.token_economy.memory_cache_gate import check_memory_before_pack
+    from rush.tools.flight_recorder import FlightRecorder
+    from rush.tools.review import ReviewTool
+    from rush.tools.status import _memory as status_memory
+
+    routes: list[_G2Route] = []
+    routes.append(
+        _g2_reader(
+            "cache_gate",
+            "cache_gate-check_memory_before_pack",
+            lambda env: check_memory_before_pack(
+                "module.py", "Known", project_root=env.root
+            ),
+            _g2_hit_shows,
+            frozenset({"hit:c-alice"}),
+            covers=(
+                ("token_economy/memory_cache_gate.py", "check_memory_before_pack"),
+            ),
+            sources=("context_pack",),
+            pre_setup=_g2_needs_store(_g2_pre_anchor_pack),
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "review_citations",
+            "review_citations",
+            lambda env: ReviewTool().run(env.root / "module.py"),
+            _g2_review_shows,
+            frozenset({"used:f-alice"}),
+            covers=(("tools/review.py", "_recall_memory_citations"),),
+            sources=("migration:failure_ledger",),
+            pre_setup=_g2_needs_store(_g2_pre_anchor_failure),
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "status",
+            "status-memory",
+            lambda env: status_memory(env.root),
+            _g2_status_shows,
+            frozenset({"count:3"}),
+            covers=(("tools/status.py", "_memory"),),
+            op="list",
+            legacy=frozenset({"count:4"}),
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "checkpoint_journal",
+            "checkpoint_journal-list_checkpoints",
+            lambda env: CheckpointJournal(env.root).list_checkpoints(),
+            _g2_names,
+            frozenset({"cp:good_ckpt"}),
+            covers=(("memory/checkpoint_journal.py", "_list_checkpoints"),),
+            sources=(
+                "checkpoint_journal:save_checkpoint",
+                "migration:checkpoint_journal",
+            ),
+            owner="project",
+            pre_setup=_g2_pre_checkpoint,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "checkpoint_journal",
+            "checkpoint_journal-restore_checkpoint",
+            lambda env: CheckpointJournal(env.root).restore_checkpoint("good_ckpt"),
+            _g2_markers_of,
+            frozenset({"mk-cp"}),
+            covers=(("memory/checkpoint_journal.py", "_restore_checkpoint"),),
+            sources=(
+                "checkpoint_journal:save_checkpoint",
+                "migration:checkpoint_journal",
+            ),
+            owner="project",
+            pre_setup=_g2_pre_checkpoint,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "session_memory",
+            "session_memory-format_for_mcp",
+            lambda env: SessionMemoryManager(
+                env.root / ".rush" / "session_memory.json"
+            ).format_for_mcp(),
+            _g2_markers_of,
+            frozenset({"mk-turn"}),
+            covers=(("session_memory.py", "format_for_mcp"),),
+            sources=("session_memory:record_turn", "migration:session_memory"),
+            owner="project",
+            pre_setup=_g2_pre_turn,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "session_memory",
+            "session_memory-find_attribution_link",
+            lambda env: find_attribution_link(env.root, "f1"),
+            _g2_markers_of,
+            frozenset({"mk-abc1234"}),
+            covers=(("session_memory.py", "find_attribution_link"),),
+            sources=("provenance_ai:attribution_link", "migration:session_memory"),
+            owner="project",
+            pre_setup=_g2_pre_attribution,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "flight_recorder",
+            "flight_recorder-replay_session",
+            lambda env: FlightRecorder(env.root, create=False).replay_session("s1"),
+            _g2_markers_of,
+            frozenset({"mk-flight"}),
+            covers=(("tools/flight_recorder.py", "_replay_session"),),
+            sources=("flight_recorder:record_event", "migration:flight_recorder"),
+            owner="project",
+            pre_setup=_g2_pre_flight,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "patch_memory",
+            "patch_memory-read_records",
+            lambda env: PatchMemoryStore.read_records(env.root),
+            _g2_markers_of,
+            frozenset({"mk-patch"}),
+            covers=(("patch/memory.py", "read_records"),),
+            sources=("migration:patch_memory",),
+            pre_setup=_g2_pre_patch,
+            independent_of_store=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "invariant_graph",
+            "invariant_graph-get_all",
+            lambda env: InvariantGraph(env.root).get_all(),
+            _g2_markers_of,
+            frozenset({"mk-inv"}),
+            covers=(("memory/invariant_graph.py", "get_all"),),
+            sources=("migration:invariant_graph",),
+            owner="project",
+            pre_setup=_g2_pre_invariant,
+            old_schema_reads=True,
+            ignore=(".rush/memory", "=.rush"),
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "hook_signatures",
+            "hook_signatures-verify_signatures",
+            lambda env: (
+                __import__("rush.hook.tamper_detector", fromlist=["HookTamperDetector"])
+                .HookTamperDetector(env.root)
+                .verify_signatures()
+            ),
+            lambda value: {"verified"} if value[0] else set(),
+            frozenset({"verified"}),
+            covers=(("hook/tamper_detector.py", "verify_signatures"),),
+            sources=("migration:hook_signatures",),
+            owner="project",
+            pre_setup=_g2_pre_hooks,
+            old_schema_reads=True,
+        )
+    )
+    for name, reader in (
+        ("get", lambda env: PreferenceStore(env.root).get("editor.theme")),
+        ("list_all", lambda env: PreferenceStore(env.root).list_all()),
+        (
+            "get_preference_readonly",
+            lambda env: get_preference_readonly(env.root, "editor.theme"),
+        ),
+    ):
+        routes.append(
+            _g2_reader(
+                "preferences",
+                f"preferences-{name}",
+                reader,
+                _g2_markers_of,
+                frozenset({"mk-pref"}),
+                covers=(
+                    (
+                        "memory/preference_store.py",
+                        name,
+                    ),
+                ),
+                sources=("migration:preference_store",),
+                owner="project",
+                pre_setup=_g2_pre_pref,
+                old_schema_reads=True,
+                ignore=(".rush/preferences.json", ".rush/preferences.json.migrated"),
+            )
+        )
+    return routes
+
+
+# --- internal routes: telemetry, shared decision, mode predicate, continuity ---------
+
+
+def _g2_access_or_none(
+    env: _G2Env, operation: str, allow: list[str] | None = None
+) -> Any:
+    from rush.memory.retrieval import RouteDenial, route_access
+
+    access = route_access(env.root, operation, session_allowlist=allow)
+    return None if isinstance(access, RouteDenial) else access
+
+
+def _g2_totals_shows(totals: dict[str, int]) -> set[str]:
+    return {f"{kind}:{count}" for kind, count in totals.items() if count}
+
+
+def _g2_receipts_shows(receipts: list[dict[str, Any]]) -> set[str]:
+    return {f"receipt:{item['tokens']}" for item in receipts}
+
+
+def _g2_scoped(env: _G2Env, reader: Any, shows: Any) -> _G2Out:
+    access = _g2_access_or_none(env, "list")
+    if access is None:
+        return _G2Out(None, None, frozenset(), 0, None)
+    value = reader(env, access)
+    return _G2Out(None, None, frozenset(shows(value)), 0, value)
+
+
+def _g2_telemetry_routes() -> list[_G2Route]:
+    from rush.token_economy.telemetry import (
+        read_artifact_expansion_receipts_readonly,
+        read_memory_event_totals_readonly,
+        read_summary_readonly,
+    )
+
+    kinds = ("retrieval", "expansion")
+    routes: list[_G2Route] = []
+
+    def telemetry_route(
+        cell: str,
+        reader: Any,
+        shows: Any,
+        ok: set[str],
+        legacy: set[str],
+        function: str,
+    ) -> None:
+        routes.append(
+            _G2Route(
+                transport="internal",
+                key="telemetry_readers",
+                cell=cell,
+                op="list",
+                call=lambda env, c, reader=reader, shows=shows: _g2_scoped(
+                    env, reader, shows
+                ),
+                supports={
+                    "store": {
+                        "absent": _ex(None, exact=ok),
+                        "old_schema": _ex(None, exact=ok),
+                    }
+                },
+                takes_owner=False,
+                coded=False,
+                ok_codes=frozenset({None}),
+                check_ok=_g2_shown_exact(frozenset(ok)),
+                check_legacy=_g2_shown_exact(frozenset(legacy)),
+                pre_setup=_g2_pre_events,
+                covers=(("token_economy/telemetry.py", function),),
+            )
+        )
+
+    telemetry_route(
+        "telemetry_readers-read_memory_event_totals_readonly",
+        lambda env, access: read_memory_event_totals_readonly(
+            env.root, kinds, access=access
+        ),
+        _g2_totals_shows,
+        {"retrieval:1", "expansion:2"},
+        {"retrieval:501", "expansion:2"},
+        "read_memory_event_totals_readonly",
+    )
+    telemetry_route(
+        "telemetry_readers-read_artifact_expansion_receipts_readonly",
+        lambda env, access: read_artifact_expansion_receipts_readonly(
+            env.root, "x", 1, access=access
+        ),
+        _g2_receipts_shows,
+        {"receipt:2"},
+        {"receipt:2"},
+        "read_artifact_expansion_receipts_readonly",
+    )
+    routes.append(
+        _G2Route(
+            transport="internal",
+            key="telemetry_readers",
+            cell="telemetry_readers-read_summary_readonly",
+            op="list",
+            call=lambda env, c: _G2Out(
+                None,
+                None,
+                frozenset({"summary"}),
+                0,
+                read_summary_readonly(env.root),
+            ),
+            takes_owner=False,
+            coded=False,
+            ok_codes=frozenset({None}),
+            ungated=frozenset({"summary"}),
+            pre_setup=_g2_pre_events,
+            covers=(("token_economy/telemetry.py", "read_summary_readonly"),),
+        )
+    )
+    return routes
+
+
+def _g2_visible_routes() -> list[_G2Route]:
+    from rush.memory.retrieval import memory_policy_mode, read_visible
+
+    def visible(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        access = _g2_access_or_none(env, "ask", cell.allow or ["source-a"])
+        if access is None:
+            return _G2Out(None, None, frozenset(), 0, None)
+        found = read_visible(env.root, [(SUBJECT, "needle")], access=access)
+        return _G2Out(None, None, _g2_markers(repr(found)), 0, found)
+
+    def mode(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        value = memory_policy_mode(env.root)
+        return _G2Out(None, None, frozenset({f"mode:{value}"}), 0, value)
+
+    #: the D1 predicate depends on the policy file and the project, never on a
+    #: grant's operations, owner or revocation
+    expected_mode = {
+        "access-policy-policy_state-ok-grant_ops-exact": "policy",
+        "access-policy-policy_state-ok-grant-revoked": "policy",
+        "access-legacy_allowlist-policy_state-ok-source-ungranted": "policy",
+        "access-policy-policy_state-ok-owner-omitted": "policy",
+        "access-policy-policy_state-invalid": "unavailable",
+        "access-legacy_allowlist-policy_state-missing_no_marker": "legacy",
+        "access-policy-policy_state-ok-grant_ops-missing_one": "policy",
+        "access-policy-policy_state-missing_marker": "unavailable",
+        G2_OVERLAY_ROW: "unavailable",
+    }
+
+    def custom(
+        route: _G2Route, row: str, env: _G2Env, cell: _G2Cell, out: _G2Out
+    ) -> None:
+        assert out.body == expected_mode[row], (row, out.body)
+
+    def check_mode(expected: str):
+        def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+            assert out.body == expected, out.body
+
+        return check
+
+    return [
+        _G2Route(
+            transport="internal",
+            key="retrieval_helper",
+            cell="retrieval_helper-read_visible",
+            op="ask",
+            call=visible,
+            supports=_g2_reader_dims(ok=G2_ACTIVE),
+            takes_allowlist=True,
+            takes_owner=False,
+            coded=False,
+            ok_codes=frozenset({None}),
+            check_ok=_g2_shown_exact(G2_ACTIVE),
+            check_legacy=_g2_shown_exact(G2_ACTIVE),
+            covers=(("memory/retrieval.py", "read_visible"),),
+        ),
+        _G2Route(
+            transport="internal",
+            key="mode_predicate",
+            cell="mode_predicate-memory_policy_mode",
+            op="ask",
+            call=mode,
+            supports={
+                "store": {
+                    "absent": _ex(None, exact={"mode:policy"}),
+                    "old_schema": _ex(None, exact={"mode:policy"}),
+                }
+            },
+            takes_owner=False,
+            coded=False,
+            ok_codes=frozenset({None}),
+            custom_policy=custom,
+            covers=(("memory/retrieval.py", "memory_policy_mode"),),
+        ),
+    ]
+
+
+def _g2_continuity_routes() -> list[_G2Route]:
+    from rush.continuity import context as continuity_context
+    from rush.continuity import coordination, providers, receipts
+    from rush.tools.continuity import SessionContinuityTool
+
+    started = time.monotonic()
+    routes: list[_G2Route] = []
+
+    def add(
+        cell: str,
+        call: Any,
+        shows: Any,
+        expected: set[str],
+        *,
+        sources: tuple[str, ...],
+        owner: str,
+        pre: Any,
+        covers: tuple[tuple[str, str], ...],
+        legacy: set[str] | None = None,
+        old_schema_reads: bool = False,
+        key: str = "continuity_package",
+    ) -> None:
+        routes.append(
+            _g2_reader(
+                key,
+                cell,
+                call,
+                shows,
+                frozenset(expected),
+                covers=covers,
+                sources=sources,
+                owner=owner,
+                pre_setup=pre,
+                legacy=None if legacy is None else frozenset(legacy),
+                old_schema_reads=old_schema_reads,
+            )
+        )
+
+    ckpt_sources = (
+        "checkpoint_journal:save_checkpoint",
+        "migration:checkpoint_journal",
+    )
+    add(
+        "continuity_package-_extract_session_memory",
+        lambda env: receipts._extract_session_memory(env.root),
+        _g2_markers_of,
+        {"mk-turn"},
+        sources=("session_memory:record_turn", "migration:session_memory"),
+        owner="project",
+        pre=_g2_pre_turn,
+        covers=(("continuity/receipts.py", "_extract_session_memory"),),
+    )
+    add(
+        "continuity_package-last_handoff_for_provider",
+        lambda env: receipts.last_handoff_for_provider(env.root, "codex"),
+        _g2_markers_of,
+        {"mk-cp"},
+        sources=ckpt_sources,
+        owner="project",
+        pre=_g2_pre_checkpoint,
+        covers=(("continuity/receipts.py", "last_handoff_for_provider"),),
+        old_schema_reads=True,
+    )
+    add(
+        "continuity_package-_fetch_replay_events",
+        lambda env: coordination._fetch_replay_events(env.root, "s1"),
+        _g2_markers_of,
+        {"mk-flight"},
+        sources=("flight_recorder:record_event", "migration:flight_recorder"),
+        owner="project",
+        pre=_g2_pre_flight,
+        covers=(("continuity/coordination.py", "_fetch_replay_events"),),
+        old_schema_reads=True,
+    )
+    add(
+        "continuity_package-provider_handoff",
+        lambda env: providers.provider_handoff(env.root, "good_ckpt"),
+        _g2_markers_of,
+        {"mk-cp"},
+        sources=ckpt_sources,
+        owner="project",
+        pre=_g2_pre_checkpoint,
+        covers=(("continuity/providers.py", "provider_handoff"),),
+        old_schema_reads=True,
+    )
+    routes.append(
+        _g2_reader(
+            "continuity_package",
+            "continuity_package-pack_context",
+            lambda env: continuity_context.pack_context(
+                started, env.root, "module.py", "Known", 4000, ExecutionPermissions()
+            ),
+            lambda value: {"packed"} if value.get("status") == "ok" else set(),
+            frozenset({"packed"}),
+            covers=(("continuity/context.py", "pack_context"),),
+            sources=("context_pack",),
+            owner="project",
+            pre_setup=_g2_pre_module,
+            independent_of_store=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "continuity_package",
+            "continuity_package-retrieve_context",
+            lambda env: continuity_context.retrieve_context(
+                started, env.root, "nohandle", ExecutionPermissions()
+            ),
+            lambda value: {"reached"} if value.get("status") != "skipped" else set(),
+            frozenset({"reached"}),
+            covers=(("continuity/context.py", "retrieve_context"),),
+            sources=("context_pack",),
+            owner="project",
+            independent_of_store=True,
+        )
+    )
+    # the continuity tool's checkpoint operations
+    tool = SessionContinuityTool()
+    routes.append(
+        _g2_reader(
+            "continuity_tool",
+            "continuity_tool-list",
+            lambda env: tool.run(env.root, operation="list"),
+            lambda value: (
+                _g2_names(value.get("raw")) if value.get("status") == "ok" else set()
+            ),
+            frozenset({"cp:good_ckpt"}),
+            covers=(("tools/continuity.py", "_run_list"),),
+            sources=ckpt_sources,
+            owner="project",
+            pre_setup=_g2_pre_checkpoint,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_reader(
+            "continuity_tool",
+            "continuity_tool-restore",
+            lambda env: tool.run(env.root, operation="restore", name="good_ckpt"),
+            lambda value: {"restored"} if value.get("status") == "ok" else set(),
+            frozenset({"restored"}),
+            covers=(("tools/continuity.py", "_run_restore"),),
+            sources=ckpt_sources,
+            owner="project",
+            pre_setup=_g2_pre_checkpoint,
+            old_schema_reads=True,
+        )
+    )
+    routes.append(
+        _g2_writer(
+            "continuity_tool",
+            "continuity_tool-save",
+            "checkpoint_journal:save_checkpoint",
+            lambda env, c: tool.run(
+                env.root,
+                operation="save",
+                name="cp-save",
+                files=[],
+                permissions=ExecutionPermissions(cache_write=True),
+            ),
+            covers=(("tools/continuity.py", "_run_save"),),
+        )
+    )
+    return routes
+
+
+# --- dashboard, TUI and project-registry readers -----------------------------------------
+
+
+def _g2_project_id(env: _G2Env) -> str:
+    return register_project(env.root, data_root=env.data_root).project_id
+
+
+def _g2_dashboard_section(env: _G2Env) -> Any:
+    from rush.dashboard import server
+
+    return server._build_memory_section(_g2_project_id(env), {})
+
+
+def _g2_dashboard_tokens(env: _G2Env) -> Any:
+    from rush.dashboard import server
+
+    return server._build_tokens_section(_g2_project_id(env), {})
+
+
+def _g2_tokens_shows(section: dict[str, Any]) -> set[str]:
+    """The memory-event totals the section reveals (a denied grant totals nothing, so
+    its `authorized` scope label reveals nothing) and the whole-project label."""
+    totals = section["actual"]["by_memory_event_kind"]
+    shown = {f"{kind}:{count}" for kind, count in totals.items() if count}
+    if section.get("memory_events_scope") == "project":
+        shown.add("scope:project")
+    return shown
+
+
+def _g2_tui_project(env: _G2Env) -> Any:
+    from rush.tui import ProjectState
+
+    return ProjectState(name="p", root=env.root, project_id=_g2_project_id(env))
+
+
+def _g2_tui_sources(env: _G2Env) -> Any:
+    from rush.tui import _memory_sources_and_state
+
+    return _memory_sources_and_state(_g2_tui_project(env))
+
+
+def _g2_tui_map(env: _G2Env) -> Any:
+    from rush.tui import _load_map_snapshot
+
+    return _load_map_snapshot(_g2_tui_project(env), env.data_root)
+
+
+def _g2_tui_refresh(env: _G2Env) -> Any:
+    from rush.tui import TuiState, _memory_refresh, default_scan_actions
+
+    project = _g2_tui_project(env)
+    state = TuiState(projects=[project], data_root=env.data_root)
+    state.memory_subject = SUBJECT
+    _memory_refresh(state, project, default_scan_actions())
+    return state.memory_items
+
+
+def _g2_tui_expand(env: _G2Env) -> Any:
+    from rush.tui import (
+        TuiState,
+        _memory_expand_selected,
+        _memory_refresh,
+        default_scan_actions,
+    )
+
+    project = _g2_tui_project(env)
+    state = TuiState(projects=[project], data_root=env.data_root)
+    state.memory_subject = SUBJECT
+    actions = default_scan_actions()
+    _memory_refresh(state, project, actions)
+    if state.memory_items:
+        state.memory_selected_index = 0
+        _memory_expand_selected(state, project, actions)
+    return state.memory_expanded
+
+
+def _g2_registry(function: str, *, with_access: bool = False):
+    def call(env: _G2Env) -> Any:
+        from rush.workflows import projects
+
+        reader = getattr(projects, function)
+        if function == "_readonly_memory_counts":
+            return reader(env.root, include_internal=False)
+        if function == "_readonly_telemetry_scope":
+            access = _g2_access_or_none(env, "list")
+            return (
+                reader(env.root, {}, ["run_id"], access=access)
+                if access is not None
+                else None
+            )
+        if with_access:
+            access = _g2_access_or_none(env, "list")
+            return reader(env.root, {}, access=access) if access is not None else None
+        return reader(env.root)
+
+    return call
+
+
+def _g2_ids(prefix: str):
+    def shows(value: Any) -> set[str]:
+        found: set[str] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                if isinstance(node.get("id"), str) and node["id"] in set(
+                    G2_STATE_ROW.values()
+                ) | {"a2", "x1"}:
+                    found.add(f"{prefix}:{node['id']}")
+                for item in node.values():
+                    walk(item)
+            elif isinstance(node, (list, tuple)):
+                for item in node:
+                    walk(item)
+
+        walk(value)
+        return found
+
+    return shows
+
+
+def _g2_count_shows(value: Any) -> set[str]:
+    return {f"counts:{sorted(value[0].items())}"} if value and value[0] else set()
+
+
+def _g2_total_shows(value: Any) -> set[str]:
+    return {f"{kind}:{count}" for kind, count in (value or {}).items() if count}
+
+
+def _g2_scope_shows(value: Any) -> set[str]:
+    return {f"scope:{value[0]}"} if value and value[0] else set()
+
+
+def _g2_dashboard_routes() -> list[_G2Route]:
+    routes: list[_G2Route] = []
+
+    def add(
+        key: str,
+        cell: str,
+        call: Any,
+        shows: Any,
+        expected: set[str],
+        legacy: set[str],
+        covers: tuple[tuple[str, str], ...],
+        *,
+        transport: str = "dashboard",
+        old_schema_reads: bool = False,
+        independent_of_store: bool = False,
+        pre_setup: Any = _g2_pre_events,
+        op: str = "list",
+    ) -> None:
+        route = _g2_reader(
+            key,
+            cell,
+            call,
+            shows,
+            frozenset(expected),
+            covers=covers,
+            legacy=frozenset(legacy),
+            pre_setup=pre_setup,
+            op=op,
+            old_schema_reads=old_schema_reads,
+            independent_of_store=independent_of_store,
+        )
+        routes.append(dataclasses.replace(route, transport=transport))
+
+    add(
+        "dashboard_readers",
+        "dashboard_readers-memory_section",
+        _g2_dashboard_section,
+        _g2_markers_of,
+        {"mk-a1", "mk-a2"},
+        {"mk-a1", "mk-a2", "mk-x1"},
+        (
+            ("dashboard/server.py", "_build_memory_section"),
+            ("dashboard/server.py", "_fetch_memory_browse_items"),
+        ),
+    )
+    add(
+        "dashboard_readers",
+        "dashboard_readers-tokens_section",
+        _g2_dashboard_tokens,
+        _g2_tokens_shows,
+        {"retrieval:1", "expansion:2"},
+        {"retrieval:501", "expansion:2", "scope:project"},
+        (("dashboard/server.py", "_build_tokens_section"),),
+        independent_of_store=True,
+        pre_setup=_g2_pre_project_events,
+    )
+    add(
+        "tui",
+        "tui-_memory_sources_and_state",
+        _g2_tui_sources,
+        lambda value: {f"src:{s}" for s in value[0]},
+        {"src:source-a"},
+        {"src:source-a", "src:source-x"},
+        (("tui.py", "_memory_sources_and_state"),),
+        transport="tui",
+        independent_of_store=True,
+    )
+    add(
+        "tui",
+        "tui-_load_map_snapshot",
+        _g2_tui_map,
+        _g2_ids("map"),
+        {"map:a1", "map:a2", "map:arch", "map:exp", "map:tam"},
+        {"map:a1", "map:a2", "map:x1", "map:arch", "map:exp", "map:tam"},
+        (("tui.py", "_load_map_snapshot"),),
+        transport="tui",
+        old_schema_reads=True,
+    )
+    add(
+        "tui",
+        "tui-_memory_refresh",
+        _g2_tui_refresh,
+        _g2_markers_of,
+        {"mk-a1", "mk-a2"},
+        {"mk-a1", "mk-a2", "mk-x1"},
+        (),
+        transport="tui",
+    )
+    add(
+        "tui",
+        "tui-_memory_expand_selected",
+        _g2_tui_expand,
+        _g2_markers_of,
+        {"mk-a1"},
+        {"mk-a1"},
+        (("tui.py", "_memory_expand_selected"),),
+        transport="tui",
+    )
+    for function, shows, expected, legacy, with_access, store_dim in (
+        (
+            "_readonly_memory_refs",
+            _g2_ids("ref"),
+            {"ref:a1", "ref:a2", "ref:arch", "ref:exp", "ref:tam"},
+            {"ref:a1", "ref:a2", "ref:x1", "ref:arch", "ref:exp", "ref:tam"},
+            False,
+            {"old_schema_reads": True},
+        ),
+        (
+            "_readonly_memory_counts",
+            _g2_count_shows,
+            {"counts:[('domain_knowledge', 5)]"},
+            {"counts:[('domain_knowledge', 6)]"},
+            False,
+            {"old_schema_reads": True},
+        ),
+        (
+            "_readonly_memory_event_totals",
+            _g2_total_shows,
+            {"retrieval:1", "expansion:2"},
+            {"retrieval:501", "expansion:2"},
+            True,
+            {"independent_of_store": True},
+        ),
+        (
+            "_readonly_telemetry_scope",
+            lambda value: {"scope:2"} if value and value[0] else set(),
+            {"scope:2"},
+            {"scope:2"},
+            True,
+            {"independent_of_store": True},
+        ),
+        (
+            "_current_map_memories",
+            _g2_ids("map"),
+            {"map:a1", "map:a2", "map:arch", "map:exp", "map:tam"},
+            {"map:a1", "map:a2", "map:x1", "map:arch", "map:exp", "map:tam"},
+            False,
+            {"old_schema_reads": True},
+        ),
+    ):
+        add(
+            "project_registry_readers",
+            f"project_registry_readers-{function.lstrip('_')}",
+            _g2_registry(function, with_access=with_access),
+            shows,
+            expected,
+            legacy,
+            (("workflows/projects.py", function),),
+            transport="internal",
+            **cast("dict[str, Any]", store_dim),
+        )
+    return routes
+
+
+def _g2_specs() -> list[_G2Spec]:
+    specs: list[_G2Spec] = []
+
+    def add(**kwargs: Any) -> None:
+        specs.append(_G2Spec(**kwargs))
+
+    for op in ("ask", "recall"):
+        add(
+            key=op,
+            cell=op,
+            op="ask",
+            operation=op,
+            kwargs=_g2_compact(op, "needle"),
+            default_cache_write=False,
+            allowlist=True,
+            supports=_g2_page_supports(historical=False, codes=("OK",)),
+            check_ok=_g2_ok_page,
+            check_legacy=_g2_ok_page,
+            request_strict=True,
+            covers=(
+                ("tools/memory.py", "_compact_query"),
+                ("tools/memory.py", "_compact_page"),
+                ("tools/memory.py", "_query"),
+            ),
+        )
+    add(
+        key="list",
+        cell="list",
+        op="list",
+        operation="list",
+        kwargs=_g2_compact("list", ""),
+        default_cache_write=False,
+        allowlist=True,
+        supports=_g2_page_supports(historical=False, codes=("OK",)),
+        check_ok=_g2_ok_page,
+        check_legacy=_g2_ok_page,
+        request_strict=True,
+        covers=(("tools/memory.py", "_list_filtered"),),
+    )
+    add(
+        key="list",
+        cell="list-mode-historical",
+        op="list",
+        operation="list",
+        kwargs=lambda env, cell: {
+            "subject": SUBJECT,
+            "query": "needle",
+            "session_allowlist": cell.allow,
+            "owner_scope": _g2_owner(cell.owner),
+            "include_archived": True,
+        },
+        default_cache_write=False,
+        allowlist=True,
+        missing_ops=("history",),
+        ok_codes=frozenset({"OK", None}),
+        supports=_g2_page_supports(historical=True, codes=("OK", None)),
+        check_ok=_g2_ok_list_hist,
+        check_legacy=_g2_ok_list_hist,
+        request_strict=True,
+        carry_base={"view": "compact"},
+        carry_dims=frozenset({"row_state"}),
+    )
+    add(
+        key="expand",
+        cell="expand",
+        op="expand",
+        operation="expand",
+        kwargs=_g2_expand_kwargs,
+        default_cache_write=False,
+        allowlist=True,
+        supports=_g2_expand_supports(),
+        check_ok=_g2_ok_expand,
+        check_legacy=_g2_ok_expand,
+        request_strict=True,
+        covers=(("tools/memory.py", "_expand"),),
+    )
+    add(
+        key="related",
+        cell="related",
+        op="ask",
+        operation="related",
+        kwargs=_g2_related_kwargs,
+        default_cache_write=False,
+        allowlist=True,
+        ok_codes=frozenset({"OK", "E_NOT_VISIBLE"}),
+        supports=_g2_related_supports(),
+        setup=_g2_related_setup,
+        check_ok=_g2_related_check,
+        check_legacy=_g2_related_check,
+        request_strict=True,
+        covers=(("tools/memory.py", "_related"),),
+    )
+    return specs
+
+
+def _g2_inproc(spec: _G2Spec) -> _G2Route:
+    def call(env: _G2Env, cell: _G2Cell) -> _G2Out:
+        kwargs = spec.kwargs(env, cell)
+        if not spec.allowlist:
+            kwargs.pop("session_allowlist", None)
+        permissions = (
+            _g2_permissions(cell, default_cache_write=spec.default_cache_write)
+            if spec.perm or cell.cache_write is not None or cell.retrieval == "hybrid"
+            else None
+        )
+        result = MemoryTool().run(
+            env.root, operation=spec.operation, permissions=permissions, **kwargs
+        )
+        return _g2_out_from_tool(result)
+
+    def carry(env: _G2Env, cell: _G2Cell, dim: str, value: str) -> _G2Out:
+        kwargs = spec.kwargs(env, cell)
+        request = dict(spec.carry_base or kwargs.get("request") or {})
+        request[dim] = value
+        kwargs["request"] = request
+        if not spec.allowlist:
+            kwargs.pop("session_allowlist", None)
+        permissions = (
+            _g2_permissions(cell, default_cache_write=spec.default_cache_write)
+            if spec.perm
+            else None
+        )
+        result = MemoryTool().run(
+            env.root, operation=spec.operation, permissions=permissions, **kwargs
+        )
+        return _g2_out_from_tool(result)
+
+    return _G2Route(
+        transport="inproc",
+        key=spec.key,
+        cell=spec.cell,
+        op=spec.op,
+        call=call,
+        supports=spec.supports,
+        takes_allowlist=spec.allowlist,
+        missing_ops=spec.missing_ops,
+        setup=spec.setup,
+        ok_codes=spec.ok_codes,
+        owner_required=spec.owner_required,
+        writer_family=spec.writer_family,
+        check_ok=spec.check_ok,
+        check_legacy=spec.check_legacy,
+        ungranted=spec.ungranted,
+        carry=carry if spec.request_strict else None,
+        carry_dims=spec.carry_dims,
+        idempotent=spec.idempotent,
+        covers=spec.covers,
+        intrinsic_apply=spec.intrinsic_apply,
+    )
+
+
+# --- G2 routes added by fix round 2 (spec-tests-2) -----------------------------------
+# The plan 2.3 entry points the first matrix left to separate regression tests: the
+# migration readers and `write_if_new`, the preference writers, the persona and
+# flight-recorder commands, the TUI promote preview and apply, the dashboard promote
+# POST and map sync, the scan handoff prepare / dispatch / recover, the admission
+# reconcile and the memory overview. Each is crossed with the same rows as every other
+# route; `_G2_REQUIRED_PAIRS` and its guard keep the set closed.
+
+_G2_PREF_FILES = (".rush/preferences.json", ".rush/preferences.json.migrated")
+_G2_PREF_SOURCE = ("migration:preference_store",)
+#: the ledger and owner locks a dashboard context creates (fixture, not the route)
+_G2_DASHBOARD_DATA = ("dashboard", "owners")
+_G2_FLIGHT_SOURCES = ("flight_recorder:record_event", "migration:flight_recorder")
+#: 2.3 entry points that are not AST-detected inventory pairs but are retained routes
+_G2_EXTRA_REQUIRED = frozenset(
+    {
+        ("memory/migration.py", "write_if_new"),
+        ("dashboard/server.py", "_fetch_memory_browse_items"),
+        ("dashboard/server.py", "_dispatch_memory_promote"),
+    }
+)
+
+
+def _g2_cli_output(env: _G2Env, args: list[str]) -> str:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    env.monkeypatch.chdir(env.root)
+    return CliRunner().invoke(cli, args).output
+
+
+def _g2_pre_persona(env: _G2Env) -> None:
+    from rush.memory.migration import migrate_preference_store
+    from rush.memory.preference_store import PreferenceStore
+
+    if env.extra["cell"].store == "absent":
+        return
+    PreferenceStore(env.root).set("persona_style", "default")
+    migrate_preference_store(env.root)
+
+
+def _g2_persona_shows(output: str) -> set[str]:
+    return {"persona:default"} if "persona style: default" in output.lower() else set()
+
+
+def _g2_persona_set_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert "Persona style set to: terse" in str(out.body), out.body
+
+
+def _g2_write_if_new(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.migration import write_if_new
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+
+    # the store is opened inside the writer gate, as every migration caller does
+    with authorize_writer(env.root, "migration:preference_store") as granted:
+        if isinstance(granted, RouteDenial):
+            raise _g2_denied_write(granted.reason)
+        return write_if_new(
+            TypedArtifactStore(env.root),
+            family="memory",
+            subject=SUBJECT,
+            content={"k": "mk-wif"},
+            source="migration:preference_store",
+            origin_kind="preference",
+            origin_id="g2-wif",
+            access=granted,
+        )
+
+
+def _g2_pref_set(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.preference_store import PreferenceStore
+
+    PreferenceStore(env.root).set("editor.theme", "mk-newpref")
+    return "set"
+
+
+def _g2_pref_delete(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.preference_store import PreferenceStore
+
+    return PreferenceStore(env.root).delete("editor.theme")
+
+
+def _g2_pref_row(env: _G2Env) -> Any:
+    from rush.memory.migration import read_origin
+
+    return read_origin(env.root, "preference", "editor.theme")
+
+
+def _g2_pref_set_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body == "set", out.body
+    if cell.store == "present":
+        assert (_g2_pref_row(env) or {}).get("value") == "mk-newpref"
+
+
+def _g2_pref_delete_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body is (cell.store != "absent"), out.body
+    if cell.store == "present":
+        assert (_g2_pref_row(env) or {}).get("deleted") is True
+
+
+def _g2_as(transport: str, route: _G2Route, **changes: Any) -> _G2Route:
+    return dataclasses.replace(route, transport=transport, **changes)
+
+
+def _g2_origin_routes() -> list[_G2Route]:
+    from rush.memory import migration
+
+    pref: dict[str, Any] = {
+        "sources": _G2_PREF_SOURCE,
+        "owner": "project",
+        "pre_setup": _g2_pre_pref,
+        "old_schema_reads": True,
+        "ignore": _G2_PREF_FILES,
+    }
+    flight: dict[str, Any] = {
+        "sources": _G2_FLIGHT_SOURCES,
+        "owner": "project",
+        "pre_setup": _g2_pre_flight,
+        "old_schema_reads": True,
+    }
+    mig = "memory/migration.py"
+    routes = [
+        _g2_reader(
+            "migration",
+            "migration-read_origin",
+            lambda env: migration.read_origin(env.root, "preference", "editor.theme"),
+            _g2_markers_of,
+            frozenset({"mk-pref"}),
+            covers=((mig, "read_origin"), (mig, "_origin_rows_readonly")),
+            **pref,
+        ),
+        _g2_reader(
+            "migration",
+            "migration-read_origin_kind",
+            lambda env: migration.read_origin_kind(env.root, "preference"),
+            _g2_markers_of,
+            frozenset({"mk-pref"}),
+            covers=((mig, "read_origin_kind"),),
+            **pref,
+        ),
+        _g2_reader(
+            "migration",
+            "migration-read_origin_kind_readonly",
+            lambda env: migration.read_origin_kind_readonly(env.root, "preference"),
+            _g2_markers_of,
+            frozenset({"mk-pref"}),
+            covers=((mig, "read_origin_kind_readonly"),),
+            **pref,
+        ),
+        _g2_reader(
+            "migration",
+            "migration-read_origin_kind_by_symbol",
+            lambda env: migration.read_origin_kind_by_symbol(
+                env.root, "flight_event", "s1"
+            ),
+            _g2_markers_of,
+            frozenset({"mk-flight"}),
+            covers=((mig, "read_origin_kind_by_symbol"),),
+            **flight,
+        ),
+        _g2_writer(
+            "migration",
+            "migration-write_if_new",
+            "migration:preference_store",
+            _g2_write_if_new,
+            covers=((mig, "write_if_new"),),
+        ),
+    ]
+    prefs = "memory/preference_store.py"
+    routes += [
+        dataclasses.replace(
+            _g2_writer(
+                "preferences",
+                "preferences-set",
+                "migration:preference_store",
+                _g2_pref_set,
+                covers=((prefs, "set"), (prefs, "_update_migrated")),
+                check=_g2_pref_set_check,
+                committed=0,
+                pre_setup=_g2_pre_pref,
+            ),
+            ignore=_G2_PREF_FILES,
+            owner_fixed=False,
+        ),
+        dataclasses.replace(
+            _g2_writer(
+                "preferences",
+                "preferences-delete",
+                "migration:preference_store",
+                _g2_pref_delete,
+                covers=((prefs, "delete"),),
+                check=_g2_pref_delete_check,
+                committed=0,
+                pre_setup=_g2_pre_pref,
+            ),
+            ignore=_G2_PREF_FILES,
+            owner_fixed=False,
+        ),
+    ]
+    return routes
+
+
+def _g2_cli_text_routes() -> list[_G2Route]:
+    cli_py = "cli.py"
+    return [
+        _g2_as(
+            "cli",
+            _g2_reader(
+                "cli_other_readers",
+                "cli_other_readers-context_persona_read",
+                lambda env: _g2_cli_output(env, ["context", "persona"]),
+                _g2_persona_shows,
+                frozenset({"persona:default"}),
+                covers=((cli_py, "context_persona_cmd"),),
+                sources=_G2_PREF_SOURCE,
+                owner="project",
+                pre_setup=_g2_pre_persona,
+                old_schema_reads=True,
+                ignore=_G2_PREF_FILES,
+            ),
+        ),
+        _g2_as(
+            "cli",
+            _g2_writer(
+                "cli_other_readers",
+                "cli_other_readers-context_persona_set",
+                "migration:preference_store",
+                lambda env, cell: _g2_cli_output(
+                    env, ["context", "persona", "--set", "terse"]
+                ),
+                covers=((cli_py, "context_persona_cmd"),),
+                check=_g2_persona_set_check,
+                committed=0,
+                pre_setup=_g2_pre_persona,
+            ),
+        ),
+        _g2_as(
+            "cli",
+            _g2_reader(
+                "cli_other_readers",
+                "cli_other_readers-flight_recorder_cmd",
+                lambda env: _g2_cli_output(
+                    env, ["flight-recorder", "--replay", "s1", "--json"]
+                ),
+                _g2_markers_of,
+                frozenset({"mk-flight"}),
+                covers=((cli_py, "flight_recorder_cmd"),),
+                sources=_G2_FLIGHT_SOURCES,
+                owner="project",
+                pre_setup=_g2_pre_flight,
+                old_schema_reads=True,
+            ),
+        ),
+    ]
+
+
+def _g2_tui_session(env: _G2Env) -> tuple[Any, Any, Any]:
+    from rush.tui import TuiState, _memory_refresh, default_scan_actions
+
+    project = _g2_tui_project(env)
+    state = TuiState(projects=[project], data_root=env.data_root)
+    state.memory_subject = SUBJECT
+    state.memory_owner_scope_kind = ALICE.kind
+    state.memory_owner_scope_id = ALICE.id
+    actions = default_scan_actions()
+    _memory_refresh(state, project, actions)
+    if state.memory_items:
+        state.memory_selected_index = 0
+    return state, project, actions
+
+
+def _g2_tui_promote(env: _G2Env) -> Any:
+    from rush.tui import _memory_promote_selected
+
+    state, project, actions = _g2_tui_session(env)
+    _memory_promote_selected(state, project, actions)
+    return state.memory_message, state.memory_pending_mutation
+
+
+def _g2_tui_apply(env: _G2Env, cell: _G2Cell) -> _G2Out:
+    from rush.tui import _memory_mutation_apply, _memory_promote_selected
+
+    state, project, actions = _g2_tui_session(env)
+    _memory_promote_selected(state, project, actions)
+    _memory_mutation_apply(state, project, actions)
+    return _G2Out(
+        None, None, _g2_markers_of(state.memory_message), 0, state.memory_message
+    )
+
+
+def _g2_tui_apply_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.committed == 1, (out.committed, out.body)
+    assert "promot" in str(out.body), out.body
+
+
+def _g2_tui_routes() -> list[_G2Route]:
+    return [
+        _g2_as(
+            "tui",
+            _g2_reader(
+                "tui",
+                "tui-_memory_promote_selected",
+                _g2_tui_promote,
+                _g2_markers_of,
+                frozenset({"mk-a1"}),
+                covers=(("tui.py", "_memory_promote_selected"),),
+                legacy=frozenset({"mk-a1"}),
+                op="list",
+            ),
+        ),
+        _G2Route(
+            transport="tui",
+            key="tui",
+            cell="tui-_memory_mutation_apply",
+            op="write",
+            call=_g2_tui_apply,
+            supports=_g2_reader_dims(ok=frozenset()),
+            takes_owner=False,
+            coded=False,
+            ok_codes=frozenset({None}),
+            check_ok=_g2_tui_apply_check,
+            check_legacy=_g2_tui_apply_check,
+            idempotent=False,
+            covers=(("tui.py", "_memory_mutation_apply"),),
+        ),
+    ]
+
+
+def _g2_dashboard_context(env: _G2Env) -> tuple[str, Any]:
+    from rush.dashboard.server import DashboardContext
+
+    project_id = _g2_project_id(env)
+    ctx = DashboardContext(
+        {project_id: {"root": str(env.root), "name": "proj"}},
+        bound_host="127.0.0.1",
+        bound_port=0,
+        data_root=env.data_root,
+    )
+    return project_id, ctx
+
+
+def _g2_dashboard_sync(env: _G2Env) -> Any:
+    from rush.dashboard import server
+
+    project_id, ctx = _g2_dashboard_context(env)
+    server._sync_current_map(ctx, project_id)
+    record = ctx.projects.get(project_id)
+    return (record.snapshot.get("memories") if record is not None else None) or []
+
+
+def _g2_dashboard_promote(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.dashboard import server
+
+    project_id, ctx = _g2_dashboard_context(env)
+    status, body = server._dispatch_memory_promote(
+        ctx,
+        project_id,
+        {
+            "subject": SUBJECT,
+            "content": {"text": "needle mk-pro"},
+            "source": "source-a",
+            "owner_scope": ALICE.as_dict(),
+        },
+        {"cache_write": True},
+    )
+    if status != 200:
+        raise _g2_denied_write(str(body.get("reason") or body.get("code")))
+    return status, body
+
+
+def _g2_dashboard_promote_check(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    assert out.body[0] == 200, out.body
+    assert out.committed == 1, (out.committed, out.body)
+
+
+def _g2_dashboard_post_routes() -> list[_G2Route]:
+    server_py = "dashboard/server.py"
+    promote = dataclasses.replace(
+        _g2_writer(
+            "dashboard_mutations",
+            "dashboard_mutations-memory_promote",
+            "source-a",
+            _g2_dashboard_promote,
+            covers=(
+                (server_py, "_dispatch_memory_promote"),
+                (server_py, "_refresh_project_memories_if_store_exists"),
+                (server_py, "_refresh_project_memories"),
+            ),
+            check=_g2_dashboard_promote_check,
+            sources=(),
+        ),
+        grant_owner="alice",
+    )
+    sync = _g2_reader(
+        "dashboard_readers",
+        "dashboard_readers-sync_current_map",
+        _g2_dashboard_sync,
+        _g2_ids("mem"),
+        frozenset({"mem:a1", "mem:a2", "mem:arch", "mem:exp", "mem:tam"}),
+        covers=(
+            (server_py, "_sync_current_map"),
+            (server_py, "_refresh_project_memories"),
+        ),
+        legacy=frozenset(
+            {"mem:a1", "mem:a2", "mem:x1", "mem:arch", "mem:exp", "mem:tam"}
+        ),
+        op="list",
+    )
+    return [
+        _g2_as("dashboard", promote, ignore_data=_G2_DASHBOARD_DATA),
+        _g2_as("dashboard", sync, ignore_data=_G2_DASHBOARD_DATA),
+    ]
+
+
+def _g2_scan_root(root: Path) -> str:
+    return str(root)
+
+
+def _g2_pre_scan(env: _G2Env) -> None:
+    """The finished scan run a handoff is prepared from (files only, no store)."""
+    (env.root / "app.py").write_text("def unreviewed():\n    pass\n", encoding="utf-8")
+    _scan_manifest(env.root, "run-1")
+
+
+def _g2_handoff_call(env: _G2Env, **kwargs: Any) -> Any:
+    from rush.workflows.project_run import build_handoff
+
+    return build_handoff(
+        _g2_project_id(env), "run-1", "codex-cli", data_root=env.data_root, **kwargs
+    )
+
+
+def _g2_scan_denied(exc: Exception) -> Exception:
+    return _g2_denied_write(str(exc).rsplit(": ", 1)[-1])
+
+
+def _g2_build_handoff(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.workflows.project_run import ScanHandoffAuthError
+
+    try:
+        return _g2_handoff_call(env)
+    except ScanHandoffAuthError as exc:
+        raise _g2_scan_denied(exc) from exc
+
+
+def _g2_build_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body.state == "prepared", out.body
+    assert out.committed == 1, out.committed
+
+
+def _g2_setup_prepared(env: _G2Env) -> None:
+    """A handoff prepared under the row's own grant (a session prepared before any
+    grant has no bound sender and is refused in `policy` mode), or none when the grant
+    does not allow preparing one."""
+    from rush.workflows.project_run import ScanHandoffAuthError
+
+    try:
+        env.extra["handoff"] = _g2_handoff_call(
+            env,
+            operation_id="g2-op",
+            effect_ids={
+                "artifact_create": "g2-artifact",
+                "session_create": "g2-session",
+                "delivery_transition": "g2-delivery",
+            },
+            owner_instance_id="",
+        )
+    except ScanHandoffAuthError:
+        env.extra["handoff"] = None
+
+
+def _g2_dispatch_handoff(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.handoff import HandoffError
+    from rush.workflows.project_run import (
+        ScanHandoffAuthError,
+        ScanInvalidRequestError,
+        dispatch_handoff,
+    )
+
+    handoff = env.extra.get("handoff")
+    if handoff is None:
+        raise _g2_denied_write("no_handoff")
+    try:
+        return dispatch_handoff(
+            _g2_project_id(env),
+            handoff.handoff_id,
+            handoff.session_capability,
+            data_root=env.data_root,
+        )
+    except (ScanHandoffAuthError, HandoffError, ScanInvalidRequestError) as exc:
+        raise _g2_scan_denied(exc) from exc
+
+
+def _g2_dispatch_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body.state == "delivered", out.body
+
+
+def _g2_recover_handoff(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.workflows.project_run import (
+        ScanInvalidRequestError,
+        recover_prepared_handoff,
+    )
+
+    handoff = env.extra.get("handoff")
+    if handoff is None:
+        raise _g2_denied_write("no_handoff")
+    try:
+        recovered = recover_prepared_handoff(
+            _g2_project_id(env),
+            handoff.handoff_id,
+            claimed_operation_id="g2-op",
+            artifact_create_receipt_id="g2-artifact",
+            session_create_receipt_id="g2-session",
+            delivery_receipt_id="g2-delivery",
+            data_root=env.data_root,
+        )
+    except ScanInvalidRequestError as exc:
+        raise _g2_scan_denied(exc) from exc
+    if recovered is None:
+        raise _g2_denied_write("not_recovered")
+    return recovered
+
+
+def _g2_recover_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body.state == "delivered", out.body
+
+
+def _g2_scan_dims() -> dict[str, dict[str, _G2Expect]]:
+    """A prepared handoff needs a store: without one (or with a pre-72 one) the route
+    refuses and changes nothing."""
+    return {
+        "store": {
+            "absent": _ex("E_PERMISSION", committed=0, absent=(".rush/memory.db",)),
+            "old_schema": _ex("E_PERMISSION", committed=0),
+        }
+    }
+
+
+def _g2_scan_routes() -> list[_G2Route]:
+    run_py = "workflows/project_run.py"
+    common: dict[str, Any] = {"sources": (_g2_scan_root,)}
+    build = _g2_writer(
+        "scan_handoff",
+        "scan_handoff-build_handoff",
+        "scan",
+        _g2_build_handoff,
+        covers=((run_py, "build_handoff"),),
+        check=_g2_build_check,
+        pre_setup=_g2_pre_scan,
+        **common,
+    )
+    dispatch = _g2_writer(
+        "scan_handoff",
+        "scan_handoff-dispatch_handoff",
+        "scan",
+        _g2_dispatch_handoff,
+        covers=((run_py, "dispatch_handoff"),),
+        check=_g2_dispatch_check,
+        committed=0,
+        pre_setup=_g2_pre_scan,
+        supports=_g2_scan_dims(),
+        **common,
+    )
+    recover = _g2_writer(
+        "scan_handoff",
+        "scan_handoff-recover_prepared_handoff",
+        "scan",
+        _g2_recover_handoff,
+        covers=((run_py, "recover_prepared_handoff"),),
+        check=_g2_recover_check,
+        committed=0,
+        pre_setup=_g2_pre_scan,
+        supports=_g2_scan_dims(),
+        **common,
+    )
+    # The scan handoff is dashboard-driven (`handoff_send`): its project is addressed
+    # by id, so the overlay row registers it as fixture state like every dashboard route.
+    return [
+        dataclasses.replace(
+            build,
+            transport="dashboard",
+            overlay_setup=_g2_pre_scan,
+            missing_ops=("expand",),
+        ),
+        dataclasses.replace(
+            dispatch,
+            transport="dashboard",
+            setup=_g2_setup_prepared,
+            missing_ops=("expand",),
+        ),
+        dataclasses.replace(
+            recover,
+            transport="dashboard",
+            setup=_g2_setup_prepared,
+            missing_ops=("expand",),
+            ignore_db=True,
+        ),
+    ]
+
+
+def _g2_setup_reconcile(env: _G2Env) -> None:
+    """A dead owner's admission row and the handoff it left prepared (under the row's
+    own grant, so its sender is bound), in a ledger outside the project and data root."""
+    from rush.dashboard.state import MutationLedger
+    from rush.workflows.project_run import (
+        ScanHandoffAuthError,
+        ScanInvalidRequestError,
+    )
+
+    project_id = _g2_project_id(env)
+    ledger = MutationLedger(db_path=env.tmp_path / "admission.db")
+    effect_ids = {
+        "artifact_create": "g2-artifact",
+        "session_create": "g2-session",
+        "delivery_transition": "g2-delivery",
+    }
+    reservation = ledger.reserve(
+        project_id,
+        "g2-handoff",
+        "",
+        operation_type="handoff_send",
+        effect_ids=effect_ids,
+    )
+    ledger.admit(
+        project_id,
+        execution_identity="scan_start:g2",
+        slot_id=reservation.operation_id,
+        operation_id=reservation.operation_id,
+        run_id="run-1",
+        plan_id="g2-plan",
+        owner_instance_id="g2-dead-owner",
+    )
+    env.extra["ledger"] = ledger
+    try:
+        env.extra["handoff"] = _g2_handoff_call(
+            env,
+            operation_id=reservation.operation_id,
+            effect_ids=effect_ids,
+            owner_instance_id="g2-dead-owner",
+        )
+    except (ScanHandoffAuthError, ScanInvalidRequestError):
+        env.extra["handoff"] = None
+
+
+def _g2_setup_reconcile_overlay(env: _G2Env) -> None:
+    _g2_pre_scan(env)
+    _g2_setup_reconcile(env)
+
+
+def _g2_reconcile(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.dashboard.state import reconcile_admissions
+    from rush.workflows.project_run import _load_handoff
+
+    ledger = env.extra.get("ledger")
+    if ledger is None:
+        raise _g2_denied_write("no_ledger")
+    reconciled = reconcile_admissions(ledger, data_root=env.data_root)
+    handoff = env.extra.get("handoff")
+    loaded = _load_handoff(env.root, handoff.handoff_id) if handoff else None
+    return reconciled, (loaded.state if loaded is not None else None)
+
+
+def _g2_reconcile_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body == (1, "delivered"), out.body
+
+
+def _g2_reconcile_route() -> _G2Route:
+    """The dead owner's handoff is delivered exactly where its grant allows (the
+    success oracle); a refusing row reconciles the admission, delivers nothing and
+    leaves every file as it was (the exposure-reducing db cleanup aside)."""
+    state_py = "dashboard/state.py"
+    base = _g2_writer(
+        "dashboard_admission_reconcile",
+        "dashboard_admission_reconcile-reconcile_admissions",
+        "scan",
+        _g2_reconcile,
+        covers=((state_py, "reconcile_admissions"),),
+        check=_g2_reconcile_check,
+        committed=0,
+        pre_setup=_g2_pre_scan,
+        sources=(_g2_scan_root,),
+        supports={
+            "store": {
+                "absent": _ex("E_PERMISSION", committed=0, absent=(".rush/memory.db",)),
+                "old_schema": _ex(None, committed=0, check=None),
+            }
+        },
+    )
+    return dataclasses.replace(
+        base,
+        transport="dashboard",
+        setup=_g2_setup_reconcile,
+        overlay_setup=_g2_setup_reconcile_overlay,
+        missing_ops=("expand",),
+        ignore_data=_G2_DASHBOARD_DATA,
+        ignore_db=True,
+    )
+
+
+def _g2_overview_shows(result: Any) -> set[str]:
+    return _g2_ids("ov")(_rd(result))
+
+
+def _g2_extra_routes() -> list[_G2Route]:
+    from rush.tools.memory import memory_overview
+
+    overview = _g2_reader(
+        "overview",
+        "overview-memory_overview",
+        lambda env: memory_overview(env.root),
+        _g2_overview_shows,
+        frozenset({"ov:a1", "ov:a2", "ov:tam"}),
+        covers=(("tools/memory.py", "memory_overview"),),
+        op="list",
+        legacy=frozenset({"ov:a1", "ov:a2", "ov:tam", "ov:x1"}),
+        old_schema_reads=True,
+    )
+    return [
+        *_g2_origin_routes(),
+        *_g2_cli_text_routes(),
+        *_g2_tui_routes(),
+        *_g2_dashboard_post_routes(),
+        *_g2_scan_routes(),
+        _g2_reconcile_route(),
+        overview,
+    ]
+
+
+def _g2_tool_routes() -> list[_G2Route]:
+    specs = _g2_all_specs()
+    return [
+        *(_g2_inproc(spec) for spec in specs),
+        *(route for spec in specs if (route := _g2_mcp(spec)) is not None),
+        *(
+            _g2_bridge(spec)
+            for spec in specs
+            if spec.operation in _G2_BRIDGE_OPERATIONS
+        ),
+        *_g2_producer_routes(),
+        *(_g2_cli_generic(spec) for spec in specs if spec.operation in _G2_CLI_GENERIC),
+        *_g2_cli_explicit_routes(),
+        *_g2_writer_routes(),
+        *_g2_reader_routes(),
+        *_g2_telemetry_routes(),
+        *_g2_visible_routes(),
+        *_g2_continuity_routes(),
+        *_g2_dashboard_routes(),
+        *_g2_extra_routes(),
+    ]
+
+
+_G2_ROUTES: list[_G2Route] = _g2_tool_routes()
+
+
+def _g2_seed(root: Path, store: TypedArtifactStore) -> None:
+    """The fixture rows. `a1`/`a2` are Alice's active `source-a` rows, `x1` is hers under
+    `source-x`, `arch` is archived, `exp` is expired and `tam` has tampered bytes."""
+    for artifact_id, source in (
+        ("a1", "source-a"),
+        ("a2", "source-a"),
+        ("x1", "source-x"),
+        ("arch", "source-a"),
+        ("exp", "source-a"),
+        ("tam", "source-a"),
+    ):
+        _row(store, artifact_id, ALICE, f"mk-{artifact_id}", source=source)
+    store.archive(
+        "arch", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET expires_at = 1.0, expired_at = 2.0, "
+            "expired_by = 'sweep' WHERE id = 'exp'"
+        )
+        conn.commit()
+    _tamper(store.db_path, "tam")
+    gc.collect()  # close the helpers' lingering connections: no -wal/-shm sidecars
+
+
+def _g2_degrade_store(env: _G2Env, cell: _G2Cell) -> None:
+    """`store-old_schema`: the same store, minus the columns only a write migrates in."""
+    if cell.store == "old_schema" and env.store is not None:
+        _drop_payload_columns(env.store.db_path)
+        _no_sidecars(env.store.db_path)
+
+
+def _g2_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: _G2Route, row: str
+) -> _G2Env:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    cell = _g2_parse_row(row)
+    env = _G2Env(
+        root=root,
+        data_root=data_root,
+        store=None,
+        auth=auth,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        extra={"cell": cell, "transport": route.transport},
+    )
+    (root / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    if cell.store != "absent":
+        env.store = TypedArtifactStore(root)
+        _g2_seed(root, env.store)
+    can_setup = route.setup is not None and cell.store != "absent"
+    if route.pre_setup is not None:
+        route.pre_setup(env)
+    owner = ALICE if route.grant_owner == "alice" else legacy_owner_scope(root)
+    ops = tuple(FULL_OPS_HISTORY)
+    if "missing_no_marker" in row:
+        if can_setup:
+            route.setup(env)
+        _g2_degrade_store(env, cell)
+        return env
+    sources: tuple[str, ...] = ("source-a",)
+    if route.sourced and not row.endswith(("missing_one", "source-ungranted")):
+        sources += (
+            *(s(root) if callable(s) else s for s in route.grant_sources),
+            *((route.writer_family,) if route.writer_family else ()),
+        )
+    if row.endswith("missing_marker"):
+        # A registered-then-removed policy: the marker stays, the policy file goes.
+        env.grant = _grant(auth, root, owner, data_root, sources=sources, ops=ops)
+        if can_setup:
+            route.setup(env)
+        _g2_degrade_store(env, cell)
+        auth.policy_path(data_root=data_root).unlink()
+        return env
+    env.grant = _grant(auth, root, owner, data_root, sources=sources, ops=ops)
+    if can_setup:
+        route.setup(env)
+    _g2_degrade_store(env, cell)
+    if row.endswith("grant-revoked"):
+        auth.revoke_memory_scope(
+            grant_id=env.grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    elif row.endswith("owner-omitted"):
+        _grant(auth, root, BOB, data_root, ops=ops)
+    elif row.endswith("policy_state-invalid"):
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+    elif row.endswith("missing_one"):
+        lacking = set(route.missing_ops or (route.op,))
+        reduced = tuple(o for o in ops if o not in lacking)
+        _grant(auth, root, owner, data_root, ops=reduced)
+    return env
+
+
+def _g2_cells() -> list[Any]:
+    cells = []
+    for route in _G2_ROUTES:
+        for row in _g2_rows(route):
+            cells.append(pytest.param(route, row, id=f"{route.ident}-{row}"))
+    return cells
+
+
+_G2_DENIAL_REASONS = {
+    "grant-revoked": "revoked",
+    "owner-omitted": "owner_required",
+    "policy_state-invalid": "policy_invalid",
+    "missing_one": "operation_not_granted",
+    "missing_marker": "policy_missing",
+}
+
+
+def _g2_effects(route: _G2Route, root: Path, data_root: Path) -> dict[str, Any]:
+    """`_effects` without the paths the route's own constructor owns."""
+    snapshot = _effects(root, data_root)
+    if route.ignore_data:
+        snapshot["data"] = {
+            k: v
+            for k, v in snapshot["data"].items()
+            if not k.startswith(route.ignore_data)
+        }
+    if route.ignore_db:
+        snapshot["db"] = None
+        snapshot["counts"] = {}
+        if snapshot.get("root"):
+            snapshot["root"] = {
+                k: v
+                for k, v in snapshot["root"].items()
+                if not k.startswith(".rush/memory.db")
+            }
+    if not route.ignore:
+        return snapshot
+
+    def keep(prefix: str):
+        def test(key: str) -> bool:
+            return not any(
+                key == f"{prefix}{p.lstrip('=')}"
+                or (not p.startswith("=") and key.startswith(f"{prefix}{p}/"))
+                for p in route.ignore
+            )
+
+        return test
+
+    if snapshot.get("root"):
+        test = keep("")
+        snapshot["root"] = {k: v for k, v in snapshot["root"].items() if test(k)}
+    try:
+        inside = root.resolve().relative_to(data_root.resolve()).as_posix() + "/"
+    except ValueError:
+        inside = None
+    if inside is not None:
+        test = keep(inside)
+        snapshot["data"] = {k: v for k, v in snapshot["data"].items() if test(k)}
+    return snapshot
+
+
+def _g2_diff(before: dict[str, Any], after: dict[str, Any]) -> list[str]:
+    """Which parts of an `_effects` snapshot differ, for assertion messages."""
+    out: list[str] = []
+    for part in ("root", "data"):
+        old, new = before.get(part) or {}, after.get(part) or {}
+        for key in sorted(set(old) | set(new)):
+            if old.get(key) != new.get(key):
+                out.append(f"{part}:{key}")
+    for part in ("db", "counts"):
+        if before.get(part) != after.get(part):
+            out.append(part)
+    return out
+
+
+def _g2_denied(route: _G2Route, out: _G2Out) -> bool:
+    """The route refused: an `E_PERMISSION` code, or (for a route that has no code)
+    nothing revealed and nothing written."""
+    if route.coded:
+        return out.code == "E_PERMISSION"
+    return not out.shown and out.committed == 0 and out.code in (None, "E_PERMISSION")
+
+
+def _g2_assert_denied(
+    route: _G2Route, row: str, out: _G2Out, reason: str | None
+) -> None:
+    detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
+    assert _g2_denied(route, out), detail
+    if route.coded and reason is not None:
+        assert out.reason == reason, detail
+    assert not out.shown, detail
+    assert out.committed == 0, detail
+
+
+def _g2_call(route: _G2Route, env: _G2Env, cell: _G2Cell) -> _G2Out:
+    count = _g2_count(env)
+    out = route.call(env, cell)
+    return dataclasses.replace(out, committed=_g2_count(env) - count)
+
+
+def _g2_run_policy_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -> None:
+    before = _g2_effects(route, env.root, env.data_root)
+    snapshot = _g2_snapshot(env)
+    out = _g2_call(route, env, cell)
+    detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
+
+    if route.custom_policy is not None:
+        route.custom_policy(route, row, env, cell, out)
+        assert _g2_effects(route, env.root, env.data_root) == before, detail
+        return
+    if route.ungated is not None:
+        # Not memory-gated (it reads token events, not rows): the same answer in
+        # every row, and it changes nothing.
+        assert out.shown == route.ungated, detail
+        assert _g2_effects(route, env.root, env.data_root) == before, detail
+        return
+    if row.endswith("owner-omitted") and route.owner_required:
+        # The strict model requires `owner_scope` here: omitting it is an input error
+        # with zero effects, never a silently defaulted owner.
+        assert out.code in ("E_INPUT", "E_PERMISSION") or out.status == "error", detail
+        assert _g2_effects(route, env.root, env.data_root) == before, detail
+        return
+    for suffix, expected in _G2_DENIAL_REASONS.items():
+        if row.endswith("owner-omitted") and route.owner_fixed:
+            break
+        if suffix == "owner-omitted" and route.owner_omitted_reason is not None:
+            expected = route.owner_omitted_reason
+        if row.endswith(suffix):
+            _g2_assert_denied(route, row, out, expected)
+            after = _g2_effects(route, env.root, env.data_root)
+            assert after == before, (
+                f"{detail}: a denied route changed state {_g2_diff(before, after)}"
+            )
+            return
+    if row.endswith("source-ungranted"):
+        if route.ungranted is not None:
+            assert out.code in route.ungranted.codes, detail
+            assert not out.shown and out.committed == 0, detail
+            assert _g2_effects(route, env.root, env.data_root) == before, detail
+        elif route.takes_allowlist or route.sourced:
+            _g2_assert_denied(route, row, out, "source_not_granted")
+            assert _g2_effects(route, env.root, env.data_root) == before, detail
+        else:
+            assert out.code in route.ok_codes or out.code == "E_INPUT", detail
+            assert out.reason not in POLICY_REASONS, detail
+        return
+    if "missing_no_marker" in row:
+        # Legacy mode keeps the HEAD behavior: never a policy denial.
+        assert out.reason not in POLICY_REASONS, detail
+        assert out.code in route.ok_codes or out.code in (None, "E_INPUT"), detail
+        if route.check_legacy is not None:
+            route.check_legacy(env, cell, out, snapshot)
+        return
+    # policy + exact grant: the route reached its own outcome, exactly.
+    assert out.code in route.ok_codes, detail
+    assert out.reason not in POLICY_REASONS, detail
+    if route.check_ok is not None:
+        route.check_ok(env, cell, out, snapshot)
+
+
+def _g2_run_overlay_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -> None:
+    """Access form `overlay` (producer 72-T05). A route with an `owner_scope` input is
+    sent the user-overlay owner: no overlay grant exists yet, so it refuses with
+    `owner_not_granted`. A route with no owner input is pointed at the overlay storage
+    root instead, which is never a project route (`overlay_storage_root`)."""
+    overlay = env.auth.user_overlay_owner_scope(data_root=env.data_root)
+    if route.ungated is not None:
+        return
+    if route.custom_policy is not None:
+        target = Path(overlay.id)
+        target.mkdir(parents=True, exist_ok=True)
+        env = dataclasses.replace(env, root=target)
+        before = _g2_effects(route, target, env.data_root)
+        out = _g2_call(route, env, cell)
+        route.custom_policy(route, row, env, cell, out)
+        assert _g2_effects(route, target, env.data_root) == before
+        return
+    if route.takes_owner:
+        before = _g2_effects(route, env.root, env.data_root)
+        out = _g2_call(route, env, dataclasses.replace(cell, owner=overlay))
+        reason = "owner_not_granted"
+        target = env.root
+    else:
+        target = Path(overlay.id)
+        target.mkdir(parents=True, exist_ok=True)
+        env = dataclasses.replace(env, root=target)
+        if route.transport in ("dashboard", "tui"):
+            # these readers address a project by id: the registration is fixture
+            # setup (their only effect), taken before the baseline
+            _g2_project_id(env)
+        if route.overlay_setup is not None:
+            route.overlay_setup(env)
+        before = _g2_effects(route, target, env.data_root)
+        out = _g2_call(route, env, cell)
+        reason = "overlay_storage_root"
+    detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
+    assert _g2_denied(route, out), detail
+    if route.coded:
+        assert out.reason == reason, detail
+    assert not out.shown and out.committed == 0, detail
+    assert _g2_effects(route, target, env.data_root) == before, detail
+
+
+def _g2_run_dim_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -> None:
+    dim, value = _g2_split(row)
+    expect: _G2Expect = route.supports[dim][value]
+    before = _g2_effects(route, env.root, env.data_root)
+    snapshot = _g2_snapshot(env)
+    out = _g2_call(route, env, cell)
+    detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
+    assert out.code in expect.codes, detail
+    if expect.status is not None:
+        assert out.status == expect.status, detail
+    assert expect.show <= out.shown, detail
+    if expect.exact is not None:
+        assert out.shown == expect.exact, detail
+    assert not (expect.hide & out.shown), detail
+    if expect.committed is not None:
+        assert out.committed == expect.committed, detail
+    after = _g2_effects(route, env.root, env.data_root)
+    if expect.same:
+        assert after == before, f"{detail}: effects changed {_g2_diff(before, after)}"
+    elif expect.memory_same:
+        assert after["db"] == before["db"], f"{detail}: memory.db changed"
+    for rel in expect.absent:
+        assert not (env.root / rel).exists(), f"{detail}: {rel} created"
+    if expect.check is not None:
+        expect.check(env, cell, out, snapshot)
+
+
+_G2_VOLATILE = re.compile(
+    r'("[a-z_]*(?:_ms|_at|_time|timestamp|duration|elapsed|ts)[a-z_]*"\s*:\s*)'
+    r"[-+0-9.eE]+|0x[0-9a-f]+"
+)
+
+
+def _g2_normal_body(value: Any) -> str:
+    """A route's whole response body with the volatile fields (durations, timestamps,
+    object addresses) neutralized, for the byte-identity comparison."""
+    text = json.dumps(value, sort_keys=True, default=repr)
+    return _G2_VOLATILE.sub(lambda m: f"{m.group(1)}0" if m.group(1) else "0x0", text)
+
+
+@dataclasses.dataclass(frozen=True)
+class _G2Exact:
+    """A non-idempotent route's whole outcome on a cell whose dimension it does not
+    vary along: the `_g2_diff` entries it changes (uuid path segments as `<id>`), its
+    `(code, reason, status, shown, committed)`, and its whole normalized body."""
+
+    effects: frozenset[str]
+    out: tuple[Any, ...]
+    body: str
+
+
+_G2_EXACT_UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+# Values minted per run (timestamps, ids, digests over them, session secrets),
+# replaced in this order after `_g2_normal_body` and the root/data-root paths.
+_G2_EXACT_VOLATILE = (
+    (
+        re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:[+-]\d\d:\d\d|Z)?"),
+        "<iso>",
+    ),
+    (_G2_EXACT_UUID, "<id>"),
+    (re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])"), "<sha>"),
+    (re.compile(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])"), "<hex>"),
+    (re.compile(r"(?<![\w.])1[0-9]{9}\.[0-9]+"), "<t>"),
+    (re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"), "<token>"),
+)
+
+
+def _g2_exact_body(env: _G2Env, body: Any) -> str:
+    text = (
+        _g2_normal_body(body)
+        .replace(str(env.root), "<root>")
+        .replace(str(env.data_root), "<data>")
+    )
+    for pattern, label in _G2_EXACT_VOLATILE:
+        text = pattern.sub(label, text)
+    return text
+
+
+def _g2_assert_writer_exact(
+    route: _G2Route,
+    env: _G2Env,
+    out: _G2Out,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    detail: Any,
+) -> None:
+    """spec-tests-3/security-8: a non-idempotent route's unsupported cell has exactly
+    its declared effects (nothing beyond them, project or data root) and exactly its
+    declared output, so a write plus a stray file or a foreign row's output fails."""
+    exact = _G2_WRITER_EXACT.get(route.ident)
+    assert exact is not None, f"{route.ident}: no exact unsupported-cell oracle"
+    effects = frozenset(_G2_EXACT_UUID.sub("<id>", d) for d in _g2_diff(before, after))
+    assert effects == exact.effects, (*detail, sorted(effects ^ exact.effects))
+    shape = (out.code, out.reason, out.status, tuple(sorted(out.shown)), out.committed)
+    assert shape == exact.out, (*detail, shape, exact.out)
+    assert _g2_exact_body(env, out.body) == exact.body, detail
+
+
+_G2_WRITER_EXACT: dict[str, _G2Exact] = {
+    "inproc.write-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, "ok", (), 1),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
+            'urce": "source-a"}]}, "operation": "write"}, "raw": {"archived_a'
+            't": null, "artifact_version": 1, "changed": {"<id>": {"kind": "w'
+            'rite", "revision": 1}}, "content": {"text": "needle w"}, "conten'
+            't_hash": null, "corroboration_count": 0, "created_at": 0, "expir'
+            'ed": false, "family": "memory", "id": "<id>", "origin_id": null,'
+            ' "origin_kind": null, "owner_scope": {"id": "alice", "kind": "us'
+            'er"}, "promoted_at": null, "readback": {"<id>": {"archived": fal'
+            'se, "present": true, "revision": 1, "source": "source-a", "subje'
+            'ct": "domain_knowledge", "trust_tier": "EXTERNAL_WRITE"}}, "sign'
+            'ature": null, "source": "source-a", "stale": false, "subject": "'
+            'domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNAL_W'
+            'RITE"}, "status": "ok", "summary": "Wrote memory artifact to sub'
+            'ject \'domain_knowledge\'.", "tool": "memory"}'
+        ),
+    ),
+    "inproc.promote-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, "ok", (), 1),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
+            'urce": "source-a"}, {"id": "<id>", "operation": "promote", "revi'
+            'sion": 2, "source": "source-a"}]}, "operation": "promote"}, "raw'
+            '": {"artifact": {"archived_at": null, "artifact_version": 2, "co'
+            'ntent": {"text": "needle p"}, "content_hash": null, "corroborati'
+            'on_count": 0, "created_at": 0, "expired": false, "family": "memo'
+            'ry", "id": "<id>", "origin_id": null, "origin_kind": null, "owne'
+            'r_scope": {"id": "alice", "kind": "user"}, "promoted_at": 0, "si'
+            'gnature": "<sha>", "source": "source-a", "stale": false, "subjec'
+            't": "domain_knowledge", "symbol_ref": null, "trust_tier": "STATE'
+            'D"}, "changed": {"<id>": {"kind": "write, promote", "revision": '
+            '2}}, "corroboration_count": 0, "denial_reason": null, "new_tier"'
+            ': "STATED", "promoted": true, "readback": {"<id>": {"archived": '
+            'false, "present": true, "revision": 2, "source": "source-a", "su'
+            'bject": "domain_knowledge", "trust_tier": "STATED"}}}, "status":'
+            ' "ok", "summary": "Promoted subject \'domain_knowledge\' to STATED'
+            '.", "tool": "memory"}'
+        ),
+    ),
+    "inproc.maintain-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "root:.rush/locks",
+            }
+        ),
+        out=(None, None, "ok", (), 0),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
+            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
+            'y"}'
+        ),
+    ),
+    "cli.write-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, "ok", (), 1),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
+            'urce": "source-a"}]}, "operation": "write"}, "raw": {"archived_a'
+            't": null, "artifact_version": 1, "changed": {"<id>": {"kind": "w'
+            'rite", "revision": 1}}, "content": {"text": "needle w"}, "conten'
+            't_hash": null, "corroboration_count": 0, "created_at": 0, "expir'
+            'ed": false, "family": "memory", "id": "<id>", "origin_id": null,'
+            ' "origin_kind": null, "owner_scope": {"id": "alice", "kind": "us'
+            'er"}, "promoted_at": null, "readback": {"<id>": {"archived": fal'
+            'se, "present": true, "revision": 1, "source": "source-a", "subje'
+            'ct": "domain_knowledge", "trust_tier": "EXTERNAL_WRITE"}}, "sign'
+            'ature": null, "source": "source-a", "stale": false, "subject": "'
+            'domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNAL_W'
+            'RITE"}, "status": "ok", "summary": "Wrote memory artifact to sub'
+            'ject \'domain_knowledge\'.", "tool": "memory"}'
+        ),
+    ),
+    "cli.promote-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, "ok", (), 1),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
+            'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
+            'urce": "source-a"}, {"id": "<id>", "operation": "promote", "revi'
+            'sion": 2, "source": "source-a"}]}, "operation": "promote"}, "raw'
+            '": {"artifact": {"archived_at": null, "artifact_version": 2, "co'
+            'ntent": {"text": "needle p"}, "content_hash": null, "corroborati'
+            'on_count": 0, "created_at": 0, "expired": false, "family": "memo'
+            'ry", "id": "<id>", "origin_id": null, "origin_kind": null, "owne'
+            'r_scope": {"id": "alice", "kind": "user"}, "promoted_at": 0, "si'
+            'gnature": "<sha>", "source": "source-a", "stale": false, "subjec'
+            't": "domain_knowledge", "symbol_ref": null, "trust_tier": "STATE'
+            'D"}, "changed": {"<id>": {"kind": "write, promote", "revision": '
+            '2}}, "corroboration_count": 0, "denial_reason": null, "new_tier"'
+            ': "STATED", "promoted": true, "readback": {"<id>": {"archived": '
+            'false, "present": true, "revision": 2, "source": "source-a", "su'
+            'bject": "domain_knowledge", "trust_tier": "STATED"}}}, "status":'
+            ' "ok", "summary": "Promoted subject \'domain_knowledge\' to STATED'
+            '.", "tool": "memory"}'
+        ),
+    ),
+    "cli.maintain-apply-apply": _G2Exact(
+        effects=frozenset(
+            {
+                "root:.rush/locks",
+            }
+        ),
+        out=(None, None, "ok", (), 0),
+        body=(
+            '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
+            'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
+            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
+            'y"}'
+        ),
+    ),
+    "internal.session_memory-record_turn": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/session_memory.json",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="null",
+    ),
+    "internal.session_memory-record_fix_attribution": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='experience', subject='episodi"
+            "c', trust_tier='EXTERNAL_WRITE', content={'commit_sha': 'abc1234"
+            "', 'failure_id': 'f1'}, source='provenance_ai:attribution_link',"
+            " created_at=<t>, symbol_ref='f1', content_hash=None, corroborati"
+            "on_count=0, promoted_at=None, stale=False, signature=None, origi"
+            "n_kind='attribution_link', origin_id='abc1234:f1', expired=False"
+            ", artifact_version=1, owner_scope=OwnerScope(kind='project', id="
+            "'<root>'), archived_at=None, freshness=None)\""
+        ),
+    ),
+    "internal.flight_recorder-record_event": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/sessions",
+                "root:.rush/sessions/flights",
+                "root:.rush/sessions/flights/s1.jsonl",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="null",
+    ),
+    "internal.skills_generator-generate_skill_markdown": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="null",
+    ),
+    "internal.cache_gate-write_cache_fill": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='memory', subject='domain_know"
+            "ledge', trust_tier='DERIVED', content={'source_content_hash': '<"
+            "sha>', 'text': 'p', 'cache_key': 'module.py:Known', 'cache_ident"
+            "ity': {'namespace': '<root>', 'audience': 'context_pack', 'engin"
+            "e_revision': 'context-pack-v1'}}, source='context_pack', created"
+            "_at=<t>, symbol_ref='module.py::Known', content_hash='<sha>', co"
+            "rroboration_count=0, promoted_at=None, stale=False, signature=No"
+            "ne, origin_kind=None, origin_id=None, expired=False, artifact_ve"
+            "rsion=1, owner_scope=OwnerScope(kind='project', id='<root>'), ar"
+            'chived_at=None, freshness=None)"'
+        ),
+    ),
+    "internal.checkpoint_journal-save_checkpoint": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/sessions",
+                "root:.rush/sessions/cp1.json",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="\"PosixPath('<root>/.rush/sessions/cp1.json')\"",
+    ),
+    "internal.experience-write_observation": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='experience', subject='episodi"
+            "c', trust_tier='EXTERNAL_WRITE', content={'schema_version': 1, '"
+            "kind': 'observation', 'evidence_kind': 'source_graph', 'operatio"
+            "n_id': 'op-1', 'k': 'v'}, source='invocation:op-1', created_at=<"
+            "t>, symbol_ref=None, content_hash='<sha>', corroboration_count=0"
+            ", promoted_at=None, stale=False, signature=None, origin_kind=Non"
+            "e, origin_id=None, expired=False, artifact_version=1, owner_scop"
+            "e=OwnerScope(kind='project', id='<root>'), archived_at=None, fre"
+            'shness=None)"'
+        ),
+    ),
+    "internal.experience-record_behavior_success": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='experience', subject='episodi"
+            "c', trust_tier='EXTERNAL_WRITE', content={'schema_version': 1, '"
+            "kind': 'behavior_success', 'behavior_id': 'beh1', 'conditions': "
+            "{}, 'outcome': 'pass'}, source='invocation:op-1', created_at=<t>"
+            ", symbol_ref=None, content_hash='<sha>', corroboration_count=0, "
+            "promoted_at=None, stale=False, signature=None, origin_kind=None,"
+            " origin_id=None, expired=False, artifact_version=1, owner_scope="
+            "OwnerScope(kind='project', id='<root>'), archived_at=None, fresh"
+            'ness=None)"'
+        ),
+    ),
+    "internal.experience-record_cause_experiment": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            '{"artifact_id": "<id>", "artifact_version": 1, "cause_state": "candidate"}'
+        ),
+    ),
+    "internal.experience-record_attempt": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='experience', subject='failure"
+            "', trust_tier='EXTERNAL_WRITE', content={'schema_version': 1, 'k"
+            "ind': 'repair_episode', 'symptom': 'symptomx', 'hypothesis': 'h'"
+            ", 'patch_hash': None, 'conditions': {}, 'receipt_ref': None, 'be"
+            "havior_ids': [], 'affected_symbols': [], 'outcome': 'untested', "
+            "'commit_message': None}, source='repair_attempt:symptomx', creat"
+            "ed_at=<t>, symbol_ref=None, content_hash='<sha>', corroboration_"
+            "count=0, promoted_at=None, stale=False, signature=None, origin_k"
+            "ind=None, origin_id=None, expired=False, artifact_version=1, own"
+            "er_scope=OwnerScope(kind='project', id='<root>'), archived_at=No"
+            'ne, freshness=None)"'
+        ),
+    ),
+    "internal.migration-migrate_session_memory": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/session_memory.json",
+                "root:.rush/session_memory.json.migrated",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_preference_store": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/preferences.json",
+                "root:.rush/preferences.json.migrated",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_invariant_graph": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/memory/invariants.json",
+                "root:.rush/memory/invariants.json.migrated",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_checkpoint_journal": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/sessions/good_ckpt.json",
+                "root:.rush/sessions/good_ckpt.json.migrated",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_failure_ledger": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_patch_memory": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_flight_recorder": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/sessions/flights/session-abc.jsonl",
+                "root:.rush/sessions/flights/session-abc.jsonl.migrated",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_hook_signatures": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/hook_signatures.json",
+                "root:.rush/hook_signatures.json.migrated",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.migration-migrate_merkle_invalidator": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body="1",
+    ),
+    "internal.continuity_tool-save": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/sessions",
+                "root:.rush/sessions/cp-save.json",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            '{"artifacts": ["<root>/.rush/sessions/cp-save.json"], "duration_'
+            'ms": 0, "engine": "checkpoint-journal", "engine_version": null, '
+            '"extensions": {"artifacts": ["<root>/.rush/sessions/cp-save.json'
+            '"], "metadata": {"execution": {"granted_permissions": {"artifact'
+            '_write": false, "browser": false, "build": false, "cache_write":'
+            ' true, "download": false, "network": false, "slow": false}, "mod'
+            'e": "executed", "producer": "checkpoint-journal", "requested_per'
+            'missions": {"artifact_write": false, "browser": false, "build": '
+            'false, "cache_write": true, "download": false, "network": false,'
+            ' "slow": false}}, "handoff": {"current_goal": null, "dependencie'
+            's": {}, "diff": null, "failure_receipt": null, "freshness": "cur'
+            'rent", "historic_instruction": {"present": false, "trust_tier": '
+            '"EXTERNAL_WRITE"}, "open_work": [], "redaction_count": 0, "sessi'
+            'on_memory": {"authority": "historical_evidence", "count": 0, "re'
+            'cords": [], "state": "unavailable"}, "target_provider": null, "v'
+            'ersion": 1}, "memory": {"used": [], "version": 1, "written": [{"'
+            'id": "<id>", "operation": "checkpoint", "revision": 1, "source":'
+            ' "checkpoint_journal:save_checkpoint"}]}, "operation": "save"}},'
+            ' "findings": [], "metadata": {"execution": {"granted_permissions'
+            '": {"artifact_write": false, "browser": false, "build": false, "'
+            'cache_write": true, "download": false, "network": false, "slow":'
+            ' false}, "mode": "executed", "producer": "checkpoint-journal", "'
+            'requested_permissions": {"artifact_write": false, "browser": fal'
+            'se, "build": false, "cache_write": true, "download": false, "net'
+            'work": false, "slow": false}}, "handoff": {"current_goal": null,'
+            ' "dependencies": {}, "diff": null, "failure_receipt": null, "fre'
+            'shness": "current", "historic_instruction": {"present": false, "'
+            'trust_tier": "EXTERNAL_WRITE"}, "open_work": [], "redaction_coun'
+            't": 0, "session_memory": {"authority": "historical_evidence", "c'
+            'ount": 0, "records": [], "state": "unavailable"}, "target_provid'
+            'er": null, "version": 1}, "memory": {"used": [], "version": 1, "'
+            'written": [{"id": "<id>", "operation": "checkpoint", "revision":'
+            ' 1, "source": "checkpoint_journal:save_checkpoint"}]}, "operatio'
+            'n": "save"}, "raw": {"checkpoint_id": "cp-save", "created_at": 0'
+            ', "files": [], "metadata": {"cwd": "<root>", "handoff": {"curren'
+            't_goal": null, "dependencies": {}, "diff": null, "failure_receip'
+            't": null, "freshness": "current", "historic_instruction": {"pres'
+            'ent": false, "trust_tier": "EXTERNAL_WRITE"}, "open_work": [], "'
+            'redaction_count": 0, "session_memory": {"authority": "historical'
+            '_evidence", "count": 0, "records": [], "state": "unavailable"}, '
+            '"target_provider": null, "version": 1}}, "name": "cp-save", "sch'
+            'ema_version": "1.0.0", "status": "ok"}, "schema_version": "1.0.0'
+            '", "status": "ok", "summary": "Saved session checkpoint \'cp-save'
+            '\'.", "tool": "continuity"}'
+        ),
+    ),
+    "internal.migration-write_if_new": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, ("mk-wif",), 1),
+        body=(
+            "\"MemoryArtifact(id='<id>', family='memory', subject='domain_know"
+            "ledge', trust_tier='EXTERNAL_WRITE', content={'k': 'mk-wif'}, so"
+            "urce='migration:preference_store', created_at=<t>, symbol_ref=No"
+            "ne, content_hash=None, corroboration_count=0, promoted_at=None, "
+            "stale=False, signature=None, origin_kind='preference', origin_id"
+            "='g2-wif', expired=False, artifact_version=1, owner_scope=OwnerS"
+            "cope(kind='project', id='<root>'), archived_at=None, freshness=N"
+            'one)"'
+        ),
+    ),
+    "internal.preferences-set": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body='"set"',
+    ),
+    "internal.preferences-delete": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body="true",
+    ),
+    "cli.cli_other_readers-context_persona_set": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+                "root:.rush/preferences.json",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body='"Persona style set to: terse\\n"',
+    ),
+    "tui.tui-_memory_mutation_apply": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=('"a1 promotion denied: insufficient_corroboration (candidate <id> v1)"'),
+    ),
+    "dashboard.dashboard_mutations-memory_promote": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, ("mk-pro",), 1),
+        body=(
+            '[200, {"duration_ms": 0, "engine": null, "engine_version": null,'
+            ' "findings": [], "metadata": {"memory": {"used": [], "version": '
+            '1, "written": [{"id": "<id>", "operation": "write", "revision": '
+            '1, "source": "source-a"}]}, "operation": "promote"}, "raw": {"ar'
+            'tifact": {"archived_at": null, "artifact_version": 1, "content":'
+            ' {"text": "needle mk-pro"}, "content_hash": null, "corroboration'
+            '_count": 0, "created_at": 0, "expired": false, "family": "memory'
+            '", "id": "<id>", "origin_id": null, "origin_kind": null, "owner_'
+            'scope": {"id": "alice", "kind": "user"}, "promoted_at": null, "s'
+            'ignature": null, "source": "source-a", "stale": false, "subject"'
+            ': "domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNA'
+            'L_WRITE"}, "changed": {"<id>": {"kind": "write", "revision": 1}}'
+            ', "corroboration_count": 0, "denial_reason": "insufficient_corro'
+            'boration", "new_tier": "EXTERNAL_WRITE", "promoted": false, "rea'
+            'dback": {"<id>": {"archived": false, "present": true, "revision"'
+            ': 1, "source": "source-a", "subject": "domain_knowledge", "trust'
+            '_tier": "EXTERNAL_WRITE"}}}, "status": "ok", "summary": "Promoti'
+            "on denied for subject 'domain_knowledge': insufficient_corrobora"
+            'tion.", "tool": "memory"}]'
+        ),
+    ),
+    "dashboard.scan_handoff-build_handoff": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/handoffs",
+                "root:.rush/handoffs/<id>.json",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 1),
+        body=(
+            "\"ScanHandoff(handoff_id='<id>', run_id='run-1', project_id='<id>"
+            "', root='<root>', agent_id='codex-cli', state='prepared', findin"
+            "g_ids=('finding-1',), packet={'items': [{'finding_id': 'finding-"
+            "1', 'path': 'app.py', 'line': 1, 'column': 0, 'rule': 'seeded-ru"
+            "le', 'severity': 'warn', 'message': 'issue', 'provenance': 'revi"
+            "ew/no-engine'}], 'remainder_ids': [], 'tokens': 47, 'bytes': 166"
+            ", 'encoding': 'cl100k_base', 'max_tokens': 2048, 'max_bytes': 81"
+            "92}, artifact_id='scan-handoff-<id>', artifact_version=1, source"
+            "_signature='<sha>', source_signature_format=2, memory_session_id"
+            "='<hex>', session_capability='<token>', delivery_nonce='<token>'"
+            ", granted_actions=(), acceptance_checks=(), agent_reported_compl"
+            "ete_artifact_ids=(), created_at='<iso>', updated_at='<iso>', ope"
+            "ration_id='', attempt_id='', session_capability_digest='<sha>', "
+            "owner_instance_id='')\""
+        ),
+    ),
+    "dashboard.scan_handoff-dispatch_handoff": _G2Exact(
+        effects=frozenset(
+            {
+                "counts",
+                "db",
+                "root:.rush/handoffs/<id>.json",
+                "root:.rush/memory.db",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body=(
+            "\"ScanHandoff(handoff_id='<id>', run_id='run-1', project_id='<id>"
+            "', root='<root>', agent_id='codex-cli', state='delivered', findi"
+            "ng_ids=('finding-1',), packet={'bytes': 166, 'encoding': 'cl100k"
+            "_base', 'items': [{'column': 0, 'finding_id': 'finding-1', 'line"
+            "': 1, 'message': 'issue', 'path': 'app.py', 'provenance': 'revie"
+            "w/no-engine', 'rule': 'seeded-rule', 'severity': 'warn'}], 'max_"
+            "bytes': 8192, 'max_tokens': 2048, 'remainder_ids': [], 'tokens':"
+            " 47}, artifact_id='scan-handoff-<id>', artifact_version=1, sourc"
+            "e_signature='<sha>', source_signature_format=2, memory_session_i"
+            "d='<hex>', session_capability='', delivery_nonce='<token>', gran"
+            "ted_actions=(), acceptance_checks=(), agent_reported_complete_ar"
+            "tifact_ids=(), created_at='<iso>', updated_at='<iso>', operation"
+            "_id='g2-op', attempt_id='', session_capability_digest='<sha>', o"
+            "wner_instance_id='')\""
+        ),
+    ),
+    "dashboard.scan_handoff-recover_prepared_handoff": _G2Exact(
+        effects=frozenset(
+            {
+                "root:.rush/handoffs/<id>.json",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body=(
+            "\"ScanHandoff(handoff_id='<id>', run_id='run-1', project_id='<id>"
+            "', root='<root>', agent_id='codex-cli', state='delivered', findi"
+            "ng_ids=('finding-1',), packet={'bytes': 166, 'encoding': 'cl100k"
+            "_base', 'items': [{'column': 0, 'finding_id': 'finding-1', 'line"
+            "': 1, 'message': 'issue', 'path': 'app.py', 'provenance': 'revie"
+            "w/no-engine', 'rule': 'seeded-rule', 'severity': 'warn'}], 'max_"
+            "bytes': 8192, 'max_tokens': 2048, 'remainder_ids': [], 'tokens':"
+            " 47}, artifact_id='scan-handoff-<id>', artifact_version=1, sourc"
+            "e_signature='<sha>', source_signature_format=2, memory_session_i"
+            "d='<hex>', session_capability='', delivery_nonce='<token>', gran"
+            "ted_actions=(), acceptance_checks=(), agent_reported_complete_ar"
+            "tifact_ids=(), created_at='<iso>', updated_at='<iso>', operation"
+            "_id='g2-op', attempt_id='', session_capability_digest='<sha>', o"
+            "wner_instance_id='')\""
+        ),
+    ),
+    "dashboard.dashboard_admission_reconcile-reconcile_admissions": _G2Exact(
+        effects=frozenset(
+            {
+                "root:.rush/handoffs/<id>.json",
+            }
+        ),
+        out=(None, None, None, (), 0),
+        body='[1, "delivered"]',
+    ),
+}
+
+
+def _g2_run_unsupported_row(
+    route: _G2Route, row: str, env: _G2Env, cell: _G2Cell
+) -> None:
+    """A dimension this route does not vary along: a strict-model `E_INPUT` where the
+    transport has the field, else the route's baseline outcome is byte-identical, and
+    the route's own success oracle holds (a writer that committed nothing fails it);
+    a non-idempotent route's output and effects are exactly its `_G2_WRITER_EXACT`."""
+    dim, value = _g2_split(row)
+    before = _g2_effects(route, env.root, env.data_root)
+    snapshot = _g2_snapshot(env)
+    if route.carry is not None and (
+        route.carry_dims is None or dim in route.carry_dims
+    ):
+        out = route.carry(env, cell, dim, value)
+        detail = (route.ident, row, out.code, out.reason, out.status)
+        assert out.code == "E_INPUT" or out.status == "error", detail
+        assert not out.shown, detail
+        assert _g2_effects(route, env.root, env.data_root) == before, detail
+        return
+    first = _g2_call(route, env, cell)
+    after = _g2_effects(route, env.root, env.data_root)
+    detail = (route.ident, row, first.code, first.reason, first.status)
+    assert first.code in route.ok_codes or first.code in (None, "E_INPUT"), detail
+    assert first.reason not in POLICY_REASONS, detail
+    if route.check_ok is not None and first.code in route.ok_codes:
+        # the success oracle runs on every route, idempotent or not, under the
+        # baseline cell (the dimension changes nothing this route does)
+        route.check_ok(env, _g2_parse_row(G2_POLICY_ROWS[0]), first, snapshot)
+    if not route.idempotent:
+        _g2_assert_writer_exact(route, env, first, before, after, detail)
+    else:
+        mid = _g2_effects(route, env.root, env.data_root)
+        second = _g2_call(route, env, cell)
+        assert (second.code, second.shown, second.committed) == (
+            first.code,
+            first.shown,
+            first.committed,
+        ), detail
+        assert _g2_normal_body(second.body) == _g2_normal_body(first.body), detail
+        assert _g2_effects(route, env.root, env.data_root) == mid, detail
+        assert mid == before, detail
+
+
+@pytest.mark.parametrize(("route", "row"), _g2_cells())
+def test_t01_fix_policy_mode_matrix(
+    route: _G2Route, row: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if route.rows_only is not None:
+        env = _G2Env(
+            root=tmp_path,
+            data_root=default_data_root(),
+            store=None,
+            auth=None,
+            tmp_path=tmp_path,
+            monkeypatch=monkeypatch,
+        )
+        out = route.call(env, _G2Cell(row=row))
+        detail = (route.ident, row, out.code, out.reason, out.status)
+        assert out.code == "E_INPUT" or out.status == "error", detail
+        return
+    env = _g2_env(tmp_path, monkeypatch, route, row)
+    cell = _g2_parse_row(row)
+    if row in G2_POLICY_ROWS:
+        _g2_run_policy_row(route, row, env, cell)
+    elif row == G2_OVERLAY_ROW:
+        _g2_run_overlay_row(route, row, env, cell)
+    elif "-producer-" in row:
+        # rejected/pending lifecycle rows do not exist yet: the strict model refuses a
+        # request that names one.
+        dim, value = _g2_split(row)
+        if route.carry is not None:
+            out = route.carry(env, cell, dim, value)
+            assert out.code == "E_INPUT" or out.status == "error", (route.ident, row)
+        else:
+            # a transport with no field for the dimension (the CLI): the baseline
+            # outcome is byte-identical, as for any dimension it does not vary along
+            _g2_run_unsupported_row(route, row, env, cell)
+    else:
+        dim, value = _g2_split(row)
+        if value in route.supports.get(dim, {}):
+            _g2_run_dim_row(route, row, env, cell)
+        else:
+            _g2_run_unsupported_row(route, row, env, cell)
+
+
+def test_t01_fix_matrix_success_oracles_reject_injected_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-3 (G15 class 23): the matrix's success oracles fail a write apply
+    that committed nothing and an ask that returned a row of a source the grant never
+    approved; the genuine routes pass the same cells."""
+    routes = {r.ident: r for r in _G2_ROUTES}
+    write, ask = routes["inproc.write-apply-apply"], routes["inproc.ask"]
+    cells = {
+        "inproc.write-apply-apply": "access-policy-policy_state-ok-grant_ops-exact",
+        "inproc.ask": "access-policy-policy_state-ok-grant_ops-exact",
+    }
+    for index, route in enumerate((write, ask)):
+        real = tmp_path / f"real-{index}"
+        real.mkdir()
+        test_t01_fix_policy_mode_matrix(route, cells[route.ident], real, monkeypatch)
+
+    noop_write = dataclasses.replace(
+        write,
+        call=lambda env, cell: _G2Out(
+            "OK", None, frozenset(), 0, {"raw": {"id": "ghost", "apply": True}}, "ok"
+        ),
+    )
+    foreign_ask = dataclasses.replace(
+        ask,
+        call=lambda env, cell: _G2Out(
+            "OK", None, frozenset({"mk-a1", "mk-a2", "mk-x1"}), 0, {"raw": {}}, "ok"
+        ),
+    )
+    for index, fake in enumerate((noop_write, foreign_ask)):
+        injected = tmp_path / f"injected-{index}"
+        injected.mkdir()
+        with pytest.raises(AssertionError):
+            test_t01_fix_policy_mode_matrix(
+                fake, cells[fake.ident], injected, monkeypatch
+            )
+
+
+# --- G4: shared trust-boundary inputs -------------------------------------------------
+
+
+class _RaisingPath:
+    """A path-like whose `__fspath__` raises (a raising `Path(path).resolve()` input)."""
+
+    def __init__(self, exc: BaseException) -> None:
+        self._exc = exc
+
+    def __fspath__(self) -> str:
+        raise self._exc
+
+
+def _bad_paths(tmp_path: Path) -> dict[str, Any]:
+    loop = tmp_path / "loop"
+    if os.name != "nt":
+        loop.symlink_to(loop)
+    return {
+        "int": 3,
+        "nul": str(tmp_path) + "/a\x00b",
+        "raises_oserror": _RaisingPath(OSError("boom")),
+        "raises_runtime": _RaisingPath(RuntimeError("boom")),
+        "raises_value": _RaisingPath(ValueError("boom")),
+        "symlink_loop": loop,
+    }
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("int", id="int"),
+        pytest.param("nul", id="nul"),
+        pytest.param("raises_oserror", id="raises_oserror"),
+        pytest.param("raises_runtime", id="raises_runtime"),
+        pytest.param("raises_value", id="raises_value"),
+        pytest.param("symlink_loop", id="symlink_loop", marks=pytest.mark.posix_only),
+    ],
+)
+def test_t01_invalid_project_path_returns_e_input(
+    kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.tools.memory import VALID_OPERATIONS
+
+    bad = _bad_paths(tmp_path)[kind]
+    constructed: list[str] = []
+
+    def refuse(name: str) -> Any:
+        def inner(*args: Any, **kwargs: Any) -> Any:
+            constructed.append(name)
+            raise AssertionError(f"{name} reached with an invalid path")
+
+        return inner
+
+    monkeypatch.setattr(TypedArtifactStore, "__init__", refuse("TypedArtifactStore"))
+    monkeypatch.setattr(
+        TypedArtifactStore,
+        "open_readonly_view",
+        staticmethod(refuse("open_readonly_view")),
+    )
+    before = _tree(tmp_path)
+    tool = MemoryTool()
+    for operation in sorted(VALID_OPERATIONS):
+        result = tool.run(bad, operation=operation)  # type: ignore[arg-type]
+        raw = _rd(result)
+        assert raw.get("code") == "E_INPUT", (operation, raw)
+        assert raw.get("data") == {
+            "field": "path",
+            "message": "invalid project path",
+        }, operation
+    assert constructed == []
+    assert _tree(tmp_path) == before
+
+
+def test_t01_missing_directory_is_not_an_invalid_path(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist"
+    result = MemoryTool().run(
+        missing,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["s"],
+        request={"view": "compact"},
+    )
+    assert _code_of(result) == "OK"
+    assert _items(result) == []
+    assert not missing.exists()
+
+
+_BAD_OWNER_SCOPES = [
+    {"kind": ["user"], "id": "a"},
+    {"kind": "robot", "id": "x"},
+    {"kind": "user"},
+    {"id": "x"},
+    {"kind": True, "id": "x"},
+    {"kind": "user", "id": True},
+    {"kind": "user", "id": ""},
+    {"kind": {"k": "v"}, "id": "a"},
+    {"kind": "user", "id": ["a"]},
+    "user:alice",
+    7,
+]
+
+
+@pytest.mark.parametrize("index", range(len(_BAD_OWNER_SCOPES)))
+def test_t01_owner_scope_invalid_shape_returns_e_input(
+    index: int, tmp_path: Path
+) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    bad = _BAD_OWNER_SCOPES[index]
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    before = _effects(root, data_root)
+    tool = MemoryTool()
+    for operation, extra in (
+        (
+            "ask",
+            {"subject": SUBJECT, "query": "needle", "request": {"view": "compact"}},
+        ),
+        ("list", {"subject": SUBJECT, "query": "", "request": {"view": "compact"}}),
+        (
+            "write",
+            {
+                "subject": SUBJECT,
+                "content": {"t": "x"},
+                "source": "source-a",
+                "request": {"apply": True},
+                "permissions": _g2_perm(),
+            },
+        ),
+    ):
+        result = tool.run(
+            root,
+            operation=cast(MemoryOperation, operation),
+            owner_scope=bad,  # type: ignore[arg-type]
+            session_allowlist=["source-a"],
+            **extra,
+        )
+        assert _code_of(result) == "E_INPUT" or result["status"] == "error", (
+            operation,
+            bad,
+        )
+        assert "mk-a1" not in _dump(result.get("raw"))
+    assert _effects(root, data_root) == before
+    outcome = validate_and_normalize(
+        "rush_memory",
+        {
+            "path": str(root),
+            "operation": "ask",
+            "subject": SUBJECT,
+            "query": "needle",
+            "session_allowlist": ["source-a"],
+            "owner_scope": bad,
+        },
+    )
+    assert outcome.rejected
+    assert _nn(outcome.error)["data"]["details"][0]["loc"][0] == "owner_scope"
+    with pytest.raises(ValueError):
+        OwnerScope.from_value(bad)  # type: ignore[arg-type]
+
+
+def test_t01_owner_scope_unhashable_kind_is_a_value_error() -> None:
+    with pytest.raises(ValueError):
+        OwnerScope(["user"], "a")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        OwnerScope({"k": 1}, "a")  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        OwnerScope(True, "a")  # type: ignore[arg-type]
+
+
+def test_t01_restricted_bridge_readonly(tmp_path: Path) -> None:
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+    from rush.memory.handoff import prepare_handoff
+
+    denial = {
+        "schema_version": 1,
+        "operation": "receive",
+        "code": "E_PERMISSION",
+        "data": {"message": "Unknown or revoked handoff session."},
+    }
+
+    # No store at all: the same constant denial and nothing created.
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    handler = build_memory_bridge_handler(
+        root=bare, session_id="s" * 32, capability="cap"
+    )
+    result = handler("receive", {})
+    assert result == denial
+    for operation in ("expand", "related", "resume"):
+        out = handler(operation, {"id": "a1", "version": 1})
+        assert out["code"] == "E_PERMISSION"
+        assert out["data"] == denial["data"]
+    assert list(bare.iterdir()) == []
+
+    # A store with a real session: wrong capability, unknown id and revoked session are
+    # byte-identical to the missing-store denial; nothing is created, no key, no sidecar.
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    session, capability, _delta = prepare_handoff(
+        store,
+        root=root,
+        audience="codex_cli",
+        granted_ids=["a1"],
+        session_allowlist=["source-a"],
+    )
+    revoked_session, revoked_cap, _d2 = prepare_handoff(
+        store,
+        root=root,
+        audience="codex_cli",
+        granted_ids=["a1"],
+        session_allowlist=["source-a"],
+    )
+    store.revoke_handoff_session(revoked_session.session_id)
+    snapshot = _digest_dir(root)
+    key_rows = _paging_key_rows(store.db_path)
+    for sid, cap in (
+        (session.session_id, "wrong-capability"),
+        ("0" * 32, capability),
+        (revoked_session.session_id, revoked_cap),
+    ):
+        guarded = build_memory_bridge_handler(root=root, session_id=sid, capability=cap)
+        assert guarded("receive", {}) == denial
+        assert guarded("expand", {"id": "a1", "version": 1})["data"] == denial["data"]
+    assert _digest_dir(root) == snapshot
+    assert _paging_key_rows(store.db_path) == key_rows
+    _no_sidecars(store.db_path)
+
+    # The valid session reads without writing anything: expand/related/resume/receive.
+    good = build_memory_bridge_handler(
+        root=root, session_id=session.session_id, capability=capability
+    )
+    assert good("expand", {"id": "a1", "version": 1})["code"] == "OK"
+    assert good("receive", {})["code"] == "OK"
+    assert good("related", {"id": "a1", "version": 1})["code"] in {
+        "OK",
+        "E_NOT_VISIBLE",
+    }
+    assert good("resume", {"task": "t", "conditions": {}})["code"] == "OK"
+    assert _digest_dir(root) == snapshot
+    _no_sidecars(store.db_path)
+
+    # Expiry is revealed only after the capability matches.
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_handoff_sessions SET expires_at = ? WHERE session_id = ?",
+            (time.time() - 5, session.session_id),
+        )
+        conn.commit()
+    expired = build_memory_bridge_handler(
+        root=root, session_id=session.session_id, capability=capability
+    )("receive", {})
+    assert expired["code"] == "E_PERMISSION" and "expired" in _dump(expired).lower()
+    wrong = build_memory_bridge_handler(
+        root=root, session_id=session.session_id, capability="nope"
+    )("receive", {})
+    assert wrong == denial
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "a*b",
+        "*",
+        "intent:*",
+        "x\x00",
+        "a\ud800",
+        "a\u200bb",
+        "a\u202eb",
+        1,
+        True,
+        "",
+        " x",
+    ],
+)
+def test_t01_memory_source_fields_reject_invalid_literals(
+    bad: Any, tmp_path: Path
+) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    before = _effects(root, data_root)
+
+    for operation, fields, field in (
+        (
+            "ask",
+            {"subject": SUBJECT, "query": "q", "session_allowlist": [bad]},
+            "session_allowlist",
+        ),
+        (
+            "recall",
+            {"subject": SUBJECT, "query": "q", "session_allowlist": [bad]},
+            "session_allowlist",
+        ),
+        (
+            "list",
+            {"subject": SUBJECT, "query": "q", "session_allowlist": [bad]},
+            "session_allowlist",
+        ),
+        ("write", {"subject": SUBJECT, "content": {"k": "v"}, "source": bad}, "source"),
+        (
+            "promote",
+            {
+                "subject": SUBJECT,
+                "content": {"k": "v"},
+                "source": bad,
+                "user_stated": True,
+            },
+            "source",
+        ),
+        (
+            "expand",
+            {"request": {"id": "a1", "version": 1}, "session_allowlist": [bad]},
+            "session_allowlist",
+        ),
+    ):
+        outcome = validate_and_normalize(
+            "rush_memory", {"path": str(root), "operation": operation, **fields}
+        )
+        assert outcome.rejected, (operation, bad)
+        assert _nn(outcome.error)["data"]["details"][0]["loc"][0] == field, (
+            operation,
+            bad,
+        )
+
+    # In-process: a wildcard is E_INPUT/source_pattern before resolution; any other
+    # invalid literal is E_PERMISSION/invalid_request; a write source with `*` is E_INPUT.
+    tool = MemoryTool()
+    result = tool.run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=[bad] if isinstance(bad, str) else None,
+        request={"view": "compact"},
+        owner_scope=ALICE.as_dict(),
+    )
+    if isinstance(bad, str):
+        if "*" in bad:
+            assert _code_of(result) == "E_INPUT"
+            assert _reason_of(result) == "source_pattern"
+        elif bad.strip() == bad and bad:
+            assert _code_of(result) == "E_PERMISSION"
+            assert _reason_of(result) == "invalid_request"
+    if isinstance(bad, str) and "*" in bad:
+        written = tool.run(
+            root,
+            operation="write",
+            subject=SUBJECT,
+            content={"k": "v"},
+            source=bad,
+            request={"apply": True},
+            permissions=_g2_perm(),
+            owner_scope=ALICE.as_dict(),
+        )
+        assert _code_of(written) == "E_INPUT"
+    assert _effects(root, data_root) == before
+
+
+# --- G4: read_contained_source, read_access and route_access inputs ------------------------
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("absolute", id="absolute"),
+        pytest.param("dotdot", id="dotdot"),
+        pytest.param("symlink_leaf", id="symlink_leaf", marks=pytest.mark.posix_only),
+        pytest.param(
+            "symlink_parent", id="symlink_parent", marks=pytest.mark.posix_only
+        ),
+        pytest.param("hard_link", id="hard_link", marks=pytest.mark.posix_only),
+        pytest.param("fifo", id="fifo", marks=pytest.mark.posix_only),
+        pytest.param("invalid_utf8", id="invalid_utf8"),
+        pytest.param("missing", id="missing"),
+        pytest.param("directory", id="directory"),
+    ],
+)
+def test_t01_read_contained_source_inputs(case: str, tmp_path: Path) -> None:
+    from rush.memory.trust import read_contained_source
+
+    root = tmp_path / "project"
+    (root / "pkg").mkdir(parents=True)
+    (root / "a.py").write_text(KNOWN_SRC, encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text(KNOWN_SRC, encoding="utf-8")
+    assert read_contained_source(root, "a.py") == KNOWN_SRC
+    for rel, content in (
+        ("lf.py", b"def f():\n    return 1\n"),
+        ("crlf.py", b"def f():\r\n    return 1\r\n"),
+        ("cr.py", b"def f():\r    return 1\r"),
+    ):
+        (root / rel).write_bytes(content)
+        assert read_contained_source(root, rel) == (root / rel).read_text(
+            encoding="utf-8"
+        )
+    (root / "bom.py").write_bytes(b"\xef\xbb\xbfx = 1\n")
+    assert read_contained_source(root, "bom.py") == "﻿x = 1\n"
+    target: str
+    if case == "absolute":
+        target = str(outside)
+    elif case == "dotdot":
+        target = "../outside.py"
+    elif case == "symlink_leaf":
+        (root / "leaf.py").symlink_to(outside)
+        target = "leaf.py"
+    elif case == "symlink_parent":
+        (root / "linkdir").symlink_to(outside.parent)
+        target = "linkdir/outside.py"
+    elif case == "hard_link":
+        os.link(root / "a.py", root / "hard.py")
+        target = "hard.py"
+    elif case == "fifo":
+        os.mkfifo(root / "pipe.py")
+        target = "pipe.py"
+    elif case == "invalid_utf8":
+        (root / "bad.py").write_bytes(b"\xff\xfe\x00bad")
+        target = "bad.py"
+    elif case == "missing":
+        target = "pkg/missing.py"
+    else:
+        target = "pkg"
+    assert read_contained_source(root, target) is None
+
+
+def test_t01_read_access_route_access_boundary_inputs(tmp_path: Path) -> None:
+    from rush.memory.retrieval import RouteDenial, read_access, route_access
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    bad_data_roots: list[Any] = [3, Path(str(tmp_path) + "/a\x00b"), loop]
+    for bad in bad_data_roots:
+        denied = route_access(root, "ask", session_allowlist=["s"], data_root=bad)
+        assert isinstance(denied, RouteDenial)
+        assert (denied.code, denied.reason) == ("E_PERMISSION", "data_root_unavailable")
+        assert read_access(root, "ask", ["s"], data_root=bad) is None
+    for bad_root in ("a\x00b", loop, 3, None):
+        denied = route_access(bad_root, "ask", session_allowlist=["s"])  # type: ignore[arg-type]
+        assert isinstance(denied, RouteDenial)
+        assert (denied.code, denied.reason) == ("E_PERMISSION", "project_missing")
+        assert read_access(bad_root, "ask", ["s"]) is None  # type: ignore[arg-type]
+    for bad_source in ("a*b", "*", "intent:*"):
+        denied = route_access(root, "ask", session_allowlist=[bad_source])
+        assert isinstance(denied, RouteDenial)
+        assert (denied.code, denied.reason) == ("E_INPUT", "source_pattern")
+    for bad_source in ("x\x00", "a\ud800", "a\u200bb"):
+        denied = route_access(root, "ask", session_allowlist=[bad_source])
+        assert isinstance(denied, RouteDenial)
+        assert (denied.code, denied.reason) == ("E_PERMISSION", "invalid_request")
+
+
+# --- G8: one row per access form for each predicate -----------------------------------
+
+
+def test_t01_g8_access_form_predicates(tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import (
+        MemoryAccess,
+        RouteDenial,
+        memory_policy_mode,
+        recheck_failure,
+        route_access,
+    )
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+
+    # form: legacy_allowlist (no grant, unmarked)
+    legacy = route_access(root, "ask", session_allowlist=["source-a"])
+    assert isinstance(legacy, MemoryAccess) and legacy.kind == "legacy_allowlist"
+    assert legacy.sources == ("source-a",)
+    assert legacy.historical_allowed is True
+    assert recheck_failure(legacy) is None
+    legacy_hist = route_access(
+        root, "list", historical=True, session_allowlist=["source-a"]
+    )
+    assert (
+        isinstance(legacy_hist, MemoryAccess) and legacy_hist.historical_allowed is True
+    )
+
+    # form: policy
+    grant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+    assert memory_policy_mode(root) == "policy"
+    policy = route_access(root, "ask", owner_scope=ALICE)
+    assert isinstance(policy, MemoryAccess) and policy.kind == "policy"
+    assert policy.grant_id == grant["grant_id"]
+    assert policy.required_operations == frozenset({"ask"})
+    assert policy.historical_allowed is False
+    assert recheck_failure(policy) is None
+    assert policy.recheck() == "ok"
+    assert legacy.recheck() == "denied", (
+        "a legacy access is denied once enrolment happened"
+    )
+    assert recheck_failure(legacy) == ("E_PERMISSION", "policy_mode_changed")
+    denied_hist = route_access(root, "list", historical=True, owner_scope=ALICE)
+    assert isinstance(denied_hist, RouteDenial)
+    assert (denied_hist.code, denied_hist.reason) == (
+        "E_PERMISSION",
+        "operation_not_granted",
+    )
+    narrow = route_access(
+        root, "ask", owner_scope=ALICE, session_allowlist=["source-b"]
+    )
+    assert isinstance(narrow, RouteDenial) and narrow.reason == "source_not_granted"
+
+    # changed vs denied
+    regrant = _grant(auth, root, ALICE, data_root, ops=FULL_OPS_HISTORY)
+    assert regrant["grant_id"] != grant["grant_id"]
+    assert policy.recheck() == "changed"
+    assert recheck_failure(policy) == ("E_RESTART", "access_changed")
+    with_history = route_access(root, "list", historical=True, owner_scope=ALICE)
+    assert isinstance(with_history, MemoryAccess)
+    assert with_history.historical_allowed is True
+    assert with_history.required_operations == frozenset({"list", "history"})
+    auth.revoke_memory_scope(
+        grant_id=regrant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    assert with_history.recheck() == "denied"
+    assert recheck_failure(with_history) == ("E_PERMISSION", "revoked")
+
+    # form: unavailable
+    auth.policy_path(data_root=data_root).write_bytes(b"{")
+    assert memory_policy_mode(root) == "unavailable"
+    denial = route_access(root, "ask", session_allowlist=["source-a"])
+    assert isinstance(denial, RouteDenial)
+    assert (denial.code, denial.reason) == ("E_PERMISSION", "policy_invalid")
+    # form: overlay is producer-staged to 72-T05; the operation set still names it
+    from rush.memory.retrieval import required_operation_set
+
+    assert required_operation_set("ask", overlay=True) == ("overlay_read", "list")
+
+
+def test_t01_token_usage_agent_and_session_filters_exclude_foreign_totals(
+    tmp_path: Path,
+) -> None:
+    """G6 survivor kill (`projects.py:2166`: filters dropped before the read): an
+    agent/session selection totals only its own stored-identity events, so the
+    foreign agent's and the unscoped events never enter it."""
+    from rush.workflows import projects as wp
+    from tests.test_phase70_t28e_review1b import _attribution_project
+
+    project_id, _root, data_root = _attribution_project(tmp_path)
+
+    def total(**filters: str) -> int | None:
+        usage = wp.project_token_usage(project_id, data_root=data_root, **filters)
+        return usage["provider_reported"]["total_tokens"]
+
+    assert total() == 1577
+    assert total(agent_id="ag-1", session_id="s-1") == 1200
+    assert total(agent_id="ag-2", session_id="s-2") == 300
+    assert total(agent_id="ag-1") == 1200
+    assert total(session_id="s-2") == 300
+    assert total(agent_id="ag-1", session_id="s-2") is None
+
+
+# --- G12 FIX ROUND 1 (security findings) -------------------------------------
+
+
+def test_t01_fixr1_supplied_writer_access_is_bound_to_its_project(
+    tmp_path: Path,
+) -> None:
+    """security-1: a writer access resolved for project A authorizes nothing at
+    project B, and an explicit data root that conflicts with the access's own is
+    refused before any lock directory exists."""
+    from rush.memory import authorization as auth
+    from rush.memory import experience
+    from rush.memory.retrieval import (
+        MemoryAccess,
+        RouteDenial,
+        authorize_writer,
+    )
+
+    data_root = default_data_root()
+    a = _registered(tmp_path / "a", data_root)
+    b = _registered(tmp_path / "b", data_root)
+    _grant(
+        auth,
+        a,
+        legacy_owner_scope(a),
+        data_root,
+        sources=("invocation:op-1",),
+        ops=("write",),
+    )
+    _grant(
+        auth, b, legacy_owner_scope(b), data_root, sources=("source-a",), ops=("ask",)
+    )
+    access = MemoryAccess.resolve(
+        a,
+        operation="write",
+        apply=True,
+        owner_scope=legacy_owner_scope(a),
+        requested_sources=["invocation:op-1"],
+        data_root=data_root,
+    )
+    assert access is not None
+    before = _effects(b, data_root)
+    with pytest.raises(experience.MemoryWriteDenied) as info:
+        experience.write_observation(
+            evidence_kind="source_graph",
+            operation_id="op-1",
+            source="invocation:op-1",
+            content={"k": "v"},
+            project_root=b,
+            access=access,
+        )
+    assert info.value.code == "E_PERMISSION"
+    assert not (b / ".rush" / "memory.db").exists()
+    assert _effects(b, data_root) == before
+
+    other_data = tmp_path / "other-data"
+    with authorize_writer(
+        a, "invocation:op-1", access=access, data_root=other_data
+    ) as granted:
+        assert isinstance(granted, RouteDenial)
+        assert (granted.code, granted.reason) == (
+            "E_PERMISSION",
+            "policy_grant_required",
+        )
+    assert not other_data.exists()
+    with authorize_writer(
+        a, "invocation:op-1", owner=BOB, access=access, data_root=data_root
+    ) as granted:
+        assert isinstance(granted, RouteDenial)
+    with authorize_writer(a, "invocation:op-1", access=access) as granted:
+        assert granted is access
+
+
+def test_t01_fix2_bind_store_legacy_to_policy_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-15: a legacy store approval is rechecked under the policy lock, so a
+    project enrolled with ask-only authority after the preview and before the lock is
+    taken is refused, with the db bytes, binding digest and key bytes unchanged."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    owner = legacy_owner_scope(root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", owner, "mk-a1", source="source-a")
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    assert preview["code"] == "OK", preview
+    db = root / ".rush" / "memory.db"
+    key_path = data_root / "user" / ".rush" / "memory_store.key"
+    real_lock = auth.hold_policy_lock
+    enrolled: list[bool] = []
+
+    @contextlib.contextmanager
+    def enrolling(*args: Any, **kwargs: Any) -> Any:
+        if not enrolled:
+            enrolled.append(True)
+            _grant(auth, root, owner, data_root, ops=("ask",))
+        with real_lock(*args, **kwargs) as held:
+            yield held
+
+    monkeypatch.setattr(auth, "hold_policy_lock", enrolling)
+    db_before = _sha_file(db)
+    key_before = key_path.read_bytes() if key_path.exists() else None
+    result = TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
+    assert enrolled == [True]
+    assert result == {"code": "E_PERMISSION", "reason": "policy_mode_changed"}, result
+    assert _sha_file(db) == db_before
+    assert (key_path.read_bytes() if key_path.exists() else None) == key_before
+    assert (
+        TypedArtifactStore.bind_store(root, approve=False)["binding_digest"]
+        == preview["binding_digest"]
+    )
+
+
+def _refuse_first_write_while(
+    root: Path, monkeypatch: pytest.MonkeyPatch, other: Any
+) -> None:
+    """Writer A's first write at `root` is refused by its commit check; `other`
+    runs in a second thread after A has taken its cleanup snapshot, and A gives it
+    2 s to finish before A's own store constructor runs."""
+    from rush.memory import store as store_mod
+
+    real_init = store_mod.TypedArtifactStore.__init__
+    workers: list[threading.Thread] = []
+    errors: list[BaseException] = []
+
+    def run_other() -> None:
+        try:
+            other()
+        except BaseException as exc:  # noqa: BLE001 - re-raised by the assert below
+            errors.append(exc)
+
+    def init(self: Any, project_root: Path | None = None) -> None:
+        if not workers:
+            worker = threading.Thread(target=run_other)
+            workers.append(worker)
+            worker.start()
+            worker.join(timeout=2.0)
+        real_init(self, project_root)
+
+    monkeypatch.setattr(store_mod.TypedArtifactStore, "__init__", init)
+    artifact = MemoryArtifact(
+        id="a-refused",
+        family="memory",
+        subject=SUBJECT,  # type: ignore[arg-type]
+        trust_tier="DERIVED",
+        content={"text": "needle mk-a"},
+        source="source-a",
+        created_at=time.time(),
+        owner_scope=legacy_owner_scope(root),
+    )
+    with pytest.raises(store_mod.MemoryAccessChanged):
+        store_mod.write_checked_artifact(
+            root, artifact, commit_check=lambda: ("E_PERMISSION", "expired")
+        )
+    workers[0].join(timeout=60.0)
+    assert not workers[0].is_alive()
+    assert errors == []
+    monkeypatch.setattr(store_mod.TypedArtifactStore, "__init__", real_init)
+
+
+def _artifact_ids(db: Path) -> list[str]:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return sorted(r[0] for r in conn.execute("SELECT id FROM memory_artifacts"))
+
+
+def test_t01_fix3_refused_first_write_keeps_concurrent_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-1: writer B creates the store at the same root and commits a row
+    while refused writer A is between its cleanup snapshot and its constructor; A's
+    rollback removes nothing B created: B's row and binding survive."""
+    root = tmp_path / "project"
+    root.mkdir()
+    root = root.resolve()
+    db = root / ".rush" / "memory.db"
+    key_path = default_data_root() / "user" / ".rush" / "memory_store.key"
+    assert not key_path.exists()
+
+    def writer_b() -> None:
+        _row(TypedArtifactStore(root), "b1", legacy_owner_scope(root), "mk-b")
+
+    _refuse_first_write_while(root, monkeypatch, writer_b)
+    assert db.exists()
+    assert _artifact_ids(db) == ["b1"]
+    assert key_path.exists()
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    assert preview["code"] == "OK", preview
+    assert preview["store_binding"] == "bound"
+
+
+@pytest.mark.parametrize("interleaving", ["create_other_root", "bind_approval"])
+def test_t01_fix3_refused_first_write_keeps_concurrent_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interleaving: str
+) -> None:
+    """security-1: the D41 key is shared by every project. A writer at another root
+    publishes it while refused writer A (another data root's policy) is in its
+    window, by creating its store or by approving its binding under its own data
+    root; A's rollback leaves the key, so B's store stays bound."""
+    from rush.memory.retrieval import MemoryAccess
+
+    a = tmp_path / "a"
+    a.mkdir()
+    a = a.resolve()
+    b = tmp_path / "b"
+    b.mkdir()
+    b = b.resolve()
+    key_path = default_data_root() / "user" / ".rush" / "memory_store.key"
+    if interleaving == "bind_approval":
+        _row(TypedArtifactStore(b), "b1", legacy_owner_scope(b), "mk-b")
+        key_path.unlink()
+        preview = TypedArtifactStore.bind_store(b, approve=False)
+        assert preview["code"] == "OK", preview
+        assert preview["store_binding"] == "unbound"
+        other_data = tmp_path / "other-data"
+        other_data.mkdir()
+        access = MemoryAccess.legacy(
+            b,
+            (),
+            owner_scope=legacy_owner_scope(b),
+            operation="write",
+            data_root=other_data,
+        )
+
+        def writer_b() -> None:
+            result = TypedArtifactStore.bind_store(
+                b,
+                approve=True,
+                expected_binding_digest=preview["binding_digest"],
+                access=access,
+            )
+            assert result["code"] == "OK", result
+
+    else:
+
+        def writer_b() -> None:
+            _row(TypedArtifactStore(b), "b1", legacy_owner_scope(b), "mk-b")
+
+    assert not key_path.exists()
+    _refuse_first_write_while(a, monkeypatch, writer_b)
+    assert not (a / ".rush" / "memory.db").exists()
+    assert key_path.exists()
+    assert _artifact_ids(b / ".rush" / "memory.db") == ["b1"]
+    after = TypedArtifactStore.bind_store(b, approve=False)
+    assert after["code"] == "OK", after
+    assert after["store_binding"] == "bound"
+
+
+def test_t01_fix2_table_counts_adds_no_sidecar(tmp_path: Path) -> None:
+    """spec-tests-7: the preservation oracle measures a committed WAL that has no
+    `-shm` without adding one: the directory entries and bytes are unchanged by
+    `_table_counts` and `_effects`."""
+    src = tmp_path / "src.db"
+    writer = sqlite3.connect(src)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("PRAGMA wal_autocheckpoint=0")
+    writer.execute("CREATE TABLE memory_artifacts (id TEXT)")
+    writer.execute("INSERT INTO memory_artifacts VALUES ('x')")
+    writer.commit()
+    root = tmp_path / "project"
+    rush = root / ".rush"
+    rush.mkdir(parents=True)
+    shutil.copyfile(src, rush / "memory.db")
+    shutil.copyfile(f"{src}-wal", rush / "memory.db-wal")
+    writer.close()
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    names = ["memory.db", "memory.db-wal"]
+    assert sorted(p.name for p in rush.iterdir()) == names
+    before = _digest_dir(root)
+    counts = _table_counts(rush / "memory.db")
+    effects = _effects(root, data_root)
+    assert sorted(p.name for p in rush.iterdir()) == names
+    assert _digest_dir(root) == before
+    assert effects["counts"] == counts
+    assert counts in ({"memory_artifacts": 1}, {"<unreadable>": 1}), counts
+
+
+def test_t01_fix2_unsupported_row_rejects_noop_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-3/security-8: an unsupported-dimension cell of a non-idempotent
+    writer route checks its exact output and effects, so a `record_event` that writes
+    nothing, one that also writes a stray project file and returns an out-of-contract
+    value, and one that returns a foreign row's content each fail it, while the
+    genuine route passes the same cell."""
+    from rush.tools.flight_recorder import FlightRecorder
+
+    route = next(
+        r for r in _G2_ROUTES if r.ident == "internal.flight_recorder-record_event"
+    )
+    row = "mode-historical"
+    assert row in _g2_rows(route)
+    genuine = tmp_path / "genuine"
+    genuine.mkdir()
+    test_t01_fix_policy_mode_matrix(route, row, genuine, monkeypatch)
+    real = FlightRecorder.record_event
+
+    def stray_file(self: Any, *args: Any, **kwargs: Any) -> Any:
+        real(self, *args, **kwargs)
+        (Path(self.project_root) / "UNEXPECTED").write_text("x", encoding="utf-8")
+        return {"written": True}
+
+    def foreign_output(self: Any, *args: Any, **kwargs: Any) -> Any:
+        real(self, *args, **kwargs)
+        return {"text": "needle mk-x1"}
+
+    mutants = {
+        "noop": (lambda *a, **k: None, None),
+        "stray_file": (stray_file, "root:UNEXPECTED"),
+        "foreign_output": (foreign_output, "mk-x1"),
+    }
+    for name, (mutant, match) in mutants.items():
+        monkeypatch.setattr(FlightRecorder, "record_event", mutant)
+        root = tmp_path / name
+        root.mkdir()
+        with pytest.raises(AssertionError, match=match):
+            test_t01_fix_policy_mode_matrix(route, row, root, monkeypatch)
+
+
+def test_t01_fix2_g2_covers_every_entry_point() -> None:
+    """spec-tests-2: every plan 2.3 entry point is a `covers` pair of a G2 route: the
+    inventory's 72-T01 pairs plus the retained routes that are not AST-detected pairs."""
+    fixture = (
+        Path(__file__).parent / "fixtures" / "phase72" / "memory_route_inventory.json"
+    )
+    inventory = json.loads(fixture.read_text(encoding="utf-8"))
+    required = {
+        (p["module"], p["function"])
+        for p in inventory["pairs"]
+        if p["task"] == "72-T01"
+    } | _G2_EXTRA_REQUIRED
+    covered = {pair for route in _G2_ROUTES for pair in route.covers}
+    assert required <= covered, sorted(required - covered)
+    # the guard bites: without the TUI apply route its entry point is uncovered
+    reduced = {
+        pair
+        for route in _G2_ROUTES
+        if "tui-_memory_mutation_apply" not in route.cell
+        for pair in route.covers
+    }
+    assert ("tui.py", "_memory_mutation_apply") in required - reduced
+
+
+def test_t01_fixr1_bind_store_rejects_revoked_access(tmp_path: Path) -> None:
+    """security-2: a revoked write grant never commits a new store binding, even
+    when the caller still holds the pre-revocation access and the preview digest."""
+    from rush.memory.retrieval import MemoryAccess
+
+    owner = legacy_owner_scope((tmp_path / "project").resolve())
+    auth, data_root, root, store, grant = _policy_project(tmp_path, owner=owner)
+    _row(store, "a1", owner, "mk-a1", source="source-a")
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    access = MemoryAccess.resolve(
+        root,
+        operation="write",
+        apply=True,
+        owner_scope=owner,
+        data_root=data_root,
+    )
+    assert access is not None
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+    )
+    before = _effects(root, data_root)
+    result = TypedArtifactStore.bind_store(
+        root,
+        approve=True,
+        expected_binding_digest=preview["binding_digest"],
+        access=access,
+    )
+    assert result["code"] == "E_PERMISSION", result
+    assert result["reason"] == "revoked", result
+    assert _effects(root, data_root) == before
+
+    other = _registered(tmp_path / "other", data_root)
+    foreign = TypedArtifactStore.bind_store(
+        other,
+        approve=True,
+        expected_binding_digest=preview["binding_digest"],
+        access=access,
+    )
+    assert foreign["code"] == "E_PERMISSION", foreign
+
+
+@pytest.mark.parametrize("historical", ["false", "true"])
+def test_t01_fixr1_dashboard_browse_excludes_planted_unbound_rows(
+    tmp_path: Path, historical: str
+) -> None:
+    """security-3: the legacy dashboard browse applies the shared visibility
+    decision, so a planted unbound STATED row never reaches the page."""
+    from rush.dashboard import server
+
+    _attacker, victim, _source = _plant(tmp_path, "legacy")
+    assert _binding(victim) == "unbound"
+    record = register_project(victim, data_root=default_data_root())
+    for query in ({}, {"query": ["needle"]}):
+        section = server._build_memory_section(
+            record.project_id, {**query, "include_archived": [historical]}
+        )
+        assert "mk-planted" not in _dump(section), (query, historical)
+        if historical == "false":
+            assert section["items"] == [], query
+            continue
+        # Historical: the unbound label is disclosed, the stored bytes are not.
+        for item in section["items"]:
+            assert item["id"] == "planted", item
+            assert item["content"] == {}, item
+            assert "store_unbound" in item["reason_codes"], item
+
+
+def test_t01_fixr1_continuity_session_memory_respects_owner_and_source(
+    tmp_path: Path,
+) -> None:
+    """security-4: in policy mode the continuity extraction reads only the grant
+    owner's approved session-memory rows, never another owner's or the ambient
+    JSON file."""
+    from rush.continuity.receipts import _extract_session_memory
+    from rush.memory import authorization as auth
+    from rush.session_memory import SessionMemoryManager
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "foreign", data_root)
+    SessionMemoryManager(root / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "project-owner confidential result"
+    )
+    _grant(
+        auth,
+        root,
+        BOB,
+        data_root,
+        sources=("migration:session_memory",),
+        ops=("ask",),
+    )
+    extracted = _extract_session_memory(root)
+    assert extracted["records"] == [], extracted
+    assert extracted["count"] == 0
+    assert "confidential" not in _dump(extracted)
+
+    own = _registered(tmp_path / "own", data_root)
+    SessionMemoryManager(own / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "project-owner own result"
+    )
+    _grant(
+        auth,
+        own,
+        legacy_owner_scope(own),
+        data_root,
+        sources=("session_memory:record_turn",),
+        ops=("ask",),
+    )
+    extracted = _extract_session_memory(own)
+    assert extracted["count"] == 1, extracted
+    assert extracted["records"][0]["summary"] == "project-owner own result"
+
+
+def test_t01_fixr1_resolve_recipe_rechecks_grant_before_emitting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-5: a grant revoked while the helper source resolves yields the
+    unknown-recipe result with no purpose, helper source, checks or exceptions."""
+    from rush.memory import authorization as auth
+    from rush.memory import recipes
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _recipe_fixture(root)
+    assert (
+        recipes.record_recipe(
+            project_root=root,
+            recipe_id="r",
+            purpose="private recipe",
+            helper_ref={"path": "helper.py", "symbol": "helper"},
+            checks=[{"name": "c"}],
+            exceptions=["e"],
+        )["code"]
+        == "OK"
+    )
+    grant = _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("recipe:*",),
+        ops=FULL_OPS,
+    )
+    control = recipes.resolve_recipe(project_root=root, recipe_id="r")
+    assert control["usable"] is True
+    real = recipes.resolve_symbol_source
+
+    def revoke_then_resolve(*args: Any, **kwargs: Any) -> Any:
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(recipes, "resolve_symbol_source", revoke_then_resolve)
+    result = recipes.resolve_recipe(project_root=root, recipe_id="r")
+    assert result == {"code": "E_INPUT", "message": "unknown recipe 'r'"}
+
+
+def test_t01_fixr1_scan_handoff_needs_write_and_expand_in_one_grant(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """security-6: D2 prepares a handoff only under one grant holding write and
+    expand; a write-only grant is denied before any effect."""
+    from rush.memory import authorization as auth
+    from rush.workflows.project_run import ScanHandoffAuthError, build_handoff
+
+    request.getfixturevalue("hermetic_engine_path")
+    data_root = default_data_root()
+    denied = _registered(tmp_path / "denied", data_root)
+    granted = _registered(tmp_path / "granted", data_root)
+    for root, ops in ((denied, ("write",)), (granted, ("write", "expand"))):
+        _scan_manifest(root, "run-1")
+        auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=[str(root)],
+            allowed_operations=list(ops),
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    record = register_project(denied, data_root=data_root)
+    before = _effects(denied, data_root)
+    with pytest.raises(ScanHandoffAuthError) as info:
+        build_handoff(record.project_id, "run-1", "codex-cli", data_root=data_root)
+    assert getattr(info.value, "code", None) == "E_PERMISSION"
+    assert _effects(denied, data_root) == before
+    assert not (denied / ".rush" / "memory.db").exists()
+
+    ok = register_project(granted, data_root=data_root)
+    handoff = build_handoff(ok.project_id, "run-1", "codex-cli", data_root=data_root)
+    assert handoff.state == "prepared"
+    assert handoff.memory_session_id
+
+
+def test_t01_fixr1_delete_preview_is_read_only(tmp_path: Path) -> None:
+    """security-7: a delete preview under a list-only grant never constructs a
+    writable store, so no memory.db appears."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _grant(auth, root, legacy_owner_scope(root), data_root, ops=("list",))
+    before = _effects(root, data_root)
+    result = MemoryTool().run(
+        root,
+        operation="delete",
+        request={
+            "artifact_ids": ["a1"],
+            "expected_revisions": {"a1": 1},
+            "scope": SUBJECT,
+            "apply": False,
+        },
+    )
+    assert _code_of(result) == "E_INPUT", _dump(_rd(result))
+    assert not (root / ".rush" / "memory.db").exists()
+    assert _effects(root, data_root) == before
+
+
+def test_t01_fixr1_delete_preview_over_existing_store_is_read_only(
+    tmp_path: Path,
+) -> None:
+    owner = legacy_owner_scope((tmp_path / "project").resolve())
+    _auth, data_root, root, store, _grant_record = _policy_project(
+        tmp_path, owner=owner, ops=("list",)
+    )
+    _row(store, "a1", owner, "mk-a1", source="source-a")
+    before = _effects(root, data_root)
+    result = MemoryTool().run(
+        root,
+        operation="delete",
+        request={
+            "artifact_ids": ["a1"],
+            "expected_revisions": {"a1": 1},
+            "scope": SUBJECT,
+            "apply": False,
+        },
+    )
+    raw = _rd(result)
+    assert raw["code"] == "OK", _dump(raw)
+    assert raw["data"]["applied"] is False
+    assert [item["id"] for item in raw["data"]["affected"]] == ["a1"]
+    assert _effects(root, data_root) == before
+
+
+def test_t01_fixr1_migration_compat_readers_are_read_only(tmp_path: Path) -> None:
+    """security-8: the compatibility readers never construct a writable store, so
+    an ask-only grant neither creates nor migrates memory.db."""
+    from rush.memory import authorization as auth
+    from rush.memory import migration
+
+    data_root = default_data_root()
+    bare = _registered(tmp_path / "bare", data_root)
+    old = _registered(tmp_path / "old", data_root)
+    old_store = TypedArtifactStore(old)
+    _row(old_store, "row-1", None, "mk-old", source="migration:invariant_graph")
+    _drop_payload_columns(old_store.db_path)
+    _no_sidecars(old_store.db_path)
+    for root in (bare, old):
+        auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=["migration:invariant_graph"],
+            allowed_operations=["ask"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    for root in (bare, old):
+        before = _effects(root, data_root)
+        assert migration.read_origin(root, "invariant_graph", "x") is None
+        assert migration.read_origin_kind(root, "invariant_graph") == []
+        assert migration.read_origin_kind_by_symbol(root, "invariant_graph", "s") == []
+        assert _effects(root, data_root) == before, root.name
+    assert not (bare / ".rush" / "memory.db").exists()
+
+
+def test_t01_fixr1_non_ascii_macs_classify_unbound(tmp_path: Path) -> None:
+    """security-9: a non-ASCII row or store MAC is `unbound`, never a TypeError."""
+    from rush.memory.store import binding_verifier
+
+    root = tmp_path / "project"
+    root.mkdir()
+    root = root.resolve()
+    store = TypedArtifactStore(root)
+    _row(store, "a1", None, "mk-a1", source="source-a")
+    assert _binding(root) == "bound"
+    bad = "é" * 64
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute("UPDATE memory_artifacts SET row_mac = ? WHERE id = 'a1'", (bad,))
+        conn.commit()
+    verifier = binding_verifier(store)
+    assert verifier.store == "bound"
+    assert verifier.row(_nn(store.get_current_row("a1"))) == "unbound"
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute("UPDATE memory_store_binding SET mac = ?", (bad,))
+        conn.commit()
+    assert _binding(root) == "unbound"
+    assert binding_verifier(store).store == "unbound"
+    result = MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["source-a"],
+        request={"view": "compact"},
+    )
+    assert _raw(result)["code"] == "OK"
+
+
+@pytest.mark.posix_only
+def test_t01_fixr1_fifo_store_key_reads_none_without_blocking(tmp_path: Path) -> None:
+    """security-10: a FIFO at the store key path is refused without ever blocking
+    the reader."""
+    from rush.memory.store import read_store_key
+
+    root = tmp_path / "project"
+    root.mkdir()
+    TypedArtifactStore(root.resolve())
+    key_path = Path(default_data_root()) / "user" / ".rush" / "memory_store.key"
+    assert key_path.is_file()
+    key_path.unlink()
+    os.mkfifo(key_path)
+    thread, box = _run_in_thread(read_store_key)
+    try:
+        thread.join(5)
+        alive = thread.is_alive()
+    finally:
+        try:
+            fd = os.open(key_path, os.O_WRONLY | os.O_NONBLOCK)
+            os.close(fd)
+        except OSError:
+            pass
+    thread.join(5)
+    assert not alive, "read_store_key blocked on a FIFO"
+    assert box["result"] is None
+
+
+def test_t01_fixr1_writer_gate_rejects_invalid_root_before_creating_data_dir(
+    tmp_path: Path,
+) -> None:
+    """security-11: an invalid project root is refused with project_missing before
+    the policy-lock data directory exists."""
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+
+    never = tmp_path / "never-created"
+    with authorize_writer(3, "s", data_root=never) as granted:  # type: ignore[arg-type]
+        assert isinstance(granted, RouteDenial)
+        assert (granted.code, granted.reason) == ("E_PERMISSION", "project_missing")
+    assert not never.exists()
+
+
+def test_t01_fixr1_enrolled_project_with_deleted_root_denies_project_missing(
+    tmp_path: Path,
+) -> None:
+    """security-12 guard: a matching enrolled project whose directory vanished
+    resolves project_missing and denies; an unenrolled missing directory keeps the
+    binding legacy empty behavior (pre-gate addendum, `Required shared fixes`)."""
+    from rush.memory.retrieval import (
+        RouteDenial,
+        memory_policy_decision,
+        route_access,
+    )
+
+    _auth, _data_root, root, _store, _grant_record = _policy_project(tmp_path)
+    shutil.rmtree(root)
+    denied = route_access(root, "ask", session_allowlist=["source-a"])
+    assert isinstance(denied, RouteDenial)
+    assert (denied.code, denied.reason) == ("E_PERMISSION", "project_missing")
+    root.write_text("a regular file now", encoding="utf-8")
+    denied = route_access(root, "ask", session_allowlist=["source-a"])
+    assert isinstance(denied, RouteDenial)
+    assert (denied.code, denied.reason) == ("E_PERMISSION", "project_missing")
+    unenrolled_file = tmp_path / "unenrolled-file"
+    unenrolled_file.write_text("x", encoding="utf-8")
+    assert memory_policy_decision(
+        unenrolled_file, data_root=tmp_path / "no-policy-data"
+    ) == ("legacy", None)
+    absent = tmp_path / "unenrolled-absent"
+    assert memory_policy_decision(absent, data_root=tmp_path / "no-policy-data") == (
+        "legacy",
+        None,
+    )
+    assert not absent.exists()
+
+
+def test_t01_fixr1_effects_oracle_detects_each_captured_state_component(
+    tmp_path: Path,
+) -> None:
+    """spec-tests-7 (G15 class 7): every captured state component of the zero-effect
+    oracle changes the snapshot when it is mutated on its own."""
+    data_root = default_data_root()
+    root = _git_repo(tmp_path / "project", {"f.txt": "x\n", "g.txt": "y\n"})
+    link = root / "link"
+    link.symlink_to("f.txt")
+    base = _effects(root, data_root)
+    assert _effects(root, data_root) == base
+
+    mode = (root / "f.txt").stat().st_mode & 0o777
+    os.chmod(root / "f.txt", 0o755)
+    assert _effects(root, data_root) != base, "chmod"
+    os.chmod(root / "f.txt", mode)
+    assert _effects(root, data_root) == base
+
+    link.unlink()
+    link.symlink_to("g.txt")
+    assert _effects(root, data_root) != base, "symlink retarget"
+    link.unlink()
+    link.symlink_to("f.txt")
+    base = _effects(root, data_root)  # a restored link is a new inode
+
+    _git(root, "update-index", "--index-version", "4")
+    assert _effects(root, data_root) != base, "index-only rewrite"
+
+
+def _origin_row(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    origin_id: str,
+    summary: str,
+    *,
+    trust: str,
+    bound: bool = True,
+) -> MemoryArtifact:
+    """A `session_memory` origin row. `write()` refuses STATED, so a STATED row is a
+    DERIVED row forced to STATED by SQL (valid content signature); its row MAC is
+    recomputed when `bound`, else left stale (an unbound row)."""
+    from rush.memory.store import compute_content_signature, next_row_mac
+
+    content = {
+        "timestamp": "2026-01-01T00:00:00",
+        "tool_name": "tool",
+        "finding_count": 1,
+        "fixes_applied": 0,
+        "summary": summary,
+    }
+    written = store.write(
+        MemoryArtifact(
+            id=artifact_id,
+            family="memory",
+            subject=SUBJECT,  # type: ignore[arg-type]
+            trust_tier="DERIVED",
+            content=content,
+            source="migration:session_memory",
+            created_at=time.time(),
+            origin_kind="session_memory",
+            origin_id=origin_id,
+        )
+    )
+    if trust == "STATED":
+        signature = compute_content_signature(
+            json.loads(_nn(store.get_current_row(artifact_id))["content"])
+        )
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            mac = (
+                next_row_mac(
+                    conn,
+                    store.project_root,
+                    artifact_id,
+                    {"trust_tier": "STATED", "signature": signature},
+                )
+                if bound
+                else None
+            )
+            conn.execute(
+                "UPDATE memory_artifacts SET trust_tier = 'STATED', signature = ?"
+                + (", row_mac = ?" if bound else "")
+                + " WHERE id = ?",
+                (signature, mac, artifact_id) if bound else (signature, artifact_id),
+            )
+            conn.commit()
+    return written
+
+
+def test_t01_fix2_origin_readers_hide_unbound_stated_rows(tmp_path: Path) -> None:
+    """security-16: a STATED row whose row MAC does not verify is never returned by
+    a compatibility reader (D41), including through the continuity old-schema
+    fallback; bound STATED rows and unbound DERIVED rows stay readable."""
+    from rush.continuity.receipts import _extract_session_memory
+    from rush.memory import migration
+
+    _auth, _data_root, root, store, _grant_record = _policy_project(
+        tmp_path,
+        owner=legacy_owner_scope((tmp_path / "project").resolve()),
+        sources=("migration:session_memory",),
+        ops=("ask",),
+    )
+    _origin_row(
+        store, "planted", "planted-id", "PLANTED-STATED", trust="STATED", bound=False
+    )
+    _origin_row(store, "bound", "bound-id", "BOUND-STATED", trust="STATED")
+    _origin_row(store, "derived", "derived-id", "DERIVED-OK", trust="DERIVED")
+    assert migration.read_origin(root, "session_memory", "planted-id") is None
+    kind = migration.read_origin_kind(root, "session_memory")
+    assert sorted(item["summary"] for item in kind) == ["BOUND-STATED", "DERIVED-OK"]
+    assert "PLANTED" not in _dump(
+        migration.read_origin_kind_by_symbol(root, "session_memory", "x")
+    )
+    assert "PLANTED" not in _dump(_extract_session_memory(root))
+    _drop_payload_columns(store.db_path)
+    old_schema = migration.read_origin_kind(root, "session_memory")
+    assert sorted(item["summary"] for item in old_schema) == [
+        "BOUND-STATED",
+        "DERIVED-OK",
+    ]
+    assert "PLANTED" not in _dump(_extract_session_memory(root))
+
+
+def test_t01_fix2_origin_readers_recheck_access_after_the_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-17: a grant revoked while a compatibility reader reads emits
+    nothing."""
+    from rush.memory import authorization as auth
+    from rush.memory import migration
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _origin_row(store, "r1", "r1-id", "REVOKED-SECRET", trust="DERIVED")
+    real = migration.read_sqlite_readonly
+    live: dict[str, Any] = {}
+
+    def read_then_revoke(db: Path, read: Any, **kwargs: Any) -> Any:
+        rows = real(db, read, **kwargs)
+        auth.revoke_memory_scope(
+            grant_id=live["grant"]["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        return rows
+
+    monkeypatch.setattr(migration, "read_sqlite_readonly", read_then_revoke)
+    calls: tuple[tuple[Callable[[], Any], Any], ...] = (
+        (lambda: migration.read_origin(root, "session_memory", "r1-id"), None),
+        (lambda: migration.read_origin_kind(root, "session_memory"), []),
+        (lambda: migration.read_origin_kind_by_symbol(root, "session_memory", "x"), []),
+    )
+    for call, empty in calls:
+        live["grant"] = _grant(
+            auth,
+            root,
+            legacy_owner_scope(root),
+            data_root,
+            sources=("migration:session_memory",),
+            ops=("ask",),
+        )
+        assert call() == empty
+
+
+@pytest.mark.parametrize(
+    "label", ["bad\x00label", "bad\ud800label", "bad\u200blabel", "", " padded"]
+)
+def test_t01_fix2_writer_gate_rejects_malformed_labels_before_creating_data_dir(
+    tmp_path: Path, label: str
+) -> None:
+    """security-19: a malformed writer source is refused with invalid_request before
+    the policy-lock data directory exists; a wildcard stays E_INPUT/source_pattern."""
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+
+    root = tmp_path / "project"
+    root.mkdir()
+    never = tmp_path / "never-created"
+    with authorize_writer(root.resolve(), label, data_root=never) as granted:
+        assert isinstance(granted, RouteDenial)
+        assert (granted.code, granted.reason) == ("E_PERMISSION", "invalid_request")
+    assert not never.exists()
+    with authorize_writer(root.resolve(), "a*", data_root=never) as granted:
+        assert isinstance(granted, RouteDenial)
+        assert (granted.code, granted.reason) == ("E_INPUT", "source_pattern")
+    assert not never.exists()
+
+
+# --- fix round 2 (session-memory symlink scope, delete-preview recheck, absent-store expiry) ---
+
+
+@pytest.mark.parametrize(
+    "granted_write", [False, True], ids=["ask_only", "write_granted"]
+)
+def test_t01_fixr2_session_memory_symlink_cannot_change_scope(
+    tmp_path: Path, granted_write: bool
+) -> None:
+    """security-14: the project that authorizes a session-memory write is the one
+    the path names, never the symlink target's; a symlinked memory file is refused
+    before any store or file effect."""
+    from rush.memory import authorization as auth
+    from rush.session_memory import SessionMemoryManager
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    external = victim / "history.json"
+    external.write_text('{"records": []}', encoding="utf-8")
+    link = root / ".rush" / "session_memory.json"
+    link.symlink_to(external)
+    if granted_write:
+        auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=["session_memory:record_turn"],
+            allowed_operations=["write"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+    else:
+        _grant(auth, root, legacy_owner_scope(root), data_root, ops=("ask",))
+    manager = SessionMemoryManager(link)
+    assert manager._project_root == root
+    before = _effects(root, data_root)
+    external_before = external.read_bytes()
+    victim_before = _digest_dir(victim)
+
+    manager.record_turn("tool", 1, 0, "SYMLINK-ESCAPE")
+
+    assert external.read_bytes() == external_before
+    assert _digest_dir(victim) == victim_before
+    assert not (victim / ".rush").exists()
+    assert _effects(root, data_root) == before
+
+
+def test_t01_fixr2_delete_preview_rechecks_authority_after_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """security-18: a delete preview whose list grant is revoked after selection
+    returns the denial, never the previewed metadata."""
+    owner = legacy_owner_scope((tmp_path / "project").resolve())
+    auth, data_root, root, store, grant = _policy_project(
+        tmp_path, owner=owner, ops=("list",)
+    )
+    _row(store, "a1", owner, "mk-a1", source="source-a")
+    before = _effects(root, data_root)
+    real = TypedArtifactStore.delete_batch
+
+    def revoke_after_selection(self: TypedArtifactStore, *a: Any, **k: Any) -> Any:
+        result = real(self, *a, **k)
+        auth.revoke_memory_scope(
+            grant_id=grant["grant_id"],
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            data_root=data_root,
+        )
+        return result
+
+    monkeypatch.setattr(TypedArtifactStore, "delete_batch", revoke_after_selection)
+    result = MemoryTool().run(
+        root,
+        operation="delete",
+        request={
+            "artifact_ids": ["a1"],
+            "expected_revisions": {"a1": 1},
+            "scope": SUBJECT,
+            "apply": False,
+        },
+    )
+    raw = _rd(result)
+    assert raw["code"] == "E_PERMISSION", _dump(raw)
+    assert _reason_of(result) == "revoked"
+    assert "affected" not in _dump(raw)
+    assert "mk-a1" not in _dump(raw)
+    after = _effects(root, data_root)
+    assert after["db"] == before["db"]
+    assert after["counts"] == before["counts"]
+
+
+@pytest.mark.parametrize("writer", sorted(_EXPIRING_WRITER_SOURCES))
+def test_t01_fixr2_expiring_writer_absent_store_creates_nothing(
+    writer: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-1: a grant that expires after authorization and before the first
+    row commits leaves no database, cache directory or store key behind."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    expiry = time.time() + 3600.0
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=legacy_owner_scope(root),
+        approved_sources=[_EXPIRING_WRITER_SOURCES[writer]],
+        allowed_operations=["write"],
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        data_root=data_root,
+        expires_at=expiry,
+    )
+    assert not (root / ".rush" / "memory.db").exists()
+    before = _effects(root, data_root)
+    real_write = TypedArtifactStore.write
+
+    def write_after_expiry(self: TypedArtifactStore, *args: Any, **kwargs: Any) -> Any:
+        monkeypatch.setattr(auth, "_now", lambda: expiry + 1.0)
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(TypedArtifactStore, "write", write_after_expiry)
+    if writer == "record_turn":
+        from rush.session_memory import SessionMemoryManager
+
+        SessionMemoryManager(root / ".rush" / "session_memory.json").record_turn(
+            "tool", 1, 0, "summary"
+        )
+    elif writer == "record_event":
+        from rush.tools.flight_recorder import FlightRecorder
+
+        assert FlightRecorder(root).record_event("s1", "evt", {"a": 1}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+    else:
+        from rush.memory.checkpoint_journal import CheckpointJournal
+
+        assert CheckpointJournal(root).save_checkpoint("cp1", {}, []) is None
+    assert not (root / ".rush" / "memory.db").exists()
+    assert _effects(root, data_root) == before
+
+
+_FLIGHT_BAD_IDS = ("traversal", "slash", "backslash", "absolute", "empty")
+
+
+@pytest.mark.parametrize("kind", _FLIGHT_BAD_IDS)
+def test_t01_fix3_flight_recorder_session_id_is_contained(
+    tmp_path: Path, kind: str
+) -> None:
+    """security-13: a session id is one literal file label. A traversal, separator or
+    absolute id writes nothing (no row, no directory, no outside byte) and replays
+    nothing, even when the file it names exists outside the project."""
+    from rush.tools.flight_recorder import FlightRecorder
+
+    root = tmp_path / "project"
+    root.mkdir()
+    outside = tmp_path / "escaped.jsonl"
+    secret = json.dumps({"event_type": "private", "payload": {"secret": "OUTSIDE"}})
+    outside.write_text("SENTINEL\n" + secret + "\n", encoding="utf-8")
+    session_id = {
+        "traversal": "../../../../escaped",
+        "slash": "a/b",
+        "backslash": "a\\b",
+        "absolute": str(tmp_path / "escaped"),
+        "empty": "",
+    }[kind]
+
+    recorder = FlightRecorder(root)
+    assert recorder.record_event(session_id, "event", {"value": "ESCAPED"}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+    assert outside.read_text(encoding="utf-8") == "SENTINEL\n" + secret + "\n"
+    assert not (root / ".rush").exists(), "a rejected id must create nothing"
+    assert FlightRecorder(root, create=False).replay_session(session_id) == []
+    assert outside.read_text(encoding="utf-8") == "SENTINEL\n" + secret + "\n"
+
+    # A literal id still records and replays inside the project.
+    assert recorder.record_event("s1", "event", {"value": "kept"}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+    assert (root / ".rush" / "sessions" / "flights" / "s1.jsonl").is_file()
+    replayed = FlightRecorder(root, create=False).replay_session("s1")
+    assert [event["payload"] for event in replayed] == [{"value": "kept"}]
+
+
+def test_t01_fix3_flight_recorder_refuses_symlinked_flights_dir(
+    tmp_path: Path,
+) -> None:
+    """security-13: a `.rush/sessions` symlink to outside the project is refused for
+    both the append and the replay."""
+    from rush.tools.flight_recorder import FlightRecorder
+
+    root = tmp_path / "project"
+    (root / ".rush").mkdir(parents=True)
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "flights").mkdir(parents=True)
+    (elsewhere / "flights" / "s1.jsonl").write_text(
+        json.dumps({"event_type": "private", "payload": {"secret": "OUTSIDE"}}) + "\n",
+        encoding="utf-8",
+    )
+    (root / ".rush" / "sessions").symlink_to(elsewhere, target_is_directory=True)
+    before = sorted(p.name for p in (elsewhere / "flights").iterdir())
+    planted = (elsewhere / "flights" / "s1.jsonl").read_bytes()
+
+    assert FlightRecorder(root).record_event("s1", "event", {"a": 1}) is None  # type: ignore[func-returns-value]  # asserts the None return contract
+    assert FlightRecorder(root, create=False).replay_session("s1") == []
+    assert sorted(p.name for p in (elsewhere / "flights").iterdir()) == before
+    assert (elsewhere / "flights" / "s1.jsonl").read_bytes() == planted
+
+
+def test_t01_fix3_continuity_session_memory_unavailable_on_old_schema_tamper(
+    tmp_path: Path,
+) -> None:
+    """spec-tests-8: a store the read-only view cannot open (payload columns removed)
+    reads nothing in policy mode, so a row the view rejected as tampered never turns
+    visible by removing the columns."""
+    from rush.continuity import receipts
+    from rush.memory import authorization as auth
+    from rush.session_memory import SessionMemoryManager
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("session_memory:record_turn", "migration:session_memory"),
+        ops=FULL_OPS,
+    )
+    SessionMemoryManager(root / ".rush" / "session_memory.json").record_turn(
+        "tool", 1, 0, "planted unauthorized advice"
+    )
+    db = root / ".rush" / "memory.db"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        (artifact_id,) = conn.execute(
+            "SELECT id FROM memory_artifacts WHERE source = ?",
+            ("session_memory:record_turn",),
+        ).fetchone()
+
+    honest = receipts._extract_session_memory(root)
+    assert honest["count"] == 1, honest
+
+    _tamper(db, artifact_id)
+    gc.collect()
+    rejected = receipts._extract_session_memory(root)
+    assert rejected["count"] == 0, rejected
+    assert "planted" not in _dump(rejected)
+
+    _drop_payload_columns(db)
+    gc.collect()
+    degraded = receipts._extract_session_memory(root)
+    assert degraded == {
+        "authority": "historical_evidence",
+        "state": "unavailable",
+        "count": 0,
+        "records": [],
+    }
+    assert "planted" not in _dump(degraded)

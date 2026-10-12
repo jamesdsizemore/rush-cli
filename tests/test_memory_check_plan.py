@@ -45,7 +45,7 @@ def _ask_grant(
         project_root=tmp_path,
         owner_scope=legacy_owner_scope(tmp_path),
         approved_sources=_GRANTED_SOURCES,
-        allowed_operations=["ask"],
+        allowed_operations=["ask", "write"],
         expected_policy_revision=int(revision),
         consent=True,
         data_root=data_root,
@@ -298,6 +298,7 @@ def test_memory_tool_plan_checks_operation_returns_ranked_plan(tmp_path: Path) -
     )
 
     assert result["status"] == "ok"
+    assert result["raw"] is not None
     data = result["raw"]["data"]
     assert data["checks"][0]["ids"] == ["payload-contract"]
     assert data["required_ids"] == ["checkout", "payload-contract"]

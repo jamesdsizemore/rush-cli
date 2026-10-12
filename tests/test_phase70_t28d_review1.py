@@ -703,6 +703,7 @@ _MAINTENANCE_STATUS_COLUMNS = {
     "expired_at",
     "expired_by",
     "artifact_version",
+    "row_mac",
 }
 
 

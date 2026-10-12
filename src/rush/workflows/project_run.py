@@ -2383,71 +2383,113 @@ def build_handoff(
     artifact_receipt_id = effect_ids.get("artifact_create") or operation_id or None
     session_receipt_id = effect_ids.get("session_create") or operation_id or None
 
-    store = TypedArtifactStore(root)
-    artifact = store.write(
-        MemoryArtifact(
-            id=f"scan-handoff-{handoff_id}",
-            family="handoff",
-            subject="active_context",
-            trust_tier="DERIVED",
-            content={"run_id": run_id, "agent_id": agent_id, "findings": selected},
-            source=str(root),
-            created_at=time.time(),
-            symbol_ref=f"scan_handoff:{handoff_id}",
-        ),
-        receipt_operation_id=artifact_receipt_id,
+    # 72-T01 D4: every effect (artifact, session, descriptor) happens inside the
+    # shared writer gate for this project's own source; a denial writes nothing.
+    from rush.memory.retrieval import (
+        RouteDenial,
+        authorize_writer,
+        recheck_failure,
+        route_access,
+        writer_owner,
     )
+    from rush.memory.store import MemoryAccessChanged, legacy_owner_scope
 
-    try:
-        session, session_capability, _delta = prepare_handoff(
-            store,
-            root=root,
-            audience=agent_id,
-            granted_ids=[artifact.id],
-            session_allowlist=[str(root)],
-            constraints={
-                "run_id": run_id,
-                "acceptance_checks": list(acceptance_checks),
-                "granted_actions": list(granted_actions),
-            },
-            receipt_operation_id=session_receipt_id,
+    # D2: preparing a handoff needs `write` and `expand` in one grant, resolved
+    # before the first effect and handed to the writer gate and the transport.
+    handoff_access = route_access(
+        root,
+        "handoff",
+        session_allowlist=[str(root)],
+        owner_scope=legacy_owner_scope(root),
+        data_root=data_root,
+    )
+    if isinstance(handoff_access, RouteDenial):
+        raise ScanHandoffAuthError(
+            f"memory policy denied the handoff: {handoff_access.reason}"
         )
-    except HandoffError as exc:
-        raise ScanHandoffAuthError(str(exc)) from exc
+    with authorize_writer(root, str(root), access=handoff_access) as granted:
+        if isinstance(granted, RouteDenial):
+            raise ScanHandoffAuthError(
+                f"memory policy denied the handoff: {granted.reason}"
+            )
+        try:
+            store = TypedArtifactStore(root)
+            artifact = store.write(
+                MemoryArtifact(
+                    id=f"scan-handoff-{handoff_id}",
+                    family="handoff",
+                    subject="active_context",
+                    trust_tier="DERIVED",
+                    content={
+                        "run_id": run_id,
+                        "agent_id": agent_id,
+                        "findings": selected,
+                    },
+                    source=str(root),
+                    created_at=time.time(),
+                    symbol_ref=f"scan_handoff:{handoff_id}",
+                    owner_scope=writer_owner(granted),
+                ),
+                receipt_operation_id=artifact_receipt_id,
+                commit_check=lambda: recheck_failure(granted),
+            )
 
-    now = datetime.now(UTC).isoformat()
-    handoff = ScanHandoff(
-        handoff_id=handoff_id,
-        run_id=run_id,
-        project_id=record["project_id"],
-        root=str(root),
-        agent_id=agent_id,
-        state="prepared",
-        finding_ids=tuple(str(f.get("finding_id")) for f in selected),
-        packet=packet,
-        artifact_id=artifact.id,
-        artifact_version=artifact.artifact_version,
-        source_signature=_source_signature(root),
-        source_signature_format=PROVENANCE_FORMAT,
-        memory_session_id=session.session_id,
-        # S05: kept in-memory only, for an immediate same-call `dispatch_handoff`
-        # (server.py/tui.py both build then dispatch in one call chain) --
-        # never round-tripped through `to_dict()`/`from_dict()`.
-        session_capability=session_capability,
-        session_capability_digest=hashlib.sha256(
-            session_capability.encode("utf-8")
-        ).hexdigest(),
-        delivery_nonce=secrets.token_urlsafe(32),
-        granted_actions=tuple(granted_actions),
-        acceptance_checks=tuple(acceptance_checks),
-        created_at=now,
-        updated_at=now,
-        operation_id=operation_id,
-        attempt_id=attempt_id,
-        owner_instance_id=owner_instance_id,
-    )
-    _persist_handoff(root, handoff)
-    return handoff
+            try:
+                session, session_capability, _delta = prepare_handoff(
+                    store,
+                    root=root,
+                    audience=agent_id,
+                    granted_ids=[artifact.id],
+                    session_allowlist=[str(root)],
+                    constraints={
+                        "run_id": run_id,
+                        "acceptance_checks": list(acceptance_checks),
+                        "granted_actions": list(granted_actions),
+                    },
+                    receipt_operation_id=session_receipt_id,
+                    sender=granted,
+                    commit_check=lambda: recheck_failure(granted),
+                )
+            except HandoffError as exc:
+                raise ScanHandoffAuthError(str(exc)) from exc
+
+            now = datetime.now(UTC).isoformat()
+            handoff = ScanHandoff(
+                handoff_id=handoff_id,
+                run_id=run_id,
+                project_id=record["project_id"],
+                root=str(root),
+                agent_id=agent_id,
+                state="prepared",
+                finding_ids=tuple(str(f.get("finding_id")) for f in selected),
+                packet=packet,
+                artifact_id=artifact.id,
+                artifact_version=artifact.artifact_version,
+                source_signature=_source_signature(root),
+                source_signature_format=PROVENANCE_FORMAT,
+                memory_session_id=session.session_id,
+                # S05: kept in-memory only, for an immediate same-call `dispatch_handoff`
+                # (server.py/tui.py both build then dispatch in one call chain) --
+                # never round-tripped through `to_dict()`/`from_dict()`.
+                session_capability=session_capability,
+                session_capability_digest=hashlib.sha256(
+                    session_capability.encode("utf-8")
+                ).hexdigest(),
+                delivery_nonce=secrets.token_urlsafe(32),
+                granted_actions=tuple(granted_actions),
+                acceptance_checks=tuple(acceptance_checks),
+                created_at=now,
+                updated_at=now,
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                owner_instance_id=owner_instance_id,
+            )
+            _persist_handoff(root, handoff)
+            return handoff
+        except MemoryAccessChanged as exc:
+            raise ScanHandoffAuthError(
+                f"memory policy changed during the handoff: {exc.reason}"
+            ) from exc
 
 
 def _deliver_handoff(
@@ -2550,22 +2592,59 @@ def dispatch_handoff(
     if not hmac.compare_digest(presented_digest, handoff.session_capability_digest):
         raise ScanHandoffAuthError("invalid session_capability")
 
-    store = TypedArtifactStore(root)
+    view, _state = TypedArtifactStore.open_readonly_view(root)
     try:
+        if view is None:
+            raise HandoffError("Unknown or revoked handoff session.")
         delta = receive_handoff(
-            store, session_id=handoff.memory_session_id, capability=session_capability
+            view,
+            session_id=handoff.memory_session_id,
+            capability=session_capability,
         )
     except HandoffError as exc:
         raise ScanHandoffAuthError(str(exc)) from exc
+    finally:
+        if view is not None:
+            view.close()
 
     receipt_id = (
         delivery_receipt_id
         or handoff.operation_id
         or f"legacy-delivery:{handoff.handoff_id}"
     )
-    return _deliver_handoff(
-        root, handoff, delta, delivery_receipt_id=receipt_id, store=store
+    delivered = _authorized_delivery(
+        root, handoff, delta, receipt_id, lambda: TypedArtifactStore(root)
     )
+    if delivered is None:
+        raise ScanHandoffAuthError("memory policy denied the delivery receipt")
+    return delivered
+
+
+def _authorized_delivery(
+    root: Path,
+    handoff: ScanHandoff,
+    delta: dict[str, Any],
+    receipt_id: str,
+    open_store: Callable[[], TypedArtifactStore],
+) -> ScanHandoff | None:
+    """72-T01 D4: the delivery receipt is written only inside the shared writer
+    gate for this project's own source; `None` when the policy denies it."""
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+    from rush.memory.store import MemoryAccessChanged
+
+    with authorize_writer(root, str(root)) as granted:
+        if isinstance(granted, RouteDenial):
+            return None
+        try:
+            return _deliver_handoff(
+                root,
+                handoff,
+                delta,
+                delivery_receipt_id=receipt_id,
+                store=open_store(),
+            )
+        except MemoryAccessChanged:
+            return None
 
 
 def _mark_handoff_unrecoverable(
@@ -2625,31 +2704,43 @@ def recover_prepared_handoff(
         return None
     if not claimed_operation_id or handoff.operation_id != claimed_operation_id:
         return None
-    store = TypedArtifactStore(root)
-    if store.get_receipt(artifact_create_receipt_id) is None:
-        _mark_handoff_unrecoverable(store, handoff)
+    # 72-T01 R15: receipts are inspected read-only before any writable open. A
+    # pre-72 or unreadable store (no read-only view) and an `unavailable`
+    # receipt recover nothing and clean nothing up; the exposure-reducing
+    # cleanup (`_mark_handoff_unrecoverable`) runs in every policy mode.
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    if view is None:
         return None
-    if store.get_receipt(session_create_receipt_id) is None:
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    if not _signature_comparable(handoff.source_signature_format):
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    if _source_signature(root) != handoff.source_signature:
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    delta = recover_session_delta_without_capability(
-        store,
-        handoff.memory_session_id,
-        expected_root=str(root),
-        expected_audience=handoff.agent_id,
-        expected_session_allowlist=[str(root)],
-    )
+    try:
+        states = {
+            TypedArtifactStore.get_receipt_readonly(root, receipt_id)[0]
+            for receipt_id in (artifact_create_receipt_id, session_create_receipt_id)
+        }
+        if "unavailable" in states:
+            return None
+        recoverable = (
+            "absent" not in states
+            and _signature_comparable(handoff.source_signature_format)
+            and _source_signature(root) == handoff.source_signature
+        )
+        delta = (
+            recover_session_delta_without_capability(
+                view,
+                handoff.memory_session_id,
+                expected_root=str(root),
+                expected_audience=handoff.agent_id,
+                expected_session_allowlist=[str(root)],
+            )
+            if recoverable
+            else None
+        )
+    finally:
+        view.close()
     if delta is None:
-        _mark_handoff_unrecoverable(store, handoff)
+        _mark_handoff_unrecoverable(TypedArtifactStore(root), handoff)
         return None
-    return _deliver_handoff(
-        root, handoff, delta, delivery_receipt_id=delivery_receipt_id, store=store
+    return _authorized_delivery(
+        root, handoff, delta, delivery_receipt_id, lambda: TypedArtifactStore(root)
     )
 
 

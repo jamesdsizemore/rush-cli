@@ -5561,13 +5561,46 @@ def context_gain_cmd() -> None:
 )
 def context_persona_cmd(set_persona: str | None) -> None:
     """View or configure agent terse response persona style."""
+    from rush.memory.authorization import hold_policy_lock
     from rush.memory.preference_store import PreferenceStore, get_preference_readonly
+    from rush.memory.retrieval import RouteDenial, recheck_failure, route_access
+    from rush.memory.store import legacy_owner_scope
+
+    # 72-T01 D1: the persona preference is memory (`migration:preference_store`);
+    # its read and its write are authorized before any store is touched.
+    cwd = Path.cwd().resolve()
+    sources = ["migration:preference_store"]
+
+    def unavailable(code: str, reason: str) -> None:
+        echo(f"Persona style unavailable: {code} ({reason})")
+        raise click.exceptions.Exit(1)
 
     if set_persona:
-        PreferenceStore().set("persona_style", set_persona)
+        access = route_access(
+            cwd,
+            "write",
+            apply=True,
+            owner_scope=legacy_owner_scope(cwd),
+            session_allowlist=sources,
+        )
+        if isinstance(access, RouteDenial):
+            unavailable(access.code, access.reason)
+            return
+        try:
+            with hold_policy_lock(data_root=access.data_root):
+                failure = recheck_failure(access)
+                if failure is not None:
+                    unavailable(*failure)
+                PreferenceStore().set("persona_style", set_persona)
+        except OSError:
+            unavailable("E_PERMISSION", "lock_unavailable")
         echo(f"Persona style set to: {set_persona}")
         return
-    rush_dir = Path.cwd().resolve() / ".rush"
+    access = route_access(cwd, "ask", session_allowlist=sources)
+    if isinstance(access, RouteDenial):
+        unavailable(access.code, access.reason)
+        return
+    rush_dir = cwd / ".rush"
     if (
         not (rush_dir / "preferences.json").exists()
         and not (rush_dir / "memory.db").exists()
@@ -5884,10 +5917,28 @@ def trace_cmd(as_json: bool) -> None:
 def flight_recorder_cmd(session_id: str | None, as_json: bool) -> None:
     """Record and replay agent JSON-RPC sessions."""
     from rush.invocation.targets import resolve_logical_root
-    from rush.tools.flight_recorder import FlightRecorder
 
     # T10 (S10.5): status and replay are read-only and anchored at the logical root.
-    recorder = FlightRecorder(resolve_logical_root(Path.cwd()), create=False)
+    from rush.memory.retrieval import RouteDenial, route_access
+    from rush.tools.flight_recorder import FlightRecorder
+
+    logical_root = resolve_logical_root(Path.cwd())
+    # 72-T01 D1: replaying recorded memory is an `ask` read of the recorder's own
+    # sources; a denial replays nothing (the empty reader result).
+    access = route_access(
+        Path(logical_root),
+        "ask",
+        session_allowlist=["flight_recorder:record_event", "migration:flight_recorder"],
+    )
+    if session_id and isinstance(access, RouteDenial):
+        if as_json:
+            echo_json({"session_id": session_id, "rows": [], "total": 0})
+        else:
+            echo(
+                f"Flight Recorder: replay unavailable ({access.code} {access.reason})."
+            )
+        return
+    recorder = FlightRecorder(logical_root, create=False)
     events: list[Any] = []
     if session_id:
         from rush.memory.store import MemoryStoreUnreadableError

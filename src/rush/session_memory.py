@@ -33,6 +33,17 @@ logger = get_logger("session_memory")
 DEFAULT_MEMORY_FILE = Path(".rush") / "session_memory.json"
 
 
+class _AttributionDenied:
+    """72-T01 D4: `record_fix_attribution`'s value when the write is not authorized."""
+
+    def __repr__(self) -> str:
+        return "ATTRIBUTION_DENIED"
+
+
+#: Returned by `record_fix_attribution` when the memory policy denies the link.
+ATTRIBUTION_DENIED = _AttributionDenied()
+
+
 @dataclass(frozen=True)
 class SessionRecord:
     """Represents one turn of evaluation and remediation."""
@@ -48,7 +59,9 @@ class SessionMemoryManager:
     """Manages multi-turn history with prompt injection sanitization and XML framing."""
 
     def __init__(self, memory_file: Path | None = None, max_records: int = 50) -> None:
-        self.memory_file = (memory_file or DEFAULT_MEMORY_FILE).resolve()
+        # Absolute, not resolved: the root that authorizes a write comes from the path
+        # as named, so a symlink cannot move it to its target's project.
+        self.memory_file = (memory_file or DEFAULT_MEMORY_FILE).absolute()
         self.max_records = max_records
         # Canonical .rush files share the repository store; bare custom paths stay isolated.
         parent = self.memory_file.parent
@@ -73,7 +86,89 @@ class SessionMemoryManager:
         fixes: int,
         summary: str,
     ) -> None:
-        """Sanitize and record an evaluation turn."""
+        """Sanitize and record an evaluation turn. 72-T01 D4: authorized through the
+        shared writer gate first; a denial logs and writes nothing (never raises)."""
+        from rush.io.physical_paths import ContainmentError
+        from rush.memory.retrieval import RouteDenial, authorize_writer
+        from rush.memory.store import MemoryAccessChanged
+
+        with authorize_writer(
+            self._project_root, "session_memory:record_turn"
+        ) as granted:
+            if isinstance(granted, RouteDenial):
+                log_subsystem(
+                    "memory",
+                    "WARNING",
+                    f"Session turn not recorded: {granted.code} ({granted.reason})",
+                )
+                return
+            try:
+                relative = self._contained_relative_path()
+            except ContainmentError as exc:
+                log_subsystem(
+                    "memory",
+                    "WARNING",
+                    f"Session turn not recorded: {exc.code}",
+                )
+                return
+            from rush.memory.retrieval import recheck_failure, writer_owner
+            from rush.memory.store import MemoryArtifact, write_checked_artifact
+            from rush.memory.trust import default_entry_tier
+
+            records, origin_id, artifact_content = self._stage_turn(
+                tool_name, findings, fixes, summary
+            )
+            try:
+                write_checked_artifact(
+                    self._project_root,
+                    MemoryArtifact(
+                        id=str(uuid.uuid4()),
+                        family="experience",
+                        subject="episodic",
+                        trust_tier=default_entry_tier("local_tool"),
+                        content=artifact_content,
+                        source="session_memory:record_turn",
+                        created_at=time.time(),
+                        origin_kind="session_memory",
+                        origin_id=origin_id,
+                        owner_scope=writer_owner(granted),
+                    ),
+                    commit_check=lambda: recheck_failure(granted),
+                )
+            except MemoryAccessChanged as exc:
+                log_subsystem(
+                    "memory",
+                    "WARNING",
+                    f"Session turn not recorded: {exc.code} ({exc.reason})",
+                )
+                return
+            try:
+                self._publish_turn_file(tool_name, records, relative)
+            except ContainmentError as exc:
+                log_subsystem(
+                    "memory",
+                    "WARNING",
+                    f"Session turn file not published: {exc.code}",
+                )
+        return
+
+    def _contained_relative_path(self) -> Path:
+        """The memory file's path relative to its project root, refused (before any
+        store or file effect) when a symlink or reparse point lies on it. A root that
+        does not exist yet holds no link; the authorized write creates it."""
+        from rush.io.physical_paths import PhysicalRoot
+
+        relative = self.memory_file.relative_to(self._project_root)
+        if self._project_root.is_dir():
+            PhysicalRoot(self._project_root).open_contained(relative, purpose="write")
+        return relative
+
+    def _stage_turn(
+        self, tool_name: str, findings: int, fixes: int, summary: str
+    ) -> tuple[list[SessionRecord], str, dict[str, Any]]:
+        """Sanitize the turn without touching the filesystem; returns the records the
+        session JSON file will hold plus the turn's `(origin_id, content)` for the
+        forward-write."""
         records = self.load_records()
 
         # Sanitize summary before truncation
@@ -92,17 +187,7 @@ class SessionMemoryManager:
         if len(records) > self.max_records:
             records = records[-self.max_records :]
 
-        self.memory_file.parent.mkdir(parents=True, exist_ok=True)
-        from rush.memory.store import MemoryArtifact, TypedArtifactStore
-        from rush.memory.trust import default_entry_tier
         from rush.safety.redactor import sanitize_value
-
-        clean_payload = sanitize_value({"records": [asdict(r) for r in records]}).value
-        self.memory_file.write_text(
-            json.dumps(clean_payload, indent=2),
-            encoding="utf-8",
-        )
-        log_subsystem("memory", "DEBUG", f"Recorded session turn for {tool_name}")
 
         # Forward-write path (P61.5.2, T-61.23): sanitize-then-write into TypedArtifactStore,
         # same (sanitize_value -> write()) sequence FlightRecorder.record_event uses. Shares
@@ -111,20 +196,21 @@ class SessionMemoryManager:
         origin_id = hashlib.sha256(
             f"{new_record.timestamp}{new_record.tool_name}{new_record.summary}".encode()
         ).hexdigest()
-        artifact_content = sanitize_value(asdict(new_record)).value
-        TypedArtifactStore(self._project_root).write(
-            MemoryArtifact(
-                id=str(uuid.uuid4()),
-                family="experience",
-                subject="episodic",
-                trust_tier=default_entry_tier("local_tool"),
-                content=artifact_content,
-                source="session_memory:record_turn",
-                created_at=time.time(),
-                origin_kind="session_memory",
-                origin_id=origin_id,
-            )
+        return records, origin_id, sanitize_value(asdict(new_record)).value
+
+    def _publish_turn_file(
+        self, tool_name: str, records: list[SessionRecord], relative: Path
+    ) -> None:
+        """Publish the staged records to the session JSON file through the contained
+        atomic writer; runs only after the checked typed-store write committed."""
+        from rush.io.atomic_file import AtomicFile, SanitizedJsonValue
+        from rush.io.physical_paths import PhysicalRoot
+
+        AtomicFile(PhysicalRoot(self._project_root)).write_json(
+            relative,
+            SanitizedJsonValue.from_value({"records": [asdict(r) for r in records]}),
         )
+        log_subsystem("memory", "DEBUG", f"Recorded session turn for {tool_name}")
 
     def format_for_mcp(self) -> str:
         """Format session memory in strict XML boundary frames to prevent prompt injection.
@@ -150,27 +236,37 @@ class SessionMemoryManager:
 
 def record_fix_attribution(
     project_root: Path, commit: dict[str, Any], failure_id: str
-) -> MemoryArtifact | None:
+) -> MemoryArtifact | _AttributionDenied | None:
     """Link a `GitTrailerParser`-classified `is_fix=True` commit's SHA to the failure record it fixed.
 
     Stores only the commit SHA (Phase 62 §6.5 Invariant 4) — never the commit body/diff. Keyed by
     `(commit sha, failure_id)` so a rerun over the same commit never duplicates the link.
-    Returns the committed link (T19), or `None` when that link already existed.
+    Returns the committed link (T19), or `None` when that link already existed. 72-T01
+    D4: `ATTRIBUTION_DENIED` (nothing written) when the memory policy denies it.
     """
     from rush.memory.migration import write_if_new
-    from rush.memory.store import TypedArtifactStore
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+    from rush.memory.store import MemoryAccessChanged, TypedArtifactStore
 
-    store = TypedArtifactStore(project_root)
-    return write_if_new(
-        store,
-        family="experience",
-        subject="episodic",
-        content={"commit_sha": commit["hash"], "failure_id": failure_id},
-        source="provenance_ai:attribution_link",
-        origin_kind="attribution_link",
-        origin_id=f"{commit['hash']}:{failure_id}",
-        symbol_ref=failure_id,
-    )
+    source = "provenance_ai:attribution_link"
+    with authorize_writer(Path(project_root), source) as granted:
+        if isinstance(granted, RouteDenial):
+            return ATTRIBUTION_DENIED
+        store = TypedArtifactStore(project_root)
+        try:
+            return write_if_new(
+                store,
+                family="experience",
+                subject="episodic",
+                content={"commit_sha": commit["hash"], "failure_id": failure_id},
+                source=source,
+                origin_kind="attribution_link",
+                origin_id=f"{commit['hash']}:{failure_id}",
+                symbol_ref=failure_id,
+                access=granted,
+            )
+        except MemoryAccessChanged:
+            return ATTRIBUTION_DENIED
 
 
 def find_attribution_link(project_root: Path, failure_id: str) -> str | None:

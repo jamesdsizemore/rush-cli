@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,30 @@ def contained_source_path(project_root: Path, path_part: str) -> Path | None:
         return None
 
 
+def read_contained_source(project_root: Path, path_part: str) -> str | None:
+    """72-T01 R21: one contained snapshot read of `path_part` under `project_root`
+    (`workflows.projects.open_contained_file`'s single checked fd, decoded as UTF-8
+    with universal newlines, so the text equals `Path.read_text(encoding="utf-8")`).
+    `None` for a refused, missing, unreadable or undecodable file."""
+    from rush.io.physical_paths import ContainmentError
+    from rush.workflows.projects import open_contained_file
+
+    try:
+        fd = open_contained_file(project_root, path_part)
+    except (ContainmentError, ValueError, OSError, UnicodeError):
+        return None
+    try:
+        handle = os.fdopen(fd, "r", encoding="utf-8", errors="strict")
+    except (OSError, ValueError):
+        os.close(fd)
+        return None
+    try:
+        with handle:
+            return handle.read()
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
 def resolve_symbol_ref(symbol_ref: str, project_root: Path) -> bool:
     """Confirms `symbol_ref` ('path/to/file.py::Symbol') names a real file + top-level def/class.
 
@@ -130,9 +155,12 @@ def resolve_symbol_ref(symbol_ref: str, project_root: Path) -> bool:
     file_path = contained_source_path(Path(project_root), path_part)
     if file_path is None or not file_path.is_file():
         return False
+    text = read_contained_source(Path(project_root), path_part)
+    if text is None:
+        return False
     try:
-        tree = ast.parse(file_path.read_text(encoding="utf-8"))
-    except (SyntaxError, UnicodeDecodeError, OSError):
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
         return False
     return any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))

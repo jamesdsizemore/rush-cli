@@ -9,20 +9,26 @@ from __future__ import annotations
 import dataclasses
 import gc
 import hashlib
+import hmac
 import json
+import os
 import secrets
 import sqlite3
+import stat
+import subprocess
+import sys
 import time
 import urllib.parse
+import uuid
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeGuard, cast
 
 from rush.memory.merkle_invalidator import MerkleInvalidator
-from rush.memory.trust import PromotionResult, evaluate_conflict, evaluate_promotion
+from rush.memory.trust import PromotionResult, evaluate_promotion
 from rush.safety.redactor import sanitize_value
 from rush.sqlite_util import ClosingConnection
 
@@ -265,7 +271,7 @@ class OwnerScope:
     id: str
 
     def __post_init__(self) -> None:
-        if self.kind not in _OWNER_SCOPE_KINDS:
+        if not isinstance(self.kind, str) or self.kind not in _OWNER_SCOPE_KINDS:
             raise ValueError(
                 f"owner_scope kind must be one of {sorted(_OWNER_SCOPE_KINDS)}, "
                 f"got {self.kind!r}"
@@ -518,7 +524,13 @@ CREATE TABLE IF NOT EXISTS memory_handoff_sessions (
     constraints TEXT NOT NULL,
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL,
-    revoked_at REAL
+    revoked_at REAL,
+    sender_grant_id TEXT,
+    sender_owner_kind TEXT,
+    sender_owner_id TEXT,
+    sender_project_id TEXT,
+    sender_worktree_id TEXT,
+    sender_policy_revision INTEGER
 );
 CREATE TABLE IF NOT EXISTS memory_handoff_receipts (
     session_id TEXT NOT NULL,
@@ -566,6 +578,14 @@ CREATE TABLE IF NOT EXISTS mutation_receipts (
 );
 """
 
+_BINDING_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS memory_store_binding (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    store_id TEXT NOT NULL,
+    mac TEXT NOT NULL
+);
+"""
+
 _SCHEMA_SQL = (
     """
 PRAGMA journal_mode=WAL;
@@ -594,7 +614,8 @@ CREATE TABLE IF NOT EXISTS memory_artifacts (
     owner_scope_id TEXT,
     orphaned_at REAL,
     payload_hash TEXT,
-    payload_hash_origin TEXT
+    payload_hash_origin TEXT,
+    row_mac TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_memory_trust ON memory_artifacts(trust_tier);
@@ -620,6 +641,7 @@ END;
     + _HANDOFF_TABLES_SQL
     + _EMBEDDING_TABLE_SQL
     + _MUTATION_RECEIPTS_TABLE_SQL
+    + _BINDING_TABLE_SQL
 )
 
 _INSERT_SQL = """
@@ -627,8 +649,8 @@ INSERT INTO memory_artifacts (
     id, family, subject, trust_tier, content, source, created_at,
     symbol_ref, content_hash, corroboration_count, promoted_at, stale,
     signature, origin_kind, origin_id, artifact_version,
-    owner_scope_kind, owner_scope_id, payload_hash, payload_hash_origin
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    owner_scope_kind, owner_scope_id, payload_hash, payload_hash_origin, row_mac
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 """
 
 # 72-T01 (plan §2.1 item 2): `payload_hash` is the SHA-256 of the exact persisted
@@ -649,6 +671,22 @@ def payload_mismatched(text: Any, digest: Any) -> bool:
     return digest is not None and (
         not isinstance(text, str) or payload_digest(text) != digest
     )
+
+
+def source_predicate_sql(column: str, sources: Sequence[str]) -> tuple[str, list[str]]:
+    """D40: `column` is an exact approved label, or carries a granted family prefix
+    with a non-empty suffix (never LIKE/glob matching)."""
+    from rush.memory.authorization import family_prefixes
+
+    exact = sorted(s for s in sources if not s.endswith(":*"))
+    families = family_prefixes(sources)
+    clause = (
+        f"({column} IN (SELECT value FROM json_each(?)) OR EXISTS ("
+        "SELECT 1 FROM json_each(?) AS f "
+        f"WHERE substr({column}, 1, length(f.value)) = f.value "
+        f"AND length({column}) > length(f.value)))"
+    )
+    return clause, [json.dumps(exact), json.dumps(families)]
 
 
 def compute_content_signature(content: dict[str, Any]) -> str:
@@ -711,6 +749,682 @@ def _migrate_payload_hash_columns(conn: sqlite3.Connection) -> None:
                     "payload_hash_origin = 'backfill' WHERE rowid = ?",
                     (payload_digest(text), rowid),
                 )
+
+
+# --- D41: local store binding ------------------------------------------------
+
+#: Row MAC payload columns, in order (D41).
+ROW_MAC_COLUMNS: tuple[str, ...] = (
+    "id",
+    "family",
+    "subject",
+    "trust_tier",
+    "content",
+    "source",
+    "symbol_ref",
+    "content_hash",
+    "owner_scope_kind",
+    "owner_scope_id",
+    "origin_kind",
+    "origin_id",
+)
+_STORE_KEY_NAME = "memory_store.key"
+_STORE_KEY_TMP_PREFIX = _STORE_KEY_NAME + ".tmp-"
+_STORE_KEY_BYTES = 32
+StoreBinding = Literal["bound", "unbound"]
+
+
+def _store_key_dir() -> Path | None:
+    """`<default_data_root()>/user/.rush`; `None` when the data root is unavailable."""
+    from rush.setup.provision import DataRootUnavailableError, default_data_root
+
+    try:
+        return Path(default_data_root()) / "user" / ".rush"
+    except (DataRootUnavailableError, OSError, RuntimeError, ValueError):
+        return None
+
+
+def _read_key_posix(path: Path) -> bytes | None:
+    try:
+        # O_NONBLOCK: a FIFO planted at the key path must fail the regular-file
+        # check below instead of blocking the open.
+        fd = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+        )
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or info.st_size != _STORE_KEY_BYTES
+        ):
+            return None
+        data = os.read(fd, _STORE_KEY_BYTES + 1)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return data if len(data) == _STORE_KEY_BYTES else None
+
+
+def read_store_key() -> bytes | None:
+    """D41: the 32-byte local store key, or `None`. Never creates anything."""
+    key_dir = _store_key_dir()
+    if key_dir is None:
+        return None
+    if sys.platform == "win32":  # pragma: no cover - native Windows lane
+        return _windows_key_io(key_dir, create=False)
+    return _read_key_posix(key_dir / _STORE_KEY_NAME)
+
+
+def _unlink_temp(path: Path) -> None:
+    """Remove the key's temporary hard link, retrying a `PermissionError` every
+    0.02 s for one second (a remaining temp link is the permitted ceiling)."""
+    deadline = time.monotonic() + 1.0
+    while True:
+        try:
+            os.unlink(path)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                return
+            time.sleep(0.02)
+        except OSError:
+            return
+
+
+def ensure_store_key() -> bytes | None:
+    """D41: read the store key, publishing a new one when absent; `None` when it
+    cannot be read or created."""
+    existing = read_store_key()
+    if existing is not None:
+        return existing
+    key_dir = _store_key_dir()
+    if key_dir is None:
+        return None
+    if sys.platform == "win32":  # pragma: no cover - native Windows lane
+        return _windows_key_io(key_dir, create=True)
+    key_path = key_dir / _STORE_KEY_NAME
+    if os.path.lexists(key_path):
+        return None  # present but unusable: never replaced
+    temp = key_dir / (_STORE_KEY_TMP_PREFIX + uuid.uuid4().hex)
+    try:
+        os.makedirs(key_dir, mode=0o700, exist_ok=True)
+        fd = os.open(
+            temp,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+    except OSError:
+        return None
+    try:
+        try:
+            os.write(fd, secrets.token_bytes(_STORE_KEY_BYTES))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        try:
+            os.link(temp, key_path)
+        except FileExistsError:
+            pass
+    except OSError:
+        return None
+    finally:
+        _unlink_temp(temp)
+    return read_store_key()
+
+
+def _windows_key_io(key_dir: Path, *, create: bool) -> bytes | None:  # pragma: no cover
+    """D41 Windows key read/create through pinned, non-reparse directory handles,
+    an owner-only DACL and a shared-delete read handle. `None` on any failure."""
+    try:
+        return _windows_key_io_unchecked(key_dir, create=create)
+    except Exception:  # noqa: BLE001 - every Windows key failure is "key unavailable"
+        return None
+
+
+def _windows_key_io_unchecked(  # pragma: no cover - native Windows lane
+    key_dir: Path, *, create: bool
+) -> bytes | None:
+    if sys.platform != "win32":
+        raise OSError("the Windows key lane runs only on Windows")
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    from rush.memory.authorization import _windows_sid_principal
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    invalid = ctypes.c_void_p(-1).value
+    kernel32.CreateFileW.restype = ctypes.c_void_p
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.GetFileAttributesW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetFileAttributesW.restype = wintypes.DWORD
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+
+    class _Info(ctypes.Structure):
+        _fields_ = [
+            ("attrs", wintypes.DWORD),
+            ("c1", wintypes.DWORD * 2),
+            ("c2", wintypes.DWORD * 2),
+            ("c3", wintypes.DWORD * 2),
+            ("serial", wintypes.DWORD),
+            ("size_high", wintypes.DWORD),
+            ("size_low", wintypes.DWORD),
+            ("links", wintypes.DWORD),
+            ("index_high", wintypes.DWORD),
+            ("index_low", wintypes.DWORD),
+        ]
+
+    kernel32.GetFileInformationByHandle.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(_Info),
+    ]
+    reparse, directory = 0x400, 0x10
+
+    def info_of(handle: Any) -> _Info:
+        info = _Info()
+        if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return info
+
+    pinned: list[Any] = []
+    try:
+        root = key_dir.parent.parent
+        for directory_path in (root, root / "user", key_dir):
+            if create and not os.path.lexists(directory_path):
+                os.mkdir(directory_path)
+            handle = kernel32.CreateFileW(
+                str(directory_path), 0x81, 0x3, None, 3, 0x02200000, None
+            )
+            if handle in (None, invalid):
+                return None
+            pinned.append(handle)
+            attrs = info_of(handle).attrs
+            if attrs & reparse or not attrs & directory:
+                return None
+        principal = _windows_sid_principal()
+        sid = principal.split(":", 1)[1]
+        key_path = key_dir / _STORE_KEY_NAME
+        if create and not os.path.lexists(key_path):
+            sddl = f"O:{sid}D:P(A;;FA;;;{sid})(A;;FA;;;SY)"
+
+            class _SA(ctypes.Structure):
+                _fields_ = [
+                    ("length", wintypes.DWORD),
+                    ("descriptor", ctypes.c_void_p),
+                    ("inherit", wintypes.BOOL),
+                ]
+
+            descriptor = ctypes.c_void_p()
+            advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                ctypes.POINTER(ctypes.c_void_p),
+                ctypes.c_void_p,
+            ]
+            if not advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl, 1, ctypes.byref(descriptor), None
+            ):
+                return None
+            try:
+                attrs_sa = _SA(ctypes.sizeof(_SA), descriptor, False)
+                temp = key_dir / (_STORE_KEY_TMP_PREFIX + uuid.uuid4().hex)
+                handle = kernel32.CreateFileW(
+                    str(temp),
+                    0x40020000,
+                    0,
+                    ctypes.byref(attrs_sa),
+                    1,
+                    0x00200080,
+                    None,
+                )
+                if handle in (None, invalid):
+                    return None
+                fd = msvcrt.open_osfhandle(handle, os.O_WRONLY | os.O_BINARY)
+                try:
+                    os.write(fd, secrets.token_bytes(_STORE_KEY_BYTES))
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+                try:
+                    os.link(temp, key_path)
+                except FileExistsError:
+                    pass
+                finally:
+                    _unlink_temp(temp)
+            finally:
+                kernel32.LocalFree(descriptor)
+        handle = kernel32.CreateFileW(
+            str(key_path), 0x80020000, 5, None, 3, 0x00200000, None
+        )
+        if handle in (None, invalid):
+            return None
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        try:
+            info = info_of(handle)
+            if info.attrs & reparse or info.attrs & directory:
+                return None
+            if info.size_high or info.size_low != _STORE_KEY_BYTES:
+                return None
+            if not _windows_key_acl_ok(handle, sid):
+                return None
+            data = os.read(fd, _STORE_KEY_BYTES + 1)
+        finally:
+            os.close(fd)
+        return data if len(data) == _STORE_KEY_BYTES else None
+    finally:
+        for handle in pinned:
+            kernel32.CloseHandle(handle)
+
+
+def _windows_key_acl_ok(handle: Any, sid: str) -> bool:  # pragma: no cover
+    """Owner is the current SID; the DACL is non-NULL and every non-inherit-only
+    ACE is a deny or an allow for the current SID, SYSTEM or Administrators."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    advapi32.GetSecurityInfo.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    advapi32.ConvertSidToStringSidW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.LPWSTR),
+    ]
+    advapi32.GetAce.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+
+    def sid_text(pointer: Any) -> str | None:
+        text = wintypes.LPWSTR()
+        if not advapi32.ConvertSidToStringSidW(pointer, ctypes.byref(text)):
+            return None
+        try:
+            return str(text.value)
+        finally:
+            kernel32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+
+    owner = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    descriptor = ctypes.c_void_p()
+    if advapi32.GetSecurityInfo(
+        handle,
+        1,
+        0x5,
+        ctypes.byref(owner),
+        None,
+        ctypes.byref(dacl),
+        None,
+        ctypes.byref(descriptor),
+    ):
+        return False
+    try:
+        if sid_text(owner) != sid or not dacl.value:
+            return False
+
+        class _AclHeader(ctypes.Structure):
+            _fields_ = [
+                ("revision", ctypes.c_ubyte),
+                ("sbz1", ctypes.c_ubyte),
+                ("size", wintypes.WORD),
+                ("count", wintypes.WORD),
+                ("sbz2", wintypes.WORD),
+            ]
+
+        class _AceHeader(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_ubyte),
+                ("flags", ctypes.c_ubyte),
+                ("size", wintypes.WORD),
+            ]
+
+        header = ctypes.cast(dacl, ctypes.POINTER(_AclHeader)).contents
+        allowed = {sid, "S-1-5-18", "S-1-5-32-544"}
+        for index in range(header.count):
+            ace = ctypes.c_void_p()
+            if not advapi32.GetAce(dacl, index, ctypes.byref(ace)):
+                return False
+            ace_header = ctypes.cast(ace, ctypes.POINTER(_AceHeader)).contents
+            if ace_header.flags & 0x08:  # INHERIT_ONLY_ACE
+                continue
+            if ace_header.type in (1, 6):  # access-denied (object) ACE
+                continue
+            if ace_header.type != 0:  # only a plain access-allowed ACE may allow
+                return False
+            sid_pointer = (ace.value or 0) + ctypes.sizeof(_AceHeader) + 4
+            if sid_text(ctypes.c_void_p(sid_pointer)) not in allowed:
+                return False
+        return True
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def _listed_case_path(path: Path) -> str:
+    """The path spelled as its directories list each component (matched by device
+    and inode); a component whose parent cannot be listed keeps its spelling."""
+    resolved = Path(path)
+    parts = resolved.parts
+    if not parts:
+        return str(resolved)
+    current = Path(parts[0])
+    for name in parts[1:]:
+        candidate = current / name
+        chosen = name
+        try:
+            target = os.lstat(candidate)
+            names = os.listdir(current)
+        except OSError:
+            current = candidate
+            continue
+        if name not in names:
+            for entry in names:
+                try:
+                    info = os.lstat(current / entry)
+                except OSError:
+                    continue
+                if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
+                    chosen = entry
+                    break
+        current = current / chosen
+    return str(current)
+
+
+def _binding_root_text(root: Path) -> str:
+    """D41: the canonical spelling of a project root for the store MAC."""
+    if sys.platform == "darwin":
+        import fcntl
+
+        try:
+            fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        except OSError:
+            return _listed_case_path(root)
+        try:
+            raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+        except OSError:
+            return _listed_case_path(root)
+        finally:
+            os.close(fd)
+        return os.fsdecode(raw.split(b"\0", 1)[0])
+    if sys.platform == "win32":
+        return str(root)
+    return _listed_case_path(root)
+
+
+def _store_mac(key: bytes, store_id: str, root: Path, db_ino: int) -> str:
+    from rush.memory.authorization import _worktree_id
+
+    worktree = _worktree_id(Path(_binding_root_text(root)))
+    message = (
+        b"rush-memory-store-v1\0"
+        + store_id.encode()
+        + b"\0"
+        + worktree.encode()
+        + b"\0"
+        + str(db_ino).encode()
+    )
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+def row_mac(key: bytes, store_id: str, row: Mapping[str, Any] | sqlite3.Row) -> str:
+    """D41: HMAC-SHA256 over the row's `ROW_MAC_COLUMNS` (NULL fields omitted)."""
+    fields: list[list[Any]] = []
+    for column in ROW_MAC_COLUMNS:
+        value = row[column] if column in row.keys() else None  # noqa: SIM118
+        if value is None:
+            continue
+        if isinstance(value, bytes):
+            fields.append([column, "b", value.hex()])
+        else:
+            fields.append([column, "v", value])
+    payload = json.dumps(fields, separators=(",", ":")).encode()
+    message = b"rush-memory-row-v1\0" + store_id.encode() + b"\0" + payload
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
+_MAC_HEX = frozenset("0123456789abcdef")
+
+
+def _is_mac(value: object) -> TypeGuard[str]:
+    """A 64-character lowercase hex MAC; anything else (including non-ASCII text,
+    which `hmac.compare_digest` rejects with a `TypeError`) is never a valid MAC."""
+    return isinstance(value, str) and len(value) == 64 and _MAC_HEX.issuperset(value)
+
+
+def _binding_row(conn: sqlite3.Connection) -> tuple[str, str] | None:
+    try:
+        if not sqlite_has_table(conn, "memory_store_binding"):
+            return None
+        row = conn.execute(
+            "SELECT store_id, mac FROM memory_store_binding WHERE id = 1"
+        ).fetchone()
+    except sqlite3.DatabaseError:
+        return None
+    if row is None or not isinstance(row[0], str) or not _is_mac(row[1]):
+        return None
+    return row[0], row[1]
+
+
+def _verified_binding(
+    conn: sqlite3.Connection, root: Path, key: bytes | None = None
+) -> tuple[bytes, str] | None:
+    """`(key, store_id)` when the store's binding row verifies for `root`."""
+    found = _binding_row(conn)
+    if found is None:
+        return None
+    if key is None:
+        key = read_store_key()
+    if key is None:
+        return None
+    store_id, mac = found
+    try:
+        db_ino = os.stat(Path(root) / ".rush" / "memory.db").st_ino
+        expected = _store_mac(key, store_id, Path(root), db_ino)
+    except (OSError, ValueError):
+        return None
+    if not hmac.compare_digest(mac, expected):
+        return None
+    return key, store_id
+
+
+def store_binding(conn: sqlite3.Connection, root: Path) -> StoreBinding:
+    """D41: `bound` when this store's binding row verifies under the local key."""
+    return "bound" if _verified_binding(conn, root) is not None else "unbound"
+
+
+@dataclass(frozen=True)
+class BindingVerifier:
+    """D41 per-read verifier: built once per read call."""
+
+    store: StoreBinding
+    key: bytes | None
+    store_id: str | None
+
+    def row(self, row: Mapping[str, Any] | sqlite3.Row) -> StoreBinding:
+        if self.store != "bound" or self.key is None or self.store_id is None:
+            return "unbound"
+        keys = row.keys()
+        mac = row["row_mac"] if "row_mac" in keys else None
+        if not _is_mac(mac):
+            return "unbound"
+        expected = row_mac(self.key, self.store_id, row)
+        return "bound" if hmac.compare_digest(mac, expected) else "unbound"
+
+    def version_bytes(
+        self, row: Mapping[str, Any] | sqlite3.Row, version: int, content: Any
+    ) -> StoreBinding:
+        """Bound only for a bound row's current version with its exact stored bytes."""
+        if self.row(row) != "bound":
+            return "unbound"
+        if version != row["artifact_version"] or content != row["content"]:
+            return "unbound"
+        return "bound"
+
+
+UNBOUND_VERIFIER = BindingVerifier("unbound", None, None)
+
+
+def binding_verifier(store: TypedArtifactStore) -> BindingVerifier:
+    """D41: the verifier for one read over `store`'s connection."""
+    try:
+        with store._connect() as conn:
+            found = _verified_binding(conn, store.project_root)
+    except sqlite3.DatabaseError:
+        return UNBOUND_VERIFIER
+    if found is None:
+        return UNBOUND_VERIFIER
+    return BindingVerifier("bound", found[0], found[1])
+
+
+def _row_dict(conn: sqlite3.Connection, artifact_id: str) -> dict[str, Any] | None:
+    cur = conn.execute("SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,))
+    row = cur.fetchone()
+    if row is None:
+        return None
+    return {d[0]: row[i] for i, d in enumerate(cur.description)}
+
+
+def next_row_mac(
+    conn: sqlite3.Connection,
+    root: Path,
+    artifact_id: str,
+    changes: Mapping[str, Any],
+) -> str | None:
+    """D41 covered update: the new `row_mac` when the previous row verified,
+    else `None` (the row stays or becomes unbound)."""
+    found = _verified_binding(conn, root)
+    if found is None:
+        return None
+    previous = _row_dict(conn, artifact_id)
+    if previous is None:
+        return None
+    verifier = BindingVerifier("bound", found[0], found[1])
+    if verifier.row(previous) != "bound":
+        return None
+    return row_mac(found[0], found[1], {**previous, **changes})
+
+
+def insert_row_mac(
+    conn: sqlite3.Connection, root: Path, values: Mapping[str, Any]
+) -> str | None:
+    """D41 insert: a MAC when the store is bound, else `None`."""
+    found = _verified_binding(conn, root)
+    if found is None:
+        return None
+    return row_mac(found[0], found[1], values)
+
+
+def _write_binding_row(conn: sqlite3.Connection, root: Path, key: bytes) -> str:
+    store_id = uuid.uuid4().hex
+    db_ino = os.stat(Path(root) / ".rush" / "memory.db").st_ino
+    conn.execute(
+        "INSERT OR REPLACE INTO memory_store_binding (id, store_id, mac) "
+        "VALUES (1, ?, ?)",
+        (store_id, _store_mac(key, store_id, Path(root), db_ino)),
+    )
+    return store_id
+
+
+def _binding_digest(
+    binding: StoreBinding, store_id: str | None, rows: list[tuple[str, int, str]]
+) -> str:
+    body = {
+        "store_binding": binding,
+        "store_id": store_id,
+        "rows": [list(r) for r in sorted(rows)],
+    }
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _binding_inventory(conn: sqlite3.Connection, root: Path) -> dict[str, Any]:
+    found = _verified_binding(conn, root)
+    stored = _binding_row(conn)
+    verifier = (
+        BindingVerifier("bound", found[0], found[1]) if found else UNBOUND_VERIFIER
+    )
+    binding: StoreBinding = "bound" if found else "unbound"
+    rows: list[tuple[str, int, str]] = []
+    stated = unbound = 0
+    if sqlite_has_table(conn, "memory_artifacts"):
+        cur = conn.execute("SELECT * FROM memory_artifacts ORDER BY id")
+        names = [d[0] for d in cur.description]
+        for raw in cur.fetchall():
+            row = dict(zip(names, raw, strict=True))
+            content = row.get("content")
+            text = content if isinstance(content, str) else repr(content)
+            rows.append(
+                (
+                    str(row["id"]),
+                    int(row.get("artifact_version") or 1),
+                    payload_digest(text),
+                )
+            )
+            if row.get("trust_tier") == "STATED":
+                stated += 1
+            if verifier.row(row) != "bound":
+                unbound += 1
+    return {
+        "store_binding": binding,
+        "store_id": stored[0] if stored else None,
+        "rows": len(rows),
+        "stated_rows": stated,
+        "unbound_rows": unbound,
+        "binding_digest": _binding_digest(binding, stored[0] if stored else None, rows),
+    }
+
+
+def _git_tracked(root: Path) -> bool | None:
+    try:
+        done = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "--error-unmatch",
+                "--",
+                ".rush/memory.db",
+            ],
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode == 0:
+        return True
+    return False if done.returncode == 1 else None
 
 
 def decode_content(stored: Any) -> Any:
@@ -1110,6 +1824,129 @@ def artifact_version_sources(
         return {}
 
 
+HANDOFF_SENDER_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("sender_grant_id", "TEXT"),
+    ("sender_owner_kind", "TEXT"),
+    ("sender_owner_id", "TEXT"),
+    ("sender_project_id", "TEXT"),
+    ("sender_worktree_id", "TEXT"),
+    ("sender_policy_revision", "INTEGER"),
+)
+
+
+def _write_local_gitignore(rush_dir: Path) -> None:
+    """D41/D1: a `.rush` this process created ignores everything in it."""
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(rush_dir / ".gitignore", flags, 0o644)
+    except OSError:
+        return
+    try:
+        os.write(fd, b"*\n")
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+CommitCheck = Callable[[], "tuple[str, str] | None"]
+
+
+class MemoryAccessChanged(Exception):
+    """D1 race rule: the resolved access changed before a mutation committed."""
+
+    def __init__(self, code: str, reason: str) -> None:
+        super().__init__(f"{code}: {reason}")
+        self.code = code
+        self.reason = reason
+
+
+def run_commit_check(
+    conn: sqlite3.Connection, commit_check: CommitCheck | None
+) -> None:
+    """Call `commit_check` after every effect, immediately before commit; a
+    failure rolls the transaction back and raises `MemoryAccessChanged`."""
+    if commit_check is None:
+        return
+    failure = commit_check()
+    if failure is not None:
+        conn.rollback()
+        raise MemoryAccessChanged(*failure)
+
+
+def write_checked_artifact(
+    project_root: Path,
+    artifact: MemoryArtifact,
+    *,
+    commit_check: CommitCheck | None = None,
+) -> MemoryArtifact:
+    """D4: an internal writer's `TypedArtifactStore(root).write(artifact)`. When this
+    call creates the store and `commit_check` then refuses the write, the database,
+    cache directory, store key and every other path the creation added are removed
+    again, so a denied first write leaves nothing behind."""
+    root = Path(project_root).resolve()
+    rush = root / ".rush"
+    # Files and deeper directories first: removal runs in this order.
+    candidates = [
+        rush / "memory.db-shm",
+        rush / "memory.db-wal",
+        rush / "memory.db",
+        rush / "cache" / "merkle.json",
+        rush / "cache",
+        rush / ".gitignore",
+        rush,
+    ]
+    key_dir = _store_key_dir()
+    if key_dir is not None:
+        candidates = [
+            key_dir / _STORE_KEY_NAME,
+            key_dir,
+            key_dir.parent,
+            *candidates,
+        ]
+    # security-1: the store lock spans the snapshot through the cleanup, and every
+    # store or key creation takes it too, so no path in `created` is another
+    # writer's, whatever data root's policy lock that writer holds.
+    with hold_store_lock(root):
+        created = (
+            []
+            if os.path.lexists(rush / "memory.db")
+            else [p for p in candidates if not os.path.lexists(p)]
+        )
+        try:
+            return TypedArtifactStore(root).write(artifact, commit_check=commit_check)
+        except MemoryAccessChanged:
+            for path in created:
+                try:
+                    if path.is_dir() and not path.is_symlink():
+                        path.rmdir()
+                    else:
+                        path.unlink()
+                except OSError:
+                    pass
+            raise
+
+
+@contextmanager
+def hold_store_lock(project_root: Path) -> Iterator[None]:
+    """security-1: serializes every store open and D41 key creation with a refused
+    first write's snapshot-to-cleanup window, across writers of every data root:
+    the default data root's policy lock (that root also holds the shared key), or
+    the project root's directory lock when the default root is unavailable or cannot
+    be created (no key can exist then). Reentrant within one thread; a caller that
+    also holds an access's own policy lock takes that one first."""
+    from rush.dashboard.state import PolicyLockRootUncreatable
+    from rush.memory.authorization import MemoryPolicyError, hold_policy_lock
+
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(hold_policy_lock())
+        except (MemoryPolicyError, PolicyLockRootUncreatable):
+            stack.enter_context(hold_policy_lock(data_root=project_root))
+        yield
+
+
 class TypedArtifactStore:
     """WAL-mode SQLite store for `MemoryArtifact` rows across every memory subject."""
 
@@ -1119,9 +1956,13 @@ class TypedArtifactStore:
         )
         self.db_path = self.project_root / ".rush" / "memory.db"
         self._owner_scope_default = legacy_owner_scope(self.project_root)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._merkle = MerkleInvalidator(project_root=self.project_root)
-        self._init_db()
+        with hold_store_lock(self.project_root):
+            rush_created = not os.path.lexists(self.db_path.parent)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            if rush_created:
+                _write_local_gitignore(self.db_path.parent)
+            self._merkle = MerkleInvalidator(project_root=self.project_root)
+            self._init_db()
 
     _readonly_conn: sqlite3.Connection | None = None
 
@@ -1135,6 +1976,7 @@ class TypedArtifactStore:
         return conn
 
     def _init_db(self) -> None:
+        created = not self.db_path.exists()
         with self._connect() as conn:
             candidate_fts_existed = (
                 conn.execute(
@@ -1158,10 +2000,34 @@ class TypedArtifactStore:
             self._migrate_archived_column(conn)
             self._migrate_owner_scope_columns(conn)
             self._migrate_handoff_recovery_columns(conn)
+            self._migrate_binding_columns(conn)
             self._ensure_cursor_key(conn)
             if not candidate_fts_existed:
                 self._backfill_candidate_fts(conn)
+            if created:
+                # D41: the creating transaction binds the new store to this root.
+                key = ensure_store_key()
+                if key is not None:
+                    _write_binding_row(conn, self.project_root, key)
             conn.commit()
+
+    def _migrate_binding_columns(self, conn: sqlite3.Connection) -> None:
+        """72-T01 additive migration (writable constructor only): D41 `row_mac`
+        and the D21 handoff sender columns. Existing rows stay unbound."""
+        artifact_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+        }
+        if "row_mac" not in artifact_columns:
+            conn.execute("ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT")
+        session_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(memory_handoff_sessions)")
+        }
+        for column, col_type in HANDOFF_SENDER_COLUMNS:
+            if column not in session_columns:
+                conn.execute(
+                    f"ALTER TABLE memory_handoff_sessions ADD COLUMN {column} {col_type}"
+                )
 
     def _ensure_cursor_key(self, conn: sqlite3.Connection) -> None:
         """MC02 §9.0: creates this store's cursor-signing key exactly once (idempotent via
@@ -1238,7 +2104,11 @@ class TypedArtifactStore:
             return store_generation(own_conn)
 
     def snapshot_memories(
-        self, owner_filter: str | None = None, *, include_internal: bool = False
+        self,
+        owner_filter: str | None = None,
+        *,
+        include_internal: bool = False,
+        access: MemoryAccess | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """P69-01.2n shared primitive: reads the memory inventory and calls
         `current_generation()` inside the same read transaction/connection,
@@ -1248,12 +2118,23 @@ class TypedArtifactStore:
 
         T18: bookkeeping rows (`is_internal_memory_source`) are excluded by
         default -- diagnostic `include_internal=True` restores exactly the
-        pre-T18 row set."""
+        pre-T18 row set.
+
+        72-T01 D1 `list`: a policy `access` keeps only its owner's rows of the
+        sources it approves (the generation still pairs with the whole read)."""
+        from rush.memory.retrieval import reader_row_allowed
+
         with self._connect() as conn:
             conn.execute("BEGIN")
+            columns = {
+                r[1] for r in conn.execute("PRAGMA table_info(memory_artifacts)")
+            }
+            owner_columns = "".join(
+                f", {c}" for c in ("owner_scope_kind", "owner_scope_id") if c in columns
+            )
             rows = conn.execute(
-                "SELECT id, subject, trust_tier, source, artifact_version, archived_at "
-                "FROM memory_artifacts ORDER BY id ASC"
+                "SELECT id, subject, trust_tier, source, artifact_version, archived_at"
+                f"{owner_columns} FROM memory_artifacts ORDER BY id ASC"
             ).fetchall()
             generation = self.current_generation(conn)
             conn.commit()
@@ -1269,6 +2150,7 @@ class TypedArtifactStore:
             for row in rows
             if (owner_filter is None or row["source"] == owner_filter)
             and (include_internal or not is_internal_memory_source(row["source"]))
+            and (access is None or reader_row_allowed(access, self.project_root, row))
         ]
         return memories, generation
 
@@ -1344,6 +2226,169 @@ class TypedArtifactStore:
 
         return read_sqlite_readonly(db, read) or []
 
+    @staticmethod
+    def get_receipt_readonly(
+        project_root: Path, operation_id: str
+    ) -> tuple[Literal["absent", "present", "unavailable"], dict[str, Any] | None]:
+        """D4 receipt inspection over one read-only connection: `absent` (no DB,
+        table or row), `unavailable` (corrupt, busy, WAL index missing or an
+        undecodable payload) or `present` with the receipt (payload `None` for
+        NULL). Creates no file, `-wal` or `-shm`."""
+        db = Path(project_root) / ".rush" / "memory.db"
+
+        def read(conn: sqlite3.Connection) -> tuple[str, dict[str, Any] | None]:
+            if not sqlite_has_table(conn, "mutation_receipts"):
+                return "absent", None
+            row = conn.execute(
+                "SELECT * FROM mutation_receipts WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if row is None:
+                return "absent", None
+            raw = row["payload"]
+            try:
+                payload = None if raw is None else json.loads(raw)
+            except (TypeError, ValueError):
+                return "unavailable", None
+            return "present", {
+                "operation_id": row["operation_id"],
+                "artifact_id": row["artifact_id"],
+                "kind": row["kind"],
+                "revision": row["revision"],
+                "payload": payload,
+                "created_at": row["created_at"],
+            }
+
+        try:
+            result = read_sqlite_readonly(db, read)
+        except MemoryStoreUnreadableError:
+            return "unavailable", None
+        except sqlite3.DatabaseError:
+            return "unavailable", None
+        if result is None:
+            return "absent", None
+        state, receipt = result
+        return cast("Literal['absent', 'present', 'unavailable']", state), receipt
+
+    @staticmethod
+    def bind_store(
+        project_root: Path,
+        *,
+        approve: bool,
+        expected_binding_digest: Any = None,
+        access: MemoryAccess | None = None,
+        overlay: bool = False,
+    ) -> dict[str, Any]:
+        """D41: preview (read-only) or approve this store's local binding.
+
+        Approval re-binds the store to this root under the local key and MACs
+        every row, after `expected_binding_digest` re-matches under the policy
+        lock and `BEGIN IMMEDIATE`."""
+        if overlay:
+            return {
+                "code": "E_INPUT",
+                "field": "overlay",
+                "producer": "73-T02/BOOTSTRAP-CONSENT",
+                "message": "overlay store binding is not available yet",
+            }
+        root = Path(project_root).resolve()
+        db = root / ".rush" / "memory.db"
+        if not approve:
+            try:
+                inventory = read_sqlite_readonly(
+                    db, lambda conn: _binding_inventory(conn, root)
+                )
+            except MemoryStoreUnreadableError as exc:
+                return {"code": exc.code, "reason": "memory_store_unreadable"}
+            if inventory is None:
+                return {"code": "E_NOT_FOUND", "reason": "store_absent"}
+            return {"code": "OK", **inventory, "git_tracked": _git_tracked(root)}
+        if not isinstance(expected_binding_digest, str):
+            return {
+                "code": "E_INPUT",
+                "field": "expected_binding_digest",
+                "message": "expected_binding_digest must be the preview's digest",
+            }
+        from rush.memory.authorization import hold_policy_lock
+        from rush.memory.retrieval import (
+            MemoryAccess,
+            memory_policy_decision,
+            recheck_failure,
+        )
+
+        data_root = access.data_root if access is not None else None
+        if access is not None and access.project_root != root:
+            return {"code": "E_PERMISSION", "reason": "policy_grant_required"}
+        mode, reason = memory_policy_decision(root, data_root=data_root)
+        if mode == "unavailable":
+            return {"code": "E_PERMISSION", "reason": reason}
+        owner = legacy_owner_scope(root)
+        if mode == "policy":
+            if access is None:
+                access, _why = MemoryAccess.resolve_with_reason(
+                    root, operation="write", apply=True, owner_scope=owner
+                )
+            if (
+                access is None
+                or access.kind != "policy"
+                or "write" not in access.required_operations
+                or access.owner_scope != owner
+            ):
+                return {"code": "E_PERMISSION", "reason": "policy_grant_required"}
+        if access is None:
+            # security-15: a legacy approval is rechecked like a policy one, so a
+            # project enrolled before the lock is taken is refused.
+            access = MemoryAccess.legacy(
+                root, (), owner_scope=owner, operation="write", data_root=data_root
+            )
+        try:
+            with hold_policy_lock(data_root=data_root), hold_store_lock(root):
+                failure = recheck_failure(access)
+                if failure is not None:
+                    return {"code": failure[0], "reason": failure[1]}
+                key = ensure_store_key()
+                if key is None:
+                    return {"code": "E_UNAVAILABLE", "reason": "store_key_unavailable"}
+                if not db.exists():
+                    return {"code": "E_NOT_FOUND", "reason": "store_absent"}
+                with closing(sqlite3.connect(str(db), timeout=10.0)) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    inventory = _binding_inventory(conn, root)
+                    if inventory["binding_digest"] != expected_binding_digest:
+                        conn.rollback()
+                        return {"code": "E_VERSION", "reason": "store_changed"}
+                    conn.execute(_BINDING_TABLE_SQL)
+                    columns = {
+                        row[1]
+                        for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+                    }
+                    if "row_mac" not in columns:
+                        conn.execute(
+                            "ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT"
+                        )
+                    store_id = _write_binding_row(conn, root, key)
+                    cur = conn.execute("SELECT * FROM memory_artifacts")
+                    names = [d[0] for d in cur.description]
+                    rows = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
+                    for row in rows:
+                        conn.execute(
+                            "UPDATE memory_artifacts SET row_mac = ? WHERE id = ?",
+                            (row_mac(key, store_id, row), row["id"]),
+                        )
+                    failure = recheck_failure(access)
+                    if failure is not None:
+                        conn.rollback()
+                        return {"code": failure[0], "reason": failure[1]}
+                    conn.commit()
+        except OSError:
+            return {"code": "E_PERMISSION", "reason": "lock_unavailable"}
+        return {
+            "code": "OK",
+            "store_binding": "bound",
+            "store_id": store_id,
+            "bound_rows": len(rows),
+        }
+
     def search_candidates(
         self,
         subject: MemorySubject,
@@ -1378,12 +2423,9 @@ class TypedArtifactStore:
         if not sources:
             return []
         quoted_query = '"' + query.replace('"', '""') + '"'
-        clauses = [
-            "memory_fts_candidates MATCH ?",
-            "ma.subject = ?",
-            f"ma.source IN ({','.join('?' for _ in sources)})",
-        ]
-        params: list[Any] = [quoted_query, subject, *sources]
+        source_clause, source_params = source_predicate_sql("ma.source", sources)
+        clauses = ["memory_fts_candidates MATCH ?", "ma.subject = ?", source_clause]
+        params: list[Any] = [quoted_query, subject, *source_params]
         tiers = list(trust_tiers) if trust_tiers is not None else []
         if tiers:
             clauses.append(f"ma.trust_tier IN ({','.join('?' for _ in tiers)})")
@@ -1440,8 +2482,9 @@ class TypedArtifactStore:
         sources = list(source_allowlist)
         if not sources:
             return []
-        clauses = ["subject = ?", f"source IN ({','.join('?' for _ in sources)})"]
-        params: list[Any] = [subject, *sources]
+        source_clause, source_params = source_predicate_sql("source", sources)
+        clauses = ["subject = ?", source_clause]
+        params: list[Any] = [subject, *source_params]
         tiers = list(trust_tiers) if trust_tiers is not None else []
         if tiers:
             clauses.append(f"trust_tier IN ({','.join('?' for _ in tiers)})")
@@ -1482,6 +2525,53 @@ class TypedArtifactStore:
                 f"OR {prefix}owner_scope_id = '')"
             )
         return clause, [owner_scope.kind, owner_scope.id]
+
+    def contest_peers(
+        self,
+        subject: str,
+        symbol_ref: str | None,
+        owner_scope: OwnerScope,
+        sources: Sequence[str],
+        *,
+        exclude: str,
+    ) -> list[sqlite3.Row]:
+        """D34: rows sharing `subject`, `symbol_ref` (NULL-equal) and owner with a
+        granted source, other than `exclude` (callers still decide each one)."""
+        if not sources:
+            return []
+        default = self._owner_scope_default
+        source_clause, source_params = source_predicate_sql("source", sources)
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM memory_artifacts WHERE subject = ? AND id != ? "
+                "AND symbol_ref IS ? AND COALESCE(owner_scope_kind, ?) = ? "
+                f"AND COALESCE(owner_scope_id, ?) = ? AND {source_clause} "
+                "ORDER BY id LIMIT 64",
+                (
+                    subject,
+                    exclude,
+                    symbol_ref,
+                    default.kind,
+                    owner_scope.kind,
+                    default.id,
+                    owner_scope.id,
+                    *source_params,
+                ),
+            ).fetchall()
+
+    def has_contradiction(self, left: tuple[str, int], right: tuple[str, int]) -> bool:
+        """D34: a `contradicts` relation joins these two exact versions."""
+        with self._connect() as conn:
+            if not sqlite_has_table(conn, "memory_relations"):
+                return False
+            found = conn.execute(
+                "SELECT 1 FROM memory_relations WHERE kind = 'contradicts' AND ("
+                "(source_id = ? AND source_version = ? AND target_id = ? "
+                "AND target_version = ?) OR (source_id = ? AND source_version = ? "
+                "AND target_id = ? AND target_version = ?)) LIMIT 1",
+                (*left, *right, *right, *left),
+            ).fetchone()
+        return found is not None
 
     def get_current_row(self, artifact_id: str) -> sqlite3.Row | None:
         """72-T01: the raw current row for one ID (what `evaluate_artifact_visibility`
@@ -1544,6 +2634,7 @@ class TypedArtifactStore:
         apply: bool = False,
         receipt_operation_id: str | None = None,
         receipt_operation_ids: Mapping[str, str] | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> dict[str, Any]:
         """Batch memory deletion (P65-07.3, plan §6.4 transaction/outbox algorithm).
 
@@ -1574,7 +2665,8 @@ class TypedArtifactStore:
         over `receipt_operation_id` when both are given.
         """
         with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
+            # A preview only reads, so it also runs over a read-only view.
+            conn.execute("BEGIN IMMEDIATE" if apply else "BEGIN")
             rows: dict[str, sqlite3.Row] = {}
             for artifact_id in artifact_ids:
                 row = conn.execute(
@@ -1662,6 +2754,7 @@ class TypedArtifactStore:
                     None,
                     {"affected": affected},
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
         for artifact_id, tombstone_version, source in tombstones:
             note_committed_write(artifact_id, tombstone_version, source, "delete")
@@ -1677,6 +2770,7 @@ class TypedArtifactStore:
         owner_scope: OwnerScope | None = None,
         apply: bool = False,
         receipt_operation_id: str | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> dict[str, Any]:
         """Single-artifact content edit under compare-and-swap (P65-07.3, plan §6.4).
 
@@ -1733,15 +2827,18 @@ class TypedArtifactStore:
                 expected_version=expected_version,
                 subject=scope,
             )
+            new_text = _persisted_text(row["content"], sanitized_content)
+            mac = next_row_mac(
+                conn,
+                self.project_root,
+                artifact_id,
+                {"content": new_text, "trust_tier": new_trust_tier},
+            )
             conn.execute(
                 "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
-                "trust_tier = ?, signature = NULL, promoted_at = NULL WHERE id = ?",
-                (
-                    _persisted_text(row["content"], sanitized_content),
-                    new_version,
-                    new_trust_tier,
-                    artifact_id,
-                ),
+                "trust_tier = ?, signature = NULL, promoted_at = NULL, row_mac = ? "
+                "WHERE id = ?",
+                (new_text, new_version, new_trust_tier, mac, artifact_id),
             )
             if receipt_operation_id:
                 self._write_receipt(
@@ -1752,6 +2849,7 @@ class TypedArtifactStore:
                     new_version,
                     {"trust_tier": new_trust_tier},
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
             note_committed_write(artifact_id, new_version, row["source"], "edit")
             return {
@@ -1771,6 +2869,7 @@ class TypedArtifactStore:
         apply: bool = False,
         archived: bool = True,
         receipt_operation_id: str | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> dict[str, Any]:
         """Sets/clears an archived marker under compare-and-swap (P65-07.3, plan §6.4).
 
@@ -1833,6 +2932,7 @@ class TypedArtifactStore:
                     new_version,
                     {"archived": archived},
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
             note_committed_write(artifact_id, new_version, row["source"], "archive")
             return {
@@ -2250,12 +3350,28 @@ class TypedArtifactStore:
                     conn.execute(
                         f"ALTER TABLE memory_artifacts ADD COLUMN {column} TEXT"
                     )
+            if "row_mac" not in columns:
+                conn.execute("ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT")
             default_owner = legacy_owner_scope(root)
-            conn.execute(
-                "UPDATE memory_artifacts SET owner_scope_kind = ?, owner_scope_id = ? "
-                "WHERE owner_scope_kind IS NULL OR owner_scope_id IS NULL",
-                (default_owner.kind, default_owner.id),
-            )
+            ownerless = conn.execute(
+                "SELECT id FROM memory_artifacts "
+                "WHERE owner_scope_kind IS NULL OR owner_scope_id IS NULL"
+            ).fetchall()
+            for (artifact_id,) in ownerless:
+                mac = next_row_mac(
+                    conn,
+                    root,
+                    artifact_id,
+                    {
+                        "owner_scope_kind": default_owner.kind,
+                        "owner_scope_id": default_owner.id,
+                    },
+                )
+                conn.execute(
+                    "UPDATE memory_artifacts SET owner_scope_kind = ?, "
+                    "owner_scope_id = ?, row_mac = ? WHERE id = ?",
+                    (default_owner.kind, default_owner.id, mac, artifact_id),
+                )
             already_migrated = conn.execute(
                 "SELECT COUNT(*) FROM memory_artifact_versions"
             ).fetchone()[0]
@@ -2295,46 +3411,6 @@ class TypedArtifactStore:
             "INSERT INTO memory_changes (artifact_id, artifact_version, tombstone, created_at) "
             "VALUES (?,1,0,?)",
             (row["id"], now),
-        )
-
-    def _find_stated_conflict(
-        self,
-        conn: sqlite3.Connection,
-        subject: str,
-        symbol_ref: str,
-        owner_scope: OwnerScope,
-    ) -> MemoryArtifact | None:
-        """The incoming write's *own* conflicting STATED row (P69-07 subsection i).
-
-        Scoped to `owner_scope` as well as `(subject, symbol_ref)`: a STATED record
-        belonging to a different owner is not this write's conflict to resolve -- it is
-        a separate artifact that happens to share subject/symbol_ref, not a stale
-        duplicate, and silently deleting it was a fourth unguarded deletion path.
-        """
-        # COALESCE applies the ownership contract's legacy default (subsection c) in the
-        # query itself: a row migrated by `_migrate_owner_scope_columns` keeps NULL owner
-        # columns on disk (see that method for why it cannot rewrite them), and must
-        # still behave as project-owned here.
-        default = self._owner_scope_default
-        cur = conn.execute(
-            "SELECT * FROM memory_artifacts WHERE subject = ? AND symbol_ref = ? "
-            "AND trust_tier = 'STATED' "
-            "AND COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
-            "LIMIT 1",
-            (
-                subject,
-                symbol_ref,
-                default.kind,
-                owner_scope.kind,
-                default.id,
-                owner_scope.id,
-            ),
-        )
-        row = cur.fetchone()
-        return (
-            _row_to_artifact(row, default_owner_scope=self._owner_scope_default)
-            if row
-            else None
         )
 
     def _delete_tx(
@@ -2391,16 +3467,9 @@ class TypedArtifactStore:
                 "promotion is the only path to STATED"
             )
         owner_scope = artifact.owner_scope or self._owner_scope_default
+        # 72-T01 D34: a write never evicts a STATED row (any owner, any source);
+        # a conflicting write is inserted beside it and reads mark both `contested`.
         evicted = None
-        if artifact.symbol_ref is not None:
-            existing = self._find_stated_conflict(
-                conn, artifact.subject, artifact.symbol_ref, owner_scope
-            )
-            if (
-                existing is not None
-                and evaluate_conflict(artifact, existing) == "delete"
-            ):
-                evicted = self._delete_tx(conn, existing.id, owner_scope=owner_scope)
         sanitized_content = sanitize_value(artifact.content).value
         stored = dataclasses.replace(
             artifact,
@@ -2428,6 +3497,25 @@ class TypedArtifactStore:
         now = time.time()
         text = json.dumps(stored.content)
         digest = payload_digest(text)
+        owner = stored.owner_scope or self._owner_scope_default
+        mac = insert_row_mac(
+            conn,
+            self.project_root,
+            {
+                "id": stored.id,
+                "family": stored.family,
+                "subject": stored.subject,
+                "trust_tier": stored.trust_tier,
+                "content": text,
+                "source": stored.source,
+                "symbol_ref": stored.symbol_ref,
+                "content_hash": stored.content_hash,
+                "owner_scope_kind": owner.kind,
+                "owner_scope_id": owner.id,
+                "origin_kind": stored.origin_kind,
+                "origin_id": stored.origin_id,
+            },
+        )
         conn.execute(
             _INSERT_SQL,
             (
@@ -2447,10 +3535,11 @@ class TypedArtifactStore:
                 stored.origin_kind,
                 stored.origin_id,
                 stored.artifact_version,
-                (stored.owner_scope or self._owner_scope_default).kind,
-                (stored.owner_scope or self._owner_scope_default).id,
+                owner.kind,
+                owner.id,
                 digest,
                 "write",
+                mac,
             ),
         )
         conn.execute(
@@ -2475,7 +3564,11 @@ class TypedArtifactStore:
         )
 
     def write(
-        self, artifact: MemoryArtifact, *, receipt_operation_id: str | None = None
+        self,
+        artifact: MemoryArtifact,
+        *,
+        receipt_operation_id: str | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> MemoryArtifact:
         """Persist an artifact. Enforces Invariant 1 (no-STATED-on-entry) and 2
         (redact-before-store). The conflict lookup/delete `_prepare_write()` may run,
@@ -2495,6 +3588,7 @@ class TypedArtifactStore:
                     stored.artifact_version,
                     {},
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
         self._note_inserted(stored, evicted)
         return stored
@@ -2506,6 +3600,7 @@ class TypedArtifactStore:
         namespace: str,
         behavior_id: str,
         runtime_digest: str,
+        commit_check: CommitCheck | None = None,
     ) -> MemoryArtifact:
         """MC10 §9.0: insert one passing observation artifact and advance its
         namespace/behavior/runtime-platform-digest last-success pointer in the *same*
@@ -2536,6 +3631,7 @@ class TypedArtifactStore:
                     now,
                 ),
             )
+            run_commit_check(conn, commit_check)
             conn.commit()
         self._note_inserted(stored, evicted)
         return stored
@@ -2583,16 +3679,23 @@ class TypedArtifactStore:
         created_at: float,
         expires_at: float,
         receipt_operation_id: str | None = None,
+        sender: Mapping[str, Any] | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> None:
         """MC11 §9.0: persist one bounded-handoff session descriptor. `granted_ids` is the
         exact, immutable authorized artifact-ID set for this session -- widening scope
-        always requires a brand-new session (no update path exists)."""
+        always requires a brand-new session (no update path exists). 72-T01 D21:
+        `sender` holds the policy-mode sender binding (`sender_grant_id`, owner,
+        project, worktree, policy revision); legacy sessions keep them NULL."""
+        bound = dict(sender or {})
         with self._connect() as conn:
             conn.execute(
                 "INSERT INTO memory_handoff_sessions "
                 "(session_id, root, audience, capability_hash, granted_ids, "
-                "session_allowlist, constraints, created_at, expires_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?)",
+                "session_allowlist, constraints, created_at, expires_at, "
+                "sender_grant_id, sender_owner_kind, sender_owner_id, "
+                "sender_project_id, sender_worktree_id, sender_policy_revision) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     session_id,
                     root,
@@ -2603,6 +3706,7 @@ class TypedArtifactStore:
                     json.dumps(constraints),
                     created_at,
                     expires_at,
+                    *(bound.get(name) for name, _type in HANDOFF_SENDER_COLUMNS),
                 ),
             )
             if receipt_operation_id:
@@ -2614,6 +3718,7 @@ class TypedArtifactStore:
                     None,
                     {"audience": audience},
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
 
     def get_handoff_session(self, session_id: str) -> dict[str, Any] | None:
@@ -2637,7 +3742,12 @@ class TypedArtifactStore:
             "constraints": json.loads(row["constraints"]),
             "created_at": row["created_at"],
             "expires_at": row["expires_at"],
-            "revoked_at": row["revoked_at"],
+            "revoked_at": _row_value(row, "revoked_at"),
+            "sender_columns": all(
+                name in row.keys()  # noqa: SIM118 -- sqlite3.Row
+                for name, _type in HANDOFF_SENDER_COLUMNS
+            ),
+            **{name: _row_value(row, name) for name, _type in HANDOFF_SENDER_COLUMNS},
         }
 
     def revoke_handoff_session(
@@ -2717,7 +3827,11 @@ class TypedArtifactStore:
         return {row["artifact_id"]: row["acknowledged_version"] for row in rows}
 
     def acknowledge_handoff(
-        self, session_id: str, readbacks: Sequence[tuple[str, int, str]]
+        self,
+        session_id: str,
+        readbacks: Sequence[tuple[str, int, str]],
+        *,
+        commit_check: CommitCheck | None = None,
     ) -> dict[str, int]:
         """MC11 §9.0: atomically verify and record an exact receiver read-back.
 
@@ -2772,6 +3886,7 @@ class TypedArtifactStore:
                     "updated_at = excluded.updated_at",
                     (session_id, artifact_id, current[artifact_id], now),
                 )
+            run_commit_check(conn, commit_check)
             conn.commit()
         return self.get_handoff_receipts(session_id)
 
@@ -2781,6 +3896,7 @@ class TypedArtifactStore:
         content: dict[str, Any],
         *,
         expected_version: int | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> None:
         """Update an existing row's content (redacted), exercising the AFTER UPDATE FTS trigger.
 
@@ -2813,16 +3929,20 @@ class TypedArtifactStore:
                 trust_tier=new_trust_tier,
                 expected_version=expected_version,
             )
+            new_text = _persisted_text(row["content"], sanitized_content)
+            mac = next_row_mac(
+                conn,
+                self.project_root,
+                artifact_id,
+                {"content": new_text, "trust_tier": new_trust_tier},
+            )
             conn.execute(
                 "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
-                "trust_tier = ?, signature = NULL, promoted_at = NULL WHERE id = ?",
-                (
-                    _persisted_text(row["content"], sanitized_content),
-                    new_version,
-                    new_trust_tier,
-                    artifact_id,
-                ),
+                "trust_tier = ?, signature = NULL, promoted_at = NULL, row_mac = ? "
+                "WHERE id = ?",
+                (new_text, new_version, new_trust_tier, mac, artifact_id),
             )
+            run_commit_check(conn, commit_check)
             conn.commit()
             note_committed_write(artifact_id, new_version, row["source"], "update")
 
@@ -2836,6 +3956,7 @@ class TypedArtifactStore:
         expected_version: int | None = None,
         owner_scope: OwnerScope | None = None,
         receipt_operation_id: str | None = None,
+        commit_check: CommitCheck | None = None,
     ) -> tuple[MemoryArtifact, PromotionResult]:
         """Evaluate persisted bytes and atomically persist their signed promotion.
 
@@ -2864,6 +3985,12 @@ class TypedArtifactStore:
                     row, default_owner_scope=self._owner_scope_default
                 )
                 candidate_sources = []
+                found = _verified_binding(conn, self.project_root)
+                verifier = (
+                    BindingVerifier("bound", found[0], found[1])
+                    if found
+                    else UNBOUND_VERIFIER
+                )
                 for ref in candidate_refs:
                     peer_row = conn.execute(
                         "SELECT * FROM memory_artifacts WHERE id = ?", (ref["id"],)
@@ -2886,6 +4013,7 @@ class TypedArtifactStore:
                         or peer.trust_tier == "STATED"
                         or peer.stale
                         or peer.archived_at is not None
+                        or verifier.row(peer_row) != "bound"
                     ):
                         raise VersionConflictError(
                             f"promotion corroborator {ref['id']!r} changed since review"
@@ -2908,6 +4036,7 @@ class TypedArtifactStore:
                     artifact.artifact_version,
                     {"promoted": True},
                 )
+            run_commit_check(conn, commit_check)
         # The `with` block commits on exit; only a real promotion wrote a revision.
         if decision.promoted:
             note_committed_write(
@@ -3009,16 +4138,36 @@ class TypedArtifactStore:
         `SignatureMismatchError` for a STATED row whose signature is missing or wrong,
         `TrojanSourceFoundError` for Trojan Source characters (§9 P61.9, Invariants 3/4).
         """
-        from rush.memory.retrieval import MemoryAccess, visible_artifacts
+        from rush.memory.retrieval import (
+            MemoryAccess,
+            memory_policy_mode,
+            visible_artifacts,
+        )
 
         if access is not None and session_allowlist is not None:
             raise ValueError("pass access or session_allowlist, not both")
+        if include_archived:
+            mode = "historical"
         if access is None:
             if not session_allowlist:
                 return []
-            access = MemoryAccess.legacy(self.project_root, session_allowlist)
-        if include_archived:
-            mode = "historical"
+            # D1: the allowlist form is legacy only in `legacy` mode; in `policy`
+            # mode it narrows the resolved grant; `unavailable` reads nothing.
+            policy_mode = memory_policy_mode(self.project_root)
+            if policy_mode == "unavailable":
+                return []
+            if policy_mode == "legacy":
+                access = MemoryAccess.legacy(self.project_root, session_allowlist)
+            else:
+                resolved = MemoryAccess.resolve(
+                    self.project_root,
+                    operation="recall",
+                    historical=mode == "historical",
+                    requested_sources=list(session_allowlist),
+                )
+                if resolved is None:
+                    return []
+                access = resolved
         rows = self.search_rows(
             subject, query, include_archived=include_archived or mode == "historical"
         )
@@ -3087,16 +4236,25 @@ def promote_stored_artifact(
             corroboration_count=decision.corroboration_count,
             artifact_version=new_version,
         )
+        new_text = _persisted_text(row["content"], artifact.content)
+        mac = next_row_mac(
+            conn,
+            project_root,
+            artifact.id,
+            {"content": new_text, "trust_tier": artifact.trust_tier},
+        )
         conn.execute(
             "UPDATE memory_artifacts SET content = ?, trust_tier = ?, promoted_at = ?, "
-            "signature = ?, corroboration_count = ?, artifact_version = ? WHERE id = ?",
+            "signature = ?, corroboration_count = ?, artifact_version = ?, row_mac = ? "
+            "WHERE id = ?",
             (
-                _persisted_text(row["content"], artifact.content),
+                new_text,
                 artifact.trust_tier,
                 artifact.promoted_at,
                 artifact.signature,
                 artifact.corroboration_count,
                 artifact.artifact_version,
+                mac,
                 artifact.id,
             ),
         )

@@ -1,5 +1,6 @@
 """Token economy SQLite telemetry ledger (.rush/telemetry/tokens.db)."""
 
+import json
 import sqlite3
 import time
 from contextlib import closing
@@ -18,6 +19,36 @@ _MEMORY_EVENT_KINDS = frozenset(
 # so a missing attribution value must be a real string, never NULL.
 _UNSCOPED = "unscoped"
 _IDENTITY_COLUMNS = ("project_id", "run_id", "agent_id", "session_id")
+# 72-T01 §3.9: the access a memory event was recorded under (NULL when unattributed).
+_ACCESS_COLUMNS = ("owner_scope_kind", "owner_scope_id", "sources_json")
+
+
+def access_event_predicate(access: Any) -> tuple[str, list[str]]:
+    """§3.9 policy-mode telemetry filter: the event's recorded owner equals the
+    access owner and every recorded source is an exact approved label or carries
+    a granted family prefix (a recorded `<family>:*` element passes only as that
+    literal approved item)."""
+    from rush.memory.authorization import family_prefixes
+
+    owner = access.owner_scope
+    sources = sorted(access.sources)
+    clause = (
+        "owner_scope_kind = ? AND owner_scope_id = ? AND sources_json IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM json_each(sources_json) AS e WHERE NOT ("
+        "e.value IN (SELECT value FROM json_each(?)) OR EXISTS (SELECT 1 FROM "
+        "json_each(?) AS f WHERE substr(e.value, 1, length(f.value)) = f.value "
+        "AND length(e.value) > length(f.value))))"
+    )
+    return clause, [
+        owner.kind if owner is not None else "",
+        owner.id if owner is not None else "",
+        json.dumps(sources),
+        json.dumps(family_prefixes(sources)),
+    ]
+
+
+def _policy_access(access: Any) -> bool:
+    return access is not None and getattr(access, "kind", None) == "policy"
 
 
 class TelemetryStore:
@@ -66,6 +97,7 @@ class TelemetryStore:
             )
             self._migrate_token_events(conn)
             self._migrate_memory_events(conn)
+            self._migrate_memory_event_access(conn)
             conn.commit()
 
     def _migrate_token_events(self, conn: sqlite3.Connection) -> None:
@@ -123,6 +155,16 @@ class TelemetryStore:
         )
         conn.execute("DROP TABLE memory_events_legacy")
 
+    def _migrate_memory_event_access(self, conn: sqlite3.Connection) -> None:
+        """72-T01 §3.9: additive `owner_scope_kind`/`owner_scope_id`/`sources_json`
+        (writable store only; a read-only reader never migrates)."""
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        if not existing:
+            return
+        for column in _ACCESS_COLUMNS:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE memory_events ADD COLUMN {column} TEXT")
+
     def record_memory_event(
         self,
         kind: str,
@@ -137,6 +179,9 @@ class TelemetryStore:
         session_id: str = _UNSCOPED,
         opt_in: bool = False,
         cache_write: bool = False,
+        owner_scope_kind: str | None = None,
+        owner_scope_id: str | None = None,
+        sources_json: str | None = None,
     ) -> bool:
         """MC04 §9.0 / P69-07 subsection e: persist one real retrieval/expansion/packing/
         handoff/embedding cost, deduplicated by `(invocation_id, event_id)` so a genuine
@@ -164,8 +209,9 @@ class TelemetryStore:
                 """
                 INSERT OR IGNORE INTO memory_events
                     (invocation_id, event_id, kind, tokens, timestamp, request_id,
-                     project_id, run_id, agent_id, session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     project_id, run_id, agent_id, session_id,
+                     owner_scope_kind, owner_scope_id, sources_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     real_invocation_id,
@@ -178,6 +224,9 @@ class TelemetryStore:
                     run_id,
                     agent_id,
                     session_id,
+                    owner_scope_kind,
+                    owner_scope_id,
+                    sources_json,
                 ),
             )
             conn.commit()
@@ -318,10 +367,12 @@ def read_memory_event_totals_readonly(
     run_id: str | None = None,
     agent_id: str | None = None,
     session_id: str | None = None,
+    access: Any = None,
 ) -> dict[str, int]:
     """T27: `TelemetryStore.get_memory_event_total(kind)` per kind without
     constructing a store; a missing DB or table counts zero and creates
-    nothing."""
+    nothing. 72-T01 §3.9: a policy `access` counts only the events recorded
+    under its owner and granted sources (none from a pre-72 table)."""
     from rush.memory.store import read_sqlite_readonly, sqlite_has_table
 
     db_path = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
@@ -342,12 +393,20 @@ def read_memory_event_totals_readonly(
         columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
         if not set(filters) <= columns:
             return {}
-        where = " AND ".join(f"{column} = ?" for column in filters)
+        clauses = [f"{column} = ?" for column in filters]
+        params: list[Any] = list(filters.values())
+        if _policy_access(access):
+            if not set(_ACCESS_COLUMNS) <= columns:
+                return {}
+            clause, extra = access_event_predicate(access)
+            clauses.append(clause)
+            params.extend(extra)
+        where = " AND ".join(clauses)
         rows = conn.execute(
             "SELECT kind, COALESCE(SUM(tokens), 0) FROM memory_events"
             + (f" WHERE {where}" if where else "")
             + " GROUP BY kind",
-            list(filters.values()),
+            params,
         ).fetchall()
         return {str(kind): int(total) for kind, total in rows}
 
@@ -356,9 +415,15 @@ def read_memory_event_totals_readonly(
 
 
 def read_artifact_expansion_receipts_readonly(
-    project_root: Path, artifact_id: str, version: int, *, limit: int = 8
+    project_root: Path,
+    artifact_id: str,
+    version: int,
+    *,
+    limit: int = 8,
+    access: Any = None,
 ) -> list[dict[str, Any]]:
-    """Real expansion invocations for an exact artifact revision, without DB setup."""
+    """Real expansion invocations for an exact artifact revision, without DB setup.
+    72-T01 §3.9: a policy `access` returns only its own owner/source events."""
     from rush.memory.store import read_sqlite_readonly, sqlite_has_table
 
     db = Path(project_root) / ".rush" / "telemetry" / "tokens.db"
@@ -380,11 +445,19 @@ def read_artifact_expansion_receipts_readonly(
             <= columns
         ):
             return []
+        scope = ""
+        scope_params: list[Any] = []
+        if _policy_access(access):
+            if not set(_ACCESS_COLUMNS) <= columns:
+                return []
+            clause, scope_params = access_event_predicate(access)
+            scope = f" AND {clause}"
         rows = conn.execute(
             "SELECT invocation_id, kind, tokens, timestamp FROM memory_events "
-            "WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ? "
-            "ORDER BY timestamp DESC, invocation_id LIMIT ?",
-            (prefix, prefix, max(1, min(limit, 32))),
+            "WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ?"
+            + scope
+            + " ORDER BY timestamp DESC, invocation_id LIMIT ?",
+            (prefix, prefix, *scope_params, max(1, min(limit, 32))),
         ).fetchall()
         return [
             {

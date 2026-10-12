@@ -105,7 +105,7 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
     (
         "list",
         {"subject": "episodic", "query": "q", "session_allowlist": ["s1"]},
-        "session_allowlist",
+        "query",
     ),
     ("write", {"subject": "episodic", "content": {"k": "v"}, "source": "t"}, "content"),
     (
@@ -563,6 +563,15 @@ def test_t06_memory_missing_required_field_rejects_with_zero_effects(
     assert outcome.rejected
     assert outcome.error["data"]["details"][0]["loc"][0] == dropped
     assert before == after
+    if operation == "list":
+        # 72-T01 R5: `session_allowlist` is optional on the query models, so a request
+        # that omits only it validates (policy mode resolves owner and sources).
+        optional = {
+            "path": str(tmp_path),
+            "operation": operation,
+            **{k: v for k, v in fields.items() if k != "session_allowlist"},
+        }
+        assert not _validate_and_normalize("rush_memory", optional).rejected
 
 
 # --- Adversarial inputs (brief section 6, "Adversarial inputs" bullet) -----

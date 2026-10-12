@@ -48,13 +48,21 @@ from rush.dashboard.static_assets import (
     load_dashboard_asset,
 )
 from rush.dashboard.theme import MOTION, THEME
+from rush.memory.authorization import source_granted
 from rush.memory.maintenance import MaintenanceTask
+from rush.memory.retrieval import (
+    MemoryAccess,
+    RouteDenial,
+    evaluate_artifact_visibility,
+    route_access,
+)
 from rush.memory.store import (
     MemorySubject,
     OwnerScope,
     SignatureMismatchError,
     TrojanSourceFoundError,
     TypedArtifactStore,
+    binding_verifier,
     is_internal_memory_source,
     readonly_view_reason,
 )
@@ -99,11 +107,13 @@ from rush.workflows.projects import (
     ProjectError,
     ProjectInvalidRequestError,
     _scan_file_inventory,
+    authorized_map_memories,
     create_project,
     expand_artifact_reference,
     export_project_data,
     git_link_matches_commit,
     list_project_artifacts,
+    memory_list_access,
     project_git_commit_diff,
     project_git_history,
     project_snapshot,
@@ -3083,8 +3093,30 @@ def _refresh_project_memories(
     `handoff_send` all persist real memory content, so all three must
     republish the project's live memory data (never bare `bump_sequence()`,
     which drops the ordering/staleness check `refresh_memories()` exists
-    for)."""
-    memories, generation = TypedArtifactStore(root).snapshot_memories()
+    for).
+
+    72-T01 D1 `list`: the republished rows are the grant owner's rows of the sources
+    it approves (every row in `legacy` mode); a denied route republishes nothing."""
+    from rush.memory.retrieval import RouteDenial, route_access
+
+    access = route_access(root, "list")
+    if isinstance(access, RouteDenial):
+        return
+    # List authority reads only: a query-only view never creates `.rush/`, a
+    # cache directory or a migrated schema; no readable store publishes nothing.
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    if view is None:
+        return
+    try:
+        memories, generation = view.snapshot_memories(
+            access=access if access.kind == "policy" else None
+        )
+    finally:
+        view.close()
+    # D1 race rule: a grant revoked (or `legacy` mode left) while the rows were
+    # selected publishes none of them.
+    if access.recheck() != "ok":
+        return
     ctx.projects.refresh_memories(project_id, memories, generation)
 
 
@@ -3095,8 +3127,7 @@ def _refresh_project_memories_if_store_exists(
     (unlike propose/maintain) have a genuine read-only preview mode and can
     fail before writing anything -- so this must never itself spring a
     `.rush/memory.db` into existence just to check for updates. Only calls
-    the write-adjacent `TypedArtifactStore(root)` (and hence
-    `_refresh_project_memories`) once a store already exists on disk;
+    `_refresh_project_memories` once a store already exists on disk;
     `refresh_memories()`'s own generation gate (state.py) still rejects a
     non-newer generation, so a preview or a zero-write failure against an
     *existing* store still publishes no fabricated sequence bump. A
@@ -3475,13 +3506,18 @@ def _build_overview_section(project_id: str, record: ProjectRecord) -> dict[str,
     and counts -- never the full snapshot's raw findings/agents/memories
     arrays."""
     snapshot = record.snapshot
+    root = snapshot.get("root")
+    memories = snapshot.get("memories") or []
+    if isinstance(root, str) and root:
+        # 72-T01 D1 `list`: count only the memories the reader may list.
+        memories = authorized_map_memories(Path(root), memories)
     return {
         "project_id": project_id,
-        "root": snapshot.get("root"),
+        "root": root,
         "source_identity": record.source_identity,
         "sequence": record.sequence,
         "finding_count": len(snapshot.get("findings") or []),
-        "memory_count": len(snapshot.get("memories") or []),
+        "memory_count": len(memories),
         "agent_count": len(snapshot.get("agents") or []),
     }
 
@@ -3759,10 +3795,21 @@ def _build_memory_section(
     (`dynamic_freshness_checked: false` -- only the persisted `stale`
     column, no live re-check)."""
     root = Path(resolve_project(project_id)["root"])
+    include_archived = query.get("include_archived", ["false"])[0] == "true"
+    # 72-T01 D1: in `policy` mode the grant's owner and sources decide what is
+    # listed (never every source in the store); `unavailable` or a denied grant
+    # lists nothing; `legacy` keeps the whole project as before.
+    access = _dashboard_memory_access(root, historical=include_archived)
     # R20.G8: a GET never creates or migrates memory.db. No DB = empty; an
     # unreadable one (old schema, corrupt, busy) is reported as `store_state`.
     store, store_state = TypedArtifactStore.open_readonly_view(root)
-    all_sources = _all_known_sources(store) if store is not None else []
+    if access is None:
+        all_sources = _all_known_sources(store) if store is not None else []
+    elif isinstance(access, RouteDenial):
+        all_sources = []
+    else:
+        all_sources = sorted(access.sources)
+    policy_access = access if isinstance(access, MemoryAccess) else None
     browse_revision = str(store.current_generation() if store is not None else 0)
 
     requested_subjects = _split_csv(query.get("subject", []))
@@ -3772,7 +3819,6 @@ def _build_memory_section(
     trust_filter = set(_split_csv(query.get("trust", [])))
     source_filter = set(_split_csv(query.get("source", [])))
     freshness = query.get("freshness", [None])[0]
-    include_archived = query.get("include_archived", ["false"])[0] == "true"
     # T18 R18.2: bookkeeping sources are excluded from the default browse/query
     # allowlist and `known_sources`. `include_internal` restores exactly the
     # pre-T18 set. Expand/related-by-ID (below) keep the unfiltered `all_sources`.
@@ -3797,6 +3843,13 @@ def _build_memory_section(
         include_archived,
         tuple(sorted(browse_sources)),
         browse_revision,
+        (
+            policy_access.owner_scope,
+            policy_access.grant_id,
+            policy_access.policy_revision,
+        )
+        if policy_access is not None
+        else None,
     )
     cached_items = None if query_text else _MEMORY_BROWSE_CACHE.get(browse_cache_key)
     if cached_items is not None:
@@ -3813,6 +3866,7 @@ def _build_memory_section(
             trust_filter=trust_filter,
             include_archived=include_archived,
             query_text=query_text,
+            access=policy_access,
         )
         if not query_text:
             _MEMORY_BROWSE_CACHE[browse_cache_key] = list(items)
@@ -3919,6 +3973,18 @@ def _unreadable_memory_envelope(operation: str, store_state: str | None) -> Tool
     )
 
 
+def _dashboard_memory_access(
+    root: Path, *, historical: bool = False
+) -> MemoryAccess | RouteDenial | None:
+    """72-T01 D1 `list` access for a dashboard/TUI read: `None` in `legacy` mode
+    (the whole project), the resolved grant in `policy` mode, a `RouteDenial`
+    otherwise."""
+    access = route_access(root, "list", historical=historical)
+    if isinstance(access, RouteDenial):
+        return access
+    return access if access.kind == "policy" else None
+
+
 def _fetch_memory_browse_items(
     store: TypedArtifactStore,
     *,
@@ -3928,12 +3994,18 @@ def _fetch_memory_browse_items(
     trust_filter: set[str],
     include_archived: bool,
     query_text: str,
+    access: MemoryAccess | None = None,
 ) -> list[dict[str, Any]]:
     """The actual (uncached) row-fetch this section's browse/query branches
     used to run on every single page request -- factored out so
     `_build_memory_section`'s per-generation cache can skip it entirely on a
-    cache hit. Behavior is unchanged from before the cache was added."""
+    cache hit. Behavior is unchanged from before the cache was added. A legacy
+    browse (`access is None`) is evaluated with a legacy access over every known
+    source, so the shared visibility decision applies to every row in both modes."""
+    if access is None:
+        access = MemoryAccess.legacy(root, all_sources, operation="list")
     items: list[dict[str, Any]] = []
+    verifier = binding_verifier(store)
     if query_text and all_sources:
         for subject in subjects:
             # R20.G8: the same `recall()` (signature, Trojan-source and live
@@ -3941,17 +4013,28 @@ def _fetch_memory_browse_items(
             # read-only view -- a GET never constructs a writable store. A
             # rejected subject yields no rows, exactly as `list`'s error did.
             try:
-                artifacts = store.recall(
-                    subject,
-                    query_text,
-                    all_sources,
-                    include_archived=include_archived,
-                )
+                artifacts = [
+                    artifact
+                    for artifact in store.recall(
+                        subject,
+                        query_text,
+                        include_archived=include_archived,
+                        access=access,
+                    )
+                    if source_granted(artifact.source, all_sources)
+                ]
             except (SignatureMismatchError, TrojanSourceFoundError):
                 continue
             for artifact in artifacts:
                 item = dataclasses.asdict(artifact)
                 item["dynamic_freshness_checked"] = True
+                if artifact.trust_tier == "STATED":
+                    current = store.get_current_row(artifact.id)
+                    if current is None or verifier.row(current) != "bound":
+                        # D41: an unbound STATED row's label is disclosed, its
+                        # stored bytes are not.
+                        item["content"] = {}
+                        item["reason_codes"] = ["store_unbound"]
                 items.append(item)
         if trust_filter:
             items = [i for i in items if i.get("trust_tier") in trust_filter]
@@ -3971,8 +4054,25 @@ def _fetch_memory_browse_items(
                     include_archived=include_archived,
                     scan_offset=subject_offset,
                     scan_limit=_MEMORY_BROWSE_BATCH,
+                    owner_scope=access.owner_scope,
                 )
-                items.extend(_scope_artifact_row(row) for row in batch)
+                for row in batch:
+                    decision = evaluate_artifact_visibility(
+                        store,
+                        row,
+                        access=access,
+                        mode="historical" if include_archived else "inspect",
+                    )
+                    if not decision.visible:
+                        continue
+                    item = _scope_artifact_row(row)
+                    if "store_unbound" in decision.reason_codes:
+                        item["reason_codes"] = list(decision.reason_codes)
+                        if row["trust_tier"] == "STATED":
+                            # D41: an unbound STATED row's label is disclosed, its
+                            # stored bytes are not.
+                            item["content"] = {}
+                    items.append(item)
                 if len(batch) < _MEMORY_BROWSE_BATCH:
                     break
                 subject_offset += len(batch)
@@ -4030,7 +4130,11 @@ def _build_tokens_section(
         "session_id": session_filter,
     }
     summary = read_summary_readonly(root, **filters)
-    by_kind = read_memory_event_totals_readonly(root, _MEMORY_EVENT_KINDS, **filters)
+    # 72-T01 §3.9: policy mode totals only the grant's own owner/source events.
+    memory_access = memory_list_access(root)
+    by_kind = read_memory_event_totals_readonly(
+        root, _MEMORY_EVENT_KINDS, access=memory_access, **filters
+    )
     # R20.G8: read-only view; never creates or migrates memory.db.
     store, _store_state = TypedArtifactStore.open_readonly_view(root)
     cache_fill_count = 0
@@ -4094,6 +4198,8 @@ def _build_tokens_section(
         "cache": {"warm_fill_count": cache_fill_count},
         "runs": rows,
         "export_rows": rows,
+        # 72-T01 §3.9: whose memory events `by_memory_event_kind` totals.
+        "memory_events_scope": "project" if memory_access is None else "authorized",
     }
 
 
@@ -5109,6 +5215,25 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                         )
                         return
                     map_snapshot = historical
+                # 72-T01 D1 `list`: the map's memory entries are the reader's own
+                # (legacy unchanged; policy only the grant's; denied none).
+                # A project this server loaded but never registered keeps its
+                # snapshot root (a path no grant names reads as legacy).
+                try:
+                    map_root: str | None = resolve_project(
+                        project_id, data_root=ctx.data_root
+                    )["root"]
+                except wp.ProjectNotFoundError:
+                    map_root = record.snapshot.get("root")
+                map_memories = (
+                    authorized_map_memories(
+                        Path(map_root), map_snapshot.get("memories")
+                    )
+                    if isinstance(map_root, str) and map_root
+                    else map_snapshot.get("memories")
+                )
+                if map_memories is not map_snapshot.get("memories"):
+                    map_snapshot = {**map_snapshot, "memories": map_memories}
                 node_types = tuple(
                     v
                     for entry in query.get("node_types", [])

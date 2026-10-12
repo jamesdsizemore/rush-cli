@@ -72,6 +72,12 @@ from rush.workflows.projects import register_project
 # --------------------------------------------------------------------------
 
 
+def _meta(result: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] | None = result.get("metadata", {})
+    assert metadata is not None
+    return metadata
+
+
 def _write_memory_config(root: Path, *, record: bool = True) -> None:
     (root / "rush.toml").write_text(
         f"[tools.memory]\nrecord = {'true' if record else 'false'}\n",
@@ -111,6 +117,13 @@ def _insert_stated_row(
     )
     conn.commit()
     conn.close()
+    # 72-T01 D41: a raw-SQL STATED row is authoritative only after the approved
+    # store binding (preview digest, then approve).
+    root = db_path.parent.parent
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
 
 
 def _seed_failure_1(root: Path, target_name: str = "mod.py") -> None:
@@ -758,9 +771,10 @@ def _case_memorytool_write_written_entry(tmp_path: Path) -> None:
         allow_cache_write=True,
     )
     assert result["status"] == "ok", result
-    memory = result.get("metadata", {}).get("memory")
+    memory = _meta(result).get("memory")
     assert memory is not None
     raw = result["raw"]
+    assert raw is not None
     assert memory["written"] == [
         {
             "id": raw["id"],
@@ -783,7 +797,7 @@ def _case_memorytool_promote_both_entries(tmp_path: Path) -> None:
         allow_cache_write=True,
     )
     assert result["status"] == "ok", result
-    memory = result.get("metadata", {}).get("memory")
+    memory = _meta(result).get("memory")
     assert memory is not None
     assert len(memory["written"]) == 2, (
         "promote commits both a candidate-create and a promotion decision"
@@ -800,7 +814,9 @@ def _case_memorytool_compact_recall_used_matches_page_items(tmp_path: Path) -> N
         source="csv-helper",
         allow_cache_write=True,
     )
-    artifact_id = write_result["raw"]["id"]
+    write_raw = write_result["raw"]
+    assert write_raw is not None
+    artifact_id = write_raw["id"]
     recall_result = tool(
         path=tmp_path,
         operation="recall",
@@ -810,9 +826,11 @@ def _case_memorytool_compact_recall_used_matches_page_items(tmp_path: Path) -> N
         session_allowlist=["csv-helper"],
     )
     assert recall_result["status"] == "ok", recall_result
-    items = recall_result["raw"]["data"]["items"]
+    recall_raw = recall_result["raw"]
+    assert recall_raw is not None
+    items = recall_raw["data"]["items"]
     assert any(item["id"] == artifact_id for item in items)
-    memory = recall_result.get("metadata", {}).get("memory")
+    memory = _meta(recall_result).get("memory")
     assert memory is not None
     assert {u["id"] for u in memory["used"]} == {item["id"] for item in items}
 
@@ -829,7 +847,7 @@ def _case_memorytool_permission_denied_absent(tmp_path: Path) -> None:
     )
     assert result["status"] == "skipped"
     # keep-green: a denied write never commits, so it can never report a receipt.
-    assert result.get("metadata", {}).get("memory") is None
+    assert _meta(result).get("memory") is None
 
 
 def _case_memorytool_bridge_receive_raw_no_receipts(tmp_path: Path) -> None:
@@ -884,13 +902,13 @@ def _case_scan_staged_manifest_and_aggregate_receipts(
 
     by_id = {item.candidate.candidate_id: item for item in run.candidate_results}
     review_result = by_id["review"].result
-    child_memory = review_result.get("metadata", {}).get("memory")
+    child_memory = _meta(review_result).get("memory")
     assert child_memory is not None and child_memory["used"], (
         "G2: the review candidate runs against a temp staging copy with no .rush -- "
         "its recall must still cite the real project's live store, not the deleted "
         "staging tempdir"
     )
-    aggregate_memory = run.aggregate.get("metadata", {}).get("memory")
+    aggregate_memory = _meta(run.aggregate).get("memory")
     assert aggregate_memory is not None
     assert aggregate_memory["used"] == child_memory["used"], (
         "aggregate must union child receipts"
@@ -924,7 +942,7 @@ def _case_scan_no_cross_root_receipt_leakage(
     )
     by_id_b = {item.candidate.candidate_id: item for item in run_b.candidate_results}
     # keep-green: project b never saw project a's artifact, so it can never cite it.
-    memory_b = by_id_b["review"].result.get("metadata", {}).get("memory")
+    memory_b = _meta(by_id_b["review"].result).get("memory")
     assert memory_b is None or all(
         u["id"] != "failure-1" for u in memory_b.get("used", [])
     )
@@ -1027,7 +1045,7 @@ def _case_absence_when_unused_no_memory_key(tmp_path: Path) -> None:
     result = ReviewTool().run(target)
     # keep-green: no memory config, no artifacts seeded -- there must be no "memory" key
     # at all (never an empty-but-present block).
-    assert "memory" not in result.get("metadata", {})
+    assert "memory" not in _meta(result)
 
 
 def _case_compact_projection_large_receipts_stay_within_budget(tmp_path: Path) -> None:
@@ -1055,7 +1073,7 @@ def _case_compact_projection_large_receipts_stay_within_budget(tmp_path: Path) -
         session_allowlist=["bulk-source"],
     )
     assert recall_result["status"] == "ok", recall_result
-    memory = recall_result.get("metadata", {}).get("memory")
+    memory = _meta(recall_result).get("memory")
     assert memory is not None, (
         "no metadata.memory exists to bound in the first place (T19 not implemented)"
     )
@@ -1077,6 +1095,7 @@ def _case_provenance_attribution_link_returns_written_artifact(tmp_path: Path) -
         "record_fix_attribution discards migration.write_if_new's committed row -- "
         "T19 needs it returned so the ToolResult can carry a written attribution_link receipt"
     )
+    assert isinstance(committed, MemoryArtifact)
     assert committed.source == "provenance_ai:attribution_link"
 
 

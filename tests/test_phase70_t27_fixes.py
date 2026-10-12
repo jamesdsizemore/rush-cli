@@ -11,7 +11,7 @@ import runpy
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import click
 import pytest
@@ -349,6 +349,41 @@ def test_context_persona_read_leaves_legacy_memory_db_untouched(
     assert "Current persona style: default" in result.output
     assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     assert not (rush_dir / "cache").exists()
+    assert sorted(p.name for p in rush_dir.iterdir()) == listing
+    # 72-T01 D41: a read never creates the store-binding key or the `.rush/.gitignore`.
+    from rush.setup.provision import default_data_root
+
+    assert not (default_data_root() / "user" / ".rush" / "memory_store.key").exists()
+    assert not (rush_dir / ".gitignore").exists()
+
+    # 72-T01 D1: once the project is enrolled in the memory policy, the persona read
+    # resolves the grant first; a grant that does not name `migration:preference_store`
+    # denies it with zero effects (no preference value, no write).
+    from rush.memory import authorization as auth
+    from rush.memory.store import legacy_owner_scope
+    from rush.workflows.projects import register_project
+
+    data_root = default_data_root()
+    register_project(project, data_root=data_root)
+    root = project.resolve()
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=legacy_owner_scope(root),
+        approved_sources=["other-source"],
+        allowed_operations=["ask"],
+        expected_policy_revision=0,
+        consent=True,
+        data_root=data_root,
+    )
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    listing = sorted(p.name for p in rush_dir.iterdir())
+    denied = CliRunner().invoke(cli, ["context", "persona"])
+    assert denied.exit_code == 1, denied.output
+    assert (
+        "Persona style unavailable: E_PERMISSION (source_not_granted)" in denied.output
+    )
+    assert "Current persona style" not in denied.output
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
     assert sorted(p.name for p in rush_dir.iterdir()) == listing
 
 
@@ -1382,7 +1417,7 @@ def test_project_artifacts_empty_reason_names_artifacts_not_projects() -> None:
     }
     console = Console(file=io.StringIO(), width=200, no_color=True)
     theme._collection(result, console)
-    text = console.file.getvalue()
+    text = cast(io.StringIO, console.file).getvalue()
     assert "no projects are registered" not in text, text
     assert "0 records: no artifacts are recorded for this project" in text, text
 
@@ -1702,13 +1737,14 @@ def test_simulate_ci_runs_each_step_through_its_named_shell(
     (wf_dir / "ci.yml").write_text(workflow)
     monkeypatch.setattr(simulate_ci, "_IS_WINDOWS", windows, raising=False)
     calls: list[list[str]] = []
-    monkeypatch.setattr(
-        simulate_ci,
-        "run_subprocess",
-        lambda argv, cwd=None: (
-            calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
-        ),
-    )
+
+    def fake_run_subprocess(
+        argv: list[str], cwd: Any = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(simulate_ci, "run_subprocess", fake_run_subprocess)
     res = simulate_ci.SimulateCi(tmp_path).run_workflow("ci.yml")
     assert res["passed"] is True, res
     assert calls == [expected]
@@ -1728,13 +1764,14 @@ def test_simulate_ci_step_without_a_shell_template_placeholder_uses_the_template
     wf_dir.mkdir(parents=True)
     (wf_dir / "ci.yml").write_text(workflow)
     calls: list[list[str]] = []
-    monkeypatch.setattr(
-        simulate_ci,
-        "run_subprocess",
-        lambda argv, cwd=None: (
-            calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", "")
-        ),
-    )
+
+    def fake_run_subprocess(
+        argv: list[str], cwd: Any = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(simulate_ci, "run_subprocess", fake_run_subprocess)
     res = simulate_ci.SimulateCi(tmp_path).run_workflow("ci.yml")
     assert res["passed"] is True, res
     assert len(calls) == 1

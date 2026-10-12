@@ -633,16 +633,21 @@ def build_memory_bridge_handler(
                 },
             }
         validated_operation = cast(MemoryOperation, operation)
-        store = TypedArtifactStore(root)
+        # 72-T01 D22: a read-only load before capability validation; a missing or
+        # unreadable store is the same constant denial, and nothing is created.
+        view, _state = TypedArtifactStore.open_readonly_view(root)
         try:
-            session = handoff.load_session(store, session_id, capability)
+            session = handoff.load_session(view, session_id, capability)
         except handoff.HandoffError as exc:
             return {
                 "schema_version": 1,
                 "operation": operation,
                 "code": exc.code,
-                "data": {"message": str(exc)},
+                "data": exc.data(),
             }
+        finally:
+            if view is not None:
+                view.close()
         req = dict(request or {})
         if operation == "receive":
             req["session_id"] = session_id

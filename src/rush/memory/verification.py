@@ -83,6 +83,7 @@ def verify_attempt(
     patch: str,
     granted: ExecutionPermissions,
     declared_permission_names: tuple[str, ...] = (),
+    access: Any = None,
 ) -> VerifyAttemptOutcome:
     """Apply `patch` in an isolated sandbox and run `PatchVerifier.verify_patch()`.
 
@@ -170,6 +171,7 @@ def verify_attempt(
                     "passed_count": result.passed_count,
                 },
                 project_root=repo_root,
+                access=access,
             )
         return VerifyAttemptOutcome(
             attempt_id=attempt_id,

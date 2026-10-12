@@ -144,8 +144,8 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="workflow",
         description="Query, write, or promote cross-tool memory artifacts.",
         mcp_description=(
-            "Recall or record project memory at <path>. Reads need a non-empty "
-            "session_allowlist; writes and other mutations need the allow_cache_write "
+            "Recall or record memory at <path>. Reads use policy grants; legacy "
+            "needs non-empty session_allowlist. Mutations need the allow_cache_write "
             "permission. Returns {status, findings[], summary}."
         ),
         engine_names=(),

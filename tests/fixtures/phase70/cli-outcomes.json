@@ -4896,7 +4896,8 @@
       "allowed_paths": [
         "<cwd>/.rush/cache",
         "<cwd>/.rush/locks",
-        "<cwd>/.rush/memory.db"
+        "<cwd>/.rush/memory.db",
+        "<data-root>/user/.rush/memory_store.key"
       ]
     },
     "producer": "rush.cli:memory_maintain_cmd",
@@ -5068,8 +5069,10 @@
     "failure": {"argv": ["memory", "promote", "nonsense", "phase70-source", "--content", "{}", "--allow-cache-write", "--allow-artifact-write"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
+        "<cwd>/.rush/.gitignore",
         "<cwd>/.rush/cache",
-        "<cwd>/.rush/memory.db"
+        "<cwd>/.rush/memory.db",
+        "<data-root>/user/.rush/memory_store.key"
       ]
     },
     "producer": "rush.cli:memory_promote_cmd",
@@ -5463,8 +5466,10 @@
     "failure": {"argv": ["memory", "write", "nonsense", "phase70-source", "--content", "{}", "--allow-cache-write", "--allow-artifact-write"], "json_paths": {}, "human_contains": ["'nonsense' is not one of 'active_context'"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
+        "<cwd>/.rush/.gitignore",
         "<cwd>/.rush/cache",
-        "<cwd>/.rush/memory.db"
+        "<cwd>/.rush/memory.db",
+        "<data-root>/user/.rush/memory_store.key"
       ]
     },
     "producer": "rush.cli:memory_write_cmd",
@@ -7181,7 +7186,8 @@
       "allowed_paths": [
         "<cwd>/.rush/cache",
         "<cwd>/.rush/handoffs/*.json",
-        "<cwd>/.rush/memory.db"
+        "<cwd>/.rush/memory.db",
+        "<data-root>/user/.rush/memory_store.key"
       ]
     },
     "producer": "rush.cli:scan_handoff_cmd",
@@ -7808,7 +7814,8 @@
       "allowed_paths": [
         "<cwd>/.rush/cache",
         "<cwd>/.rush/memory.db",
-        "<cwd>/.rush/sessions/phase70-fixture.json"
+        "<cwd>/.rush/sessions/phase70-fixture.json",
+        "<data-root>/user/.rush/memory_store.key"
       ]
     },
     "producer": "rush.cli:session_save_cmd",

@@ -23,21 +23,27 @@ and replacement checkpoint migrations update existing origins without retaining 
 from __future__ import annotations
 
 import calendar
+import functools
 import hashlib
 import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Any
 
 from rush.memory.store import (
+    UNBOUND_VERIFIER,
+    BindingVerifier,
     MemoryArtifact,
     MemoryFamily,
     MemorySubject,
     TypedArtifactStore,
+    _verified_binding,
     _write_version,
+    next_row_mac,
     note_committed_write,
     note_memory_read,
     read_sqlite_readonly,
@@ -72,24 +78,43 @@ def write_if_new(
     origin_id: str,
     symbol_ref: str | None = None,
     created_at: float | None = None,
+    access: Any = None,
 ) -> MemoryArtifact | None:
-    """Idempotent insert keyed by `(origin_kind, origin_id)`; returns `None` if already migrated."""
-    if artifact_exists(store, origin_kind, origin_id):
-        return None
-    return store.write(
-        MemoryArtifact(
-            id=str(uuid.uuid4()),
-            family=family,
-            subject=subject,
-            trust_tier=_LOCAL_TIER,
-            content=content,
-            source=source,
-            created_at=created_at if created_at is not None else time.time(),
-            symbol_ref=symbol_ref,
-            origin_kind=origin_kind,
-            origin_id=origin_id,
-        )
+    """Idempotent insert keyed by `(origin_kind, origin_id)`; returns `None` if already
+    migrated. 72-T01 D4: authorized for `source` through the shared writer gate (a
+    supplied `access` must authorize it); a denial returns `None` with no effect."""
+    from rush.memory.retrieval import (
+        RouteDenial,
+        authorize_writer,
+        recheck_failure,
+        writer_owner,
     )
+    from rush.memory.store import MemoryAccessChanged
+
+    with authorize_writer(store.project_root, source, access=access) as granted:
+        if isinstance(granted, RouteDenial):
+            return None
+        if artifact_exists(store, origin_kind, origin_id):
+            return None
+        try:
+            return store.write(
+                MemoryArtifact(
+                    id=str(uuid.uuid4()),
+                    family=family,
+                    subject=subject,
+                    trust_tier=_LOCAL_TIER,
+                    content=content,
+                    source=source,
+                    created_at=created_at if created_at is not None else time.time(),
+                    symbol_ref=symbol_ref,
+                    origin_kind=origin_kind,
+                    origin_id=origin_id,
+                    owner_scope=writer_owner(granted),
+                ),
+                commit_check=lambda: recheck_failure(granted),
+            )
+        except MemoryAccessChanged:
+            return None
 
 
 def replace_origin_content(
@@ -127,16 +152,25 @@ def replace_origin_content(
             trust_tier=_LOCAL_TIER,
             expected_version=None,
         )
+        new_text = json.dumps(clean_content)
+        mac = next_row_mac(
+            conn,
+            store.project_root,
+            row["id"],
+            {"content": new_text, "trust_tier": _LOCAL_TIER, "content_hash": None},
+        )
         conn.execute(
             "UPDATE memory_artifacts SET content = ?, trust_tier = ?, created_at = ?, "
             "signature = NULL, promoted_at = NULL, corroboration_count = 0, "
             "stale = 0, content_hash = NULL, expires_at = NULL, expired_at = NULL, "
-            "expired_by = NULL, artifact_version = ? WHERE origin_kind = ? AND origin_id = ?",
+            "expired_by = NULL, artifact_version = ?, row_mac = ? "
+            "WHERE origin_kind = ? AND origin_id = ?",
             (
-                json.dumps(clean_content),
+                new_text,
                 _LOCAL_TIER,
                 created_at if created_at is not None else time.time(),
                 new_version,
+                mac,
                 origin_kind,
                 origin_id,
             ),
@@ -145,46 +179,63 @@ def replace_origin_content(
     return True
 
 
+# 72-T01 D1 (§2.3 Migration readers): the sources that write each `origin_kind`
+# (its `migrate_*` source plus any live writer's source).
+_ORIGIN_SOURCES: dict[str, tuple[str, ...]] = {
+    "preference": ("migration:preference_store",),
+    "invariant_graph": ("migration:invariant_graph",),
+    "merkle_cache": ("migration:merkle_invalidator",),
+    "checkpoint": (
+        "checkpoint_journal:save_checkpoint",
+        "migration:checkpoint_journal",
+    ),
+    "failure_ledger": ("migration:failure_ledger",),
+    "patch_memory": ("migration:patch_memory",),
+    "flight_event": ("flight_recorder:record_event", "migration:flight_recorder"),
+    "hook_signature": ("migration:hook_signatures",),
+    "session_memory": ("session_memory:record_turn", "migration:session_memory"),
+    "attribution_link": ("provenance_ai:attribution_link",),
+}
+
+
+def _origin_filter(
+    project_root: Path, origin_kind: str
+) -> tuple[Callable[[sqlite3.Row], bool], Callable[[], str]] | None:
+    """72-T01 D1: the row test for one compatibility-view read of `origin_kind` and
+    the access recheck to run after the read, or `None` when the route is denied
+    (the reader returns no rows and opens nothing). `legacy` mode keeps every row,
+    as at HEAD; `policy` mode keeps the grant owner's rows whose source it
+    approves."""
+    from rush.memory.retrieval import RouteDenial, reader_route, reader_row_allowed
+
+    root = Path(project_root).resolve()
+    access = reader_route(root, "ask", _ORIGIN_SOURCES.get(origin_kind, ()))
+    if isinstance(access, RouteDenial):
+        return None
+    return (lambda row: reader_row_allowed(access, root, row)), access.recheck
+
+
 def read_origin(
     project_root: Path, origin_kind: str, origin_id: str
 ) -> dict[str, Any] | None:
-    """Compatibility-view read fallback: a migrated row's content by its exact origin key."""
-    store = TypedArtifactStore(project_root)
-    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
-        conn.row_factory = sqlite3.Row
-        row = conn.execute(
-            "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND origin_id = ? LIMIT 1",
-            (origin_kind, origin_id),
-        ).fetchone()
-    return json.loads(row["content"]) if row else None
+    """Compatibility-view read fallback: a migrated row's content by its exact origin
+    key. Read-only: it never creates or migrates `memory.db`."""
+    return read_origin_readonly(project_root, origin_kind, origin_id)
 
 
 def read_origin_kind(project_root: Path, origin_kind: str) -> list[dict[str, Any]]:
     """Compatibility-view read fallback: every migrated row's content for one `origin_kind`,
-    ordered by `created_at` (session_memory.py's `format_for_mcp` needs chronological order)."""
-    store = TypedArtifactStore(project_root)
-    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT content FROM memory_artifacts WHERE origin_kind = ? ORDER BY created_at",
-            (origin_kind,),
-        ).fetchall()
-    return [json.loads(row["content"]) for row in rows]
+    ordered by `created_at` (session_memory.py's `format_for_mcp` needs chronological order).
+    Read-only: it never creates or migrates `memory.db`."""
+    return read_origin_kind_readonly(project_root, origin_kind)
 
 
 def read_origin_kind_by_symbol(
     project_root: Path, origin_kind: str, symbol_ref: str
 ) -> list[dict[str, Any]]:
-    """Compatibility-view read fallback scoped to a shared `symbol_ref` (e.g. a flight session id)."""
-    store = TypedArtifactStore(project_root)
-    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT content FROM memory_artifacts WHERE origin_kind = ? AND symbol_ref = ? "
-            "ORDER BY created_at",
-            (origin_kind, symbol_ref),
-        ).fetchall()
-    return [json.loads(row["content"]) for row in rows]
+    """Compatibility-view read fallback scoped to a shared `symbol_ref` (e.g. a flight
+    session id). Read-only: it never creates or migrates `memory.db`."""
+    return read_origin_kind_by_symbol_readonly(project_root, origin_kind, symbol_ref)
 
 
 _ORIGIN_SQL = "SELECT * FROM memory_artifacts WHERE origin_kind = ?"
@@ -204,8 +255,24 @@ def _origin_rows_readonly(
 
     T19: each row is paired with its `(id, revision, source)` ref, or `None`
     for a legacy row with no `artifact_version`; the public readers note the
-    refs of the rows they actually return (`note_memory_read`)."""
-    db = Path(project_root).resolve() / ".rush" / "memory.db"
+    refs of the rows they actually return (`note_memory_read`).
+
+    72-T01 D1: `params[0]` is the `origin_kind`; a denied route reads nothing and
+    `policy` mode keeps only the rows `_origin_filter` allows. D41: a STATED row
+    whose row MAC does not verify against this store is never returned, in either
+    mode. Every tier is held to the shared integrity check (`retrieval._integrity`):
+    a row whose content no longer matches its `payload_hash` is never returned,
+    while an unbound row (`payload_hash` NULL or absent, an older schema) stays
+    readable. The access is rechecked after the read; a grant that stopped holding
+    during the read returns nothing."""
+    from rush.memory.retrieval import _integrity
+
+    filtered = _origin_filter(project_root, params[0])
+    if filtered is None:
+        return []
+    visible, recheck = filtered
+    root = Path(project_root).resolve()
+    db = root / ".rush" / "memory.db"
 
     def read(
         conn: sqlite3.Connection,
@@ -215,6 +282,12 @@ def _origin_rows_readonly(
         cursor = conn.execute(sql, params)
         # A legacy DB predating `artifact_version` has rows but no revision.
         versioned = any(col[0] == "artifact_version" for col in cursor.description)
+        found = _verified_binding(conn, root)
+        verifier = (
+            BindingVerifier("bound", found[0], found[1])
+            if found is not None
+            else UNBOUND_VERIFIER
+        )
         return [
             (
                 json.loads(row["content"]),
@@ -223,9 +296,16 @@ def _origin_rows_readonly(
                 else None,
             )
             for row in cursor.fetchall()
+            if visible(row)
+            and (
+                # The oldest schema has no trust tier, signature or payload binding.
+                "trust_tier" not in row.keys()  # noqa: SIM118 - sqlite3.Row
+                or not _integrity(row, verifier)[0]
+            )
         ]
 
-    return read_sqlite_readonly(db, read) or []
+    rows = read_sqlite_readonly(db, read) or []
+    return rows if recheck() == "ok" else []
 
 
 def _returned(
@@ -273,6 +353,28 @@ def read_origin_kind_by_symbol_readonly(
     )
 
 
+def _gated_migration(
+    source: str,
+) -> Callable[[Callable[[Path], int]], Callable[[Path], int]]:
+    """72-T01 D4: a `migrate_*` function runs (store, writes, rename) only inside the
+    shared writer gate for its `migration:<name>` source; a denial migrates 0 rows,
+    creates nothing and renames nothing."""
+
+    def decorate(migrate: Callable[[Path], int]) -> Callable[[Path], int]:
+        @functools.wraps(migrate)
+        def gated(project_root: Path) -> int:
+            from rush.memory.retrieval import RouteDenial, authorize_writer
+
+            with authorize_writer(Path(project_root).resolve(), source) as granted:
+                if isinstance(granted, RouteDenial):
+                    return 0
+                return migrate(project_root)
+
+        return gated
+
+    return decorate
+
+
 def _rename_migrated(path: Path) -> None:
     path.rename(path.with_name(path.name + ".migrated"))
 
@@ -294,6 +396,7 @@ def _read_map_source(old_file: Path, project_root: Path) -> dict[str, Any]:
     )
 
 
+@_gated_migration("migration:preference_store")
 def migrate_preference_store(project_root: Path) -> int:
     """Absorbs `.rush/preferences.json` (`PreferenceStore`) into `subject="preference"` rows."""
     old_file = project_root / ".rush" / "preferences.json"
@@ -320,6 +423,7 @@ def migrate_preference_store(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:invariant_graph")
 def migrate_invariant_graph(project_root: Path) -> int:
     """Absorbs `.rush/memory/invariants.json` (`InvariantGraph`) into `subject="architectural_decision"` rows."""
     old_file = project_root / ".rush" / "memory" / "invariants.json"
@@ -346,6 +450,7 @@ def migrate_invariant_graph(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:merkle_invalidator")
 def migrate_merkle_invalidator(project_root: Path) -> int:
     """Copies `.rush/cache/merkle.json` (`MerkleInvalidator`) AST-hash entries as historical facts.
 
@@ -375,6 +480,7 @@ def migrate_merkle_invalidator(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:checkpoint_journal")
 def migrate_checkpoint_journal(project_root: Path) -> int:
     """Absorbs `.rush/sessions/*.json` (`CheckpointJournal`) into `family="handoff"` rows."""
     session_dir = project_root / ".rush" / "sessions"
@@ -385,7 +491,8 @@ def migrate_checkpoint_journal(project_root: Path) -> int:
         return 0
     from rush.memory.checkpoint_journal import CheckpointJournal
 
-    entries = CheckpointJournal(project_root).list_checkpoints()
+    # Ungated: this migration already holds its own writer gate.
+    entries = CheckpointJournal(project_root)._list_checkpoints()
     store = TypedArtifactStore(project_root)
     migrated = 0
     for entry in entries:
@@ -412,6 +519,7 @@ def migrate_checkpoint_journal(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:failure_ledger")
 def migrate_failure_ledger(project_root: Path) -> int:
     """Absorbs `.rush/memory/failures.db` (`FailureLedger`) rows into `subject="failure"` rows.
 
@@ -450,6 +558,7 @@ def migrate_failure_ledger(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:patch_memory")
 def migrate_patch_memory(project_root: Path) -> int:
     """Absorbs `.rush/cache.db`'s `patch_memory` table (`PatchMemoryStore`) into `subject="failure"` rows.
 
@@ -488,6 +597,7 @@ def migrate_patch_memory(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:flight_recorder")
 def migrate_flight_recorder(project_root: Path) -> int:
     """Absorbs `.rush/sessions/flights/*.jsonl` (`FlightRecorder`) into `subject="episodic"` rows."""
     flights_dir = project_root / ".rush" / "sessions" / "flights"
@@ -504,7 +614,8 @@ def migrate_flight_recorder(project_root: Path) -> int:
     for jsonl_file in jsonl_files:
         session_id = jsonl_file.stem
         try:
-            events = recorder.replay_session(session_id)
+            # Ungated: this migration already holds its own writer gate.
+            events = recorder._replay_session(session_id)
         except ValueError:
             continue
         for event in events:
@@ -531,6 +642,7 @@ def migrate_flight_recorder(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:hook_signatures")
 def migrate_hook_signatures(project_root: Path) -> int:
     """Absorbs `.rush/hook_signatures.json` (`HookTamperDetector`) into `origin_kind="hook_signature"` rows."""
     sig_file = project_root / ".rush" / "hook_signatures.json"
@@ -561,6 +673,7 @@ def migrate_hook_signatures(project_root: Path) -> int:
     return migrated
 
 
+@_gated_migration("migration:session_memory")
 def migrate_session_memory(project_root: Path) -> int:
     """Absorbs `.rush/session_memory.json` (`SessionMemoryManager`) into `subject="episodic"` rows.
 

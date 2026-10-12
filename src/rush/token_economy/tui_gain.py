@@ -19,9 +19,10 @@ def build_gain_panel(project_root: Path | None = None) -> Panel:
         from rush.invocation.targets import resolve_logical_root
 
         project_root = resolve_logical_root(Path.cwd())
-    from rush.workflows.projects import root_token_usage
+    from rush.workflows.projects import memory_list_access, root_token_usage
 
-    usage = root_token_usage(project_root)
+    # 72-T01 D1 `list`: policy mode totals only the grant's own memory events.
+    usage = root_token_usage(project_root, access=memory_list_access(project_root))
     stats = usage["estimated_avoided"]
 
     table = Table(title="Rush Context Intelligence Gain HUD", expand=True)
