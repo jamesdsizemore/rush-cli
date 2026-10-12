@@ -544,8 +544,33 @@ def _any_vector(_config: Any, chunks: Any) -> list[list[float]]:
     return [[1.0, float(len(chunk) % 7) + 1.0] for chunk in chunks]
 
 
+def _old_hybrid_budget_loop(
+    candidates: list[dict[str, Any]],
+    labels: dict[str, Any],
+    *,
+    max_bytes: int,
+    max_tokens: int,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """72-T08: the hybrid page's selection loop with every trial page fully measured,
+    labels included: the trial page is the incomplete page that still carries the
+    `candidate_cap` label (`retrieval._measure_page(..., False, ..., labels)`)."""
+    items: list[dict[str, Any]] = []
+    for item in candidates:
+        trial_bytes, trial_tokens = retrieval._measure_page(
+            [*items, item], None, False, "cl100k_base", labels
+        )
+        if trial_bytes > max_bytes or trial_tokens > max_tokens:
+            break
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
 def test_r5_hybrid_page_matches_the_old_loop_across_budgets(tmp_path: Path) -> None:
     from rush.memory.embeddings import EmbeddingConfig
+    from rush.memory.retrieval import hybrid_admission
 
     config = EmbeddingConfig(
         endpoint="http://fake-embed.invalid", model="fake", model_digest="d1"
@@ -569,12 +594,36 @@ def test_r5_hybrid_page_matches_the_old_loop_across_budgets(tmp_path: Path) -> N
     full = _page(1_000_000, 1_000_000)
     assert full["retrieval"] == "hybrid"
     assert len(full["items"]) == 40
+    labels = {
+        "retrieval": "hybrid",
+        "candidates_truncated": full["candidates_truncated"],
+        "incomplete_reason": "candidate_cap",
+        "embedded_texts": full["embedded_texts"],
+    }
     for max_bytes, max_tokens in _BUDGETS:
-        page = _page(max_bytes, max_tokens)
-        expected = _old_budget_loop(
-            full["items"], max_bytes=max_bytes, max_tokens=max_tokens, limit=10_000
+        refusal = hybrid_admission(
+            limit=10_000,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding="cl100k_base",
         )
+        page = _page(max_bytes, max_tokens)
+        if refusal is not None:
+            # Caps below the hybrid envelope minimum are refused before any embedding.
+            assert page["code"] == "E_INPUT", (max_bytes, max_tokens)
+            assert page["items"] == []
+            continue
+        expected = _old_hybrid_budget_loop(
+            full["items"],
+            labels,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            limit=10_000,
+        )
+        if not expected:
+            assert page["code"] == "E_BUDGET", (max_bytes, max_tokens)
         assert page["items"] == expected, (max_bytes, max_tokens)
+        assert page["bytes"] <= max_bytes and page["tokens"] <= max_tokens
 
 
 @pytest.mark.parametrize("max_bytes", [150, 1_000_000])

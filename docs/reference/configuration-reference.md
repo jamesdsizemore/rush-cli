@@ -64,14 +64,22 @@ check = true
 
 `NAME` must exactly match one of the catalog tool names (e.g. `lint`, `format`, `test`, `security`, `tdd`, `slop`, `complexity`). Unknown names raise `RushConfigError`.
 
-## `[tools.memory]` (Phase 63 MC05, observation opt-in only)
+## `[tools.memory]` (Phase 63 MC05, Phase 72 hybrid retrieval)
 
 ```toml
 [tools.memory]
 record = false
+embedding_endpoint = "http://127.0.0.1:11434"
+embedding_model = "nomic-embed-text"
+embedding_model_digest = "0123456789ab"
 ```
 
-- `record`: opt-in flag for `InvocationExecutor` to capture a completed tool execution as a redacted `experience`/`episodic` memory observation (`rush.memory.experience.record_observation`); implemented. Default `false`. Even when `true`, an observation is only written when the invocation is also host-granted `cache_write`; a cache hit never produces a new observation, and the `memory` tool's own operations are excluded from this recursive capture. This is the only `tools.memory` key MC05 adds; MC14 adds the remaining `tools.memory` configuration keys later.
+- `record`: opt-in flag for `InvocationExecutor` to capture a completed tool execution as a redacted `experience`/`episodic` memory observation (`rush.memory.experience.record_observation`); implemented. Default `false`. Even when `true`, an observation is only written when the invocation is also host-granted `cache_write`; a cache hit never produces a new observation, and the `memory` tool's own operations are excluded from this recursive capture.
+- `embedding_endpoint`: the local embedding engine a hybrid `ask`/`recall`/`list` read uses when the request names no endpoint. Default unset. It must be loopback `http` (`127.0.0.1`, `::1` or `localhost`) with an explicit port 1-65535 and no credentials, path, query, fragment or control characters; any other value is never contacted and the read answers lexically with `embedding_fallback_code: "endpoint_not_loopback"`. An endpoint named in the request itself may be any `http`/`https` host and is used only under the network grant.
+- `embedding_model`: the engine's model name (1-256 characters, no `/` or `..`). Default unset.
+- `embedding_model_digest`: 12-64 lowercase hex characters, a prefix of the model's full digest. Default unset.
+
+A read with no `retrieval` field is hybrid by default only when all three options are set, the committed hybrid evaluation verdict is `benefit` for this model and digest, and the engine's `/api/tags` lists that model with a matching digest. Explicit `retrieval` and explicit request embedding fields win over these options. Hybrid needs the network grant; without it, or whenever the engine is unconfigured, unreachable, slow or returns invalid vectors, the read returns the lexical page labelled `retrieval: "lexical"`, `embedding_status: "skipped"` and one `embedding_fallback_code`, with code `E_EMBEDDING_UNAVAILABLE`. An undeclared `[tools.memory]` key is a configuration error.
 
 ## `[plugins.NAME]` (Phase 28)
 

@@ -70,6 +70,9 @@ class DatasetCaseResult:
     outcome: CaseOutcome
     prediction: dict[str, str] | None
     total_tokens: int
+    # 72-T08: a `p72-` retrieval case's measurements, exactly as its decider returned
+    # them (`returned_ids`, `retrieval`, `passed`, token and latency counts, ...).
+    phase72: dict[str, Any] | None = None
 
 
 def _records_digest(records: list[dict[str, Any]]) -> str:
@@ -238,7 +241,9 @@ def run_longmemeval_case(
     with tempfile.TemporaryDirectory(prefix="memds-", dir=workspace_parent) as tmp:
         root = Path(tmp)
         tool = CountingMemoryTool()
-        permissions = ExecutionPermissions(cache_write=True)
+        # 72-T08 R10: the local embedding route needs the network grant, or the hybrid
+        # arm is refused before it embeds anything.
+        permissions = ExecutionPermissions(network=True, cache_write=True)
         total_tokens = 0
         for session in sanitized.get("haystack_sessions", []):
             for turn in session.get("turns", []):
@@ -293,6 +298,131 @@ def run_longmemeval_case(
             prediction=prediction,
             total_tokens=total_tokens,
         )
+
+
+_P72_SETTINGS = "src/p72_settings.py"
+_P72_SEED_SOURCES = ("p72-anchored", "p72-notes", "p72-revoked")
+_P72_LIVE_SOURCES = ("p72-anchored", "p72-notes")
+_P72_OPERATIONS = ("ask", "expand", "list")
+
+
+def _policy_revision() -> int:
+    from rush.memory import authorization
+
+    return int(authorization.load_policy_readonly()["policy_revision"] or 0)
+
+
+def _grant_p72_reader(root: Path, sources: tuple[str, ...]) -> dict[str, Any]:
+    from rush.memory import authorization
+    from rush.memory.store import OwnerScope
+
+    return authorization.grant_memory_scope(
+        project_root=root,
+        owner_scope=OwnerScope("user", "p72-reader"),
+        approved_sources=list(sources),
+        allowed_operations=list(_P72_OPERATIONS),
+        expected_policy_revision=_policy_revision(),
+        consent=True,
+    )
+
+
+def _seed_phase72_root(root: Path, corpus_records: list[dict[str, Any]]) -> None:
+    """72-T08 frozen seeding: register the root, write the settings file, grant the
+    reader all three sources, write every corpus record (anchored rows bound to the
+    settings file's current hash; `role` is never stored), revoke that grant, grant the
+    two live sources, then change the settings file so the anchored rows go stale."""
+    from rush.memory import authorization
+    from rush.memory.retrieval import SourceValidationMemo
+    from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
+    from rush.tools.memory import _family_for_subject
+    from rush.workflows.projects import register_project
+
+    register_project(root)
+    settings = root / _P72_SETTINGS
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text("EXPORT_BATCH_SIZE = 300\n", encoding="utf-8")
+    seed_grant = _grant_p72_reader(root, _P72_SEED_SOURCES)
+    store = TypedArtifactStore(root)
+    try:
+        source_hash = SourceValidationMemo().source_hash(root, _P72_SETTINGS)
+        for record in corpus_records:
+            owner = record["owner_scope"]
+            store.write(
+                MemoryArtifact(
+                    id=record["id"],
+                    family=_family_for_subject(record["subject"]),
+                    subject=record["subject"],
+                    trust_tier=record["trust_tier"],
+                    content=record["content"],
+                    source=record["source"],
+                    created_at=time.time(),
+                    symbol_ref=record["symbol_ref"],
+                    content_hash=source_hash if record["symbol_ref"] else None,
+                    owner_scope=OwnerScope(owner["kind"], owner["id"]),
+                )
+            )
+    finally:
+        store.close()
+    authorization.revoke_memory_scope(
+        grant_id=seed_grant["grant_id"],
+        expected_policy_revision=_policy_revision(),
+        consent=True,
+    )
+    _grant_p72_reader(root, _P72_LIVE_SOURCES)
+    settings.write_text("EXPORT_BATCH_SIZE = 750\n", encoding="utf-8")
+
+
+def _phase72_tokens(phase72: dict[str, Any]) -> int:
+    total = 0
+    for key in ("model_tokens", "local_returned_tokens"):
+        value = phase72.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            total += value
+    return total
+
+
+def run_phase72_case(
+    query_record: dict[str, Any],
+    corpus_records: list[dict[str, Any]],
+    *,
+    decide_fn: Callable[
+        [Path, MemoryTool, ExecutionPermissions, dict[str, Any]], dict[str, Any]
+    ],
+    max_total_tokens: int | None,
+    timeout_seconds: float | None = None,
+    workspace_root: Path | None = None,
+) -> DatasetCaseResult:
+    """72-T08: one frozen `p72-` retrieval case in a fresh root (a new temporary
+    directory per call, so no case or seed sees another's store or policy), seeded by
+    `_seed_phase72_root`. `decide_fn(root, tool, permissions, query_record)` runs the
+    arm's retrieval and decision and returns the case's `phase72` measurements; the
+    query record's gold keys and the corpus `role` stay with the caller. Permissions
+    grant the local embedding route (`network`, `cache_write`). `total_tokens` is the
+    decider's `model_tokens` plus `local_returned_tokens`; `max_total_tokens=None` (the
+    fixture-verification pass) never ends a case on budget."""
+    case_id = str(query_record.get("question_id", ""))
+    start = time.perf_counter()
+    workspace_parent = (workspace_root or Path.cwd()).resolve()
+    workspace_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="memds-", dir=workspace_parent) as tmp:
+        root = Path(tmp).resolve()
+        _seed_phase72_root(root, corpus_records)
+        tool = MemoryTool()
+        permissions = ExecutionPermissions(network=True, cache_write=True)
+        phase72 = decide_fn(root, tool, permissions, query_record)
+    total_tokens = _phase72_tokens(phase72)
+    outcome: CaseOutcome = "scored"
+    if timeout_seconds is not None and (time.perf_counter() - start) > timeout_seconds:
+        outcome = "timeout"
+    elif max_total_tokens is not None and total_tokens > max_total_tokens:
+        outcome = "budget_exhausted"
+    return DatasetCaseResult(
+        case_id=case_id,
+        outcome=outcome,
+        prediction=None,
+        total_tokens=total_tokens,
+        phase72=phase72,
+    )
 
 
 def aggregate_dataset_results(results: list[DatasetCaseResult]) -> dict[str, int]:

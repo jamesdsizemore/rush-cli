@@ -18,10 +18,23 @@ from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, ClassVar, Literal, cast, get_args
 
+from ..config import RushConfigError, load_config
 from ..delivery import compact
 from ..invocation.models import InvocationContext
+from ..memory import embeddings as _embeddings
+from ..memory import retrieval as _retrieval
 from ..memory.consolidation import consolidate_episodes
-from ..memory.embeddings import EmbeddingConfig
+from ..memory.embeddings import (
+    EmbeddingConfig,
+    EmbeddingEngineTimeout,
+    EmbeddingEngineUnavailable,
+    EmbeddingResponseError,
+    config_endpoint_ok,
+    request_endpoint_error,
+    valid_chunking,
+    valid_digest,
+    valid_model,
+)
 from ..memory.experience import MemoryWriteDenied, compare_last_success, prepare_memory
 from ..memory.handoff import (
     DEFAULT_PAGE_SIZE,
@@ -44,6 +57,7 @@ from ..memory.retrieval import (
     DEFAULT_ENCODING,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
+    FALLBACK_REASONS,
     NOT_CURRENT_REASONS,
     FrameBytes,
     MemoryAccess,
@@ -57,6 +71,7 @@ from ..memory.retrieval import (
     evaluate_artifact_visibility,
     expand_admission,
     expand_artifact,
+    hybrid_admission,
     hybrid_page,
     memory_policy_decision,
     memory_policy_mode,
@@ -521,6 +536,25 @@ _COMPACT_REQUEST_KEYS = {
     "embedding_chunking_version",
 }
 _RETRIEVAL_MODES = {"lexical", "hybrid"}
+# 72-T08: the engine identity a request field or `[tools.memory]` option supplies.
+_EMBEDDING_OPTION_KEYS = (
+    "embedding_endpoint",
+    "embedding_model",
+    "embedding_model_digest",
+)
+
+
+def _fallback_labels(code: str, embedded_texts: int) -> dict[str, Any]:
+    """72-T08 §3.7 `L(c, n)`: the labels of a hybrid-requested read answered lexically."""
+    return {
+        "retrieval": "lexical",
+        "embedding_status": "skipped",
+        "embedding_fallback_code": code,
+        "hybrid_unavailable_reason": FALLBACK_REASONS[code],
+        "embedded_texts": embedded_texts,
+    }
+
+
 _EXPAND_REQUEST_KEYS = {
     "id",
     "version",
@@ -2989,6 +3023,8 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"field": "query", "message": "query must be UTF-8 text without NUL"},
             )
+        # 72-T08 (D14a): an absent `retrieval` is the implicit default, decided below.
+        explicit = "retrieval" in request
         retrieval = request.get("retrieval", "lexical")
         if not isinstance(retrieval, str) or retrieval not in _RETRIEVAL_MODES:
             return self._envelope_result(
@@ -3040,23 +3076,80 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
+        # 72-T08 (§3.2): request-sourced engine fields are validated by the predicates
+        # the MCP models share, before the owner, admission or any effect.
+        for field, valid in (
+            (
+                "embedding_endpoint",
+                embedding_endpoint is None
+                or request_endpoint_error(embedding_endpoint) is None,
+            ),
+            (
+                "embedding_model",
+                embedding_model is None or valid_model(embedding_model),
+            ),
+            (
+                "embedding_model_digest",
+                embedding_model_digest is None or valid_digest(embedding_model_digest),
+            ),
+            (
+                "embedding_chunking_version",
+                embedding_chunking_version is None
+                or valid_chunking(embedding_chunking_version),
+            ),
+        ):
+            if not valid:
+                return self._envelope_result(
+                    started,
+                    operation,
+                    "E_INPUT",
+                    {"message": f"invalid {field} in request", "field": field},
+                )
         try:
             owner = self._parse_owner_scope(owner_scope, root)
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             return self._envelope_result(
                 started,
                 operation,
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        # 72-T02 (C05): admission before access, the store view, telemetry or any
-        # embedding call, for both retrieval modes. The lexical minimum is only a lower
-        # bound for hybrid's larger envelope; its exact minimum is 72-T08's job. D35:
-        # under a transport frame the duration is frozen once, here, and admission,
-        # every page fit and the emitted envelope use the same framed bytes.
+        # 72-T08 (§3.1): the `[tools.memory]` engine options are read (no effect) only when
+        # the request is not explicitly lexical.
+        cfg_options: dict[str, Any] | None = None
+        cfg_error = False
+        if not (explicit and retrieval == "lexical"):
+            try:
+                tool_config = load_config(root).tools.get("memory")
+            except (RushConfigError, UnicodeDecodeError, OSError):
+                cfg_error = True
+            else:
+                if tool_config is not None:
+                    cfg_options = dict(tool_config.options)
+        verdict = _retrieval.HYBRID_DEFAULT_VERDICT
+        p_default = (
+            not explicit
+            and cfg_options is not None
+            and all(cfg_options.get(key) is not None for key in _EMBEDDING_OPTION_KEYS)
+            and verdict is not None
+            and verdict.get("verdict") == "benefit"
+            and cfg_options.get("embedding_model") == verdict.get("model")
+            and cfg_options.get("embedding_model_digest") == verdict.get("model_digest")
+        )
+        hybrid_requested = (
+            (explicit and retrieval == "hybrid")
+            or p_default
+            or (not explicit and cfg_error)
+        )
+        # 72-T02 (C05) / 72-T08 (§3.3): admission before access, the store view, telemetry
+        # or any embedding call; a hybrid-requested read is admitted against the largest
+        # zero-item envelope its route can emit. D35: under a transport frame the
+        # duration is frozen once, here, and admission, every page fit and the emitted
+        # envelope use the same framed bytes.
         frozen = _frozen_duration(started) if frame is not None else None
         fit = self._frame_fit(root, operation, frozen, frame)
-        refused = recall_admission(
+        admit = hybrid_admission if hybrid_requested else recall_admission
+        refused = admit(
             limit=limit,
             max_bytes=max_bytes,
             max_tokens=max_tokens,
@@ -3094,48 +3187,50 @@ class MemoryTool(ToolFn):
                     "(fail-closed, no default cross-session access)."
                 },
             )
-        if retrieval == "hybrid" and not granted.network:
-            return finish(
-                "E_PERMISSION",
-                {"message": f"memory {operation} retrieval=hybrid requires network."},
+        # 72-T08 (§3.1): the labelled-fallback precedence, first match, after admission
+        # and access and before any network request. A missing network grant is a
+        # lexical fallback, never `E_PERMISSION`.
+        fallback: str | None = None
+        embed_config: EmbeddingConfig | None = None
+        if hybrid_requested:
+            fallback, embed_config = self._hybrid_engine(
+                request, query, cursor, granted, cfg_options, cfg_error
             )
-        # 72-T01: reads use `open_readonly_view()`. 72-T02 R2: only a hybrid read
-        # allowed to persist embeddings, over a store whose writable open runs no DDL
-        # or migration (`writable_open_ddl_free`), reopens it writable; any other
-        # store stays the read-only view (embeddings are then never persisted).
+        # 72-T08 (§3.5, D39): embeddings persist only under a separately resolved write
+        # authority for the same owner (policy) or a still-legacy project (legacy form).
+        fill_access = (
+            self._fill_access(access)
+            if hybrid_requested and fallback is None and granted.cache_write
+            else None
+        )
+        # 72-T01: reads use `open_readonly_view()`; 72-T02/72-T08: a writable store is
+        # constructed only for an authorized fill on an existing DB whose writable open
+        # runs no DDL, and the read-only view is closed first.
         store_root = access.storage_root
         store, state = TypedArtifactStore.open_readonly_view(store_root)
         if state is not None:
             return finish(
                 _READ_STATE_CODES[state], {"message": readonly_view_reason(state)}
             )
-        if (
-            store is not None
-            and retrieval == "hybrid"
-            and granted.cache_write
-            and store.writable_open_ddl_free()
-        ):
-            store.close()
-            store = TypedArtifactStore(store_root)
-        if store is None:
-            empty: dict[str, Any] = {
-                "items": [],
-                "next_cursor": None,
-                "complete": True,
-                "tokens": 0,
-                "bytes": 0,
-                "encoding": encoding,
-            }
-            if retrieval == "hybrid":
-                empty.update(retrieval="hybrid", candidates_truncated=False)
+        if fill_access is not None:
+            if (
+                store is not None
+                and (store_root / ".rush" / "memory.db").exists()
+                and store.writable_open_ddl_free()
+            ):
+                store.close()
+                store = TypedArtifactStore(store_root)
             else:
-                # 72-T02 (T074 F8): report the real serialized size, the same as an
-                # empty page from an existing store. Hybrid sizing is 72-T08's job.
-                empty["bytes"], empty["tokens"] = _measure_page(
-                    [], None, True, encoding
-                )
-            return finish("OK", empty)
+                fill_access = None
         try:
+            # 72-T08 (F8): the implicit default verifies the engine's model identity
+            # before any page is labelled hybrid, the store present or absent.
+            if p_default and fallback is None and embed_config is not None:
+                fallback = self._tags_fallback(embed_config)
+            if store is None:
+                return self._absent_store_page(
+                    finish, encoding, hybrid=hybrid_requested, fallback=fallback
+                )
             return self._compact_page(
                 started,
                 store,
@@ -3143,7 +3238,7 @@ class MemoryTool(ToolFn):
                 subject,
                 query,
                 operation,
-                retrieval,
+                "hybrid" if hybrid_requested else "lexical",
                 request,
                 granted,
                 limit=limit,
@@ -3159,9 +3254,150 @@ class MemoryTool(ToolFn):
                 frozen=frozen,
                 frame=frame,
                 fit=fit,
+                embed_config=embed_config,
+                fallback=fallback,
+                fill_access=fill_access,
             )
         finally:
-            store.close()
+            if store is not None:
+                store.close()
+
+    @staticmethod
+    def _hybrid_engine(
+        request: dict[str, Any],
+        query: str,
+        cursor: str | None,
+        granted: ExecutionPermissions,
+        cfg_options: dict[str, Any] | None,
+        cfg_error: bool,
+    ) -> tuple[str | None, EmbeddingConfig | None]:
+        """72-T08 F1'-F7: the first fallback code for a hybrid-requested read, else the
+        engine identity, each field taken from the request when given, else from config."""
+        if cursor is not None:
+            # Only an implicit read reaches here: explicit hybrid + cursor is E_INPUT.
+            return "cursor_continuation", None
+        if query == "":
+            return "empty_query", None
+        if not granted.network:
+            return "network_not_granted", None
+        values: dict[str, Any] = {}
+        sources: dict[str, str | None] = {}
+        for key in _EMBEDDING_OPTION_KEYS:
+            value = request.get(key)
+            source: str | None = "request" if value is not None else None
+            if value is None and cfg_options is not None:
+                value = cfg_options.get(key)
+                source = "config" if value is not None else None
+            values[key], sources[key] = value, source
+        if any(source is None for source in sources.values()):
+            return ("config_invalid" if cfg_error else "no_engine_configured"), None
+        endpoint = values["embedding_endpoint"]
+        model = values["embedding_model"]
+        digest = values["embedding_model_digest"]
+        if sources["embedding_endpoint"] == "config" and not config_endpoint_ok(
+            endpoint
+        ):
+            return "endpoint_not_loopback", None
+        if (sources["embedding_model"] == "config" and not valid_model(model)) or (
+            sources["embedding_model_digest"] == "config" and not valid_digest(digest)
+        ):
+            return "model_digest_mismatch", None
+        return None, EmbeddingConfig(
+            endpoint=endpoint,
+            model=model,
+            model_digest=digest,
+            chunking_version=request.get("embedding_chunking_version") or "mc12-v1",
+        )
+
+    @staticmethod
+    def _tags_fallback(config: EmbeddingConfig) -> str | None:
+        """72-T08 F8: `/api/tags` must list the configured model with a full digest that
+        starts with the configured one."""
+        try:
+            tags = _embeddings.fetch_model_tags(config.endpoint)
+        except EmbeddingEngineTimeout:
+            return "engine_timeout"
+        except EmbeddingEngineUnavailable:
+            return "engine_unreachable"
+        except EmbeddingResponseError:
+            return "model_digest_mismatch"
+        if _embeddings.model_matches(tags, config.model, config.model_digest):
+            return None
+        return "model_digest_mismatch"
+
+    @staticmethod
+    def _fill_access(access: MemoryAccess) -> MemoryAccess | None:
+        """72-T08 §3.5: the write authority an embedding fill needs, or `None`."""
+        from ..memory.authorization import user_overlay_owner_scope
+
+        if access.kind == "policy":
+            fill = MemoryAccess.resolve(  # type: ignore[call-arg]  # 72-T05 resolve(task_id=)
+                access.project_root,
+                operation="write",
+                apply=True,
+                overlay=(
+                    access.owner_scope
+                    == user_overlay_owner_scope(data_root=access.data_root)
+                ),
+                owner_scope=access.owner_scope,
+                requested_sources=access.requested_sources,
+                session_binding=access.session_binding,
+                data_root=access.data_root,
+                task_id=access.task_id,  # type: ignore[attr-defined]  # 72-T05 MemoryAccess.task_id
+            )
+            if (
+                fill is not None
+                and fill.kind == "policy"
+                and "write" in fill.required_operations
+                and fill.owner_scope == access.owner_scope
+            ):
+                return fill
+            return None
+        if (
+            memory_policy_mode(access.project_root, data_root=access.data_root)
+            == "legacy"
+        ):
+            return access
+        return None
+
+    @staticmethod
+    def _absent_store_page(
+        finish: Callable[[str, dict[str, Any]], ToolResult],
+        encoding: str,
+        *,
+        hybrid: bool,
+        fallback: str | None,
+    ) -> ToolResult:
+        """72-T08 §3.8: the empty page for a project with no store, its size measured
+        with every label it carries; nothing embedded, `.rush` never created. 72-T02:
+        `finish` fits it to the transport frame."""
+        labels: dict[str, Any] | None = None
+        code = "OK"
+        if fallback is not None:
+            labels = _fallback_labels(fallback, 0)
+            code = "E_EMBEDDING_UNAVAILABLE"
+        elif hybrid:
+            labels = {
+                "retrieval": "hybrid",
+                "candidates_truncated": False,
+                "incomplete_reason": None,
+                "embedded_texts": 0,
+            }
+        empty: dict[str, Any] = {
+            "items": [],
+            "next_cursor": None,
+            "complete": True,
+            "tokens": 0,
+            "bytes": 0,
+            "encoding": encoding,
+            **(labels or {}),
+        }
+        # 72-T02 (T074 F8): the real serialized size, the same as an empty page from an
+        # existing store.
+        empty["bytes"], empty["tokens"] = _measure_page(
+            [], None, True, encoding, labels
+        )
+        return finish(code, empty)
 
     def _compact_page(
         self,
@@ -3188,33 +3424,30 @@ class MemoryTool(ToolFn):
         frozen: int | None = None,
         frame: compact.FrameContext | None = None,
         fit: FrameBytes | None = None,
+        embed_config: EmbeddingConfig | None = None,
+        fallback: str | None = None,
+        fill_access: MemoryAccess | None = None,
     ) -> ToolResult:
-        """`_compact_query()`'s page over an opened store and a resolved access."""
+        """`_compact_query()`'s page over an opened store and a resolved access.
+
+        72-T08: `retrieval="hybrid"` with no `fallback` runs `hybrid_page()` with the
+        resolved engine; a `fallback` code is a labelled lexical page (`OK` reported as
+        `E_EMBEDDING_UNAVAILABLE`, every other code kept)."""
         root = store.project_root
-        embedding_endpoint = request.get("embedding_endpoint")
-        embedding_model = request.get("embedding_model")
-        embedding_model_digest = request.get("embedding_model_digest")
-        embedding_chunking_version = request.get("embedding_chunking_version")
         telemetry = (
             cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
             if granted.cache_write
             else None
         )
-        if retrieval == "hybrid":
-            embed_config = None
-            if embedding_endpoint and embedding_model and embedding_model_digest:
-                embed_config = EmbeddingConfig(
-                    endpoint=embedding_endpoint,
-                    model=embedding_model,
-                    model_digest=embedding_model_digest,
-                    chunking_version=embedding_chunking_version or "mc12-v1",
-                )
+        if retrieval == "hybrid" and fallback is None:
             page = hybrid_page(
                 store,
                 subject=subject,
                 query=query or "",
                 access=access,
                 embed_config=embed_config,
+                fill_access=fill_access,
+                mode="ordinary",
                 limit=limit,
                 max_tokens=max_tokens,
                 max_bytes=max_bytes,
@@ -3232,6 +3465,8 @@ class MemoryTool(ToolFn):
                 frame_bytes=fit,
             )
         else:
+            # The fallback labels ride in the page and count in every measure; a plain
+            # lexical read passes no `extra`, so its page is unchanged.
             page = recall_page(
                 store,
                 subject=subject,
@@ -3253,7 +3488,10 @@ class MemoryTool(ToolFn):
                 opt_in=False,
                 cache_write=granted.cache_write,
                 frame_bytes=fit,
+                extra=_fallback_labels(fallback, 0) if fallback is not None else None,
             )
+            if fallback is not None and page["code"] == "OK":
+                page["code"] = "E_EMBEDDING_UNAVAILABLE"
         code = page.pop("code")
         return self._envelope_result(
             started, operation, code, page, duration_ms=frozen, frame=frame

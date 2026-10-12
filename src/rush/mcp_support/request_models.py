@@ -168,6 +168,49 @@ LegacyReceiptIds = Annotated[
     dict[str, StrictStr], AfterValidator(_no_v2_receipt_values)
 ]
 
+
+# 72-T08 §3.2: request-sourced embedding fields use the same predicates as the in-process
+# `_compact_query` check (deferred import: `rush.memory` imports through `rush.tools`).
+def _embedding_endpoint(value: str) -> str:
+    from rush.memory.embeddings import request_endpoint_error
+
+    error = request_endpoint_error(value)
+    if error is not None:
+        raise ValueError(f"embedding_endpoint: {error}")
+    return value
+
+
+def _embedding_model(value: str) -> str:
+    from rush.memory.embeddings import valid_model
+
+    if not valid_model(value):
+        raise ValueError("embedding_model: invalid model name")
+    return value
+
+
+def _embedding_model_digest(value: str) -> str:
+    from rush.memory.embeddings import valid_digest
+
+    if not valid_digest(value):
+        raise ValueError("embedding_model_digest: must be 12-64 lowercase hex")
+    return value
+
+
+def _embedding_chunking_version(value: str) -> str:
+    from rush.memory.embeddings import valid_chunking
+
+    if not valid_chunking(value):
+        raise ValueError("embedding_chunking_version: invalid chunking version")
+    return value
+
+
+EmbeddingEndpoint = Annotated[StrictStr, AfterValidator(_embedding_endpoint)]
+EmbeddingModel = Annotated[StrictStr, AfterValidator(_embedding_model)]
+EmbeddingModelDigest = Annotated[StrictStr, AfterValidator(_embedding_model_digest)]
+EmbeddingChunkingVersion = Annotated[
+    StrictStr, AfterValidator(_embedding_chunking_version)
+]
+
 _GRANT_FIELDS = (
     "allow_network",
     "allow_download",
@@ -381,10 +424,10 @@ _CompactRequest = _model(
         "encoding": (StrictStr, _OPTIONAL),
         "cursor": (StrictStr | None, _OPTIONAL),
         "retrieval": (Literal["lexical", "hybrid"], _OPTIONAL),
-        "embedding_endpoint": (StrictStr | None, _OPTIONAL),
-        "embedding_model": (StrictStr | None, _OPTIONAL),
-        "embedding_model_digest": (StrictStr | None, _OPTIONAL),
-        "embedding_chunking_version": (StrictStr | None, _OPTIONAL),
+        "embedding_endpoint": (EmbeddingEndpoint | None, _OPTIONAL),
+        "embedding_model": (EmbeddingModel | None, _OPTIONAL),
+        "embedding_model_digest": (EmbeddingModelDigest | None, _OPTIONAL),
+        "embedding_chunking_version": (EmbeddingChunkingVersion | None, _OPTIONAL),
     },
 )
 _BUDGET = {

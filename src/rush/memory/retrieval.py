@@ -41,7 +41,9 @@ from typing import Any, Literal, overload
 import tiktoken
 
 from rush.memory.embeddings import (
+    MAX_BATCH,
     EmbeddingConfig,
+    EmbeddingEngineTimeout,
     EmbeddingEngineUnavailable,
     EmbeddingResponseError,
     embed_chunks,
@@ -62,6 +64,7 @@ from rush.memory.store import (
     _stored_text,
     binding_verifier,
     compute_content_signature,
+    embedding_text,
     legacy_owner_scope,
     owner_scope_for_row,
     payload_digest,
@@ -76,6 +79,30 @@ _RANKING_VERSION = "mc02-v1"
 # ceiling, matches the lexical `_SCAN_CAP`).
 _RRF_K = 60
 _VECTOR_SCAN_CAP = 512
+# 72-T08: the most texts one hybrid read can embed (every row of both capped scans plus
+# the query); the admission minimum measures a label carrying this count.
+_MAX_EMBEDDED_TEXTS = 2 * _VECTOR_SCAN_CAP + 1
+
+# 72-T08 D14a: the committed paired-evaluation verdict that lets an implicit read default
+# to hybrid. `None` until `docs/reports/phase-72-memory-eval/hybrid-verdict.json` records a
+# global `benefit`; then `{"verdict", "model", "model_digest", "cases_sha256",
+# "verdict_report_sha256"}` from that file and the frozen manifest.
+HYBRID_DEFAULT_VERDICT: dict[str, str] | None = None
+
+# 72-T08: the one fixed `hybrid_unavailable_reason` text per labelled-fallback code.
+# Exception text never reaches a page.
+FALLBACK_REASONS: dict[str, str] = {
+    "cursor_continuation": "hybrid retrieval has no cursor; this page continues lexically",
+    "empty_query": "hybrid retrieval needs a non-empty query",
+    "network_not_granted": "hybrid retrieval needs the network permission",
+    "config_invalid": "rush.toml could not be loaded",
+    "no_engine_configured": "no embedding engine configured",
+    "endpoint_not_loopback": "configured embedding endpoint is not loopback http",
+    "model_digest_mismatch": "embedding model or digest does not match",
+    "engine_unreachable": "embedding engine unreachable",
+    "engine_timeout": "embedding engine timed out",
+    "invalid_vectors": "embedding engine returned invalid vectors",
+}
 
 DEFAULT_LIMIT = 8
 DEFAULT_MAX_TOKENS = 2048
@@ -762,6 +789,15 @@ def recheck_failure(access: MemoryAccess) -> tuple[str, str] | None:
     if state == "changed":
         return "E_RESTART", "access_changed"
     return "E_PERMISSION", access.denial_reason()
+
+
+def _recheck_code(access: MemoryAccess, denied_code: str) -> str | None:
+    """72-T01 recheck: `None` when `access` still holds, else the route's failure code
+    (`denied_code` when the policy now denies it, `E_RESTART` when it changed)."""
+    status = access.recheck()
+    if status == "ok":
+        return None
+    return denied_code if status == "denied" else "E_RESTART"
 
 
 def _access_project_matches(access: MemoryAccess, root: Any) -> bool:
@@ -2073,6 +2109,7 @@ def _contest_index(
     *,
     now: float | None,
     memo: SourceValidationMemo | None,
+    verifier: BindingVerifier | None = None,
 ) -> _ContestIndex:
     """D34: the visible peers of `rows` from one untruncated SQL scan per subject
     (a page has one) limited to the rows' distinct `(owner, subject, symbol_ref)`
@@ -2097,7 +2134,7 @@ def _contest_index(
             visible: list[tuple[str, int, MemoryArtifact]] = []
             for peer in group:
                 if not evaluate_artifact_visibility(
-                    store, peer, access=access, now=now, memo=memo
+                    store, peer, access=access, now=now, memo=memo, verifier=verifier
                 ).visible:
                     continue
                 try:
@@ -2195,6 +2232,8 @@ def _trial_page_bytes(
     max_tokens: int,
     encoding: str,
     reserve_cursor: str | None = None,
+    extra: dict[str, Any] | None = None,
+    complete: bool | None = None,
 ) -> int | None:
     """Byte size of the cursor-free `_measure_page(items + [item], None, True, ...)`
     page when the trial page fits both budgets, else `None` -- the same decision as
@@ -2212,7 +2251,12 @@ def _trial_page_bytes(
     bytes are within `max_tokens` its tokens are too, and only a larger page is fully
     tokenized. An item carrying a special-token string is always fully tokenized so
     tiktoken raises its `ValueError` exactly as it did when every trial page was
-    tokenized."""
+    tokenized.
+
+    72-T08: `extra` (page labels) is counted exactly as `_measure_page` counts it and
+    `complete` overrides the trial page's flag (a hybrid trial page is incomplete);
+    `items_bytes` must be measured with the same two."""
+    trial_complete = reserve_cursor is None if complete is None else complete
     item_text = json.dumps(item, ensure_ascii=False, separators=(",", ":"))
     trial_bytes = items_bytes + len(item_text.encode("utf-8")) + (1 if items else 0)
     reserved_bytes = trial_bytes
@@ -2220,7 +2264,7 @@ def _trial_page_bytes(
         reserved_bytes += len(reserve_cursor) + 2 - 4 + 1
     if reserved_bytes > max_tokens or _contains_special_token(item_text, encoding):
         _bytes, trial_tokens = _measure_page(
-            [*items, item], reserve_cursor, reserve_cursor is None, encoding
+            [*items, item], reserve_cursor, trial_complete, encoding, extra
         )
         if trial_tokens > max_tokens:
             return None
@@ -2293,25 +2337,33 @@ def _emit_current(
     items: list[dict[str, Any]],
     access: MemoryAccess,
     now: float | None,
+    mode: VisibilityMode = "ordinary",
 ) -> bool:
     """72-T02 R13/D39: whether a page may still be emitted, decided on one fresh
     reader (never the request's own, possibly immutable, view) inside one read
     transaction: the store generation is unchanged and every emitted id is still
-    current at its emitted version and usable under a fresh visibility decision
-    (expiry, source, owner). A reader that cannot open is a restart."""
+    current at its emitted version and eligible under `mode` for a fresh visibility
+    decision (expiry, source, owner). A reader that cannot open is a restart."""
     with store.fresh_reader() as conn:
         if conn is None or store.current_generation(conn) != generation:
             return False
         moment = time.time() if now is None else now
         memo = SourceValidationMemo()
+        verifier = binding_verifier(store)
         for item in items:
             row = store.get_current_row(item["id"], conn=conn)
             if row is None or row["artifact_version"] != item["version"]:
                 return False
             decision = evaluate_artifact_visibility(
-                store, row, access=access, now=moment, memo=memo
+                store,
+                row,
+                access=access,
+                mode=mode,
+                now=moment,
+                memo=memo,
+                verifier=verifier,
             )
-            if not decision.usable_as_current:
+            if not _eligible(decision, mode):
                 return False
     return True
 
@@ -2405,37 +2457,119 @@ def recall_admission(
     return None
 
 
+def hybrid_admission(
+    *,
+    limit: Any,
+    max_bytes: int,
+    max_tokens: int,
+    encoding: str,
+    cursor: Any = None,
+    frame_bytes: FrameBytes | None = None,
+) -> dict[str, Any] | None:
+    """72-T08 (R6, contract C05): `recall_admission`'s `limit`/cursor/`encoding` refusals,
+    then `E_INPUT` with `required` when a cap is below the largest zero-item envelope the
+    hybrid route can emit (its `E_BUDGET` page, or a labelled fallback page for any
+    `FALLBACK_REASONS` code, each carrying `_MAX_EMBEDDED_TEXTS`) plus the framing the
+    lexical admission adds over its own minimum page (with `frame_bytes`, 72-T02 D35: the
+    framed response). Runs before any store read, access resolution, telemetry or
+    network call."""
+    refused = recall_admission(
+        limit=limit,
+        max_bytes=max_bytes,
+        max_tokens=max_tokens,
+        encoding=encoding,
+        cursor=cursor,
+        frame_bytes=frame_bytes,
+    )
+    if refused is not None and "required" not in refused:
+        return refused
+    floor = recall_admission(
+        limit=1,
+        max_bytes=0,
+        max_tokens=0,
+        encoding=encoding,
+        frame_bytes=frame_bytes,
+    )
+    lexical_min = _measure_page([], None, False, encoding)
+    framing = (0, 0)
+    if floor is not None and "required" in floor:
+        framing = (
+            floor["required"]["max_bytes"] - lexical_min[0],
+            floor["required"]["max_tokens"] - lexical_min[1],
+        )
+    envelopes: list[dict[str, Any]] = [
+        _hybrid_labels(False, "candidate_cap", _MAX_EMBEDDED_TEXTS)
+    ]
+    envelopes.extend(
+        _fallback_labels(code, _MAX_EMBEDDED_TEXTS) for code in FALLBACK_REASONS
+    )
+    sizes = [_measure_page([], None, False, encoding, env) for env in envelopes]
+    required = {
+        "max_bytes": max(size[0] for size in sizes) + framing[0],
+        "max_tokens": max(size[1] for size in sizes) + framing[1],
+    }
+    if max_bytes < required["max_bytes"] or max_tokens < required["max_tokens"]:
+        page = _page("E_INPUT", encoding=encoding)
+        page["required"] = required
+        return page
+    return None
+
+
+def _hybrid_labels(
+    candidates_truncated: bool, incomplete_reason: str | None, embedded_texts: int
+) -> dict[str, Any]:
+    """72-T08: the labels of a page ranked by hybrid retrieval."""
+    return {
+        "retrieval": "hybrid",
+        "candidates_truncated": candidates_truncated,
+        "incomplete_reason": incomplete_reason,
+        "embedded_texts": embedded_texts,
+    }
+
+
+def _fallback_labels(code: str, embedded_texts: int) -> dict[str, Any]:
+    """72-T08: the labels of a hybrid-requested page served lexically."""
+    return {
+        "retrieval": "lexical",
+        "embedding_status": "skipped",
+        "embedding_fallback_code": code,
+        "hybrid_unavailable_reason": FALLBACK_REASONS[code],
+        "embedded_texts": embedded_texts,
+    }
+
+
 def _budget_page(
     encoding: str,
     required: tuple[int, int],
     max_bytes: int,
     max_tokens: int,
     frame_bytes: FrameBytes | None = None,
+    labels: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """72-T02: an `E_BUDGET` page that itself fits both caps (its framed response
     with `frame_bytes`). `required` is included only when it still fits; otherwise
-    the canonical minimum (admitted) page is sent."""
-    extra: dict[str, Any] = {
-        "required": {"max_bytes": required[0], "max_tokens": required[1]}
-    }
-    size = _measure_page([], None, False, encoding, extra)
-    page = _page("E_BUDGET", encoding=encoding, tokens=size[1], bytes_=size[0])
-    page.update(extra)
-    if frame_bytes is None:
-        fits = _within(size, max_bytes, max_tokens)
-    else:
+    the canonical minimum (admitted) page is sent. 72-T08: `labels` (retrieval labels)
+    are always carried and counted."""
+    base = dict(labels or {})
+
+    def build(extra: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        size = _measure_page([], None, False, encoding, extra or None)
+        page = _page("E_BUDGET", encoding=encoding, tokens=size[1], bytes_=size[0])
+        page.update(extra)
+        if frame_bytes is None:
+            return page, _within(size, max_bytes, max_tokens)
         data = {key: value for key, value in page.items() if key != "code"}
-        fits = _frame_fits(
+        return page, _frame_fits(
             frame_bytes, "E_BUDGET", data, encoding, max_bytes, max_tokens
         )
+
+    page, fits = build(
+        {**base, "required": {"max_bytes": required[0], "max_tokens": required[1]}}
+    )
     if fits:
         return page
-    size = _measure_page([], None, False, encoding)
-    page = _page("E_BUDGET", encoding=encoding, tokens=size[1], bytes_=size[0])
-    if frame_bytes is not None:
-        # B16: the keyless minimum is emitted too, so admission measures its frame.
-        frame_bytes("E_BUDGET", {k: v for k, v in page.items() if k != "code"})
-    return page
+    # B16: the minimum is emitted too, so admission measures its frame.
+    return build(base)[0]
 
 
 def recall_page(
@@ -2468,6 +2602,7 @@ def recall_page(
     freshness: Sequence[str] | None = None,
     archive_mode: Literal["active", "historical"] = "active",
     v2_items: bool = False,
+    extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """MC02 §9.0 bounded recall: pages `store.search_candidates()` (prefiltered by
     subject/source/owner/archive/expiry) into a token/byte-bounded result.
@@ -2502,7 +2637,12 @@ def recall_page(
     stay the payload measure. R13: before a page is returned the access is rechecked
     (`E_PERMISSION` with its reason wins) and the generation is re-read on a fresh
     reader (`E_RESTART` on drift). R3: the cursor does not bind the policy revision.
+
+    72-T08: `extra` (the labelled hybrid fallback's retrieval labels) is merged into
+    every `OK` and `E_BUDGET` page and counted in every trial and final measure; the
+    default `None` leaves every page byte-identical.
     """
+    labels: dict[str, Any] = dict(extra or {})
     # 72-T06: a v2 page scans every requested subject (in place of the v1 `subject`),
     # keeps rows by its visibility `mode` (`ordinary`: usable as current; `inspect`
     # and `historical`: visible) and its freshness filter, prefilters trust tiers, and
@@ -2609,10 +2749,11 @@ def recall_page(
         page_items: list[dict[str, Any]], next_cursor: str | None, complete: bool
     ) -> tuple[int, int] | None:
         """The page's payload size when its response fits both caps, else `None`."""
-        size = _measure_page(page_items, next_cursor, complete, encoding)
+        size = _measure_page(page_items, next_cursor, complete, encoding, labels)
         if frame_bytes is None:
             return size if _within(size, max_bytes, max_tokens) else None
         data = _page_data(page_items, next_cursor, complete, encoding, size)
+        data.update(labels)
         fits = _frame_fits(frame_bytes, "OK", data, encoding, max_bytes, max_tokens)
         return size if fits else None
 
@@ -2620,10 +2761,11 @@ def recall_page(
         page_items: list[dict[str, Any]], next_cursor: str | None, complete: bool
     ) -> tuple[int, int]:
         """The caps the page needs: its payload size, or its framed size."""
-        size = _measure_page(page_items, next_cursor, complete, encoding)
+        size = _measure_page(page_items, next_cursor, complete, encoding, labels)
         if frame_bytes is None:
             return size
         data = _page_data(page_items, next_cursor, complete, encoding, size)
+        data.update(labels)
         return _frame_size(frame_bytes, "OK", data, encoding)
 
     def trial(item: dict[str, Any], reserve: str | None) -> int | None:
@@ -2636,6 +2778,7 @@ def recall_page(
                 max_tokens=max_tokens,
                 encoding=encoding,
                 reserve_cursor=reserve,
+                extra=labels,
             )
         # ponytail: one full framed serialization per candidate (O(limit x page));
         # an incremental frame-size model is the upgrade if pages grow large.
@@ -2643,7 +2786,7 @@ def recall_page(
         return base_bytes if fitted is not None else None
 
     items: list[dict[str, Any]] = []
-    base_bytes = _page_bytes([], None, True, encoding)
+    base_bytes = len(_page_text([], None, True, encoding, labels).encode("utf-8"))
     position = last_fit = scan_offset
     # (item, start): fits only as the final page / fits no page at all.
     pending: tuple[dict[str, Any], int] | None = None
@@ -2734,17 +2877,17 @@ def recall_page(
         next_cursor: str | None,
         size: tuple[int, int],
     ) -> dict[str, Any]:
-        return emit(
-            _page(
-                "OK",
-                items=page_items,
-                next_cursor=next_cursor,
-                complete=next_cursor is None,
-                encoding=encoding,
-                tokens=size[1],
-                bytes_=size[0],
-            )
+        page = _page(
+            "OK",
+            items=page_items,
+            next_cursor=next_cursor,
+            complete=next_cursor is None,
+            encoding=encoding,
+            tokens=size[1],
+            bytes_=size[0],
         )
+        page.update(labels)
+        return emit(page)
 
     stuck = pending or blocked
     if exhausted:
@@ -2761,18 +2904,36 @@ def recall_page(
         if fitted is None and resume != last_fit:
             next_cursor = token(last_fit)  # identical to the accepted trial page
             fitted = page_fit(items, next_cursor, False)
-        size = fitted or _measure_page(items, next_cursor, False, encoding)
+        size = fitted or _measure_page(items, next_cursor, False, encoding, labels)
         return ok(items, next_cursor, size)
     if stuck is not None:
         need = page_need([stuck[0]], token(stuck[1] + 1), False)
-        return emit(_budget_page(encoding, need, max_bytes, max_tokens, frame_bytes))
+        return emit(
+            _budget_page(
+                encoding,
+                need,
+                max_bytes,
+                max_tokens,
+                frame_bytes=frame_bytes,
+                labels=labels,
+            )
+        )
     # The scan cap was spent on ineligible rows: an empty continuation page.
     next_cursor = token(resume)
     fitted = page_fit([], next_cursor, False)
     if fitted is not None:
         return ok([], next_cursor, fitted)
     need = page_need([], next_cursor, False)
-    return emit(_budget_page(encoding, need, max_bytes, max_tokens, frame_bytes))
+    return emit(
+        _budget_page(
+            encoding,
+            need,
+            max_bytes,
+            max_tokens,
+            frame_bytes=frame_bytes,
+            labels=labels,
+        )
+    )
 
 
 def _measure_expand(page: dict[str, Any], encoding: str) -> tuple[int, int]:
@@ -3488,11 +3649,109 @@ def _expand_utf8_slice(
     return budget_page
 
 
-def embedding_text(content: dict[str, Any]) -> str:
-    """MC12 §6.7: the exact, deterministic text embedded (and hashed for the vector cache
-    key) for one artifact's `content` -- sorted-key JSON so the same content always produces
-    the same text regardless of dict insertion order."""
-    return json.dumps(content, ensure_ascii=False, sort_keys=True)
+def _valid_vector(vector: Any) -> bool:
+    """72-T08: a usable embedding is a nonempty list of non-bool finite numbers with a
+    nonzero norm (cached, fresh and query vectors alike)."""
+    if not isinstance(vector, list) or not vector:
+        return False
+    for value in vector:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if not math.isfinite(value):
+            return False
+    return any(value != 0 for value in vector)
+
+
+def _eligible(decision: VisibilityDecision, mode: VisibilityMode) -> bool:
+    """72-T08: ordinary reads embed and return only rows usable as current; inspect and
+    historical reads every visible row."""
+    return decision.usable_as_current if mode == "ordinary" else decision.visible
+
+
+def _fill_allowed(
+    store: TypedArtifactStore,
+    access: MemoryAccess,
+    fill_access: MemoryAccess | None,
+    cache_write: bool,
+) -> bool:
+    """72-T08 D39: a fresh vector may be persisted only under `cache_write`, on a
+    writable store, through a `write`-capable policy access for the same owner or a
+    legacy allowlist while the project is still in legacy mode."""
+    if not cache_write or fill_access is None:
+        return False
+    if getattr(store, "_readonly_conn", None) is not None:
+        return False
+    if access.kind == "policy":
+        return (
+            fill_access.kind == "policy"
+            and "write" in fill_access.required_operations
+            and fill_access.owner_scope == access.owner_scope
+        )
+    return (
+        memory_policy_mode(access.project_root, data_root=access.data_root) == "legacy"
+    )
+
+
+def _persist_embeddings(
+    store: TypedArtifactStore,
+    access: MemoryAccess,
+    fill_access: MemoryAccess,
+    fresh: dict[str, list[float]],
+    rows_by_id: dict[str, Any],
+    hashes: dict[str, str],
+    embed_config: EmbeddingConfig,
+) -> None:
+    """72-T08 D39: persist this read's fresh vectors after every endpoint call, under the
+    policy lock, only while the fill access still holds. `put_embedding` re-reads each row
+    (version, granted source, embedding-text hash) inside its own transaction and runs the
+    same recheck before commit. A lock that cannot be taken skips persistence; the read
+    itself is unaffected."""
+    from rush.memory import authorization
+
+    def commit_check() -> tuple[str, str] | None:
+        return recheck_failure(fill_access)
+
+    try:
+        with authorization.hold_policy_lock(data_root=fill_access.data_root):
+            if access.kind == "policy":
+                if recheck_failure(fill_access) is not None:
+                    return
+            elif (
+                memory_policy_mode(access.project_root, data_root=access.data_root)
+                != "legacy"
+            ):
+                return
+            for artifact_id, vector in fresh.items():
+                row = rows_by_id[artifact_id]
+                if not authorization.source_granted(row["source"], fill_access.sources):
+                    continue
+                try:
+                    store.put_embedding(
+                        artifact_id=artifact_id,
+                        artifact_version=row["artifact_version"],
+                        content_hash=hashes[artifact_id],
+                        model_digest=embed_config.model_digest,
+                        chunking_version=embed_config.chunking_version,
+                        vector=vector,
+                        write_sources=fill_access.sources,
+                        commit_check=commit_check,
+                    )
+                except MemoryAccessChanged:
+                    return
+    except OSError:
+        return
+    except authorization.MemoryPolicyError as exc:
+        if (exc.code, exc.reason) != ("E_POLICY_INVALID", "data_root_unavailable"):
+            raise
+
+
+def _unavailable(code: str, embedded_texts: int) -> dict[str, Any]:
+    return {
+        "available": False,
+        "fallback_code": code,
+        "reason": FALLBACK_REASONS[code],
+        "embedded_texts": embedded_texts,
+    }
 
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -3515,10 +3774,12 @@ def hybrid_candidates(
     access: MemoryAccess | None = None,
     embed_config: EmbeddingConfig | None,
     cache_write: bool = False,
+    fill_access: MemoryAccess | None = None,
     embed_fn: Callable[
         [EmbeddingConfig, Sequence[str]], list[list[float]]
     ] = embed_chunks,
     scan_limit: int = _VECTOR_SCAN_CAP,
+    mode: VisibilityMode = "ordinary",
     now: float | None = None,
     memo: SourceValidationMemo | None = None,
 ) -> dict[str, Any]:
@@ -3528,72 +3789,99 @@ def hybrid_candidates(
     eligible) via deterministic reciprocal-rank fusion: `1/(60+lexical_rank) +
     1/(60+vector_rank)`, an absent rank contributing zero, ID-ascending tie-break.
 
-    Returns `{"available": False, "reason": ...}` when no engine is configured or it is
-    unreachable/invalid -- callers must fall back to a plainly-labelled lexical result, never
-    report that as hybrid success. 72-T01: every candidate goes through
-    `evaluate_artifact_visibility` (ordinary mode) before any content is embedded, so an
-    excluded row never reaches the embedding endpoint. Without `cache_write`, a freshly
-    computed vector is used for this call's ranking only and is never persisted
-    (`TypedArtifactStore.put_embedding()` is only ever called when `cache_write` is true).
+    72-T08 (D39): each scan reads `scan_limit + 1` rows; more than `scan_limit` in either
+    sets `candidates_truncated` and only the first `scan_limit` of each are ranked. Only
+    rows eligible under `mode` (72-T01 `evaluate_artifact_visibility`) are embedded. A
+    cached vector is reused only when it is a valid vector of the query's dimension.
+    Missing rows go to `embed_fn` in slices of `MAX_BATCH`, the access rechecked before
+    every slice and before the query (no lock is held during endpoint work). Results:
 
-    An `"available": True` result also carries `"candidates_truncated"`: `True` when either
-    the lexical or vector-scope scan returned a full `scan_limit` (512) batch, meaning
-    unseen candidates beyond the cap were never ranked (§6.7 "report candidate truncation").
+    - `{"available": False, "code": c, "embedded_texts": n}`: the access was revoked
+      (`E_PERMISSION`, with `reason` at entry) or changed (`E_RESTART`); nothing persisted.
+    - `{"available": False, "fallback_code": c, "reason": text, "embedded_texts": n}`: no
+      engine, an unreachable or timed-out engine, or invalid vectors; nothing persisted.
+    - `{"available": True, "rows", "candidates_truncated", "embedded_texts", "generation"}`
+      where `generation` is the store generation read before the scans.
+
+    `embedded_texts` counts every text submitted to `embed_fn`, a failed call included.
+    Fresh vectors are persisted only when `_fill_allowed` holds (`fill_access` defaults to
+    a legacy `access` itself), after every endpoint call, through `_persist_embeddings`.
     """
     access, why = _route_access(store, access, session_allowlist)
     if access is None:
         if why is not None:
             return {"available": False, "code": "E_PERMISSION", "reason": why}
-        return {"available": True, "rows": [], "candidates_truncated": False}
+        return {
+            "available": True,
+            "rows": [],
+            "candidates_truncated": False,
+            "embedded_texts": 0,
+            "generation": store.current_generation(),
+        }
     if embed_config is None:
-        return {"available": False, "reason": "no embedding engine configured"}
+        return _unavailable("no_engine_configured", 0)
+    if fill_access is None and access.kind == "legacy_allowlist":
+        fill_access = access
+    generation = store.current_generation()
     allowed_sources = list(access.sources)
     moment = time.time() if now is None else now
     memo = memo or SourceValidationMemo()
+    include_archived = mode == "historical"
 
     lexical_rows = store.search_candidates(
         subject,
         query,
         source_allowlist=allowed_sources,
-        scan_limit=scan_limit,
+        scan_limit=scan_limit + 1,
         owner_scope=access.owner_scope,
         now=moment,
+        include_archived=include_archived,
     )
     scoped_rows = store.scope_artifacts(
         subject,
         source_allowlist=allowed_sources,
-        scan_limit=scan_limit,
+        scan_limit=scan_limit + 1,
         owner_scope=access.owner_scope,
         now=moment,
+        include_archived=include_archived,
     )
-    # §6.7 "bound vector candidates to 512 and report candidate truncation": either scan
-    # returning a full `scan_limit` batch means unseen rows may exist beyond the cap, mirroring
-    # `recall_page()`'s own `scanned >= _SCAN_CAP` cap-hit detection.
-    candidates_truncated = (
-        len(lexical_rows) >= scan_limit or len(scoped_rows) >= scan_limit
-    )
+    capped = len(lexical_rows) > scan_limit or len(scoped_rows) > scan_limit
+    lexical_rows = lexical_rows[:scan_limit]
+    scoped_rows = scoped_rows[:scan_limit]
     rows_by_id: dict[str, Any] = {}
+    verifier = binding_verifier(store)
     for row in [*scoped_rows, *lexical_rows]:
         if row["id"] in rows_by_id:
             continue
         decision = evaluate_artifact_visibility(
-            store, row, access=access, now=moment, memo=memo
+            store,
+            row,
+            access=access,
+            mode=mode,
+            now=moment,
+            memo=memo,
+            verifier=verifier,
         )
-        if decision.usable_as_current:
+        if _eligible(decision, mode):
             rows_by_id[row["id"]] = row
     lexical_order = [row["id"] for row in lexical_rows if row["id"] in rows_by_id]
     if not rows_by_id:
         return {
             "available": True,
             "rows": [],
-            "candidates_truncated": candidates_truncated,
+            "candidates_truncated": capped,
+            "embedded_texts": 0,
+            "generation": generation,
         }
 
     texts: dict[str, str] = {}
     hashes: dict[str, str] = {}
     for artifact_id, row in rows_by_id.items():
+        stored = _stored_text(row["content"])
+        if stored is None:
+            continue
         try:
-            content = json.loads(row["content"])
+            content = json.loads(stored)
         except (TypeError, ValueError, RecursionError):
             continue
         text = embedding_text(content)
@@ -3603,48 +3891,74 @@ def hybrid_candidates(
     vectors: dict[str, list[float]] = {}
     missing: list[str] = []
     for artifact_id in texts:
-        row = rows_by_id[artifact_id]
         cached = store.get_embedding(
             artifact_id=artifact_id,
-            artifact_version=row["artifact_version"],
+            artifact_version=rows_by_id[artifact_id]["artifact_version"],
             content_hash=hashes[artifact_id],
             model_digest=embed_config.model_digest,
             chunking_version=embed_config.chunking_version,
         )
-        if cached is not None:
+        if cached is not None and _valid_vector(cached):
             vectors[artifact_id] = cached
         else:
             missing.append(artifact_id)
 
+    embedded = 0
+    fresh: dict[str, list[float]] = {}
+
+    def embed_rows(ids: list[str]) -> str | None:
+        nonlocal embedded
+        for start in range(0, len(ids), MAX_BATCH):
+            chunk = ids[start : start + MAX_BATCH]
+            failed = _recheck_code(access, "E_PERMISSION")
+            if failed is not None:
+                return failed
+            embedded += len(chunk)
+            batch = embed_fn(embed_config, [texts[i] for i in chunk])
+            for artifact_id, vector in zip(chunk, batch, strict=True):
+                fresh[artifact_id] = vector
+        return None
+
     try:
-        if missing:
-            fresh = embed_fn(embed_config, [texts[i] for i in missing])
-            for artifact_id, vector in zip(missing, fresh, strict=True):
-                vectors[artifact_id] = vector
-                # 72-T02 R2: a read-only view never persists an embedding.
-                if cache_write and getattr(store, "_readonly_conn", None) is None:
-                    row = rows_by_id[artifact_id]
-                    store.put_embedding(
-                        artifact_id=artifact_id,
-                        artifact_version=row["artifact_version"],
-                        content_hash=hashes[artifact_id],
-                        model_digest=embed_config.model_digest,
-                        chunking_version=embed_config.chunking_version,
-                        vector=vector,
-                        commit_check=lambda: recheck_failure(access),
-                    )
+        failed = embed_rows(missing)
+        if failed is None:
+            failed = _recheck_code(access, "E_PERMISSION")
+        if failed is not None:
+            return {"available": False, "code": failed, "embedded_texts": embedded}
+        embedded += 1
         (query_vector,) = embed_fn(embed_config, [query])
-    except MemoryAccessChanged as exc:
-        return {"available": False, "code": exc.code, "reason": exc.reason}
-    except EmbeddingEngineUnavailable as exc:
-        return {"available": False, "reason": str(exc)}
-    except EmbeddingResponseError as exc:
-        return {"available": False, "reason": str(exc)}
+        if not _valid_vector(query_vector):
+            return _unavailable("invalid_vectors", embedded)
+        dimension = len(query_vector)
+        # A cached vector of another dimension is a cache miss, recomputed here.
+        mismatched = [
+            aid for aid, vector in vectors.items() if len(vector) != dimension
+        ]
+        for artifact_id in mismatched:
+            del vectors[artifact_id]
+        failed = embed_rows(mismatched)
+        if failed is not None:
+            return {"available": False, "code": failed, "embedded_texts": embedded}
+    except EmbeddingEngineTimeout:
+        return _unavailable("engine_timeout", embedded)
+    except EmbeddingEngineUnavailable:
+        return _unavailable("engine_unreachable", embedded)
+    except (EmbeddingResponseError, ValueError, TypeError):
+        return _unavailable("invalid_vectors", embedded)
+    for vector in fresh.values():
+        if not _valid_vector(vector) or len(vector) != dimension:
+            return _unavailable("invalid_vectors", embedded)
+    vectors.update(fresh)
+
+    if fresh and _fill_allowed(store, access, fill_access, cache_write):
+        assert fill_access is not None
+        _persist_embeddings(
+            store, access, fill_access, fresh, rows_by_id, hashes, embed_config
+        )
 
     vector_order = sorted(
         vectors, key=lambda aid: (-_cosine(query_vector, vectors[aid]), aid)
     )
-
     lexical_rank = {aid: i + 1 for i, aid in enumerate(lexical_order)}
     vector_rank = {aid: i + 1 for i, aid in enumerate(vector_order)}
     all_ids = set(lexical_order) | set(vector_order)
@@ -3661,7 +3975,9 @@ def hybrid_candidates(
     return {
         "available": True,
         "rows": [rows_by_id[aid] for aid in ranked_ids],
-        "candidates_truncated": candidates_truncated,
+        "candidates_truncated": capped,
+        "embedded_texts": embedded,
+        "generation": generation,
     }
 
 
@@ -3677,7 +3993,11 @@ def hybrid_page(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_bytes: int = DEFAULT_MAX_BYTES,
     encoding: str = DEFAULT_ENCODING,
+    cursor: str | None = None,
     cache_write: bool = False,
+    fill_access: MemoryAccess | None = None,
+    mode: VisibilityMode = "ordinary",
+    fallback_code: str | None = None,
     embed_fn: Callable[
         [EmbeddingConfig, Sequence[str]], list[list[float]]
     ] = embed_chunks,
@@ -3694,23 +4014,39 @@ def hybrid_page(
     frame_bytes: FrameBytes | None = None,
     v2_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """MC12 §6.7 hybrid retrieval page: `hybrid_candidates()`'s RRF-fused ranking, applying
-    the same compact-item budget rules `recall_page()` uses. No cursor/continuation in this
-    cut -- the candidate pool is already bounded to `_VECTOR_SCAN_CAP` (512); `data.
-    candidates_truncated` reports when that bound actually clipped the scan (§6.7 "report
-    candidate truncation") instead of silently treating the capped pool as exhaustive.
-    # ponytail: no hybrid pagination; add a cursor if a real workload needs paging past one
-    # page of a 512-candidate pool.
+    """MC12 §6.7 hybrid retrieval page over `hybrid_candidates()`'s RRF-fused ranking.
 
-    72-T01: the same access rules as `recall_page()` (mutually exclusive `access` and
-    `session_allowlist`, entry and pre-telemetry rechecks); only rows usable as current
-    are embedded or returned.
+    72-T08: `hybrid_admission` runs first (caps below the hybrid envelope minimum are
+    `E_INPUT` with `required`, before access, store, telemetry or network). A hybrid page
+    has no cursor (`next_cursor` is always `None`) and carries `retrieval: "hybrid"`,
+    `candidates_truncated`, `incomplete_reason` and `embedded_texts`, all counted in its
+    reported size. Items are accepted while the incomplete trial page (labelled
+    `candidate_cap`) fits; emission stops on `item_limit` (an eligible row is left),
+    `byte_budget` or `token_budget`. `complete` is true only when nothing stopped
+    emission and no scan was capped; otherwise `incomplete_reason` names the stop, or
+    `candidate_cap`. A first item that fits no page is `E_BUDGET` with the stop reason.
 
-    Falls back to a plainly-labelled lexical page (`code: "E_EMBEDDING_UNAVAILABLE"`,
-    `retrieval: "lexical"`, `embedding_status: "skipped"`, plus `hybrid_unavailable_reason`)
-    when no engine is configured or it is unreachable/invalid -- never reports that as hybrid
-    success (§9.0 fixed contract).
+    A hybrid-requested read that cannot rank (a `fallback_code` the caller already
+    decided, an empty `query`, a `cursor`, or `hybrid_candidates` reporting no engine, an
+    unreachable or timed-out engine, or invalid vectors) is `recall_page` lexically with
+    the `_fallback_labels` counted in its size: `OK` becomes `E_EMBEDDING_UNAVAILABLE`,
+    `E_BUDGET` and every error code are kept. A revocation or access change during
+    embedding is `E_PERMISSION` / `E_RESTART` with zero items.
+
+    Before emission (D39 R17) the access is rechecked and, on one fresh reader, the store
+    generation must be unchanged and every item's current row must keep its version and
+    stay eligible under `mode`; otherwise `E_RESTART` with zero items.
     """
+    refused = hybrid_admission(
+        limit=limit,
+        max_bytes=max_bytes,
+        max_tokens=max_tokens,
+        encoding=encoding,
+        cursor=cursor,
+        frame_bytes=frame_bytes,
+    )
+    if refused is not None:
+        return refused
     access, why = _route_access(store, access, session_allowlist)
 
     def refusal(page: dict[str, Any]) -> dict[str, Any]:
@@ -3718,18 +4054,17 @@ def hybrid_page(
 
     if access is None:
         if why is not None:
-            page = _denied_page(why, encoding)
-            page["retrieval"] = "hybrid"
-            return refusal(page)
-        page = _page("OK", complete=True, encoding=encoding)
-        page["retrieval"] = "hybrid"
-        page["candidates_truncated"] = False
+            return refusal(_denied_page(why, encoding))
+        labels = _hybrid_labels(False, None, 0)
+        size = _measure_page([], None, True, encoding, labels)
+        page = _page(
+            "OK", complete=True, encoding=encoding, tokens=size[1], bytes_=size[0]
+        )
+        page.update(labels)
         return page
     failure = recheck_failure(access)
     if failure is not None:
         return refusal(_recheck_page(failure, encoding))
-    # 72-T02 R13: the generation the emitted page is checked against.
-    generation = store.current_generation()
     moment = time.time() if now is None else now
     memo = SourceValidationMemo()
 
@@ -3737,18 +4072,40 @@ def hybrid_page(
     # fallback call never mints a second, different identity for this one logical call.
     real_invocation_id = invocation_id or str(uuid.uuid4())
 
-    fused = hybrid_candidates(
-        store,
-        subject=subject,
-        query=query,
-        access=access,
-        embed_config=embed_config,
-        cache_write=cache_write,
-        embed_fn=embed_fn,
-        now=moment,
-        memo=memo,
-    )
-    if not fused["available"]:
+    if fallback_code is None and cursor is not None:
+        fallback_code = "cursor_continuation"
+    if fallback_code is None and not query:
+        fallback_code = "empty_query"
+    embedded = 0
+    fused: dict[str, Any] = {}
+    if fallback_code is None:
+        fused = hybrid_candidates(
+            store,
+            subject=subject,
+            query=query,
+            access=access,
+            embed_config=embed_config,
+            cache_write=cache_write,
+            fill_access=fill_access,
+            embed_fn=embed_fn,
+            mode=mode,
+            now=moment,
+            memo=memo,
+        )
+        if "code" in fused:
+            return refusal(
+                _page(
+                    fused["code"],
+                    encoding=encoding,
+                    reason=access.denial_reason()
+                    if fused["code"] == "E_PERMISSION"
+                    else None,
+                )
+            )
+        if "fallback_code" in fused:
+            fallback_code = fused["fallback_code"]
+            embedded = fused["embedded_texts"]
+    if fallback_code is not None:
         fallback = recall_page(
             store,
             # 72-T06: a v2 call's lexical fallback pages its own filters.
@@ -3759,6 +4116,7 @@ def hybrid_page(
             max_tokens=max_tokens,
             max_bytes=max_bytes,
             encoding=encoding,
+            cursor=cursor,
             # A read-only view (a store that needs a write to open) records nothing.
             telemetry=telemetry
             if getattr(store, "_readonly_conn", None) is None
@@ -3774,86 +4132,136 @@ def hybrid_page(
             cache_write=cache_write,
             now=moment,
             **(v2_filters or {}),
+            extra=_fallback_labels(fallback_code, embedded),
         )
-        if fallback["code"] in ("E_PERMISSION", "E_RESTART"):
-            return fallback
-        fallback["code"] = "E_EMBEDDING_UNAVAILABLE"
-        fallback["retrieval"] = "lexical"
-        fallback["embedding_status"] = "skipped"
-        fallback["hybrid_unavailable_reason"] = fused["reason"]
+        if fallback["code"] == "OK":
+            fallback["code"] = "E_EMBEDDING_UNAVAILABLE"
         return fallback
 
+    capped = bool(fused["candidates_truncated"])
+    embedded = fused["embedded_texts"]
+    trial_labels = _hybrid_labels(capped, "candidate_cap", embedded)
     items: list[dict[str, Any]] = []
-    items_bytes, _tokens = _measure_page([], None, True, encoding)
-    contest = _contest_index(store, fused["rows"], access, now=moment, memo=memo)
+    items_bytes = len(
+        _page_text([], None, False, encoding, trial_labels).encode("utf-8")
+    )
+    stop: str | None = None
+    blocked: dict[str, Any] | None = None
+    verifier = binding_verifier(store)
+    contest = _contest_index(
+        store, fused["rows"], access, now=moment, memo=memo, verifier=verifier
+    )
     for row in fused["rows"]:
         decision = evaluate_artifact_visibility(
-            store, row, access=access, now=moment, memo=memo
+            store,
+            row,
+            access=access,
+            mode=mode,
+            now=moment,
+            memo=memo,
+            verifier=verifier,
         )
-        if not decision.usable_as_current:
+        if not _eligible(decision, mode):
             continue
         item = _candidate_to_item(
             row, store, access, decision, contest=contest, now=moment, memo=memo
         )
         if item is None:
             continue
+        if len(items) >= limit:
+            stop = "item_limit"
+            break
         if frame_bytes is None:
-            trial_bytes = _trial_page_bytes(
+            fit = _trial_page_bytes(
                 items,
                 items_bytes,
                 item,
                 max_bytes=max_bytes,
                 max_tokens=max_tokens,
                 encoding=encoding,
+                extra=trial_labels,
+                complete=False,
             )
         else:
             trial_items = [*items, item]
-            trial_size = _measure_page(trial_items, None, True, encoding)
-            data = _page_data(trial_items, None, True, encoding, trial_size)
-            data.update(
-                retrieval="hybrid", candidates_truncated=fused["candidates_truncated"]
-            )
+            trial_size = _measure_page(trial_items, None, False, encoding, trial_labels)
+            data = _page_data(trial_items, None, False, encoding, trial_size)
+            data.update(trial_labels)
             framed = _frame_fits(
                 frame_bytes, "OK", data, encoding, max_bytes, max_tokens
             )
-            trial_bytes = items_bytes if framed else None
-        if trial_bytes is None:
+            fit = items_bytes if framed else None
+        if fit is None:
+            trial = _page_text([*items, item], None, False, encoding, trial_labels)
+            over_bytes = len(trial.encode("utf-8")) > max_bytes
+            stop = "byte_budget" if over_bytes else "token_budget"
+            blocked = item
             break
         items.append(item)
-        items_bytes = trial_bytes
-        if len(items) >= limit:
-            break
+        items_bytes = fit
 
-    size_bytes, size_tokens = _measure_page(items, None, True, encoding)
-    failure = recheck_failure(access)
-    if failure is not None:
-        return refusal(_recheck_page(failure, encoding))
-    if not _emit_current(store, generation, items, access, now):
-        return _page("E_RESTART", encoding=encoding)
-    _record_memory_event(
-        telemetry if _records(telemetry, {"items": items}) else None,
-        "retrieval",
-        size_tokens,
-        request_id=request_id,
-        event_id=event_id,
-        invocation_id=real_invocation_id,
-        project_id=project_id,
-        run_id=run_id,
-        agent_id=agent_id,
-        session_id=session_id,
-        opt_in=opt_in,
-        cache_write=cache_write,
-        access=access,
-    )
+    def emit(page: dict[str, Any]) -> dict[str, Any]:
+        """72-T02 R13 / 72-T08 D39 R17: the policy recheck first (a revocation wins over
+        drift), then the store generation read before the scans and every item's current
+        row on a fresh reader -- never this request's own, possibly immutable, view --
+        before a page leaves or telemetry is recorded."""
+        failure = recheck_failure(access)
+        if failure is not None:
+            return refusal(_recheck_page(failure, encoding))
+        if not _emit_current(
+            store, fused["generation"], page["items"], access, now, mode=mode
+        ):
+            return _page("E_RESTART", encoding=encoding)
+        if page["code"] == "OK" and _records(telemetry, page):
+            _record_memory_event(
+                telemetry,
+                "retrieval",
+                page["tokens"],
+                request_id=request_id,
+                event_id=event_id,
+                invocation_id=real_invocation_id,
+                project_id=project_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                opt_in=opt_in,
+                cache_write=cache_write,
+                access=access,
+            )
+        return page
+
+    if not items and blocked is not None and stop is not None:
+        stop_labels = _hybrid_labels(capped, stop, embedded)
+        need = _measure_page([blocked], None, False, encoding, stop_labels)
+        return emit(
+            _budget_page(
+                encoding,
+                need,
+                max_bytes,
+                max_tokens,
+                frame_bytes=frame_bytes,
+                labels=stop_labels,
+            )
+        )
+
+    complete = stop is None and not capped
+    reason = stop if stop is not None else ("candidate_cap" if capped else None)
+    labels = _hybrid_labels(capped, reason, embedded)
+    size = _measure_page(items, None, complete, encoding, labels)
+    while items and not _within(size, max_bytes, max_tokens):
+        reason = "byte_budget" if size[0] > max_bytes else "token_budget"
+        items.pop()
+        complete = False
+        labels = _hybrid_labels(capped, reason, embedded)
+        size = _measure_page(items, None, complete, encoding, labels)
     page = _page(
         "OK",
         items=items,
         next_cursor=None,
-        complete=True,
+        complete=complete,
         encoding=encoding,
-        tokens=size_tokens,
-        bytes_=size_bytes,
+        tokens=size[1],
+        bytes_=size[0],
     )
-    page["retrieval"] = "hybrid"
-    page["candidates_truncated"] = fused["candidates_truncated"]
-    return page
+    page.update(labels)
+    return emit(page)

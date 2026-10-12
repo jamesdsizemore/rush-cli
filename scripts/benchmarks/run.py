@@ -10,14 +10,16 @@ import os
 import stat
 import sys
 import tempfile
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
 from rush.delivery.compact import canonical_json
 from rush.io.physical_paths import ContainmentError, PhysicalRoot
-from rush.memory.store import TypedArtifactStore
+from rush.memory.retrieval import MemoryAccess, _excerpt
+from rush.memory.store import MemorySubject, OwnerScope, TypedArtifactStore
 from rush.patch_generator import patch_target_paths
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
@@ -67,14 +69,34 @@ from .providers import (
     run_memory_decision,
 )
 from .reporting import (
+    HYBRID_ARMS,
+    chance_recall,
     paired_bootstrap_ci,
+    recall_at_k,
     redact_report,
+    write_hybrid_verdict,
     write_memory_suite_report,
     write_result,
 )
 
-_MEMORY_VARIANTS = ("none", "current", "raw", "budgeted", "linked", "full", "hybrid")
+_MEMORY_VARIANTS = (
+    "none",
+    "current",
+    "raw",
+    "budgeted",
+    "linked",
+    "full",
+    "hybrid",
+    "metadata",
+)
 _VARIANT_MAX_TOKENS = {"budgeted": 256, "current": 2048, "full": 16000}
+# 72-T08: the in-process Rush calls of a memory-suite run see these redirected into a
+# temporary root; provider subprocesses keep the caller's original environment.
+_ISOLATED_ENV_KEYS = ("HOME", "XDG_DATA_HOME", "LOCALAPPDATA")
+# The frozen `p72-` corpus: 48 records, 12 of them security-role records no arm may
+# return, so `E_i = 36` eligible records per case.
+_P72_ELIGIBLE = 36
+_P72_SECURITY_ROLES = frozenset({"denied_owner", "revoked_source", "stale_hash"})
 
 # Probe registry forward references (imported lazily or dynamically)
 _PROBE_MAP: dict[str, Callable[..., ProbeResult]] = {}
@@ -242,72 +264,177 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _variant_retrieval(
+    variant: str,
+    root: Path,
+    tool: MemoryTool,
+    permissions: ExecutionPermissions,
+    *,
+    query: str,
+    subject: MemorySubject,
+    owner_scope: OwnerScope | None,
+    session_allowlist: list[str] | None,
+    request_override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """72-T08: one arm's retrieval for one case and its measurements. Compact arms ask
+    `recall` for at most 8 items in 8192 bytes; `hybrid` adds `request_override` (the
+    frozen engine identity) or a bare `retrieval="hybrid"`. `metadata` answers from the
+    legacy `list` route: the grant's sources, the owner, freshness `fresh`, no query, the
+    first eight rows by id."""
+    owner_kwargs: dict[str, Any] = (
+        {"owner_scope": owner_scope} if owner_scope is not None else {}
+    )
+    out: dict[str, Any] = {
+        "ids": [],
+        "excerpts": [],
+        "retrieval": None,
+        "embedding_fallback_code": None,
+        "override_skipped": None,
+        "page_tokens": 0,
+        "retrieval_ms": 0.0,
+        "embedded_texts": 0,
+        "raw": None,
+    }
+    started = time.perf_counter()
+    if variant == "metadata":
+        sources = session_allowlist
+        if sources is None:
+            access = MemoryAccess.resolve(
+                Path(root), operation="list", owner_scope=owner_scope
+            )
+            sources = list(access.sources) if access is not None else []
+        listed: dict[str, Any] = dict(
+            tool.run(
+                root,
+                operation="list",
+                subject=subject,
+                session_allowlist=sources,
+                freshness_filter="fresh",
+                owner_filter=(
+                    f"{owner_scope.kind}:{owner_scope.id}" if owner_scope else None
+                ),
+                permissions=permissions,
+                **owner_kwargs,
+            )
+        )
+        raw = listed.get("raw")
+        entries = sorted(
+            (e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict)),
+            key=lambda entry: str(entry.get("id")),
+        )[:8]
+        out.update(
+            ids=[str(entry.get("id")) for entry in entries],
+            excerpts=[_excerpt(entry.get("content") or {}) for entry in entries],
+            retrieval="metadata",
+            raw=raw,
+        )
+    else:
+        request: dict[str, Any] = {
+            "view": "compact",
+            "limit": 8,
+            "max_tokens": _VARIANT_MAX_TOKENS.get(variant, 2048),
+            "max_bytes": 8192,
+        }
+        if variant == "hybrid":
+            request.update(request_override or {"retrieval": "hybrid"})
+        recalled: dict[str, Any] = dict(
+            tool.run(
+                root,
+                operation="recall",
+                subject=subject,
+                query=query,
+                session_allowlist=session_allowlist,
+                request=request,
+                permissions=permissions,
+                **owner_kwargs,
+            )
+        )
+        recalled_raw: dict[str, Any] = recalled.get("raw") or {}
+        data: dict[str, Any] = recalled_raw.get("data") or {}
+        items = [i for i in data.get("items") or [] if isinstance(i, dict)]
+        excerpts = [str(item.get("excerpt", "")) for item in items]
+        if variant == "linked" and items:
+            first = items[0]
+            related: dict[str, Any] = dict(
+                tool.run(
+                    root,
+                    operation="related",
+                    session_allowlist=session_allowlist,
+                    request={"id": first.get("id"), "version": first.get("version", 1)},
+                    **owner_kwargs,
+                )
+            )
+            related_raw: dict[str, Any] = related.get("raw") or {}
+            related_data: dict[str, Any] = related_raw.get("data") or {}
+            excerpts.extend(
+                str(item.get("excerpt", ""))
+                for item in related_data.get("items") or []
+                if isinstance(item, dict)
+            )
+        out.update(
+            ids=[str(item.get("id")) for item in items],
+            excerpts=excerpts,
+            retrieval=data.get("retrieval", "lexical"),
+            embedding_fallback_code=data.get("embedding_fallback_code"),
+            page_tokens=int(data.get("tokens") or 0),
+            embedded_texts=int(data.get("embedded_texts") or 0),
+            raw=recalled_raw,
+        )
+    out["retrieval_ms"] = (time.perf_counter() - started) * 1000.0
+    return out
+
+
 def _variant_hypothesis(
     variant: str,
     root: Path,
     tool: MemoryTool,
     permissions: ExecutionPermissions,
     sanitized: dict[str, Any],
+    *,
+    query: str | None = None,
+    subject: MemorySubject = "episodic",
+    owner_scope: OwnerScope | None = None,
+    session_allowlist: list[str] | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> str:
-    """Produces one dataset case's hypothesis under a named memory variant.
+    """Produces one dataset case's hypothesis under a named memory variant: the
+    returned items' excerpts (a compact item carries `excerpt`, never `content`).
     Never touches `sanitized`'s stripped gold fields (already removed by
     `strip_longmemeval_gold`). `"none"` never calls the memory tool at all;
     `"hybrid"` requests `retrieval=hybrid` and honestly reports whatever
-    `MemoryTool` itself returns (a real lexical fallback when no embedding
-    engine is configured, per MC12 -- never a fabricated hybrid result)."""
+    `MemoryTool` itself returns (a labelled lexical fallback when no embedding
+    engine answers, per MC12/72-T08 -- never a fabricated hybrid result).
+
+    72-T08: a caller passes the case's own `query` and grant (`owner_scope`, or an
+    explicit `session_allowlist`); without them the LongMemEval form derives the query
+    from the question's last word and the allowlist from the haystack sessions."""
     if variant == "none":
         return ""
-    session_ids = [
-        s.get("session_id", "") for s in sanitized.get("haystack_sessions", [])
-    ]
-    query_terms = [w.strip("?.,!") for w in sanitized.get("question", "").split()]
-    query = query_terms[-1] if query_terms else ""
     if variant == "raw":
         return " ".join(
             str(turn.get("content", ""))
             for session in sanitized.get("haystack_sessions", [])
             for turn in session.get("turns", [])
         )
-    request: dict[str, Any] = {
-        "view": "compact",
-        "max_tokens": _VARIANT_MAX_TOKENS.get(variant, 2048),
-    }
-    if variant == "hybrid":
-        request["retrieval"] = "hybrid"
-    recalled: dict[str, Any] = dict(
-        tool.run(
-            root,
-            operation="recall",
-            subject="episodic",
-            query=query,
-            session_allowlist=session_ids,
-            request=request,
-            permissions=permissions,
-        )
+    if query is None:
+        query_terms = [w.strip("?.,!") for w in sanitized.get("question", "").split()]
+        query = query_terms[-1] if query_terms else ""
+    if session_allowlist is None and owner_scope is None:
+        session_allowlist = [
+            s.get("session_id", "") for s in sanitized.get("haystack_sessions", [])
+        ]
+    retrieved = _variant_retrieval(
+        variant,
+        root,
+        tool,
+        permissions,
+        query=query,
+        subject=subject,
+        owner_scope=owner_scope,
+        session_allowlist=session_allowlist,
+        request_override=request_override,
     )
-    recalled_raw: dict[str, Any] = recalled.get("raw") or {}
-    recalled_data: dict[str, Any] = recalled_raw.get("data") or {}
-    items: list[dict[str, Any]] = recalled_data.get("items") or []
-    texts = [str(item.get("content", "")) for item in items if isinstance(item, dict)]
-    if variant == "linked" and items:
-        first = items[0]
-        related: dict[str, Any] = dict(
-            tool.run(
-                root,
-                operation="related",
-                session_allowlist=session_ids,
-                request={"id": first.get("id"), "version": first.get("version", 1)},
-            )
-        )
-        related_raw: dict[str, Any] = related.get("raw") or {}
-        related_data: dict[str, Any] = related_raw.get("data") or {}
-        related_items: list[dict[str, Any]] = related_data.get("related") or []
-        texts.extend(
-            str(item.get("content", ""))
-            for item in related_items
-            if isinstance(item, dict)
-        )
-    return " ".join(texts)
+    return " ".join(retrieved["excerpts"])
 
 
 _BASELINE_VARIANT = "none"
@@ -1097,18 +1224,155 @@ def _run_manifest_suite(args: argparse.Namespace) -> int:
     return code
 
 
+def _manifest_document(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    return document if isinstance(document, dict) else None
+
+
+def _recorded_embedding_differs(output: Path, embedding: Any) -> bool:
+    """72-T08: an `--output` already holding a report made under another frozen engine
+    identity is never overwritten (the paired arms must share one identity)."""
+    report = Path(output) / "memory-suite-report.json"
+    if not report.is_file():
+        return False
+    recorded = json.loads(report.read_text(encoding="utf-8"))
+    return (
+        not isinstance(recorded, dict) or recorded.get("phase72_embedding") != embedding
+    )
+
+
+def _phase72_rows(
+    results_by_seed: dict[int, list[DatasetCaseResult]],
+    manifest: dict[str, Any] | None,
+    *,
+    arm: str,
+    provider: str,
+) -> list[dict[str, Any]]:
+    """72-T08: one verdict row (`reporting.aggregate_hybrid_verdict`'s contract) per
+    `p72-` case and seed, scored against the frozen query and corpus sections. The gold
+    `relevant_ids`, `split` and corpus `role` are read here, after the decision."""
+    measured = [
+        (seed, result)
+        for seed, results in results_by_seed.items()
+        for result in results
+        if result.phase72 is not None
+    ]
+    if not measured:
+        return []
+    _queries_manifest, queries = load_dataset_section("phase72_hybrid_queries")
+    _corpus_manifest, corpus = load_dataset_section("phase72_hybrid_corpus")
+    query_by_id = {str(q["question_id"]): q for q in queries}
+    role_by_id = {str(c["id"]): c.get("role") for c in corpus}
+    case_by_id = {
+        str(case.get("id")): case
+        for case in (manifest or {}).get("cases") or []
+        if isinstance(case, dict)
+    }
+    rows: list[dict[str, Any]] = []
+    for seed, result in measured:
+        phase72 = result.phase72 or {}
+        query = query_by_id[result.case_id]
+        case = case_by_id.get(result.case_id, {})
+        relevant = [str(i) for i in query.get("relevant_ids") or []]
+        returned = [str(i) for i in phase72.get("returned_ids") or []]
+        rows.append(
+            {
+                "provider": provider,
+                "arm": arm,
+                "case_id": result.case_id,
+                "seed": seed,
+                "fixture_revision": case.get("fixture_revision"),
+                "grants": case.get("grants"),
+                "budgets": case.get("budget"),
+                "split": query.get("split"),
+                "retrieval_required": bool(case.get("retrieval_required", True)),
+                "recall_at_8": recall_at_k(returned, relevant),
+                "chance_recall": chance_recall(len(returned[:8]), _P72_ELIGIBLE),
+                "false_inclusion": sum(1 for i in returned[:8] if i not in relevant),
+                "security_inclusion": sum(
+                    1 for i in returned if role_by_id.get(i) in _P72_SECURITY_ROLES
+                ),
+                "passed": bool(phase72.get("passed")),
+                "case_tokens": result.total_tokens,
+                "case_ms": float(phase72.get("retrieval_ms") or 0.0)
+                + float(phase72.get("decision_ms") or 0.0),
+                "page_tokens": phase72.get("page_tokens"),
+                "retrieval_ms": phase72.get("retrieval_ms"),
+                "embedded_texts": phase72.get("embedded_texts"),
+                "retrieval": phase72.get("retrieval"),
+                "embedding_fallback_code": phase72.get("embedding_fallback_code"),
+                "override_skipped": phase72.get("override_skipped"),
+                "route_available": True,
+            }
+        )
+    return rows
+
+
+def _phase72_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-arm R20 counts and the retrieval latency p95 over the verdict rows."""
+    latencies = sorted(float(r.get("retrieval_ms") or 0.0) for r in rows)
+    p95 = latencies[max(0, -(-len(latencies) * 95 // 100) - 1)] if latencies else 0.0
+    return {
+        "retrieval_ms_p95": p95,
+        "hybrid_pages": sum(1 for r in rows if r.get("retrieval") == "hybrid"),
+        "fallback_pages": sum(
+            1
+            for r in rows
+            if r.get("embedding_fallback_code")
+            or r.get("override_skipped") == "no_request"
+        ),
+        "embedded_texts": sum(int(r.get("embedded_texts") or 0) for r in rows),
+    }
+
+
 def run_memory_suite(args: argparse.Namespace) -> int:
     """MC13.5: runs the local (no live-credential-required) portion of the
     memory benchmark suite -- LongMemEval-shaped dataset cases compared
-    across all seven named retrieval variants, plus all five MC13.3 named
+    across all named retrieval variants, plus all five MC13.3 named
     agent episodes -- and writes a combined report. Missing external dataset
     downloads or live-provider credentials are recorded as named blockers,
-    never a fabricated pass."""
+    never a fabricated pass.
+
+    72-T08 (D14): every in-process Rush call sees `HOME`, `XDG_DATA_HOME` and
+    `LOCALAPPDATA` inside a temporary root; the caller's environment is captured first
+    (`provider_env`, for every provider subprocess) and restored before return. A report
+    already in `--output` under a different `phase72_embedding` is refused (exit 1)."""
     _check_decision_flags(args)
     if args.task_manifest is not None:
         return _run_manifest_suite(args)
+    manifest = _manifest_document(getattr(args, "task_manifest", None))
+    embedding = manifest.get("phase72_embedding") if manifest else None
+    if _recorded_embedding_differs(Path(args.output), embedding):
+        sys.stderr.write(
+            "refused: --output holds a report made under a different "
+            "phase72_embedding; use a fresh output directory.\n"
+        )
+        return 1
+    original_env = dict(os.environ)
+    with tempfile.TemporaryDirectory(prefix="memory-suite-home-") as isolated:
+        try:
+            for key in _ISOLATED_ENV_KEYS:
+                os.environ[key] = str(Path(isolated) / key.lower())
+            return _run_memory_suite(
+                args, manifest=manifest, embedding=embedding, provider_env=original_env
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
+
+
+def _run_memory_suite(
+    args: argparse.Namespace,
+    *,
+    manifest: dict[str, Any] | None,
+    embedding: Any,
+    provider_env: Mapping[str, str],
+) -> int:
+    """`run_memory_suite()`'s body, run inside the isolated environment."""
     permissions = ExecutionPermissions(
-        cache_write=True, artifact_write=True, build=True
+        network=True, cache_write=True, artifact_write=True, build=True
     )
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()] or [0]
     blockers: list[str] = []
@@ -1261,7 +1525,18 @@ def run_memory_suite(args: argparse.Namespace) -> int:
         },
         "blockers": blockers,
     }
+    # 72-T08: the frozen engine identity, the verdict rows and the R20 counts. The
+    # provider of a row is its route directory (`<eval root>/<arm>/<route>`).
+    output = Path(args.output).resolve()
+    verdict_rows = _phase72_rows(
+        dataset_results, manifest, arm=args.variant, provider=output.name
+    )
+    payload["phase72_embedding"] = embedding
+    payload["verdict_rows"] = verdict_rows
+    payload["phase72_summary"] = _phase72_summary(verdict_rows)
     report_path = write_memory_suite_report(args.output, payload)
+    if output.parent.name in HYBRID_ARMS:
+        write_hybrid_verdict(output.parent.parent)
     sys.stdout.write(f"\nMemory suite report written to: {report_path}\n")
     for blocker in blockers:
         sys.stdout.write(f"BLOCKED (named): {blocker}\n")
@@ -2105,8 +2380,10 @@ def run_scenario(
     provider_executable: Path | None = None,
     local_runtime_executable: list[Path] | None = None,
     router_urls: list[str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> ProbeResult:
-    """Executes a single scenario by ID and writes atomic output JSON."""
+    """Executes a single scenario by ID and writes atomic output JSON. 72-T08 (D14):
+    `env`, when given, is the environment every provider subprocess runs with."""
     scenarios = load_scenarios()
     if scenario_id not in scenarios:
         raise FixtureError(f"unknown scenario: {scenario_id}")
@@ -2149,6 +2426,9 @@ def run_scenario(
         live_input["route_id"] = selected_route
         scenario = replace(scenario, input=live_input)
     probe_fn = get_probe_runner(scenario.probe)
+    provider_env = (
+        {"env": env} if env is not None and scenario.probe == "provider" else {}
+    )
     result = probe_fn(
         scenario,
         model_cache=model_cache,
@@ -2160,6 +2440,7 @@ def run_scenario(
         provider_executable=provider_executable,
         local_runtime_executable=local_runtime_executable,
         router_urls=router_urls,
+        **provider_env,
     )
     write_result(output_root, result)
     return result

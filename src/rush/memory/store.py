@@ -1764,6 +1764,13 @@ def sqlite_text(raw: bytes) -> str | bytes:
         return raw
 
 
+def embedding_text(content: dict[str, Any]) -> str:
+    """MC12 §6.7: the exact, deterministic text embedded (and hashed for the vector cache
+    key) for one artifact's `content` -- sorted-key JSON so the same content always produces
+    the same text regardless of dict insertion order."""
+    return json.dumps(content, ensure_ascii=False, sort_keys=True)
+
+
 def _content_unchanged(stored: Any, content: dict[str, Any] | None) -> bool:
     """Whether `content` is the same value the `stored` column holds. Type-strict
     (sorted canonical dumps): `True` vs `1` or `1` vs `1.0` is new content. `None`
@@ -3702,13 +3709,42 @@ class TypedArtifactStore:
         model_digest: str,
         chunking_version: str,
         vector: list[float],
+        write_sources: Sequence[str],
         commit_check: CommitCheck | None = None,
-    ) -> None:
-        """MC12 §6.7: persists one vector. Always writes -- the caller (`hybrid_candidates()`)
-        only calls this when the caller-granted `cache_write` permits it, so a read-only
-        hybrid request never reaches this method. 72-T01: `commit_check` runs after
-        the write, immediately before commit (`run_commit_check`)."""
+    ) -> bool:
+        """MC12 §6.7, 72-T08 D39: persists one vector only when, inside one
+        `BEGIN IMMEDIATE`, the current row still has `artifact_version`, a source granted by
+        `write_sources`, and embedding text whose sha256 is `content_hash` (the
+        embedding-text hash, never the artifact `content_hash`/`payload_hash`). Returns
+        whether the vector was inserted. `commit_check` runs immediately before commit."""
+        from rush.memory.authorization import source_granted
+
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "SELECT source, artifact_version, content FROM memory_artifacts "
+                "WHERE id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if (
+                cur is None
+                or cur["artifact_version"] != artifact_version
+                or not source_granted(cur["source"], write_sources)
+            ):
+                conn.rollback()
+                return False
+            text = _stored_text(cur["content"])
+            current_hash: str | None = None
+            if text is not None:
+                try:
+                    current_hash = hashlib.sha256(
+                        embedding_text(json.loads(text)).encode("utf-8")
+                    ).hexdigest()
+                except (TypeError, ValueError, RecursionError):
+                    current_hash = None
+            if current_hash != content_hash:
+                conn.rollback()
+                return False
             conn.execute(
                 "INSERT OR REPLACE INTO memory_embeddings (namespace, artifact_id, "
                 "artifact_version, content_hash, model_digest, chunking_version, dimension, "
@@ -3727,6 +3763,7 @@ class TypedArtifactStore:
             )
             run_commit_check(conn, commit_check)
             conn.commit()
+        return True
 
     def get_current(self, artifact_id: str) -> MemoryArtifact | None:
         """MC02 §9.0 `expand_artifact()` support: the *current* row for one ID, re-fetched

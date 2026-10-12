@@ -23651,6 +23651,32 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     assert "rejected_field" in functions["_h_mode"]
     assert "run_cell" in functions["test_codec_route_mode_matrix"]
 
+    # 72-T08: the hybrid route x mode matrix consumes the same coverage guard. It covers
+    # the retrieval-accepting operations this matrix already has as routes, with a real
+    # `apply` and a real `mode-historical` cell for each, and no unnamed producer stage.
+    hybrid = importlib.import_module("tests.test_phase72_memory_hybrid")
+
+    t08 = [param.values[0] for param in hybrid.a_cells()]
+    assert {cell.op for cell in t08} == set(hybrid.A_OPS)
+    assert set(hybrid.A_OPS) <= {r.key for r in _G2_ROUTES}
+    for transport in hybrid.A_TRANSPORTS:
+        for op in hybrid.A_OPS:
+            suffixes = {
+                c.suffix for c in t08 if c.transport == transport and c.op == op
+            }
+            assert {"apply-apply", "mode-historical", "retrieval-hybrid"} <= suffixes, (
+                transport,
+                op,
+            )
+    t08_ids = [param.id for param in hybrid.a_cells()]
+    assert len(t08_ids) == len(set(t08_ids))
+    assert not any("=" in cell_id for cell_id in t08_ids)
+    t08_staged = [cell_id for cell_id in t08_ids if "-producer-" in cell_id]
+    assert all(
+        cell_id.rsplit("-producer-", 1)[1] in {"72-T05", "72-T06", "73-T09"}
+        for cell_id in t08_staged
+    ), t08_staged
+
 
 def test_t01_g2a_producer_staged_cells(tmp_path: Path) -> None:
     """G2a: dimensions whose producer is a later packet are one strict-model `E_INPUT`

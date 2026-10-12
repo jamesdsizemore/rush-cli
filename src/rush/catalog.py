@@ -160,6 +160,30 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "Requires host-granted cache-write per invocation; default off."
                 ),
             ),
+            ToolOptionSpec(
+                name="embedding_endpoint",
+                value_type=str,
+                default=None,
+                description=(
+                    "Loopback http URL, with port, of a local embedding engine for "
+                    "hybrid retrieval. Reads still need a per-call network grant."
+                ),
+            ),
+            ToolOptionSpec(
+                name="embedding_model",
+                value_type=str,
+                default=None,
+                description="Embedding model served at embedding_endpoint.",
+            ),
+            ToolOptionSpec(
+                name="embedding_model_digest",
+                value_type=str,
+                default=None,
+                description=(
+                    "Lowercase hex prefix (12-64 characters) of the embedding model "
+                    "digest the engine must report."
+                ),
+            ),
         ),
         scope_kind="operation",
     ),

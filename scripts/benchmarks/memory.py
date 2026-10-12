@@ -16,7 +16,7 @@ import tempfile
 import time
 import unicodedata
 import urllib.parse
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -464,6 +464,15 @@ class EpisodeEvent:
     kwargs: dict[str, Any]
     raw: dict[str, Any]
     token_count: int
+    # 72-T08: the hybrid arm's `request_override` as applied to this call, the agent's
+    # own values of the keys it replaced, or `"no_request"` when a retrieval call carried
+    # no `request` to override.
+    override_applied: dict[str, Any] | None = None
+    override_replaced: dict[str, Any] | None = None
+    override_skipped: str | None = None
+
+
+_OVERRIDE_OPERATIONS = frozenset({"ask", "recall", "list"})
 
 
 @dataclass(frozen=True)
@@ -555,13 +564,15 @@ def run_memory_episode(
     max_steps: int = 12,
     max_total_tokens: int | None = 16000,
     timeout_seconds: float | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> EpisodeResult:
     """Runs one real agent episode against `root`'s live `MemoryTool`.
     `decide_fn` chooses each step from the actual observed history only;
     every tool call it requests is genuinely executed (no fabricated
     events). Every expansion/recall/etc. step's real serialized-result token
     cost counts toward `max_total_tokens` -- there is no free/uncounted
-    operation."""
+    operation. `request_override` (72-T08) is merged over the `request` dict of every
+    `ask`/`recall`/`list` call; every other operation's kwargs pass unchanged."""
     tool = MemoryTool()
     encoder = _get_encoder()
     events: list[EpisodeEvent] = []
@@ -583,10 +594,22 @@ def run_memory_episode(
             final = action.final
             break
         operation = cast(MemoryOperation, action.operation)
+        kwargs = action.kwargs
+        override_applied: dict[str, Any] | None = None
+        override_replaced: dict[str, Any] | None = None
+        override_skipped: str | None = None
+        if request_override is not None and action.operation in _OVERRIDE_OPERATIONS:
+            request = kwargs.get("request")
+            if isinstance(request, dict):
+                override_applied = dict(request_override)
+                override_replaced = {
+                    k: request[k] for k in request_override if k in request
+                }
+                kwargs = {**kwargs, "request": {**request, **request_override}}
+            else:
+                override_skipped = "no_request"
         raw: dict[str, Any] = dict(
-            tool.run(
-                root, operation=operation, permissions=permissions, **action.kwargs
-            )
+            tool.run(root, operation=operation, permissions=permissions, **kwargs)
         )
         serialized = json.dumps(
             raw, ensure_ascii=False, separators=(",", ":"), default=str
@@ -597,9 +620,12 @@ def run_memory_episode(
             EpisodeEvent(
                 step_index=step_index,
                 operation=action.operation,
-                kwargs=action.kwargs,
+                kwargs=kwargs,
                 raw=raw,
                 token_count=token_count,
+                override_applied=override_applied,
+                override_replaced=override_replaced,
+                override_skipped=override_skipped,
             )
         )
         if max_total_tokens is not None and total_tokens > max_total_tokens:
@@ -1043,7 +1069,11 @@ EPISODE_BUILDERS: dict[str, Callable[[Path], tuple[str, DecideFn]]] = {
 
 
 def run_named_episode(
-    episode_id: str, root: Path, *, permissions: ExecutionPermissions | None = None
+    episode_id: str,
+    root: Path,
+    *,
+    permissions: ExecutionPermissions | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> EpisodeResult:
     """Builds and runs one of the five MC13.3 named episodes against a fresh
     `root`. `permissions` defaults to the full write/build grant every
@@ -1060,6 +1090,7 @@ def run_named_episode(
         root=root,
         permissions=permissions
         or ExecutionPermissions(cache_write=True, artifact_write=True, build=True),
+        request_override=request_override,
     )
 
 

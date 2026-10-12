@@ -13,6 +13,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -176,8 +177,10 @@ def run_router_probe(
     *,
     allow_live_route: str | list[str] | tuple[str, ...] | None = None,
     router_urls: list[str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> ProbeResult:
-    """Probe one explicitly configured OpenAI-compatible router endpoint."""
+    """Probe one explicitly configured OpenAI-compatible router endpoint. `env` is the
+    provider subprocess environment (`None` inherits this process's)."""
     start_time = datetime.datetime.now(datetime.UTC).isoformat()
     t0 = time.perf_counter()
     router_name = str(scenario.input["router_id"])
@@ -222,6 +225,7 @@ def run_router_probe(
                 text=True,
                 timeout=30.0,
                 check=False,
+                env=env,
             )
         except OSError as error:
             return ProbeResult(
@@ -372,9 +376,11 @@ def run_provider_probe(
     allow_live_route: str | list[str] | tuple[str, ...] | None = None,
     custom_route: RouteDescriptor | None = None,
     provider_executable: Path | None = None,
+    env: Mapping[str, str] | None = None,
     **kwargs: Any,
 ) -> ProbeResult:
-    """Executes descriptor-driven provider route or returns fixture mode result."""
+    """Executes descriptor-driven provider route or returns fixture mode result. `env`
+    is the provider subprocess environment (`None` inherits this process's)."""
     start_time = datetime.datetime.now(datetime.UTC).isoformat()
     t0 = time.perf_counter()
 
@@ -383,6 +389,7 @@ def run_provider_probe(
             scenario,
             allow_live_route=allow_live_route,
             router_urls=kwargs.get("router_urls"),
+            env=env,
         )
 
     # 2. Handle provider route evaluation
@@ -480,6 +487,7 @@ def run_provider_probe(
             text=True,
             timeout=route.timeout_s,
             check=False,
+            env=env,
         )
         duration_ms = int((time.perf_counter() - t0) * 1000)
         stdout_clean, out_redactions = redact_text(
