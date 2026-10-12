@@ -12,8 +12,9 @@ from click.testing import CliRunner
 from rush.cli import cli
 from rush.codegraph.context_packer import ContextPacker
 from rush.continuity.context import pack_context, retrieve_context
-from rush.memory.expiry import sweep_expired
+from rush.memory.maintenance import run_maintenance_cycle
 from rush.memory.merkle_invalidator import MerkleInvalidator
+from rush.memory.retrieval import MemoryAccess
 from rush.memory.store import (
     MemoryArtifact,
     OwnerScope,
@@ -215,6 +216,8 @@ def test_maintenance_uses_requested_root(tmp_path, monkeypatch, task):
         task=task,
         permissions=GRANTED,
         owner_scope=legacy_owner_scope(requested),
+        # 72-T04 (D3): `legacy` mode maintains only the sources the caller names.
+        sources=["allowed", "independent"],
     )
     assert result["status"] == "ok"
     assert result["raw"]["changed"] >= 1
@@ -366,14 +369,27 @@ def test_expiry_selects_due_rows_before_limit(tmp_path):
     store.write(artifact("not_due", tier="IMPORTED", age=40 * 86400))
     store.write(artifact("due_first", age=30 * 86400))
     store.write(artifact("due_second", age=20 * 86400))
-    owner_scope = legacy_owner_scope(tmp_path)
-    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 1
+    # 72-T04 (D9): the expiry sweep is `run_maintenance_cycle("expiry_sweep")` over a
+    # resolved write access; the public `sweep_expired` is gone.
+    access = MemoryAccess.legacy(
+        tmp_path,
+        ["allowed"],
+        owner_scope=legacy_owner_scope(tmp_path),
+        operation="write",
+    )
+
+    def sweep() -> int:
+        return run_maintenance_cycle(
+            "expiry_sweep", batch_size=1, project_root=tmp_path, access=access
+        ).changed
+
+    assert sweep() == 1
     with sqlite3.connect(store.db_path) as conn:
         assert conn.execute(
             "SELECT id FROM memory_artifacts WHERE expired_at IS NOT NULL"
         ).fetchall() == [("due_first",)]
-    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 1
-    assert sweep_expired(tmp_path, batch_size=1, owner_scope=owner_scope) == 0
+    assert sweep() == 1
+    assert sweep() == 0
 
 
 def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):
@@ -391,6 +407,8 @@ def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):
             "maintain",
             "--task",
             "expiry_sweep",
+            "--source",
+            "allowed",
             "--allow-cache-write",
             "--json",
         ],
@@ -418,10 +436,15 @@ def test_cli_maintenance_permission_and_list_session(tmp_path, monkeypatch):
 def test_tui_and_cli_maintenance_reach_the_registered_projects_uuid_owned_row_not_path_owner(
     tmp_path, monkeypatch
 ):
-    """M09: TUI's `_default_owner_scope_id("project", ...)` and CLI `memory
-    maintain`'s auto-resolved default owner both reach a registered project's
-    UUID-owned row -- never the raw-path legacy owner a path-only default
-    would touch instead."""
+    """M09: TUI's `_default_owner_scope_id("project", ...)` still resolves a registered
+    project's UUID over the raw root path. 72-T04 (D3/D9): the CLI no longer
+    auto-defaults an owner. In `policy` mode the grant supplies the registered
+    project's UUID owner, so `memory maintain` reaches the UUID-owned row and never the
+    raw-path legacy owner's row; in `legacy` mode the D3 rule fixes the owner at
+    `legacy_owner_scope(root)`, so the same command reaches the path-owned row and
+    leaves the UUID-owned one alone."""
+    from rush.memory import authorization as auth
+    from rush.setup.provision import default_data_root
     from rush.tui import ProjectState, _default_owner_scope_id
 
     data_root = tmp_path / "rush-data"
@@ -435,51 +458,81 @@ def test_tui_and_cli_maintenance_reach_the_registered_projects_uuid_owned_row_no
     assert _default_owner_scope_id("project", project) == record.project_id
     assert _default_owner_scope_id("project", project) != str(root)
 
-    # CLI half: `memory maintain` with no --owner-* flags, run from inside a
-    # registered root, auto-resolves that same UUID -- a staleness_sweep
-    # touches the UUID-owned row and leaves an identically-drifted
-    # legacy-path-owned row alone.
-    store = TypedArtifactStore(root)
-    target = root / "module.py"
-    target.write_text("def hello():\n    return 1\n")
-    digest = MerkleInvalidator(root).hash_content(target.read_text())
-    store.write(
-        artifact(
-            "uuid-owned",
-            symbol_ref="module.py::hello",
-            content_hash=digest,
-            owner_scope=OwnerScope("project", record.project_id),
+    def seed(project_root, project_id):
+        store = TypedArtifactStore(project_root)
+        target = project_root / "module.py"
+        target.write_text("def hello():\n    return 1\n")
+        digest = MerkleInvalidator(project_root).hash_content(target.read_text())
+        store.write(
+            artifact(
+                "uuid-owned",
+                symbol_ref="module.py::hello",
+                content_hash=digest,
+                owner_scope=OwnerScope("project", project_id),
+            )
         )
-    )
-    store.write(
-        artifact(
-            "path-owned",
-            symbol_ref="module.py::hello",
-            content_hash=digest,
-            owner_scope=legacy_owner_scope(root),
+        store.write(
+            artifact(
+                "path-owned",
+                symbol_ref="module.py::hello",
+                content_hash=digest,
+                owner_scope=legacy_owner_scope(project_root),
+            )
         )
-    )
-    target.write_text("def hello():\n    return 2\n")  # drift both rows' symbol
+        # drift both rows' symbol
+        target.write_text("def hello():\n    return 2\n")
+        return store
 
-    monkeypatch.chdir(root)
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "memory",
-            "maintain",
-            "--task",
-            "staleness_sweep",
-            "--allow-cache-write",
-            "--json",
-        ],
-    )
-    assert result.exit_code == 0
-    assert json.loads(result.output)["status"] == "ok"
-
-    with sqlite3.connect(store.db_path) as conn:
-        stale_rows = dict(
-            conn.execute("SELECT id, stale FROM memory_artifacts").fetchall()
+    def maintain(project_root):
+        monkeypatch.chdir(project_root)
+        result = CliRunner().invoke(
+            cli,
+            [
+                "memory",
+                "maintain",
+                "--task",
+                "staleness_sweep",
+                "--source",
+                "allowed",
+                "--allow-cache-write",
+                "--json",
+            ],
         )
-    assert stale_rows["uuid-owned"] == 1
-    assert stale_rows["path-owned"] == 0
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["status"] == "ok"
+
+    def stale_rows(store):
+        with sqlite3.connect(store.db_path) as conn:
+            return dict(
+                conn.execute("SELECT id, stale FROM memory_artifacts").fetchall()
+            )
+
+    # legacy cell: no policy, no marker -> the D3 owner `legacy_owner_scope(root)`.
+    store = seed(root, record.project_id)
+    maintain(root)
+    legacy_rows = stale_rows(store)
+    assert legacy_rows["path-owned"] == 1
+    assert legacy_rows["uuid-owned"] == 0
+
+    # policy cell: the grant's owner (the registered project UUID) is the maintain
+    # owner; the CLI passes no owner flag.
+    policy_root = tmp_path / "policy-project"
+    policy_root.mkdir()
+    policy_record = register_project(policy_root, data_root=default_data_root())
+    revision = int(
+        auth.load_policy_readonly(data_root=default_data_root())["policy_revision"] or 0
+    )
+    auth.grant_memory_scope(
+        project_root=policy_root,
+        owner_scope=OwnerScope("project", policy_record.project_id),
+        approved_sources=["allowed"],
+        allowed_operations=["ask", "expand", "list", "write"],
+        expected_policy_revision=revision,
+        consent=True,
+        data_root=default_data_root(),
+    )
+    policy_store = seed(policy_root, policy_record.project_id)
+    maintain(policy_root)
+    policy_rows = stale_rows(policy_store)
+    assert policy_rows["uuid-owned"] == 1
+    assert policy_rows["path-owned"] == 0

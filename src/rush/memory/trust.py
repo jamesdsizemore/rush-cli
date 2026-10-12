@@ -30,7 +30,26 @@ PromotionDenialReason = Literal[
     "failed_grounding_check",
     "insufficient_corroboration",
     "integrity_payload_mismatch",
+    "contradicted",
+    "imported_unverified",
 ]
+
+_SQLITE_INTEGER_MAX = 2**63 - 1
+
+
+def parse_candidate_ref(text: str) -> dict[str, object] | None:
+    """72-T04: parse one reviewed-corroborator ref in its `ID@VERSION@SOURCE` text form
+    (CLI `--candidate-ref`, dashboard `candidate_refs`); `None` when malformed."""
+    parts = text.split("@", 2)
+    if len(parts) != 3:
+        return None
+    artifact_id, version, source = parts
+    if not artifact_id or not source or not (version.isascii() and version.isdigit()):
+        return None
+    number = int(version)
+    if not 1 <= number <= _SQLITE_INTEGER_MAX:
+        return None
+    return {"id": artifact_id, "version": number, "source": source}
 
 
 @dataclass(frozen=True)

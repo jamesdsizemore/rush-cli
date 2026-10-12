@@ -786,10 +786,13 @@ def test_recovery_receipt_distinguishes_promotion_created_from_promotion_complet
     stored2, decision2 = store.promote(
         stored2.id,
         user_stated=False,
-        candidate_sources=["only_one"],
         receipt_operation_id="op-promote-2",
     )
+    # 72-T04 (D8): no corroboration at all -- the denial is `insufficient_corroboration`
+    # from the stored pool (no peer), never from a caller-invented source list.
     assert decision2.promoted is False
+    assert decision2.denial_reason == "insufficient_corroboration"
+    assert decision2.corroboration_count == 1  # the candidate's own stored source
     assert store.get_receipt("op-promote-2") is None
 
 

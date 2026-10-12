@@ -35,8 +35,9 @@ import hashlib
 import sqlite3
 import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 import pytest
 from rich.console import Console
@@ -46,6 +47,7 @@ from rush import tui as tui_mod
 from rush.memory.maintenance import MaintenanceTask
 from rush.memory.store import (
     MemoryArtifact,
+    MemorySubject,
     OwnerScope,
     TypedArtifactStore,
     VersionConflictError,
@@ -55,6 +57,12 @@ from rush.permissions import ExecutionPermissions
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tools.memory import MemoryTool
 from rush.tui import ProjectSeed, ProjectState, ScanActions, TuiState
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
 
 pytestmark = pytest.mark.usefixtures("_isolated_home", "_no_subprocess_spawns")
 
@@ -163,7 +171,7 @@ def _run(
     memory_run: _MemoryRunSpy,
     *,
     monkeypatch: pytest.MonkeyPatch,
-    fixture_sources: list[str] | None = ("fixture-source",),
+    fixture_sources: Sequence[str] | None = ("fixture-source",),
 ) -> TuiState:
     """Drives the real interactive loop headlessly (`run_interactive_tui`,
     this project's own test harness -- there is no Textual `App.run_test`
@@ -224,12 +232,12 @@ def _seed_promote_row(
         MemoryArtifact(
             id=item["id"],
             family="memory",
-            subject=state.memory_subject,
+            subject=cast("MemorySubject", state.memory_subject),
             trust_tier="EXTERNAL_WRITE",
             content=item["content"],
             source=item["source"],
             created_at=time.time(),
-            owner_scope=OwnerScope(scope["kind"], scope["id"]),
+            owner_scope=OwnerScope(cast("Any", scope["kind"]), scope["id"]),
         )
     )
 
@@ -293,7 +301,10 @@ def test_t28d_query_includes_trust_filter(tmp_path: Path) -> None:
     actions = _actions(spy)
 
     original = tui_mod._memory_sources_and_state
-    tui_mod._memory_sources_and_state = lambda project: (["fixture-source"], None)
+    tui_mod._memory_sources_and_state = lambda project: (  # type: ignore[assignment, misc]
+        ["fixture-source"],
+        None,
+    )
     try:
         tui_mod._memory_refresh(state, project, actions)
     finally:
@@ -320,7 +331,10 @@ def test_t28d_query_includes_owner_source_freshness_archived_filters(
     actions = _actions(spy)
 
     original = tui_mod._memory_sources_and_state
-    tui_mod._memory_sources_and_state = lambda project: (["fixture-source"], None)
+    tui_mod._memory_sources_and_state = lambda project: (  # type: ignore[assignment, misc]
+        ["fixture-source"],
+        None,
+    )
     try:
         tui_mod._memory_refresh(state, project, actions)
     finally:
@@ -463,23 +477,25 @@ def _preview_missing_fields(call: dict[str, Any]) -> list[str]:
         # write/promote requests carry only apply + required_grants; the preview
         # names the affected ids/versions/owner in its response (memory.py:2941).
         raw = (call.get("response") or {}).get("raw") or {}
-        if request.get("apply") is not False:
+        if _nn(request).get("apply") is not False:
             return ["apply=False"]
-        payload = {**raw, "required_grants": request.get("required_grants")}
+        payload = {**raw, "required_grants": _nn(request).get("required_grants")}
     missing = []
     if not (
-        "target_ids" in payload or payload.get("artifact_ids") or payload.get("id")
+        "target_ids" in _nn(payload)
+        or _nn(payload).get("artifact_ids")
+        or _nn(payload).get("id")
     ):
         missing.append("ids")
     if not (
-        "expected_revisions" in payload
-        or payload.get("expected_revisions")
-        or payload.get("expected_version")
+        "expected_revisions" in _nn(payload)
+        or _nn(payload).get("expected_revisions")
+        or _nn(payload).get("expected_version")
     ):
         missing.append("versions")
-    if not payload.get("owner_scope"):
+    if not _nn(payload).get("owner_scope"):
         missing.append("owner")
-    if not payload.get("required_grants"):
+    if not _nn(payload).get("required_grants"):
         missing.append("required_grants")
     return missing
 
@@ -628,8 +644,8 @@ def test_t28d_delete_multiselect_preview_and_apply(
     project = state.active_project
     actions = _actions(spy)
     tui_mod._memory_delete_preview(state, project, actions)
-    assert state.memory_pending_delete["artifact_ids"] == ["a1", "a2"]
-    assert state.memory_pending_delete["expected_revisions"] == {"a1": 1, "a2": 7}
+    assert _nn(state.memory_pending_delete)["artifact_ids"] == ["a1", "a2"]
+    assert _nn(state.memory_pending_delete)["expected_revisions"] == {"a1": 1, "a2": 7}
     from rich.console import Console
 
     console = Console(record=True, width=200, no_color=True)
@@ -951,7 +967,7 @@ def _db_state(root: Path) -> dict[str, Any]:
     have written nothing."""
     db = root / ".rush" / "memory.db"
     with sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True) as conn:
-        state = {
+        state: dict[str, Any] = {
             "memory_artifacts": conn.execute(
                 "SELECT * FROM memory_artifacts ORDER BY id"
             ).fetchall(),
@@ -982,8 +998,17 @@ def test_t28d_maintenance_module_gets_a_read_only_candidate_preview(
     proving the seed is a genuine sweep candidate before testing the new
     preview against it."""
     from rush.memory.maintenance import run_maintenance_cycle
+    from rush.memory.retrieval import MemoryAccess
 
     owner = legacy_owner_scope(tmp_path)
+    # 72-T04 (D9): both calls take a resolved access (write for the apply, list for
+    # the zero-write preview) over the seeded row's one source.
+    write_access = MemoryAccess.legacy(
+        tmp_path, ["tool-1"], owner_scope=owner, operation="write"
+    )
+    list_access = MemoryAccess.legacy(
+        tmp_path, ["tool-1"], owner_scope=owner, operation="list"
+    )
     store = TypedArtifactStore(tmp_path)
     store.write(
         MemoryArtifact(
@@ -1000,7 +1025,7 @@ def test_t28d_maintenance_module_gets_a_read_only_candidate_preview(
     # Arrange-assert: the seeded row is a genuine promotion_sweep candidate
     # under the real predicate -- this must pass today.
     result = run_maintenance_cycle(
-        "promotion_sweep", project_root=tmp_path, owner_scope=owner
+        "promotion_sweep", project_root=tmp_path, access=write_access
     )
     assert result.processed == 1, (
         "arrange failed: the seeded row was not a real promotion_sweep "
@@ -1030,7 +1055,7 @@ def test_t28d_maintenance_module_gets_a_read_only_candidate_preview(
     lock_path = tmp_path / ".rush" / "memory-maintenance.lock"
     before = _db_state(tmp_path)
     preview_ids = preview_fn(
-        "promotion_sweep", project_root=tmp_path, owner_scope=owner
+        "promotion_sweep", project_root=tmp_path, access=list_access
     )
     assert {row["id"] for row in preview_ids} == {"candidate-1"}, (
         "T28-D requires the preview's candidate IDs to equal what the real "
@@ -1465,7 +1490,7 @@ def test_memory_detail_decodes_exact_version_and_real_receipts(tmp_path: Path) -
             },
             permissions=ExecutionPermissions(cache_write=True),
         )
-        assert linked["raw"]["code"] == "OK"
+        assert _nn(linked["raw"])["code"] == "OK"
     telemetry = TelemetryStore(root)
     for index in range(6):
         assert telemetry.record_memory_event(
@@ -1497,9 +1522,9 @@ def test_memory_detail_decodes_exact_version_and_real_receipts(tmp_path: Path) -
     frames = []
     for _ in range(12):
         frames.append(_screen(state))
-        before = state.memory_expanded["scroll"]
+        before = _nn(state.memory_expanded)["scroll"]
         tui._handle_memory_key(state, "]", actions)
-        if state.memory_expanded["scroll"] == before:
+        if _nn(state.memory_expanded)["scroll"] == before:
             break
     visible = "\n".join(frames)
     compact = "".join(char for char in visible if char.isalnum() or char == "-")
@@ -1579,7 +1604,7 @@ def test_memory_promote_uses_two_real_current_sources_and_rejects_stale(
     state.memory_items = [
         {
             **state.memory_items[0],
-            "artifact_version": store.get_current(records[0].id).artifact_version,
+            "artifact_version": _nn(store.get_current(records[0].id)).artifact_version,
         }
     ]
     tui._memory_promote_selected(state, project, actions)

@@ -432,11 +432,11 @@ These Phase 58 component contracts are not whole-application safety guarantees. 
 ## `rush.memory` Module Reference (Phase 62)
 
 ### Module `rush.memory.maintenance`
-- `run_maintenance_cycle(task, *, batch_size=500, project_root=None)`: dispatches to one of 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`). The supplied root scopes the store, lock, expiry, and grounding checks. Acquires/releases a `MeshLockManager` lease; per-row failures enter `MaintenanceRunResult.errors`. Public CLI/MCP calls require cache-write permission before constructing resources.
+- `run_maintenance_cycle(task, *, access, batch_size=500, project_root=None, candidate_ids=None, expected_revisions=None, data_root=None)`: dispatches to one of 4 `MaintenanceTask` variants (`promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep`) for a resolved write `MemoryAccess`; a preview access raises `MaintenanceAccessDenied` before any effect, and `batch_size` outside 1-1000 raises `ValueError`. Every selected row, corroborating peer and reviewed revision is scoped to the access owner and its granted sources. Selection and preparation run without locks; the writes run under the policy lock for at most `POLICY_LOCK_HOLD_BUDGET_S` (10 s) and a `MeshLockManager` lease renewed before every commit. Per-row failures enter `MaintenanceRunResult.errors`; rows left unchanged (lease lost, hold budget spent, write lock busy, or changed after preparation) enter `unprocessed`, and a lost lease sets `lock_lost`. `preview_maintenance_candidates(task, *, access, ...)` lists the same scoped candidates read-only. Public CLI/MCP calls require cache-write permission before constructing resources.
 
 ### Module `rush.memory.expiry`
 - `ExpiryPolicy`, `DEFAULT_POLICIES`: first-match-wins `(subject, trust_tier)` TTL table (`"*"` subject wildcard) — `STATED` never expires, `DERIVED` 14 days, `EXTERNAL_WRITE` 30 days, `IMPORTED` 90 days.
-- `sweep_expired()`: stamps `expired_at`/`expired_by` on rows past their configured TTL; dispatched from `run_maintenance_cycle("expiry_sweep")`.
+- `run_maintenance_cycle("expiry_sweep", access=...)`: stamps `expired_at`/`expired_by` on the access-scoped rows past their configured TTL in one batch transaction; there is no public sweep function.
 
 ### Module `rush.memory.decision_schema`
 - `DecisionRecordFields`: remediation-shaped fields (7 total) reused by `mistake_miner.py`'s pure candidate-shaping function; `status` defaults `"in_progress"`, accepts `"completed"`.

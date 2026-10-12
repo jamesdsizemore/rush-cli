@@ -18,11 +18,17 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 from _process_children import spawn_child
 from test_subprocess_contract import _wait_until
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
 
 POSIX_ONLY = ("fcntl", "termios", "tty", "pwd", "grp", "resource")
 
@@ -191,7 +197,7 @@ def _windows_recover_child(root: str, owner: str, result: str) -> None:
     import rush.tools.common  # noqa: F401 -- initializes the shared runtime
     from rush.runtime import subprocesses
 
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
     kernel.OpenProcess.restype = ctypes.c_void_p
     kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
@@ -1021,7 +1027,13 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
     import hashlib
 
     from rush.memory.maintenance import run_maintenance_cycle
-    from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
+    from rush.memory.retrieval import MemoryAccess
+    from rush.memory.store import (
+        MemoryArtifact,
+        MemorySubject,
+        OwnerScope,
+        TypedArtifactStore,
+    )
     from rush.permissions import ExecutionPermissions
     from rush.tools.memory import MemoryTool
 
@@ -1086,7 +1098,7 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
             },
             permissions=ExecutionPermissions(cache_write=True),
         )
-        assert linked["raw"]["code"] == "OK"
+        assert _nn(linked["raw"])["code"] == "OK"
     for index in range(6):
         expanded = MemoryTool().run(
             root,
@@ -1097,7 +1109,7 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
             invocation_id=f"native-use-{index:02d}",
             project_id=project_id,
         )
-        assert expanded["raw"]["code"] == "OK"
+        assert _nn(expanded["raw"])["code"] == "OK"
     from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
 
     receipts = read_artifact_expansion_receipts_readonly(
@@ -1109,7 +1121,7 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
     stale_source = root / "native-missing-source.py"
     stale_source.write_text("def symbol():\n    return 1\n", encoding="utf-8")
     stale_source_hash = hashlib.sha256(stale_source.read_bytes()).hexdigest()
-    maintenance = (
+    maintenance: tuple[tuple[str, MemorySubject, float, str | None], ...] = (
         (
             "native-stale",
             "architectural_decision",
@@ -1136,10 +1148,17 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
             receipt_operation_id=f"native-create-{identifier}",
         )
     # Canonical sweep computes corroboration counts; fixtures never fabricate them.
+    # 72-T04 (D9): the cycle takes a resolved write access over the three
+    # maintenance rows' sources (each row's source is its own identifier).
     sweep = run_maintenance_cycle(
         "promotion_sweep",
         project_root=root,
-        owner_scope=owner,
+        access=MemoryAccess.legacy(
+            root,
+            [item[0] for item in maintenance],
+            owner_scope=owner,
+            operation="write",
+        ),
         candidate_ids=[item[0] for item in maintenance],
     )
     assert sweep.processed == 3 and sweep.changed == 3 and sweep.errors == ()
@@ -1151,7 +1170,7 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     from rush.memory.store import TypedArtifactStore
 
     store = TypedArtifactStore(root)
-    observations = {}
+    observations: dict[str, Any] = {}
     press(b"\x1bOR", "[1-8] go")
     press(b"4", "owner=project:")
     press(b"]", "page 2/2")
@@ -1161,9 +1180,9 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     skill_filter = press(b"S", "page 1/1")
     assert "subject=skill_pattern" in skill_filter
     skill = store.get_current("native-skill")
-    assert skill.artifact_version == entries[skill.id].artifact_version + 1
-    assert skill.subject == "skill_pattern"
-    skill_detail = press(b"x", f"{skill.id} v{skill.artifact_version}")
+    assert _nn(skill).artifact_version == entries[_nn(skill).id].artifact_version + 1
+    assert _nn(skill).subject == "skill_pattern"
+    skill_detail = press(b"x", f"{_nn(skill).id} v{_nn(skill).artifact_version}")
     assert '"note": "native-skill"' in skill_detail
     observations["subject_skill"] = {"filter": skill_filter, "detail": skill_detail}
     press(b"-", "subject=skill_pattern")
@@ -1210,7 +1229,7 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
         "native-create-native-lone",
         *[f"native-use-{index:02d}" for index in range(6)],
     }
-    seen = set()
+    seen: set[str] = set()
     detail_frames = []
     while required - seen:
         seen.update(marker for marker in required if marker in expanded)
@@ -1236,45 +1255,46 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     press(b"-", "native-lone")
     press(b"p", "promote preview:")
     press(b"n", "promote cancelled")
-    assert store.get_current("native-lone").artifact_version == 1
+    assert _nn(store.get_current("native-lone")).artifact_version == 1
     press(b"p", "promote preview:")
     press(b"y", "promotion denied:")
-    assert store.get_current("native-lone").trust_tier == "DERIVED"
+    assert _nn(store.get_current("native-lone")).trust_tier == "DERIVED"
     press(b"/NATIVECORROBORATED\r", "native-primary")
     press(b"p", "promote preview:")
     observations["promotion"] = press(b"y", "promoted to STATED")
     # Promotion creates canonical reviewed candidate; original evidence retained.
     promoted = [store.get_current(row["id"]) for row in store.list_artifact_refs()]
     assert any(
-        row.trust_tier == "STATED" and row.content == {"note": "NATIVECORROBORATED"}
+        _nn(row).trust_tier == "STATED"
+        and _nn(row).content == {"note": "NATIVECORROBORATED"}
         for row in promoted
     )
     press(b"/NATIVELONE\r", "native-lone")
     press(b"e", "edit note>")
     press(b"NATIVEEDITED\r", "edit preview:")
     press(b"n", "edit cancelled")
-    assert store.get_current("native-lone").content == {"note": "NATIVELONE"}
+    assert _nn(store.get_current("native-lone")).content == {"note": "NATIVELONE"}
     press(b"e", "edit note>")
     press(b"NATIVEEDITED\r", "edit preview:")
     store.update_content("native-lone", {"note": "NATIVEEXTERNAL"}, expected_version=1)
     observations["conflict"] = press(b"y", "edit conflict on native-lone")
-    assert store.get_current("native-lone").content == {"note": "NATIVEEXTERNAL"}
+    assert _nn(store.get_current("native-lone")).content == {"note": "NATIVEEXTERNAL"}
     press(b"r", "refreshed native-lone to v2")
     press(b"\r", "edit preview:")
     press(b"y", "edit applied")
-    assert store.get_current("native-lone").artifact_version == 3
-    assert store.get_current("native-lone").content == {"note": "NATIVEEDITED"}
+    assert _nn(store.get_current("native-lone")).artifact_version == 3
+    assert _nn(store.get_current("native-lone")).content == {"note": "NATIVEEDITED"}
     press(b"/NATIVEEDITED\r", "native-lone")
     press(b"a", "archive preview:")
     press(b"n", "archive cancelled")
-    assert store.get_current("native-lone").archived_at is None
+    assert _nn(store.get_current("native-lone")).archived_at is None
     press(b"a", "archive preview:")
     press(b"y", "archived native-lone")
-    assert store.get_current("native-lone").archived_at is not None
+    assert _nn(store.get_current("native-lone")).archived_at is not None
     press(b"f\t\t\ttrue\r", "native-lone")
     press(b"a", "restore preview:")
     press(b"y", "restored native-lone")
-    assert store.get_current("native-lone").archived_at is None
+    assert _nn(store.get_current("native-lone")).archived_at is None
     press(b"f\t\t\t" + b"\x7f" * 4 + b"\r", "native-lone")
     press(b"d", "preview: 1 record(s) selected")
     press(b"n", "delete cancelled")
@@ -1297,11 +1317,11 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
         for row in store.list_artifact_refs()
         if row["id"] not in before
     ]
-    assert len(created) == 1 and created[0].content == {"note": "NATIVECREATED"}
+    assert len(created) == 1 and _nn(created[0]).content == {"note": "NATIVECREATED"}
     press(b"/NATIVELONG\r", "native-long")
-    payload = store.get_version_content("native-long", 1).encode()
-    page_ranges = []
-    visible_contents = []
+    payload = _nn(store.get_version_content("native-long", 1)).encode()
+    page_ranges: list[Any] = []
+    visible_contents: list[Any] = []
 
     def visible_page(frame: str, index: int) -> list[str]:
         size = re.search(r"\((\d+)x\d+\)", frame)
@@ -1338,7 +1358,7 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
             expected[start : start + chunk_width]
             for start in range(0, len(expected), chunk_width)
         ]
-        seen = {}
+        seen: dict[Any, Any] = {}
         captured = []
         while len(seen) < len(chunks):
             lines = frame.splitlines()
@@ -1420,11 +1440,12 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     } == versions
     press(b"w", "maintenance preview:")
     observations["maintenance"] = press(b"y", "Maintenance cycle 'promotion_sweep'")
-    assert store.get_current("native-stale").stale is True
-    assert store.get_current("native-expiry").expired is True
+    assert _nn(store.get_current("native-stale")).stale is True
+    assert _nn(store.get_current("native-expiry")).expired is True
     skill = store.get_current("native-skill")
     assert (
-        skill.trust_tier == "DERIVED" and skill.artifact_version == versions[skill.id]
+        _nn(skill).trust_tier == "DERIVED"
+        and _nn(skill).artifact_version == versions[_nn(skill).id]
     )
     return observations
 
@@ -1437,7 +1458,7 @@ def _exercise_native_artifact_actions(root: Path, entries: dict, press) -> dict:
     press(b"7", "Captured (")
     press(b"\t", "│ > ")
     press(b"j" * 20, "page 2/2")
-    observations = {}
+    observations: dict[str, Any] = {}
     for rel, marker in (
         ("native-report-00.txt", "CAPTURED REPORT 00"),
         ("native-report-01.txt", "CAPTURED REPORT 01"),
@@ -1487,6 +1508,7 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         preview_maintenance_candidates,
         run_maintenance_cycle,
     )
+    from rush.memory.retrieval import MemoryAccess
     from rush.memory.store import TypedArtifactStore
     from rush.tui import _artifact_cursor
     from rush.workflows.projects import read_project_artifact_page, register_project
@@ -1512,7 +1534,7 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         assert base64.b64decode(page["content_base64"]) == entry["bytes"]
         assert page["sha256"] == entry["sha256"] and page["size"] == entry["size"]
     store = TypedArtifactStore(root)
-    assert store.get_current("native-lone").content == {"note": "NATIVELONE"}
+    assert _nn(store.get_current("native-lone")).content == {"note": "NATIVELONE"}
     assert (
         TypedArtifactStore.read_artifact_receipts_readonly(root, "native-lone", 1)[0][
             "id"
@@ -1520,25 +1542,30 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         == "native-create-native-lone"
     )
     owner = memory["native-lone"].owner_scope
+    sources = sorted({entry.source for entry in memory.values()})
     for task, identifier in (
         ("staleness_sweep", "native-stale"),
         ("skill_admission_check", "native-skill"),
         ("expiry_sweep", "native-expiry"),
     ):
         candidates = preview_maintenance_candidates(
-            task, project_root=root, owner_scope=owner
+            task,  # type: ignore[arg-type]
+            project_root=root,
+            access=MemoryAccess.legacy(
+                root, sources, owner_scope=owner, operation="list"
+            ),
         )
         assert candidates == [{"id": identifier, "artifact_version": 2}]
     stale_sweep = run_maintenance_cycle(
         "staleness_sweep",
         project_root=root,
-        owner_scope=owner,
+        access=MemoryAccess.legacy(root, sources, owner_scope=owner, operation="write"),
         candidate_ids=["native-stale"],
         expected_revisions={"native-stale": 2},
     )
     assert stale_sweep.processed == 1 and stale_sweep.changed == 1
     assert stale_sweep.errors == () and stale_sweep.refused == ()
-    assert TypedArtifactStore(root).get_current("native-stale").stale is True
+    assert _nn(TypedArtifactStore(root).get_current("native-stale")).stale is True
 
 
 def _windows_installed_tui_child(
@@ -1657,7 +1684,7 @@ def _windows_installed_tui_child(
     kernel.SetStdHandle.argtypes = (ctypes.c_uint32, ctypes.c_void_p)
     kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
     kernel.CloseHandle.restype = ctypes.c_int
-    CtrlHandler = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint32)
+    CtrlHandler = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint32)  # type: ignore[attr-defined]
     kernel.SetConsoleCtrlHandler.argtypes = (CtrlHandler, ctypes.c_int)
     kernel.GenerateConsoleCtrlEvent.argtypes = (ctypes.c_uint32, ctypes.c_uint32)
     kernel.GenerateConsoleCtrlEvent.restype = ctypes.c_int
@@ -1669,7 +1696,7 @@ def _windows_installed_tui_child(
         ctypes.POINTER(ctypes.c_uint32),
     )
     transcript: dict = {"sizes": [], "inputs": [], "frames": {}, "exit": None}
-    assert kernel.FreeConsole() or ctypes.get_last_error() == 6
+    assert kernel.FreeConsole() or ctypes.get_last_error() == 6  # type: ignore[attr-defined]
     assert kernel.AllocConsole(), "native child could not allocate a real console"
     input_handle = output_handle = None
     proc = None
@@ -1683,8 +1710,8 @@ def _windows_installed_tui_child(
         invalid = ctypes.c_void_p(-1).value
         assert input_handle not in (None, invalid)
         assert output_handle not in (None, invalid)
-        os.set_handle_inheritable(input_handle, True)
-        os.set_handle_inheritable(output_handle, True)
+        os.set_handle_inheritable(input_handle, True)  # type: ignore[attr-defined]
+        os.set_handle_inheritable(output_handle, True)  # type: ignore[attr-defined]
         standard_handles = [kernel.GetStdHandle(which) for which in (-10, -11, -12)]
         for which, handle in (
             (-10, input_handle),
@@ -1765,7 +1792,7 @@ def _windows_installed_tui_child(
             try:
                 info = info_for(handle)
                 width = info.window.right - info.window.left + 1
-                colors = set()
+                colors: set[Any] = set()
                 for row in range(info.window.top, info.window.bottom + 1):
                     attributes = (ctypes.c_uint16 * width)()
                     count = ctypes.c_uint32()
@@ -1870,8 +1897,8 @@ def _windows_installed_tui_child(
             "USERPROFILE": str(Path(local_app_data).parent),
             "NO_COLOR": "1",
         }
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESTDHANDLES
+        startup = subprocess.STARTUPINFO()  # type: ignore[attr-defined]
+        startup.dwFlags |= subprocess.STARTF_USESTDHANDLES  # type: ignore[attr-defined]
         startup.hStdInput = input_handle
         startup.hStdOutput = output_handle
         startup.hStdError = output_handle
@@ -2117,6 +2144,27 @@ def _windows_installed_tui_child(
             )
             memory_entries = _seed_native_memory_actions(
                 artifact_root, artifact_project.project_id
+            )
+            # 72-T04 (D3/D9): the installed TUI sends the registered project UUID as
+            # the owner, which legacy `maintain` refuses; the flow runs in `policy`
+            # mode under this grant (the TUI supplies the source list).
+            from rush.memory import authorization as auth
+            from rush.memory.store import OwnerScope
+
+            policy_root = Path(local_app_data) / "Rush"
+            auth.grant_memory_scope(
+                project_root=artifact_root,
+                owner_scope=OwnerScope("project", artifact_project.project_id),
+                approved_sources=sorted(
+                    {entry.source for entry in memory_entries.values()}
+                ),
+                allowed_operations=["ask", "expand", "list", "write"],
+                expected_policy_revision=int(
+                    auth.load_policy_readonly(data_root=policy_root)["policy_revision"]
+                    or 0
+                ),
+                consent=True,
+                data_root=policy_root,
             )
             resize(columns, rows)
             proc = subprocess.Popen(

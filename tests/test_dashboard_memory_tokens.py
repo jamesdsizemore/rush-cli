@@ -32,11 +32,23 @@ from rush.dashboard import server as server_module
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.merkle_invalidator import MerkleInvalidator
 from rush.memory.retrieval import recall_page
-from rush.memory.store import MemoryArtifact, OwnerScope, TypedArtifactStore
+from rush.memory.store import (
+    MemoryArtifact,
+    MemoryFamily,
+    MemorySubject,
+    OwnerScope,
+    TrustTier,
+    TypedArtifactStore,
+)
 from rush.token_economy.telemetry import TelemetryStore
 from rush.tui import ProjectState, TuiState, _dispatch_key, _pump, default_scan_actions
 from rush.workflows import projects as projects_module
 from rush.workflows.projects import register_project
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
 
 
 @pytest.fixture(autouse=True)
@@ -176,7 +188,7 @@ def _start_dashboard(project_id: str, root: Path):
     return server, base_url, cookie, csrf
 
 
-_FAMILY_BY_SUBJECT = {
+_FAMILY_BY_SUBJECT: dict[str, MemoryFamily] = {
     "active_context": "handoff",
     "episodic": "experience",
     "preference": "memory",
@@ -190,8 +202,8 @@ _FAMILY_BY_SUBJECT = {
 def _seed_artifact(
     store: TypedArtifactStore,
     *,
-    subject: str = "domain_knowledge",
-    trust_tier: str = "EXTERNAL_WRITE",
+    subject: MemorySubject = "domain_knowledge",
+    trust_tier: TrustTier = "EXTERNAL_WRITE",
     content: dict[str, Any] | None = None,
     source: str = "test-source",
     symbol_ref: str | None = None,
@@ -481,7 +493,6 @@ def test_memory_denied_trust_promotion_insufficient_corroboration(
                 "content": {"note": "a claim", "id": "x", "family": "memory"},
                 "source": "only-one-source",
                 "user_stated": False,
-                "candidate_sources": ["only-one-source"],
                 "owner_scope": {"kind": "project", "id": project_id},
             },
             grants=_grant_all(),
@@ -490,6 +501,7 @@ def test_memory_denied_trust_promotion_insufficient_corroboration(
         raw = body["data"]["raw"]
         assert raw["promoted"] is False
         assert raw["denial_reason"] == "insufficient_corroboration"
+        assert raw["corroboration_count"] == 1  # the candidate's own stored source
 
         # Denial never left a STATED row behind.
         status, snap = _snapshot(base_url, project_id, cookie, "memory", query="claim")
@@ -504,6 +516,20 @@ def test_memory_promotion_succeeds_with_two_corroborating_sources(
 ) -> None:
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path)
+    # 72-T04 (D8): the corroborating peer is a stored, granted-source row the caller
+    # names in `candidate_refs` (`ID@VERSION@SOURCE`); a bare source list is refused.
+    peer = TypedArtifactStore(root).write(
+        MemoryArtifact(
+            id="peer-b",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content={"note": "corroborated claim"},
+            source="source-b",
+            created_at=time.time(),
+            owner_scope=OwnerScope("project", project_id),
+        )
+    )
     server, base_url, cookie, csrf = _start_dashboard(project_id, root)
     try:
         status, body = _action(
@@ -517,7 +543,7 @@ def test_memory_promotion_succeeds_with_two_corroborating_sources(
                 "content": {"note": "corroborated claim"},
                 "source": "source-a",
                 "user_stated": False,
-                "candidate_sources": ["source-a", "source-b"],
+                "candidate_refs": f"{peer.id}@{peer.artifact_version}@{peer.source}",
                 "owner_scope": {"kind": "project", "id": project_id},
             },
             grants=_grant_all(),
@@ -526,6 +552,7 @@ def test_memory_promotion_succeeds_with_two_corroborating_sources(
         raw = body["data"]["raw"]
         assert raw["promoted"] is True
         assert raw["new_tier"] == "STATED"
+        assert raw["corroboration_count"] == 2
 
         status, snap = _snapshot(
             base_url, project_id, cookie, "memory", query="corroborated"
@@ -1300,7 +1327,7 @@ def test_tokens_get_project_identity_filters_and_no_migration(
             for index, (owner, run, agent, session, raw, sent, memory) in enumerate(
                 rows
             ):
-                identities = {
+                identities: dict[str, Any] = {
                     "project_id": owner,
                     "run_id": run,
                     "agent_id": agent,
@@ -1366,7 +1393,7 @@ def test_tokens_get_project_identity_filters_and_no_migration(
             sorted(path.name for path in db.parent.iterdir()),
         )
 
-    cases = (
+    cases: tuple[tuple[Any, ...], ...] = (
         (
             project_a,
             root_a,
@@ -1735,7 +1762,7 @@ def test_session_continuity_tool_mints_a_distinct_invocation_id_per_run_call(
     monkeypatch.setattr(continuity_module, "pack_context", _fake_pack_context)
     tool = SessionContinuityTool()
     granted = ExecutionPermissions(cache_write=True)
-    common = {
+    common: dict[str, Any] = {
         "operation": "context_pack",
         "context_path": "x.py",
         "target_symbol": "f",
@@ -1851,7 +1878,7 @@ def test_tui_memory_delete_confirm_deletes_only_selected(tmp_path: Path) -> None
     state.memory_selected_index = doomed_index
     _key(state, " ", actions)
     _key(state, "d", actions)
-    assert state.memory_pending_delete["artifact_ids"] == [doomed.id]
+    assert _nn(state.memory_pending_delete)["artifact_ids"] == [doomed.id]
 
     _key(state, "y", actions)
     assert state.memory_pending_delete is None

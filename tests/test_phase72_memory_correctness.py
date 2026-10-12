@@ -15,6 +15,7 @@ import datetime
 import gc
 import hashlib
 import hmac
+import importlib
 import json
 import os
 import re
@@ -339,12 +340,64 @@ def _paging_key_rows(db: Path) -> int:
         return int(conn.execute("SELECT COUNT(*) FROM memory_cursor_key").fetchone()[0])
 
 
+# --- 72-T04 call-site helpers (D8/D9: maintenance takes a resolved access) ------------
+
+
+def _t04_sources(root: Path) -> list[str]:
+    """Every source label stored in `root`'s memory.db: the explicit source list a
+    `legacy`-mode maintenance access names (D3)."""
+    db = Path(root) / ".rush" / "memory.db"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        rows = conn.execute("SELECT DISTINCT source FROM memory_artifacts").fetchall()
+    return sorted(str(r[0]) for r in rows)
+
+
+def _t04_access(
+    root: Path,
+    *,
+    operation: str = "write",
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+) -> Any:
+    from rush.memory.retrieval import MemoryAccess
+
+    return MemoryAccess.legacy(
+        root,
+        _t04_sources(root) if sources is None else sources,
+        owner_scope=owner or legacy_owner_scope(Path(root).resolve()),
+        operation=operation,
+    )
+
+
+def _t04_cycle(
+    task: str, root: Path, *, owner: OwnerScope | None = None, **kwargs: Any
+) -> Any:
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    return run_maintenance_cycle(
+        task,  # type: ignore[arg-type]
+        project_root=root,
+        access=_t04_access(root, owner=owner),
+        **kwargs,
+    )
+
+
+def _t04_expire(
+    root: Path, candidate_ids: list[str], *, owner: OwnerScope | None = None
+) -> int:
+    """The `expiry_sweep` over `candidate_ids`; the public `sweep_expired` is gone."""
+    return int(
+        _t04_cycle(
+            "expiry_sweep", root, owner=owner, candidate_ids=candidate_ids
+        ).changed
+    )
+
+
 # --- 1 ----------------------------------------------------------------------
 
 
 def test_t01_denied_current_routes_and_authority(tmp_path: Path) -> None:
     from rush.memory import authorization as auth
-    from rush.memory.expiry import sweep_expired
     from rush.memory.retrieval import (
         MemoryAccess,
         defended_recall,
@@ -383,7 +436,7 @@ def test_t01_denied_current_routes_and_authority(tmp_path: Path) -> None:
     store.archive(
         "row-a2", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
     )
-    assert sweep_expired(root, owner_scope=ALICE, candidate_ids=["row-a3"]) == 1
+    assert _t04_expire(root, ["row-a3"], owner=ALICE) == 1
     _, promotion = store.promote(
         "row-t1", user_stated=True, expected_version=1, owner_scope=ALICE
     )
@@ -775,7 +828,6 @@ def test_t01_edit_and_update_content_drop_stated_authority(tmp_path: Path) -> No
 
 def test_t01_payload_hash_written_and_tamper_excluded(tmp_path: Path) -> None:
     from rush.memory import retrieval
-    from rush.memory.expiry import sweep_expired
     from rush.memory.retrieval import defended_recall, recall_page
 
     root = tmp_path / "project"
@@ -831,7 +883,7 @@ def test_t01_payload_hash_written_and_tamper_excluded(tmp_path: Path) -> None:
         source="src",
         created_at=time.time() - 30 * DAY,
     )
-    assert sweep_expired(root, candidate_ids=["w-expire"]) == 1
+    assert _t04_expire(root, ["w-expire"]) == 1
     assert_version_bound("w-expire")
 
     _row(store, "w-tampered", None, "mk-tampered", source="src")
@@ -1158,7 +1210,6 @@ def test_t01_missing_store_and_old_schema_create_nothing(tmp_path: Path) -> None
 def test_t01_review_citations_and_cache_selection_use_shared_decision(
     tmp_path: Path,
 ) -> None:
-    from rush.memory.expiry import sweep_expired
     from rush.token_economy.memory_cache_gate import (
         check_memory_before_pack,
         write_cache_fill,
@@ -1200,7 +1251,7 @@ def test_t01_review_citations_and_cache_selection_use_shared_decision(
     failure("f-tampered")
     failure("f-js", symbol_ref="web/app.js::Known", content_hash=js_hash)
     store.archive("f-archived", expected_version=1, scope="failure", apply=True)
-    assert sweep_expired(root, candidate_ids=["f-expired"]) == 1
+    assert _t04_expire(root, ["f-expired"]) == 1
     _tamper(store.db_path, "f-tampered")
 
     def review() -> tuple[list[str], int]:
@@ -1528,7 +1579,6 @@ def test_t01_learned_advice_reads_use_shared_decision(tmp_path: Path) -> None:
         compare_last_success,
         recall_repair_episodes,
     )
-    from rush.memory.expiry import sweep_expired
     from rush.memory.intent import intent_evidence
     from rush.memory.verification import plan_checks
 
@@ -1657,9 +1707,7 @@ def test_t01_learned_advice_reads_use_shared_decision(tmp_path: Path) -> None:
             apply=True,
         )
     expired_ids = [artifact_id for artifact_id, _ in rows["expired"]]
-    assert sweep_expired(root, owner_scope=ALICE, candidate_ids=expired_ids) == len(
-        expired_ids
-    )
+    assert _t04_expire(root, expired_ids, owner=ALICE) == len(expired_ids)
     for artifact_id, _ in rows["tampered"]:
         _tamper(store.db_path, artifact_id)
     _grant(auth, root, ALICE, data_root, sources=("s",), ops=("ask", "list"))
@@ -2049,7 +2097,7 @@ def test_t01_fix1_maintenance_promotion_refuses_payload_mismatched_row(
     run_maintenance_cycle(
         "promotion_sweep",
         project_root=root,
-        owner_scope=legacy_owner_scope(root.resolve()),
+        access=_t04_access(root, sources=["s1", "s2"]),
         candidate_ids=["m1"],
     )
     _fix1_assert_quarantined(store, "m1", SUBJECT, "s1")
@@ -2447,11 +2495,7 @@ def _fix2_fixture_row(root: Path, artifact_id: str, path: str) -> MemoryArtifact
 
 def _fix2_run_path(root: Path, artifact_id: str, path: str) -> None:
     """Drive one lifecycle path over `artifact_id` through its real entry point."""
-    from rush.memory.expiry import sweep_expired
-    from rush.memory.maintenance import run_maintenance_cycle
-
     store = TypedArtifactStore(root)
-    owner = legacy_owner_scope(root)
     if path == "archive":
         version = _version(store.db_path, artifact_id)
         for step, archived in enumerate((True, False)):
@@ -2464,22 +2508,12 @@ def _fix2_run_path(root: Path, artifact_id: str, path: str) -> None:
             )
             assert applied["applied"] is True
     elif path == "expiry":
-        assert sweep_expired(root, candidate_ids=[artifact_id]) == 1
+        assert _t04_expire(root, [artifact_id]) == 1
     elif path == "staleness":
         (root / "module.py").write_text("def hello():\n    return 2\n", "utf-8")
-        run_maintenance_cycle(
-            "staleness_sweep",
-            project_root=root,
-            owner_scope=owner,
-            candidate_ids=[artifact_id],
-        )
+        _t04_cycle("staleness_sweep", root, candidate_ids=[artifact_id])
     elif path == "promotion_sweep":
-        run_maintenance_cycle(
-            "promotion_sweep",
-            project_root=root,
-            owner_scope=owner,
-            candidate_ids=[artifact_id],
-        )
+        _t04_cycle("promotion_sweep", root, candidate_ids=[artifact_id])
     else:
         store.promote(artifact_id, user_stated=True)
 
@@ -2604,18 +2638,22 @@ def test_t01_fix2_j2_promotion_sweep_rereads_row_under_lock(
 
     with contextlib.closing(sqlite3.connect(db)) as conn:
         conn.row_factory = sqlite3.Row
+        access = _t04_access(root, sources=["s1"])
         (row,) = maintenance._select_rows(
             "promotion_sweep",
             conn,
             root,
-            owner_scope=legacy_owner_scope(root),
+            access=access,
             batch_size=500,
             candidate_ids=["m1"],
+            now=time.time(),
         )
         assert json.loads(row["content"]) == {"text": "needle m1"}
         store.update_content("m1", {"text": "needle EDITED"})
         edited_version = _version(db, "m1")
-        maintenance._mutate_promotion_sweep(conn, row, root)
+        maintenance._mutate_promotion_sweep(
+            conn, row, store=store, access=access, renew=lambda: True
+        )
 
     raw = _fix1_raw_content(db, "m1")
     assert json.loads(raw) == {"text": "needle EDITED"}
@@ -2800,7 +2838,6 @@ def test_t01_fix2_deep_nested_content_is_corrupt_not_crash(
 ) -> None:
     """J6: content too deeply nested to parse is excluded as corrupt on every read
     route, and archive, expiry, maintenance and delete still complete."""
-    from rush.memory.expiry import sweep_expired
     from rush.memory.maintenance import run_maintenance_cycle
     from rush.memory.retrieval import (
         MemoryAccess,
@@ -2849,11 +2886,11 @@ def test_t01_fix2_deep_nested_content_is_corrupt_not_crash(
     assert "integrity_content_corrupt" in historical.reason_codes
 
     _pm_archive_unarchive(store, "d1")
-    sweep_expired(root, candidate_ids=["d2"])
+    _t04_expire(root, ["d2"])
     run_maintenance_cycle(
         "promotion_sweep",
         project_root=root,
-        owner_scope=legacy_owner_scope(root),
+        access=_t04_access(root, sources=["sd"]),
         candidate_ids=["d1"],
     )
     result = store.delete_batch(
@@ -3454,7 +3491,6 @@ def test_t02_recall_admission_rejects_caps_below_minimum_before_effects(
 
 def test_t02_cursor_binding_rejects_drift_and_forgery(tmp_path: Path) -> None:
     from rush.memory import retrieval
-    from rush.memory.expiry import sweep_expired
 
     def seed(root: Path) -> TypedArtifactStore:
         root.mkdir()
@@ -3541,7 +3577,7 @@ def test_t02_cursor_binding_rejects_drift_and_forgery(tmp_path: Path) -> None:
     _t02_restarted(resume(token), "archive")
 
     token = first_token(store)
-    assert sweep_expired(store.project_root, candidate_ids=["old1"]) == 1
+    assert _t04_expire(store.project_root, ["old1"]) == 1
     _t02_restarted(resume(token), "expiry sweep")
 
 
@@ -4970,7 +5006,6 @@ def _t2_typeof(db: Path, table: str, artifact_id: str = "u1") -> str:
 
 
 def _t2_blob_promotion(tmp_path: Path, case: str) -> None:
-    from rush.memory.maintenance import run_maintenance_cycle
 
     root = tmp_path / "project"
     root.mkdir()
@@ -5028,10 +5063,10 @@ def _t2_blob_promotion(tmp_path: Path, case: str) -> None:
                 )
                 conn.commit()
             assert _t2_typeof(sub_store.db_path, "memory_artifacts", "m1") == "blob"
-        run_maintenance_cycle(
+        _t04_cycle(
             "promotion_sweep",
-            project_root=sub,
-            owner_scope=legacy_owner_scope(sub.resolve()),
+            sub,
+            owner=legacy_owner_scope(sub.resolve()),
             candidate_ids=["m1"],
         )
         current = sub_store.get_current("m1")
@@ -5072,11 +5107,7 @@ def _t2_bad_text_row(store: TypedArtifactStore, artifact_id: str) -> None:
     ],
 )
 def test_t02_invalid_utf8_text_rows(tmp_path: Path, case: str) -> None:
-    from rush.memory.expiry import sweep_expired
-    from rush.memory.maintenance import (
-        preview_maintenance_candidates,
-        run_maintenance_cycle,
-    )
+    from rush.memory.maintenance import preview_maintenance_candidates
 
     root = tmp_path / "project"
     root.mkdir()
@@ -5198,10 +5229,18 @@ def test_t02_invalid_utf8_text_rows(tmp_path: Path, case: str) -> None:
 
     owner = legacy_owner_scope(root.resolve())
     for task in ("promotion_sweep", "staleness_sweep", "skill_admission_check"):
-        preview_maintenance_candidates(task, project_root=root, owner_scope=owner)
-        run_maintenance_cycle(task, project_root=root, owner_scope=owner)
-    preview_maintenance_candidates("expiry_sweep", project_root=root, owner_scope=owner)
-    sweep_expired(root.resolve(), owner_scope=owner)
+        preview_maintenance_candidates(
+            task,  # type: ignore[arg-type]
+            project_root=root,
+            access=_t04_access(root, operation="list", owner=owner),
+        )
+        _t04_cycle(task, root, owner=owner)
+    preview_maintenance_candidates(
+        "expiry_sweep",
+        project_root=root,
+        access=_t04_access(root, operation="list", owner=owner),
+    )
+    _t04_cycle("expiry_sweep", root.resolve(), owner=owner)
 
 
 # <<<T02-GATE B end>>>
@@ -8449,7 +8488,9 @@ def _m_run_tui(
     cursor or caps field, so those cells are the baseline expansion; a missing or
     unmigrated store and an archived, expired or tampered row expand nothing."""
     from rush.tui import default_scan_actions
-    from tests.test_dashboard_memory_tokens import _key, _tui_state
+
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _key, _tui_state = _dmt._key, _dmt._tui_state
 
     root = _pm_project(tmp_path, monkeypatch)
     refused = (col, val) in (
@@ -8615,7 +8656,7 @@ def _m_cell_ids() -> list[str]:
     ]
 
 
-def _m_cells() -> list[Any]:
+def _t02_matrix_cells() -> list[Any]:
     import functools
 
     cells: list[Any] = []
@@ -8674,12 +8715,12 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """The matrix crosses the 72-T01 route inventory (`_G2_ROUTES`), which is built
     after this section, so its cells are generated once the module is loaded."""
     if metafunc.function.__name__ == "test_t02_route_mode_matrix":
-        metafunc.parametrize("runner", _m_cells())
+        metafunc.parametrize("runner", _t02_matrix_cells())
 
 
 def test_t02_route_mode_matrix_registers_every_cell() -> None:
     """G2: every entry point crossed with every column value is a collected cell."""
-    collected = {param.id for param in _m_cells()}
+    collected = {param.id for param in _t02_matrix_cells()}
     missing = sorted(set(_m_cell_ids()) - collected)
     assert not missing, missing[:10]
     assert len(set(_m_cell_ids())) == len(_m_cell_ids())
@@ -11758,7 +11799,8 @@ def test_t01_memory_route_inventory_closed() -> None:
     scan = _scan_route_pairs()
     # the scan is not trivially empty: 110 pairs at HEAD, minus the three writers
     # (`record_turn`, `record_event`, `_write_handoff_artifact`) whose store now opens
-    # inside the shared writer gate instead of in the function itself
+    # inside the shared writer gate instead of in the function itself, minus the two
+    # pairs 72-T04 (G9a) removes
     assert len(scan) >= 105, "the AST scan found far fewer pairs than at HEAD"
     assert _inventory_violations(scan, fixture, _plan_section_2_3()) == []
     assert _t01_route_contract_violations() == []
@@ -12215,6 +12257,7 @@ def _overlay_calls() -> dict[str, Any]:
             operation="maintain",
             task="staleness_sweep",
             owner_scope=owner.as_dict(),
+            sources=[OVERLAY_SOURCE],
             request={"apply": apply},
             permissions=permissions,
         )
@@ -12278,6 +12321,10 @@ def test_t01_overlay_storage_root_never_project_route(
         link.symlink_to(overlay_root)
         target = link
     db = overlay_root / ".rush" / "memory.db"
+    # 72-T04 (D1 row 1a): the in-process promote cell. The store under `target` is
+    # opened before the snapshot (a `sub` root has its own `.rush`); the promote is
+    # then refused before any D8 read.
+    in_process = TypedArtifactStore(target)
     before_sha = _sha_file(db)
     before_tree = _tree(overlay_root)
     for name, call in _overlay_calls().items():
@@ -12286,8 +12333,20 @@ def test_t01_overlay_storage_root_never_project_route(
         assert _reason_of(result) == "overlay_storage_root", name
         assert "mk-p1" not in _dump(result.get("raw")), name
         assert "overlay write" not in _dump(result.get("raw")), name
+    from rush.memory.authorization import MemoryPolicyError
+
+    for user_stated in (True, False):
+        with pytest.raises(MemoryPolicyError) as refused:
+            in_process.promote("p1", user_stated=user_stated, access=None)
+        assert (refused.value.code, refused.value.reason) == (
+            "E_PERMISSION",
+            "overlay_storage_root",
+        )
     assert _sha_file(db) == before_sha
     assert _tree(overlay_root) == before_tree
+    assert (
+        _nn(TypedArtifactStore(overlay_root).get_current("p1")).trust_tier == "DERIVED"
+    )
 
 
 # --- R12: PR6 mutation set over authorization.py ------------------------------
@@ -15868,17 +15927,31 @@ def test_t01_row_mac_tamper_in_bound_store(mode: str, tmp_path: Path) -> None:
     finally:
         view.close()
 
-    if mode == "legacy":
-        with pytest.raises(VersionConflictError) as info:
-            store.promote(
-                "c",
-                user_stated=False,
-                candidate_refs=[{"id": "i1", "version": 1, "source": "fresh-src"}],
-                owner_scope=owner,
-            )
-        assert info.value.code == "E_VERSION"
-        row = _nn(store.get_current_row("c"))
-        assert row["trust_tier"] != "STATED"
+    # 72-T04 (D8): the promote cell runs in both modes -- `legacy` through the D8
+    # `access=None` branch, `policy` under the owner's resolved write access.
+    promote_access = (
+        None
+        if mode == "legacy"
+        else MemoryAccess.resolve(
+            root,
+            operation="write",
+            apply=True,
+            owner_scope=owner,
+            data_root=data_root,
+        )
+    )
+    assert (mode == "legacy") == (promote_access is None)
+    with pytest.raises(VersionConflictError) as info:
+        store.promote(
+            "c",
+            user_stated=False,
+            candidate_refs=[{"id": "i1", "version": 1, "source": "fresh-src"}],
+            owner_scope=owner,
+            access=promote_access,
+        )
+    assert info.value.code == "E_VERSION"
+    row = _nn(store.get_current_row("c"))
+    assert row["trust_tier"] != "STATED"
 
 
 _STORE_KEY_CASES = [
@@ -17437,11 +17510,14 @@ def _g2_more_specs() -> list[_G2Spec]:
             kwargs=lambda env, cell, apply=apply: {
                 "task": "staleness_sweep",
                 "owner_scope": _g2_owner(cell.owner),
+                # 72-T04 (D3/D9): `owner_scope` is optional -- a `policy` grant
+                # supplies the owner (an ambiguous grant set is `owner_required`),
+                # and `legacy` mode names its sources explicitly.
+                "sources": ["source-a"],
                 "request": {"apply": apply},
             },
             perm=True,
             ok_codes=frozenset({None}),
-            owner_required=True,
             supports=(
                 {
                     "store": {
@@ -17471,7 +17547,7 @@ def _g2_more_specs() -> list[_G2Spec]:
                 ("memory/maintenance.py", "run_maintenance_cycle"),
                 ("memory/maintenance.py", "preview_maintenance_candidates"),
                 ("memory/maintenance.py", "_revision_conflicts"),
-                ("memory/expiry.py", "sweep_reviewed_expired"),
+                ("memory/expiry.py", "_sweep_reviewed_expired"),
             ),
         )
     add(
@@ -22624,6 +22700,14 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     ]
     assert "inproc.related-mode-historical" in real_historical
 
+    # 72-T04 (T01 R22): the maintain and promote apply cells are real cells of
+    # `test_t04_route_mode_matrix` -- none is producer-staged.
+    t04_ids = {cell.id for cell in _m_cells()}
+    for family in ("maintain", "promote"):
+        for transport in _M_TRANSPORTS:
+            assert f"{transport}.{family}-apply-apply" in t04_ids
+    assert not [i for i in t04_ids if "-apply-" in i and "producer" in i]
+
 
 def test_t01_g2a_producer_staged_cells() -> None:
     """G2a: dimensions whose producer is a later packet are one strict-model `E_INPUT`
@@ -24830,7 +24914,7 @@ def test_t03_link_missing_and_foreign_endpoint_bodies_identical(
 def test_t03_link_rejects_ineligible_endpoints(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
 ) -> None:
-    from rush.memory import expiry, retrieval
+    from rush.memory import retrieval
 
     world = _t03_world(tmp_path, monkeypatch, summary=False)
     store, root = world["store"], world["root"]
@@ -24842,7 +24926,7 @@ def test_t03_link_rejects_ineligible_endpoints(
         assert applied["applied"] is True
     elif state == "expired":
         _row(store, "x1", ALICE, "x1", created_at=time.time() - 15 * DAY)
-        assert expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=["x1"]) == 1
+        assert _t04_expire(root, ["x1"], owner=ALICE) == 1
     elif state == "tampered":
         _row(store, "x1", ALICE, "x1")
         _tamper(store.db_path, "x1")
@@ -25118,7 +25202,7 @@ def test_t03_summary_invalidation_matrix(
         later = time.time() + 15 * DAY
         with monkeypatch.context() as patch:
             patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
-            swept = expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=["m1"])
+            swept = _t04_expire(root, ["m1"], owner=ALICE)
         assert swept == 1
     elif action == "tamper":
         _tamper(store.db_path, "m1")
@@ -26530,10 +26614,7 @@ def _t03_late_change(
         later = time.time() + 15 * DAY
         with monkeypatch.context() as patch:
             patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
-            assert (
-                expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=[target])
-                == 1
-            )
+            assert _t04_expire(root, [target], owner=ALICE) == 1
     elif kind == "tamper":
         _tamper(store.db_path, target)
     elif kind == "source_file":
@@ -29469,12 +29550,7 @@ def _m3_apply_state(m: _M3, state: str, artifact_id: str) -> None:
         )
         assert applied["applied"] is True, applied
     elif state == "expired":
-        from rush.memory import expiry
-
-        assert (
-            expiry.sweep_expired(m.root, owner_scope=ALICE, candidate_ids=[artifact_id])
-            == 1
-        )
+        assert _t04_expire(m.root, [artifact_id], owner=ALICE) == 1
     elif state == "tampered":
         _tamper(m.db, artifact_id)
     else:
@@ -30437,3 +30513,6231 @@ def test_t03_route_mode_matrix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fn(_M3(tmp_path, monkeypatch, mode, **build), route, tr)
+
+
+# =============================================================================
+# 72-T04: maintenance import and owner-isolated corroboration (G5 tests).
+#
+# Every symbol an earlier task adds (72-T01..72-T03) and every symbol 72-T04 adds
+# is imported inside the test body, so this module still collects without them.
+# =============================================================================
+
+# One top-level symbol per scenario namespace: two anchored rows contradict each other
+# when they share a symbol and differ in content, so scenarios sharing one project use
+# their own `ns` (content `needle <ns>`, anchor `mod.py::sym_<ns>`).
+_T04_NS = (
+    "shared",
+    "z",
+    "p",
+    "m",
+    "n",
+    "i",
+    "c0",
+    "c1",
+    "x",
+    "y",
+    "h",
+    "sel",
+    "rev",
+    "t",
+    "u",
+    "v",
+    "w",
+    "q",
+    "r",
+    "s",
+    "a",
+    "b",
+    "c",
+    "d",
+    "e",
+    "f",
+    "g",
+    "k",
+    "l",
+    "o",
+)
+_T04_MOD = "".join(f"def sym_{name}():\n    return 1\n\n\n" for name in _T04_NS)
+_T04_PERM = ExecutionPermissions(cache_write=True)
+_T04_GRANT_OPS = ("list", "write")
+
+
+@pytest.fixture(autouse=True)
+def _t04_isolated_env(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G10: HOME, XDG_DATA_HOME and LOCALAPPDATA inside `tmp_path` for every T04 test;
+    the resolved default data root is asserted to be inside it."""
+    if request.node.name.startswith("test_t04"):
+        _fix1_data_root(monkeypatch, tmp_path)
+
+
+@dataclasses.dataclass
+class _TE:
+    """One T04 fixture project: `policy` (Alice and Bob grants) or `legacy`."""
+
+    root: Path
+    data_root: Path
+    store: TypedArtifactStore
+    mode: str
+    owner: OwnerScope
+    clock: float = 0.0
+    grants: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+
+    def tick(self) -> float:
+        self.clock += 0.01
+        return self.clock
+
+    @property
+    def db(self) -> Path:
+        return self.store.db_path
+
+
+def _te_env(
+    tmp_path: Path,
+    *,
+    mode: str = "policy",
+    name: str = "project",
+    sources: tuple[str, ...] = ("source-a", "source-b"),
+    ops: tuple[str, ...] = _T04_GRANT_OPS,
+    bob: bool = True,
+    grant_expires_at: float | None = None,
+    project_owner: bool = False,
+    with_store: bool = True,
+) -> _TE:
+    """An anchored git project (`mod.py::helper` on `main`). `policy`: registered, with
+    an Alice grant (and a Bob grant) at the default data root; `legacy`: no policy and
+    no marker, the maintained owner is `legacy_owner_scope(root)`."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _git_repo(tmp_path / name, {"mod.py": _T04_MOD}, branch="main")
+    grants: dict[str, dict[str, Any]] = {}
+    if mode == "policy":
+        record = register_project(root, data_root=data_root)
+        # `project_owner`: the maintained owner is the registered project's own UUID
+        # (the owner the TUI sends), not Alice.
+        who_first = OwnerScope("project", record.project_id) if project_owner else ALICE
+        for who in (who_first, BOB) if bob else (who_first,):
+            grants["alice" if who == ALICE else who.id] = auth.grant_memory_scope(
+                project_root=root,
+                owner_scope=who,
+                approved_sources=list(sources),
+                allowed_operations=list(ops),
+                expected_policy_revision=_revision(auth, data_root),
+                consent=True,
+                expires_at=grant_expires_at,
+                data_root=data_root,
+            )
+        owner = who_first
+    else:
+        owner = legacy_owner_scope(root)
+    return _TE(
+        root=root,
+        data_root=Path(data_root),
+        # `with_store=False` builds no store, so no `.rush/memory.db` exists yet.
+        store=TypedArtifactStore(root) if with_store else None,  # type: ignore[arg-type]
+        mode=mode,
+        owner=owner,
+        clock=time.time() - 1000.0,
+        grants=grants,
+    )
+
+
+def _te_row(
+    env: _TE,
+    artifact_id: str,
+    *,
+    source: str = "source-a",
+    origin: tuple[str, str | None] | None = None,
+    owner: OwnerScope | None = None,
+    content: dict[str, Any] | None = None,
+    anchored: bool = True,
+    trust: str = "DERIVED",
+    created_at: float | None = None,
+    subject: str = SUBJECT,
+    symbol_ref: str | None = None,
+    content_hash: str | None = None,
+    ns: str = "shared",
+) -> MemoryArtifact:
+    assert ns in _T04_NS, ns
+    return env.store.write(
+        MemoryArtifact(
+            id=artifact_id,
+            family="skill" if subject == "skill_pattern" else "memory",
+            subject=subject,  # type: ignore[arg-type]
+            trust_tier=trust,  # type: ignore[arg-type]
+            content=content if content is not None else {"text": f"needle {ns}"},
+            source=source,
+            created_at=created_at if created_at is not None else env.tick(),
+            symbol_ref=symbol_ref
+            if symbol_ref is not None
+            else (f"mod.py::sym_{ns}" if anchored else None),
+            content_hash=content_hash
+            if content_hash is not None
+            else (_sha_file(env.root / "mod.py") if anchored else None),
+            owner_scope=owner or env.owner,
+            origin_kind=origin[0] if origin else None,
+            origin_id=origin[1] if origin else None,
+        )
+    )
+
+
+def _te_acc(
+    env: _TE,
+    *,
+    apply: bool = True,
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+) -> Any:
+    """The resolved maintenance access: a `policy` grant resolution, or the `legacy`
+    explicit-source access over every stored source."""
+    from rush.memory.retrieval import MemoryAccess
+
+    who = owner or env.owner
+    if env.mode == "policy":
+        access = MemoryAccess.resolve(
+            env.root,
+            operation="maintain",
+            apply=apply,
+            owner_scope=who,
+            requested_sources=sources or (),
+            data_root=env.data_root,
+        )
+        assert access is not None
+        return access
+    return MemoryAccess.legacy(
+        env.root,
+        sources if sources is not None else _t04_sources(env.root),
+        owner_scope=who,
+        operation="write" if apply else "list",
+    )
+
+
+def _te_run(
+    env: _TE,
+    task: str,
+    *,
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+    **kwargs: Any,
+) -> Any:
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    return run_maintenance_cycle(
+        task,  # type: ignore[arg-type]
+        project_root=env.root,
+        access=_te_acc(env, apply=True, owner=owner, sources=sources),
+        **kwargs,
+    )
+
+
+def _te_preview(
+    env: _TE,
+    task: str,
+    *,
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+    **kwargs: Any,
+) -> Any:
+    from rush.memory.maintenance import preview_maintenance_candidates
+
+    return preview_maintenance_candidates(
+        task,  # type: ignore[arg-type]
+        project_root=env.root,
+        access=_te_acc(env, apply=False, owner=owner, sources=sources),
+        **kwargs,
+    )
+
+
+def _te_sweep(env: _TE, ids: list[str] | None = None, **kwargs: Any) -> Any:
+    if ids is not None:
+        kwargs["candidate_ids"] = ids
+    return _te_run(env, "promotion_sweep", **kwargs)
+
+
+def _te_settle(env: _TE, ids: list[str] | None = None, **kwargs: Any) -> None:
+    """The settled baseline: one sweep so every stored `corroboration_count` equals the
+    recomputed count (the first sweep rewrites 0 -> 1 for every candidate)."""
+    _te_sweep(env, ids, **kwargs)
+
+
+def _te_promote_access(env: _TE, *, owner: OwnerScope | None = None) -> Any:
+    """`store.promote`'s access: `None` in `legacy` mode (D8 legacy branch), the
+    owner's resolved write access in `policy` mode."""
+    from rush.memory.retrieval import MemoryAccess
+
+    if env.mode == "legacy":
+        return None
+    access = MemoryAccess.resolve(
+        env.root,
+        operation="promote",
+        apply=True,
+        owner_scope=owner or env.owner,
+        data_root=env.data_root,
+    )
+    assert access is not None
+    return access
+
+
+def _te_promote(env: _TE, artifact_id: str, **kwargs: Any) -> tuple[Any, Any]:
+    owner = kwargs.pop("access_owner", None)
+    kwargs.setdefault("user_stated", False)
+    return env.store.promote(
+        artifact_id, access=_te_promote_access(env, owner=owner), **kwargs
+    )
+
+
+def _te_get(env: _TE, artifact_id: str) -> dict[str, Any]:
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        # surrogatepass: a persisted CESU-8 lone surrogate must read back, not raise.
+        conn.text_factory = lambda raw: raw.decode("utf-8", "surrogatepass")
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+        ).fetchone()
+    assert row is not None, artifact_id
+    return dict(row)
+
+
+def _te_bytes(env: _TE, artifact_id: str) -> tuple[Any, ...]:
+    """Everything a refused maintenance step must leave unchanged for one row."""
+    row = _te_get(env, artifact_id)
+    return tuple(
+        row[k]
+        for k in (
+            "content",
+            "trust_tier",
+            "artifact_version",
+            "corroboration_count",
+            "promoted_at",
+            "stale",
+            "expired_at",
+            "archived_at",
+            "row_mac",
+        )
+    )
+
+
+def _te_effects(env: _TE, *, tree: bool = True) -> dict[str, Any]:
+    """`_effects` of a settled database: a WAL left by a closed writer is folded into
+    `memory.db` first, so a later checkpoint-on-close (which rewrites `memory.db` and
+    deletes `-wal`/`-shm` without any logical change) cannot differ between two
+    snapshots. Unreachable stores are collected first: their connections close (and
+    checkpoint) when the cyclic collector runs, which would otherwise be mid-call."""
+    gc.collect()
+    if env.db.exists():
+        with contextlib.closing(sqlite3.connect(env.db)) as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    return _effects(env.root, env.data_root, tree=tree)
+
+
+def _te_sql(env: _TE, sql: str, *params: Any) -> None:
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conn.execute(sql, params)
+        conn.commit()
+
+
+def _te_mt_maintain(
+    env: _TE,
+    task: str,
+    *,
+    owner: OwnerScope | None = None,
+    sources: list[str] | None = None,
+    request: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+    **kwargs: Any,
+) -> Any:
+    """`MemoryTool.run(operation="maintain")`; `legacy` mode names its `sources`."""
+    extra: dict[str, Any] = {}
+    if sources is not None:
+        extra["sources"] = sources
+    elif env.mode == "legacy":
+        extra["sources"] = _t04_sources(env.root)
+    return MemoryTool().run(
+        env.root,
+        operation="maintain",
+        task=task,  # type: ignore[arg-type]
+        owner_scope=(owner or env.owner).as_dict(),
+        request=request if request is not None else {"apply": True},
+        permissions=permissions if permissions is not None else _T04_PERM,
+        **extra,
+        **kwargs,
+    )
+
+
+# --- R1 ------------------------------------------------------------------------
+
+_T04_IMPORT_CODE = (
+    "from rush.memory.maintenance import run_maintenance_cycle; "
+    "print(run_maintenance_cycle.__name__)"
+)
+
+
+_T04_SIGNATURE_CODE = (
+    "import inspect; "
+    "from rush.memory.maintenance import "
+    "preview_maintenance_candidates, run_maintenance_cycle; "
+    "run = inspect.signature(run_maintenance_cycle).parameters; "
+    "prev = inspect.signature(preview_maintenance_candidates).parameters; "
+    "print("
+    "run['access'].kind.name if 'access' in run else 'no-access', "
+    "'data_root' in run, 'expected_revisions' in run, 'access' in prev)"
+)
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        pytest.param("", id="bare"),
+        pytest.param("import rush.plugins; ", id="plugins_first"),
+        pytest.param("import rush.tools.memory; ", id="tools_memory_first"),
+        pytest.param("import rush.cli; ", id="cli_first"),
+    ],
+)
+def test_t04_fresh_import_regression(prefix: str, tmp_path: Path) -> None:
+    done = subprocess.run(
+        [sys.executable, "-c", prefix + _T04_IMPORT_CODE],
+        env=_child_env(),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == "run_maintenance_cycle\n"
+    # D9/§3.6: the same fresh import in every order also exposes the 72-T04 signature,
+    # `run_maintenance_cycle(task, *, access, ..., expected_revisions, data_root)`.
+    shape = subprocess.run(
+        [sys.executable, "-c", prefix + _T04_SIGNATURE_CODE],
+        env=_child_env(),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert shape.returncode == 0, shape.stderr
+    assert shape.stdout == "KEYWORD_ONLY True True True\n"
+
+
+# --- packet scenario: fresh import and scoped promotion ------------------------
+
+
+def test_t04_fresh_import_and_scoped_promotion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    from rush.memory.maintenance import RevisionConflict, preview_maintenance_candidates
+
+    done = subprocess.run(
+        [sys.executable, "-c", _T04_IMPORT_CODE],
+        env=_child_env(),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert done.stdout == "run_maintenance_cycle\n", done.stderr
+
+    # Items 1-3 share one store, in order; each sweep selects the settled `a1`.
+    env = _te_env(tmp_path)
+    _te_row(env, "a1", source="source-a", origin=("agent", "o-a1"))
+    _te_row(env, "b1", source="source-b", origin=("agent", "o-b1"), owner=BOB)
+    _te_settle(env, ["a1"])
+    first = _te_sweep(env, ["a1"])
+    assert (first.processed, first.changed) == (1, 0)
+    assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+    assert _te_get(env, "b1")["trust_tier"] == "DERIVED"
+
+    _te_row(env, "a2", source="source-b", origin=None)  # a copy, null origin
+    second = _te_sweep(env, ["a1"])
+    assert (second.processed, second.changed) == (1, 0)
+    other = _te_env(tmp_path, name="two-null", bob=False)
+    _te_row(other, "n1", source="source-a", origin=None)
+    _te_row(other, "n2", source="source-b", origin=None)
+    _te_settle(other, ["n1"])
+    assert _te_sweep(other, ["n1"]).changed == 0
+    assert _te_get(other, "n1")["trust_tier"] == "DERIVED"
+
+    _te_row(env, "a3", source="source-b", origin=("agent", "o-a3"))
+    third = _te_sweep(env, ["a1"])
+    assert (third.processed, third.changed) == (1, 1)
+    promoted = _te_get(env, "a1")
+    assert (promoted["trust_tier"], promoted["corroboration_count"]) == ("STATED", 2)
+    stated = [
+        r for r in ("a1", "a2", "a3", "b1") if _te_get(env, r)["trust_tier"] == "STATED"
+    ]
+    assert stated == ["a1"]
+
+    # 4. A peer in a source the grant denies, or owned by Bob, adds nothing.
+    denied = _te_env(tmp_path, name="denied")
+    _te_row(denied, "d1", source="source-a", origin=("agent", "o-d1"))
+    _te_row(denied, "dz", source="source-z", origin=("agent", "o-dz"))
+    _te_row(denied, "db", source="source-b", origin=("agent", "o-db"), owner=BOB)
+    _te_settle(denied, ["d1"])
+    again = _te_sweep(denied, ["d1"])
+    assert (again.processed, again.changed) == (1, 0)
+    assert _te_get(denied, "d1")["corroboration_count"] == 1
+    assert _te_get(denied, "d1")["trust_tier"] == "DERIVED"
+
+    # 5. One corrupt Alice row is reported by id; the others are counted truthfully.
+    corrupt = _te_env(tmp_path, name="corrupt", bob=False)
+    for i, rid in enumerate(("c1", "c2", "c3")):
+        _te_row(
+            corrupt,
+            rid,
+            source="source-a",
+            anchored=False,
+            content={"text": f"needle distinct {i}"},
+        )
+    _te_sql(corrupt, "UPDATE memory_artifacts SET content = ? WHERE id = 'c1'", "[[[")
+    result = _te_sweep(corrupt)
+    assert result.errors == ("c1",)
+    assert (result.processed, result.changed) == (3, 2)
+
+    # 6. A lost lease stops the cycle: row 1 committed, rows 2.. unprocessed.
+    lease = _te_env(tmp_path, name="lease", bob=False)
+    for i, rid in enumerate(("e1", "e2", "e3")):
+        _te_row(
+            lease,
+            rid,
+            source="source-a",
+            anchored=False,
+            content={"text": f"needle lease {i}"},
+        )
+    renewals: list[int] = []
+
+    def renew_fails_at_row_two(self: Any, *args: Any, **kwargs: Any) -> bool:
+        renewals.append(1)
+        return len(renewals) < 2
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MeshLockManager, "renew", renew_fails_at_row_two)
+        lost = _te_sweep(lease)
+    assert lost.lock_lost is True
+    assert tuple(lost.unprocessed) == ("e2", "e3")
+    assert _te_get(lease, "e1")["artifact_version"] == 2
+    assert _te_get(lease, "e2")["artifact_version"] == 1
+    assert _te_get(lease, "e3")["artifact_version"] == 1
+    assert (lost.processed, lost.changed) == (1, 1)
+
+    # 7. A preview over a root with no memory.db lists nothing and creates nothing.
+    empty = _te_env(tmp_path, mode="legacy", name="empty", with_store=False)
+    assert not (empty.root / ".rush").exists()
+    assert (
+        preview_maintenance_candidates(
+            "promotion_sweep",
+            project_root=empty.root,
+            access=_te_acc(empty, apply=False, sources=["source-a"]),
+        )
+        == []
+    )
+    assert not (empty.root / ".rush").exists()
+
+    # 8. Apply with a stale expected revision changes nothing.
+    drift = _te_env(tmp_path, name="drift", bob=False)
+    _te_row(drift, "r1", source="source-a", anchored=False)
+    version = _te_get(drift, "r1")["artifact_version"]
+    before = _te_bytes(drift, "r1")
+    refused = _te_run(
+        drift,
+        "promotion_sweep",
+        candidate_ids=["r1"],
+        expected_revisions={"r1": version - 1},
+    )
+    assert refused.changed == 0
+    assert _te_bytes(drift, "r1") == before
+    assert tuple(refused.refused) == (RevisionConflict("r1", version - 1, version),)
+
+
+# --- R2 ------------------------------------------------------------------------
+
+
+def test_t04_cross_owner_and_archived_corroboration_refused(tmp_path: Path) -> None:
+    env = _te_env(tmp_path)
+    _te_row(env, "a1", source="source-a", origin=("agent", "o-a1"))
+    _te_row(env, "b1", source="source-b", origin=("agent", "o-b1"), owner=BOB)
+    _te_settle(env, ["a1"])
+    swept = _te_sweep(env, ["a1"])
+    assert (swept.processed, swept.changed) == (1, 0)
+    assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+
+    # An archived peer neither counts, nor is selected, nor is mutated.
+    _te_row(env, "a2", source="source-b", origin=("agent", "o-a2"))
+    env.store.archive(
+        "a2", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+    )
+    archived_before = _te_bytes(env, "a2")
+    _te_sweep(env)
+    assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+    assert _te_get(env, "a1")["corroboration_count"] == 1
+    assert _te_bytes(env, "a2") == archived_before
+
+    # An expired peer (`expired_at` set, and an elapsed `expires_at`) the same way.
+    for rid, mode in (("x1", "expired_at"), ("x2", "expires_at")):
+        _te_row(env, rid, source="source-b", origin=("agent", f"o-{rid}"))
+        if mode == "expired_at":
+            _te_sql(
+                env,
+                "UPDATE memory_artifacts SET expired_at = ?, expired_by = 'expiry_sweep' "
+                "WHERE id = ?",
+                time.time(),
+                rid,
+            )
+        else:
+            _te_sql(
+                env,
+                "UPDATE memory_artifacts SET expires_at = ? WHERE id = ?",
+                time.time() - 60,
+                rid,
+            )
+    expired_before = {rid: _te_bytes(env, rid) for rid in ("x1", "x2")}
+    _te_sweep(env)
+    assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+    assert _te_get(env, "a1")["corroboration_count"] == 1
+    assert {rid: _te_bytes(env, rid) for rid in ("x1", "x2")} == expired_before
+    selected = {c["id"] for c in _te_preview(env, "promotion_sweep")}
+    assert not selected & {"a2", "x1", "x2", "b1"}
+
+
+# --- R3 ------------------------------------------------------------------------
+
+
+def test_t04_duplicate_origin_not_independent(tmp_path: Path) -> None:
+    # Null origins on both copies: not independent evidence.
+    env = _te_env(tmp_path, bob=False)
+    _te_row(env, "c1", source="source-a", origin=None)
+    _te_row(env, "c2", source="source-b", origin=None)
+    _te_settle(env, ["c1"])
+    null = _te_sweep(env, ["c1"])
+    assert null.changed == 0
+    row = _te_get(env, "c1")
+    assert (row["trust_tier"], row["corroboration_count"]) == ("DERIVED", 1)
+    _, denied = _te_promote(env, "c1")
+    assert denied.promoted is False and denied.corroboration_count == 1
+
+    # Two distinct non-null origins in two granted sources promote exactly one row,
+    # with the count 2 on the row and in the `PromotionResult`.
+    pair = _te_env(tmp_path, name="distinct", bob=False)
+    _te_row(pair, "d1", source="source-a", origin=("agent", "o-1"))
+    _te_row(pair, "d2", source="source-b", origin=("agent", "o-2"))
+    swept = _te_sweep(pair, ["d1"])
+    assert (swept.processed, swept.changed) == (1, 1)
+    promoted = _te_get(pair, "d1")
+    assert (promoted["trust_tier"], promoted["corroboration_count"]) == ("STATED", 2)
+    assert _te_get(pair, "d2")["trust_tier"] == "DERIVED"
+    direct = _te_env(tmp_path, name="direct", bob=False)
+    _te_row(direct, "p1", source="source-a", origin=("agent", "o-1"))
+    _te_row(direct, "p2", source="source-b", origin=("agent", "o-2"))
+    artifact, decision = _te_promote(direct, "p1")
+    assert decision.promoted is True and decision.corroboration_count == 2
+    assert artifact.trust_tier == "STATED"
+
+    # A shared non-null origin pair cannot be stored (`idx_memory_origin`).
+    shared = _te_env(tmp_path, name="shared", bob=False)
+    _te_row(shared, "s1", source="source-a", origin=("agent", "o-same"))
+    with pytest.raises(sqlite3.IntegrityError):
+        _te_row(shared, "s2", source="source-b", origin=("agent", "o-same"))
+
+
+_T04_NULL_CELLS = tuple("abcdefghijklm")
+
+
+@pytest.mark.parametrize(
+    ("mode", "cell"),
+    [
+        pytest.param(mode, cell, id=f"{mode}-{cell}")
+        for mode in ("legacy", "policy")
+        for cell in _T04_NULL_CELLS
+    ],
+)
+def test_t04_null_origin_never_corroborates(
+    mode: str, cell: str, tmp_path: Path
+) -> None:
+    from rush.memory.store import VersionConflictError, binding_verifier
+
+    sources = ("source-a", "source-b", "capsule:import")
+    env = _te_env(tmp_path, mode=mode, bob=False, sources=sources)
+
+    def tier(rid: str) -> tuple[Any, Any]:
+        row = _te_get(env, rid)
+        return row["trust_tier"], row["corroboration_count"]
+
+    def two_sweeps(ids: list[str] | None = None) -> Any:
+        _te_settle(env, ids)
+        return _te_sweep(env, ids)
+
+    if cell == "a":
+        # Two MemoryTool `write` rows (null origins) in distinct sources.
+        for src in ("source-a", "source-b"):
+            written = _write_apply(env.root, owner=env.owner, source=src)
+            assert written["status"] == "ok", _dump(_rd(written))
+        rows = _rows_of(env)
+        ids = [r["id"] for r in rows]
+        assert len(ids) == 2
+        tiers = {r["id"]: r["trust_tier"] for r in rows}
+        assert two_sweeps().changed == 0
+        for rid in ids:
+            assert tier(rid) == (tiers[rid], 1)
+        _, decision = _te_promote(env, ids[0])
+        assert decision.denial_reason == "insufficient_corroboration"
+        assert decision.corroboration_count == 1
+    elif cell == "b":
+        _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+        _te_row(env, "x2", source="source-b", origin=None)
+        assert two_sweeps(["x1"]).changed == 0
+        assert tier("x1") == ("DERIVED", 1)
+        _, decision = _te_promote(env, "x1")
+        assert (decision.denial_reason, decision.corroboration_count) == (
+            "insufficient_corroboration",
+            1,
+        )
+    elif cell == "c":
+        _te_row(env, "x1", source="source-a", origin=None)
+        _te_row(env, "x2", source="source-b", origin=("agent", "o-2"))
+        assert two_sweeps().changed == 0
+        assert tier("x1") == ("DERIVED", 1) and tier("x2") == ("DERIVED", 1)
+    elif cell == "d":
+        _te_row(env, "x1", source="source-a", origin=None)
+        _te_row(env, "x2", source="source-b", origin=None)
+        assert two_sweeps().changed == 0
+        assert tier("x1") == ("DERIVED", 1) and tier("x2") == ("DERIVED", 1)
+    elif cell == "e":
+        for rid, src in (("i1", "capsule:import"), ("i2", "source-b")):
+            _te_row(env, rid, source=src, trust="IMPORTED", origin=None)
+        _te_row(env, "x3", source="source-a", origin=("agent", "o-3"))
+        swept = two_sweeps()
+        assert swept.processed == 1 and swept.changed == 0
+        assert tier("x3") == ("DERIVED", 1)
+        for rid in ("i1", "i2"):
+            assert tier(rid) == ("IMPORTED", 0)
+    elif cell == "f":
+        _te_row(env, "x1", source="source-a", origin=None)
+        _te_row(env, "x2", source="source-b", origin=None)
+        before = _te_bytes(env, "x1")
+        _, decision = _te_promote(env, "x1")
+        assert decision.promoted is False
+        assert decision.denial_reason == "insufficient_corroboration"
+        assert decision.corroboration_count == 1
+        assert _te_bytes(env, "x1") == before
+    elif cell == "g":
+        _te_row(env, "x1", source="source-a", origin=None)
+        _te_row(env, "x2", source="source-b", origin=None)
+        artifact, decision = _te_promote(env, "x1", user_stated=True)
+        assert decision.promoted is True
+        assert (artifact.trust_tier, decision.corroboration_count) == ("STATED", 0)
+    elif cell == "h":
+        _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+        _te_row(env, "x2", source="source-b", origin=("agent", "o-2"))
+        assert _te_sweep(env, ["x1"]).changed == 1
+        assert tier("x1") == ("STATED", 2)
+    elif cell == "i":
+        _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+        _te_row(
+            env,
+            "x2",
+            source="source-b",
+            origin=None,
+            content={"text": "needle a different claim"},
+        )
+        _, decision = _te_promote(env, "x1")
+        assert decision.promoted is False
+        assert decision.denial_reason == "contradicted"
+    elif cell == "j":
+        r1 = _te_row(env, "x1", source="source-a", origin=None)
+        r2 = _te_row(env, "x2", source="source-b", origin=None)
+        assert r1.artifact_version == r2.artifact_version == 1
+        artifact, decision = _te_promote(
+            env,
+            "x1",
+            candidate_refs=[{"id": "x2", "version": 1, "source": "source-b"}],
+        )
+        assert decision.promoted is True
+        assert (artifact.trust_tier, decision.corroboration_count) == ("STATED", 2)
+    elif cell == "k":
+        _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+        _te_row(env, "x2", source="source-b", origin=("agent", None))
+        assert two_sweeps(["x1"]).changed == 0
+        assert tier("x1") == ("DERIVED", 1)
+        _, decision = _te_promote(env, "x1")
+        assert (decision.denial_reason, decision.corroboration_count) == (
+            "insufficient_corroboration",
+            1,
+        )
+    elif cell == "l":
+        _te_row(env, "x1", source="source-a", origin=None)
+        _te_row(env, "x2", source="source-b", origin=None)
+        before = _te_bytes(env, "x1")
+        version = _te_get(env, "x1")["artifact_version"]
+        try:
+            _, decision = _te_promote(env, "x1", candidate_refs=[])
+        except (
+            VersionConflictError
+        ) as exc:  # pragma: no cover - the failure being tested
+            raise AssertionError(f"refs=[] must not conflict: {exc}") from exc
+        assert (decision.promoted, decision.denial_reason) == (
+            False,
+            "insufficient_corroboration",
+        )
+        assert decision.corroboration_count == 1
+        assert _te_bytes(env, "x1") == before
+        assert _te_get(env, "x1")["artifact_version"] == version
+    else:
+        assert cell == "m"
+        _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+        _te_row(env, "x2", source="source-b", origin=None)
+        _te_settle(env, ["x1"])
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET origin_kind = 'agent', origin_id = 'o-other' "
+            "WHERE id = 'x2'",
+        )
+        with contextlib.closing(sqlite3.connect(env.db)) as conn:
+            conn.row_factory = sqlite3.Row
+            peer = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = 'x2'"
+            ).fetchone()
+        assert binding_verifier(env.store).row(peer) == "unbound"
+        assert _te_sweep(env, ["x1"]).changed == 0
+        assert tier("x1") == ("DERIVED", 1)
+        _, decision = _te_promote(env, "x1")
+        assert (decision.denial_reason, decision.corroboration_count) == (
+            "insufficient_corroboration",
+            1,
+        )
+
+
+def _rows_of(env: _TE) -> list[dict[str, Any]]:
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conn.row_factory = sqlite3.Row
+        return [
+            dict(r)
+            for r in conn.execute("SELECT * FROM memory_artifacts ORDER BY created_at")
+        ]
+
+
+# --- R4 ------------------------------------------------------------------------
+
+
+def test_t04_sources_from_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    import rush.tools.memory as memory_module
+    from rush.cli import cli
+    from rush.memory import authorization as auth
+    from rush.memory.maintenance import MaintenanceRunResult
+    from rush.memory.retrieval import MemoryAccess
+
+    # policy: apply resolves {write}, preview {list}.
+    env = _te_env(tmp_path)
+    _te_row(env, "a1", source="source-a", origin=("agent", "o-1"))
+    _te_row(env, "b1", source="source-b", origin=("agent", "o-2"))
+    calls: list[tuple[Any, Any]] = []
+    original = MemoryAccess.resolve_with_reason
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        access, why = original(*args, **kwargs)
+        calls.append(
+            (
+                kwargs.get("apply"),
+                None if access is None else access.required_operations,
+            )
+        )
+        return access, why
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MemoryAccess, "resolve_with_reason", staticmethod(spy))
+        applied = _te_mt_maintain(env, "promotion_sweep")
+        previewed = _te_mt_maintain(env, "promotion_sweep", request={"apply": False})
+    assert applied["status"] in ("ok", "warn", "fail"), _dump(_rd(applied))
+    assert previewed["status"] == "ok", _dump(_rd(previewed))
+    assert (True, frozenset({"write"})) in calls
+    assert (False, frozenset({"list"})) in calls
+
+    # policy: a request source outside the grant is E_SCOPE with zero effects.
+    before = _te_effects(env)
+    scoped = _te_mt_maintain(env, "promotion_sweep", sources=["source-z"])
+    assert _code_of(scoped) == "E_SCOPE", _dump(_rd(scoped))
+    assert _te_effects(env) == before
+
+    # policy: no grant / a revoked grant is E_PERMISSION with the resolve reason.
+    carol = OwnerScope("user", "carol")
+    no_grant = _te_mt_maintain(env, "promotion_sweep", owner=carol)
+    why = MemoryAccess.resolve_with_reason(
+        env.root,
+        operation="maintain",
+        apply=True,
+        owner_scope=carol,
+        data_root=env.data_root,
+    )[1]
+    assert why != "granted"
+    assert (_code_of(no_grant), _reason_of(no_grant)) == ("E_PERMISSION", why)
+    auth.revoke_memory_scope(
+        grant_id=env.grants["alice"]["grant_id"],
+        expected_policy_revision=_revision(auth, env.data_root),
+        consent=True,
+        data_root=env.data_root,
+    )
+    revoked = _te_mt_maintain(env, "promotion_sweep")
+    assert (_code_of(revoked), _reason_of(revoked)) == ("E_PERMISSION", "revoked")
+
+    # legacy: the request `sources` build the D3 access on every transport.
+    legacy = _te_env(tmp_path, mode="legacy", name="legacy")
+    _te_row(legacy, "l1", source="source-a", origin=("agent", "o-l1"))
+    _te_row(legacy, "l2", source="source-b", origin=("agent", "o-l2"))
+    owner = legacy_owner_scope(legacy.root)
+    want = {
+        op: MemoryAccess.legacy(
+            legacy.root, ["source-a"], owner_scope=owner, operation=op, data_root=None
+        )
+        for op in ("write", "list")
+    }
+    seen: dict[str, Any] = {}
+
+    def fake_run(task: str, **kwargs: Any) -> Any:
+        seen["run"] = kwargs
+        return MaintenanceRunResult(task=task, processed=0, changed=0)  # type: ignore[arg-type]
+
+    def fake_preview(task: str, **kwargs: Any) -> list[Any]:
+        seen["preview"] = kwargs
+        return []
+
+    with monkeypatch.context() as patch:
+        patch.setattr(memory_module, "run_maintenance_cycle", fake_run)
+        patch.setattr(memory_module, "preview_maintenance_candidates", fake_preview)
+        _te_mt_maintain(legacy, "promotion_sweep", sources=["source-a"])
+        assert seen.pop("run")["access"] == want["write"]
+        _te_mt_maintain(
+            legacy, "promotion_sweep", sources=["source-a"], request={"apply": False}
+        )
+        assert seen.pop("preview")["access"] == want["list"]
+
+        monkeypatch.chdir(legacy.root)
+        cli_result = CliRunner().invoke(
+            cli,
+            [
+                "memory",
+                "maintain",
+                "--task",
+                "promotion_sweep",
+                "--source",
+                "source-a",
+                "--allow-cache-write",
+                "--json",
+            ],
+        )
+        assert cli_result.exit_code == 0, cli_result.output
+        assert seen.pop("run")["access"] == want["write"]
+
+        mcp = _mcp_memory(
+            path=str(legacy.root),
+            operation="maintain",
+            task="promotion_sweep",
+            sources=["source-a"],
+            owner_scope=owner.as_dict(),
+            allow_cache_write=True,
+            request={"apply": True},
+        )
+        assert mcp["status"] in ("ok", "warn"), mcp
+        assert seen.pop("run")["access"] == want["write"]
+
+        _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+        _action, _grant_all, _start_dashboard = (
+            _dmt._action,
+            _dmt._grant_all,
+            _dmt._start_dashboard,
+        )
+
+        record = register_project(legacy.root, data_root=legacy.data_root)
+        server, base_url, cookie, csrf = _start_dashboard(
+            record.project_id, legacy.root
+        )
+        try:
+            status, body = _action(
+                base_url,
+                record.project_id,
+                cookie,
+                csrf,
+                operation="memory_maintain",
+                arguments={"task": "promotion_sweep", "sources": ["source-a"]},
+                grants=_grant_all(),
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert status == 200, body
+        assert seen.pop("run")["access"] == want["write"]
+
+    # legacy: empty or absent sources are E_PERMISSION `sources_required`, no effects.
+    before = _te_effects(legacy)
+    legacy_kwargs: tuple[dict[str, Any], ...] = ({"sources": []}, {})
+    for kwargs in legacy_kwargs:
+        missing = MemoryTool().run(
+            legacy.root,
+            operation="maintain",
+            task="promotion_sweep",
+            owner_scope=owner.as_dict(),
+            request={"apply": True},
+            permissions=_T04_PERM,
+            **kwargs,
+        )
+        assert (_code_of(missing), _reason_of(missing)) == (
+            "E_PERMISSION",
+            "sources_required",
+        ), kwargs
+    # legacy: a declared owner other than `legacy_owner_scope(root)` is E_NOT_VISIBLE.
+    other = _te_mt_maintain(
+        legacy, "promotion_sweep", owner=ALICE, sources=["source-a"]
+    )
+    assert _code_of(other) == "E_NOT_VISIBLE", _dump(_rd(other))
+    assert _te_effects(legacy) == before
+
+    # legacy: D8 predicates still apply -- a row outside `sources` is never counted.
+    swept = _te_mt_maintain(legacy, "promotion_sweep", sources=["source-a"])
+    assert swept["status"] in ("ok", "warn"), _dump(_rd(swept))
+    assert (
+        _te_get(legacy, "l1")["trust_tier"],
+        _te_get(legacy, "l1")["corroboration_count"],
+    ) == ("DERIVED", 1)
+    assert _te_get(legacy, "l2")["artifact_version"] == 1
+
+
+# --- R5 ------------------------------------------------------------------------
+
+
+def _te_renew_fails_at(monkeypatch: pytest.MonkeyPatch, index: int) -> list[int]:
+    """`MeshLockManager.renew` returns False on its `index`-th call (1-based)."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    renewals: list[int] = []
+
+    def renew(self: Any, *args: Any, **kwargs: Any) -> bool:
+        renewals.append(1)
+        return len(renewals) != index
+
+    monkeypatch.setattr(MeshLockManager, "renew", renew)
+    return renewals
+
+
+def _te_spy_commits(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
+    from rush.memory import maintenance
+
+    committed: list[tuple[Any, ...]] = []
+    original = maintenance.note_committed_write
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        committed.append(args)
+        original(*args, **kwargs)
+
+    monkeypatch.setattr(maintenance, "note_committed_write", spy)
+    return committed
+
+
+def _te_distinct_rows(env: _TE, count: int, prefix: str = "r") -> list[str]:
+    ids = [f"{prefix}{i}" for i in range(1, count + 1)]
+    for index, rid in enumerate(ids):
+        _te_row(
+            env,
+            rid,
+            source="source-a",
+            anchored=False,
+            content={"text": f"needle distinct {prefix} {index}"},
+        )
+    return ids
+
+
+def test_t04_lock_loss_reports_unprocessed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    env = _te_env(tmp_path, bob=False)
+    ids = _te_distinct_rows(env, 4)
+    before = {rid: _te_bytes(env, rid) for rid in ids}
+    with monkeypatch.context() as patch:
+        _te_renew_fails_at(patch, 3)
+        committed = _te_spy_commits(patch)
+        result = _te_sweep(env)
+    assert result.lock_lost is True
+    assert tuple(result.unprocessed) == (ids[2], ids[3])
+    assert [entry[0] for entry in committed] == [ids[0], ids[1]]
+    assert [_te_get(env, rid)["artifact_version"] for rid in ids] == [2, 2, 1, 1]
+    assert _te_bytes(env, ids[2]) == before[ids[2]]
+    assert _te_bytes(env, ids[3]) == before[ids[3]]
+    # the lost lease is left in place: no `release` with a lease that is not ours.
+    state = MeshLockManager.inspect(env.root, Path(".rush/memory-maintenance.lock"))
+    assert state["state"] != "available"
+
+    # A cleanup failure beside the lost lease: the lock-loss state stays observable, the
+    # lease that is not ours is never released, and no later row commits.
+    beside = _te_env(tmp_path, name="beside-lost", bob=False)
+    beside_ids = _te_distinct_rows(beside, 4)
+    with monkeypatch.context() as patch:
+        _te_renew_fails_at(patch, 3)
+        committed = _te_spy_commits(patch)
+        released = _te_failing_release(patch)
+        beside_result = _te_sweep(beside)
+    assert released == []
+    assert beside_result.lock_lost is True
+    assert tuple(beside_result.unprocessed) == (beside_ids[2], beside_ids[3])
+    assert beside_result.errors == ()
+    assert [entry[0] for entry in committed] == [beside_ids[0], beside_ids[1]]
+
+    # MemoryTool: status `fail`, `lock_lost` and `unprocessed` in the raw body.
+    tool_env = _te_env(tmp_path, name="tool", bob=False)
+    tool_ids = _te_distinct_rows(tool_env, 3)
+    with monkeypatch.context() as patch:
+        _te_renew_fails_at(patch, 2)
+        tool = _te_mt_maintain(tool_env, "promotion_sweep")
+    assert tool["status"] == "fail", _dump(_rd(tool))
+    raw = _rd(tool)
+    assert raw["lock_lost"] is True
+    assert list(raw["unprocessed"]) == tool_ids[1:]
+
+
+# --- R6 ------------------------------------------------------------------------
+
+
+def test_t04_preview_hides_foreign_owner_ids(tmp_path: Path) -> None:
+    from rush.memory.maintenance import preview_maintenance_candidates
+    from rush.memory.retrieval import MemoryAccess
+
+    env = _te_env(tmp_path)
+    _te_row(env, "a1", source="source-a", anchored=False)
+    _te_row(env, "a2", source="source-a", anchored=False)
+    _te_row(env, "b1", source="source-a", anchored=False, owner=BOB)
+    ids = [c["id"] for c in _te_preview(env, "promotion_sweep")]
+    assert sorted(ids) == ["a1", "a2"]
+    named = _te_preview(env, "promotion_sweep", candidate_ids=["a1", "b1"])
+    assert [c["id"] for c in named] == ["a1"]
+
+    tool = _te_mt_maintain(env, "promotion_sweep", request={"apply": False})
+    raw = _rd(tool)
+    assert sorted(raw["candidate_ids"]) == ["a1", "a2"]
+    assert sorted(raw["expected_revisions"]) == ["a1", "a2"]
+    named_tool = _te_mt_maintain(
+        env,
+        "promotion_sweep",
+        request={"apply": False, "candidate_ids": ["a1", "b1"]},
+    )
+    assert "b1" not in _dump(_rd(named_tool))
+
+    # a root with no memory.db: the preview is empty and creates nothing.
+    bare = _te_env(tmp_path, mode="legacy", name="bare", with_store=False)
+    assert not (bare.root / ".rush").exists()
+    access = MemoryAccess.legacy(
+        bare.root, ["source-a"], owner_scope=bare.owner, operation="list"
+    )
+    assert (
+        preview_maintenance_candidates(
+            "promotion_sweep", project_root=bare.root, access=access
+        )
+        == []
+    )
+    assert not (bare.root / ".rush").exists()
+
+
+# --- R7 ------------------------------------------------------------------------
+
+_T04_DIGEST = hashlib.sha256(b"demo-closure").hexdigest()
+
+
+def _te_skill_env(tmp_path: Path, name: str = "skill", count: int = 2) -> _TE:
+    from rush.plugins.trust_store import PluginTrustStore
+
+    env = _te_env(
+        tmp_path, name=name, bob=False, sources=("source-a", "source-b", "source-c")
+    )
+    content = {"plugin_name": "demo-plugin", "closure_digest": _T04_DIGEST}
+    for index in range(count):
+        _te_row(
+            env,
+            f"s{index + 1}",
+            source=("source-a", "source-b", "source-c")[index],
+            origin=("agent", f"o-s{index + 1}"),
+            anchored=False,
+            subject="skill_pattern",
+            content=content,
+        )
+    PluginTrustStore(repo_root=env.root).grant_trust("demo-plugin", _T04_DIGEST)
+    return env
+
+
+def test_t04_skill_admission_rechecks_trust_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.dashboard import state as dashboard_state
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    from rush.plugins.trust_store import PluginTrustStore
+
+    # control: with trust intact the sweep admits the skill row.
+    control = _te_skill_env(tmp_path, "control")
+    assert _te_run(control, "skill_admission_check", candidate_ids=["s1"]).changed == 1
+    assert _te_get(control, "s1")["trust_tier"] == "STATED"
+
+    # trust revoked after row selection and digest resolution, before the write
+    # stage: the row is left unchanged.
+    env = _te_skill_env(tmp_path, "revoked")
+    before = _te_bytes(env, "s1")
+    original_acquire = MeshLockManager.acquire
+
+    def revoke_then_acquire(self: Any, *args: Any, **kwargs: Any) -> Any:
+        PluginTrustStore(repo_root=env.root).revoke_trust("demo-plugin")
+        return original_acquire(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MeshLockManager, "acquire", revoke_then_acquire)
+        result = _te_run(env, "skill_admission_check", candidate_ids=["s1"])
+    assert result.changed == 0
+    assert _te_bytes(env, "s1") == before
+
+    # the trust check itself runs under the plugin-trust lock, inside the write
+    # transaction (a second writer cannot take `BEGIN IMMEDIATE`).
+    probe_env = _te_skill_env(tmp_path, "probe")
+    store = PluginTrustStore(repo_root=probe_env.root)
+    key = "plugin-trust:" + str(store.ledger_path)
+    observed: list[tuple[bool, bool]] = []
+    original = PluginTrustStore.is_trusted
+
+    def probing(self: Any, plugin_name: str, closure_digest: Any) -> bool:
+        held = getattr(dashboard_state._cross_process_lock_depth, "held", {})
+        writer_blocked = False
+        probe = sqlite3.connect(probe_env.db, timeout=0)
+        try:
+            probe.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError:
+            writer_blocked = True
+        finally:
+            probe.rollback()
+            probe.close()
+        observed.append((held.get(key, 0) > 0, writer_blocked))
+        return original(self, plugin_name, closure_digest)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(PluginTrustStore, "is_trusted", probing)
+        _te_run(probe_env, "skill_admission_check", candidate_ids=["s1"])
+    assert observed, "the trust check never ran"
+    assert all(entry == (True, True) for entry in observed), observed
+
+
+# --- R8 ------------------------------------------------------------------------
+
+
+def _te_failing_release(patch: pytest.MonkeyPatch) -> list[int]:
+    """`MeshLockManager.release` fails: a cleanup failure after the work is done."""
+    import errno
+
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    calls: list[int] = []
+
+    def release(self: Any, *args: Any, **kwargs: Any) -> bool:
+        calls.append(1)
+        raise OSError(errno.EIO, "injected release failure")
+
+    patch.setattr(MeshLockManager, "release", release)
+    return calls
+
+
+def test_t04_row_error_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import maintenance
+    from rush.memory.maintenance import MaintenanceAccessDenied
+
+    env = _te_env(tmp_path, bob=False)
+    _te_row(env, "a1", source="source-a", anchored=False, content={"text": "needle 1"})
+    _te_row(env, "a2", source="source-a", anchored=False, content={"text": "needle 2"})
+    _te_row(env, "a3", source="source-b", anchored=False, content={"text": "needle 3"})
+    _te_sql(env, "UPDATE memory_artifacts SET content = ? WHERE id = 'a1'", "[[[")
+    result = _te_sweep(env)
+    assert result.errors == ("a1",)
+    assert result.processed == 3
+    assert result.changed == 2
+    assert _te_get(env, "a2")["corroboration_count"] == 1
+    assert _te_get(env, "a3")["corroboration_count"] == 1
+
+    # G3 recursive walks: deeply nested candidate and peer content through the actual
+    # sweep and promotion paths. Corrupt rows keep the established accounting, valid
+    # rows continue, and no RecursionError escapes.
+    deep = '{"text":"needle deep","x":' + "[" * 100000 + "]" * 100000 + "}"
+    nested = _te_env(tmp_path, name="nested", bob=False)
+    _te_row(nested, "a1", source="source-a", anchored=False, content={"text": "n 1"})
+    _te_row(nested, "a2", source="source-b", anchored=False, content={"text": "n 2"})
+    _te_row(nested, "d1", source="source-a", anchored=False, content={"text": "d 1"})
+    _te_row(nested, "d2", source="source-b", anchored=False, content={"text": "d 2"})
+    for rid in ("d1", "d2"):
+        _te_sql(
+            nested, "UPDATE memory_artifacts SET content = ? WHERE id = ?", deep, rid
+        )
+    frozen = {rid: _te_bytes(nested, rid) for rid in ("d1", "d2")}
+    swept = _te_sweep(nested)
+    assert set(swept.errors) <= {"d1", "d2"}
+    assert _te_get(nested, "a1")["corroboration_count"] == 1
+    assert _te_get(nested, "a2")["corroboration_count"] == 1
+    assert {rid: _te_bytes(nested, rid) for rid in frozen} == frozen
+    _artifact, decision = _te_promote(nested, "a1")
+    assert (decision.promoted, decision.denial_reason) == (
+        False,
+        "insufficient_corroboration",
+    )
+
+    # G3 cleanup masking the primary failure. A failing lease release alone:
+    alone = _te_env(tmp_path, name="cleanup-alone", bob=False)
+    _te_row(alone, "a1", source="source-a", anchored=False, content={"text": "c 1"})
+    _te_row(alone, "a2", source="source-b", anchored=False, content={"text": "c 2"})
+    with monkeypatch.context() as patch:
+        released = _te_failing_release(patch)
+        done = _te_sweep(alone)
+    assert released, "the cycle never released its lease"
+    assert (done.errors, done.processed, done.changed) == ((), 2, 2)
+    assert done.lock_lost is False
+
+    # ... alongside a row failure: the row error is still the observable outcome.
+    beside_row = _te_env(tmp_path, name="cleanup-row", bob=False)
+    for rid, src in (("a1", "source-a"), ("a2", "source-a"), ("a3", "source-b")):
+        _te_row(beside_row, rid, source=src, anchored=False, content={"text": rid})
+    _te_sql(
+        beside_row, "UPDATE memory_artifacts SET content = ? WHERE id = 'a1'", "[[["
+    )
+    with monkeypatch.context() as patch:
+        released = _te_failing_release(patch)
+        row_result = _te_sweep(beside_row)
+    assert released
+    assert (row_result.errors, row_result.processed, row_result.changed) == (
+        ("a1",),
+        3,
+        2,
+    )
+
+    # ... alongside an access failure: the access refusal is raised, not the release
+    # error, and no later row commits.
+    beside_access = _te_env(tmp_path, name="cleanup-access", bob=False)
+    ids = _te_distinct_rows(beside_access, 4)
+    with monkeypatch.context() as patch:
+        committed = _te_spy_commits(patch)
+
+        def revoked_after_first_commit(access: Any) -> tuple[str, str] | None:
+            return ("E_PERMISSION", "grant_revoked") if committed else None
+
+        patch.setattr(maintenance, "recheck_failure", revoked_after_first_commit)
+        released = _te_failing_release(patch)
+        with pytest.raises(MaintenanceAccessDenied) as denied:
+            _te_sweep(beside_access)
+    assert released
+    assert (denied.value.code, denied.value.reason) == ("E_PERMISSION", "grant_revoked")
+    assert tuple(denied.value.unprocessed) == tuple(ids[1:])
+    assert [entry[0] for entry in committed] == [ids[0]]
+    assert [_te_get(beside_access, rid)["artifact_version"] for rid in ids] == [
+        2,
+        1,
+        1,
+        1,
+    ]
+
+
+# --- R10 -----------------------------------------------------------------------
+
+_T04_INTERNAL = "flight_recorder:record_event"
+
+
+def _te_ref(env: _TE, artifact_id: str) -> dict[str, Any]:
+    row = _te_get(env, artifact_id)
+    return {
+        "id": artifact_id,
+        "version": row["artifact_version"],
+        "source": row["source"],
+    }
+
+
+def _te_count(env: _TE) -> int:
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM memory_artifacts").fetchone()[0])
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t04_promotion_evidence_shared(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.mcp_support.request_models import validate_and_normalize
+    from rush.memory import store as store_module
+    from rush.memory.authorization import MemoryPolicyError
+    from rush.memory.store import VersionConflictError
+
+    env = _te_env(
+        tmp_path,
+        mode=mode,
+        bob=False,
+        sources=("source-a", "source-b", _T04_INTERNAL),
+    )
+
+    # One stored-evidence function: the sweep and `store.promote` both call it.
+    _te_row(env, "z1", source="source-a", origin=None, ns="z")
+    _te_row(env, "z2", source="source-b", origin=None, ns="z")
+    seen: list[str] = []
+    original = store_module.corroborating_peers
+
+    def spy(conn: Any, store: Any, candidate_row: Any, **kwargs: Any) -> Any:
+        seen.append(candidate_row["id"])
+        return original(conn, store, candidate_row, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "corroborating_peers", spy)
+        _te_sweep(env, ["z1"])
+        _te_promote(env, "z1")
+    assert seen.count("z1") >= 2, seen
+
+    # Positive control (R3 h): two distinct non-null origins -> count 2.
+    _te_row(env, "p1", source="source-a", origin=("agent", "o-p1"), ns="p")
+    _te_row(env, "p2", source="source-b", origin=("agent", "o-p2"), ns="p")
+    _, control = _te_promote(env, "p1")
+    assert (control.promoted, control.corroboration_count) == (True, 2)
+
+    # The peer's `row_mac` NULL (D41 `unbound`): not counted, a ref to it conflicts.
+    _te_row(env, "m1", source="source-a", origin=("agent", "o-m1"), ns="m")
+    _te_settle(env, ["m1"])
+    _te_row(env, "m2", source="source-b", origin=("agent", "o-m2"), ns="m")
+    _te_sql(env, "UPDATE memory_artifacts SET row_mac = NULL WHERE id = 'm2'")
+    before = _te_bytes(env, "m1"), _te_bytes(env, "m2")
+    assert _te_sweep(env, ["m1"]).changed == 0
+    _, no_refs = _te_promote(env, "m1")
+    assert (no_refs.denial_reason, no_refs.corroboration_count) == (
+        "insufficient_corroboration",
+        1,
+    )
+    with pytest.raises(VersionConflictError) as conflict:
+        _te_promote(env, "m1", candidate_refs=[_te_ref(env, "m2")])
+    assert conflict.value.code == "E_VERSION"
+    assert (_te_bytes(env, "m1"), _te_bytes(env, "m2")) == before
+
+    # A code-selected null-origin peer does not count; named in refs it does.
+    _te_row(env, "n1", source="source-a", origin=None, ns="n")
+    _te_row(env, "n2", source="source-b", origin=None, ns="n")
+    _te_settle(env, ["n1"])
+    assert _te_sweep(env, ["n1"]).changed == 0
+    row = _te_get(env, "n1")
+    assert (row["trust_tier"], row["corroboration_count"]) == ("DERIVED", 1)
+    _, denied = _te_promote(env, "n1")
+    assert denied.denial_reason == "insufficient_corroboration"
+    _, named = _te_promote(env, "n1", candidate_refs=[_te_ref(env, "n2")])
+    assert (named.promoted, named.new_tier, named.corroboration_count) == (
+        True,
+        "STATED",
+        2,
+    )
+
+    # An `INTERNAL_MEMORY_SOURCES` peer neither counts nor contradicts.
+    _te_row(env, "i1", source="source-a", origin=("agent", "o-i1"), ns="i")
+    _te_row(env, "i2", source=_T04_INTERNAL, origin=("agent", "o-i2"), ns="i")
+    _te_row(
+        env,
+        "i3",
+        source=_T04_INTERNAL,
+        origin=("agent", "o-i3"),
+        content={"text": "needle i different"},
+        ns="i",
+    )
+    _, internal = _te_promote(env, "i1")
+    assert (internal.denial_reason, internal.corroboration_count) == (
+        "insufficient_corroboration",
+        1,
+    )
+
+    # An eligible anchored peer with different content (realistic writer shapes).
+    shapes: tuple[tuple[dict[str, Any], dict[str, Any]], ...] = (
+        ({"text": "needle c"}, {"text": "needle c", "detail": "more"}),
+        ({"note": 1}, {"note": 2}),
+    )
+    for index, (mine, theirs) in enumerate(shapes):
+        _te_row(
+            env,
+            f"c{index}a",
+            source="source-a",
+            origin=("agent", f"o-c{index}a"),
+            content=mine,
+            ns=f"c{index}",
+        )
+        _te_row(
+            env,
+            f"c{index}b",
+            source="source-b",
+            origin=("agent", f"o-c{index}b"),
+            content=theirs,
+            ns=f"c{index}",
+        )
+        _, contra = _te_promote(env, f"c{index}a")
+        assert contra.denial_reason == "contradicted", (mine, theirs)
+
+    # Raw `candidate_sources` without `candidate_refs` is `E_INPUT` everywhere.
+    rows_before = _te_count(env)
+    state_before = _te_bytes(env, "z2")
+    outcome = validate_and_normalize(
+        "rush_memory",
+        {
+            "path": str(env.root),
+            "operation": "promote",
+            "subject": SUBJECT,
+            "content": {"k": "v"},
+            "source": "source-a",
+            "candidate_sources": ["invented1", "invented2"],
+        },
+    )
+    assert outcome.rejected
+    assert any(
+        "candidate_sources" in detail["loc"]
+        for detail in _nn(outcome.error)["data"]["details"]
+    ), outcome.error
+    monkeypatch.chdir(env.root)
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "promote",
+            SUBJECT,
+            "source-a",
+            "--content",
+            '{"k": "v"}',
+            "--candidate-source",
+            "invented1",
+            "--allow-cache-write",
+            "--json",
+        ],
+    )
+    assert cli_result.exit_code == 2, cli_result.output
+    assert json.loads(cli_result.output)["raw"]["code"] == "E_INPUT"
+    for user_stated in (False, True):
+        with pytest.raises(MemoryPolicyError) as invented:
+            env.store.promote(
+                "z2",
+                user_stated=user_stated,
+                candidate_sources=["invented1", "invented2"],
+                access=_te_promote_access(env),
+            )
+        assert (invented.value.code, invented.value.reason) == (
+            "E_INPUT",
+            "candidate_refs_required",
+        )
+    assert _te_count(env) == rows_before
+    assert _te_bytes(env, "z2") == state_before
+
+    # CLI `--candidate-ref ID@VERSION@SOURCE` reaches `MemoryTool.run` as a request.
+    ref = _te_ref(env, "z2")
+    captured: list[dict[str, Any]] = []
+    real_run = MemoryTool.run
+
+    def recording(self: Any, *args: Any, **kwargs: Any) -> Any:
+        captured.append(kwargs)
+        return real_run(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MemoryTool, "run", recording)
+        accepted = CliRunner().invoke(
+            cli,
+            [
+                "memory",
+                "promote",
+                SUBJECT,
+                "source-a",
+                "--content",
+                '{"text": "needle z"}',
+                "--symbol-ref",
+                "mod.py::sym_z",
+                "--candidate-ref",
+                f"{ref['id']}@{ref['version']}@{ref['source']}",
+                "--allow-cache-write",
+                "--json",
+            ],
+        )
+    assert captured, accepted.output
+    assert captured[0]["request"] == {"apply": True, "candidate_refs": [ref]}
+
+
+def _te_promote_env(
+    tmp_path: Path, mode: str, name: str, sources: tuple[str, ...]
+) -> _TE:
+    return _te_env(tmp_path, mode=mode, name=name, bob=True, sources=sources)
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t04_promotion_ignores_denied_and_requires_contrary_scan(
+    mode: str, tmp_path: Path
+) -> None:
+    from rush.memory.authorization import MemoryPolicyError
+    from rush.memory.retrieval import MemoryAccess
+    from rush.memory.store import VersionConflictError
+
+    sources = ("source-a", "source-b", "source-c")
+    env = _te_promote_env(tmp_path, mode, "p", sources)
+
+    # A peer in an ungranted source never counts.
+    _te_row(env, "x1", source="source-a", origin=("agent", "o-x1"), ns="x")
+    _te_row(env, "xz", source="source-b", origin=("agent", "o-xz"), ns="x")
+    if mode == "policy":
+        # `source-b` stays granted; narrow the access to `source-a` only.
+        narrow = MemoryAccess.resolve(
+            env.root,
+            operation="promote",
+            apply=True,
+            owner_scope=env.owner,
+            requested_sources=["source-a"],
+            data_root=env.data_root,
+        )
+    else:
+        narrow = MemoryAccess.legacy(
+            env.root, ["source-a"], owner_scope=env.owner, operation="write"
+        )
+    assert narrow is not None
+    _, ungranted = env.store.promote("x1", user_stated=False, access=narrow)
+    assert (ungranted.denial_reason, ungranted.corroboration_count) == (
+        "insufficient_corroboration",
+        1,
+    )
+
+    # An omitted-but-visible anchored different-content peer contradicts, even when
+    # `candidate_refs` lists only agreeing peers.
+    _te_row(env, "y1", source="source-a", origin=("agent", "o-y1"), ns="y")
+    _te_row(env, "y2", source="source-b", origin=("agent", "o-y2"), ns="y")
+    _te_row(
+        env,
+        "y3",
+        source="source-c",
+        origin=("agent", "o-y3"),
+        content={"text": "needle y contrary"},
+        ns="y",
+    )
+    _, contrary = _te_promote(env, "y1", candidate_refs=[_te_ref(env, "y2")])
+    assert contrary.promoted is False and contrary.denial_reason == "contradicted"
+
+    # A hidden ref and a nonexistent ref are indistinguishable.
+    _te_row(env, "h1", source="source-a", origin=("agent", "o-h1"), ns="h")
+    hidden_owner = BOB if mode == "policy" else legacy_owner_scope(env.root)
+    if mode == "policy":
+        _te_row(
+            env,
+            "hb",
+            source="source-b",
+            origin=("agent", "o-hb"),
+            owner=hidden_owner,
+            ns="h",
+        )
+    else:
+        _te_row(
+            env,
+            "hb",
+            source="source-z",  # outside the stored-source set a legacy access names
+            origin=("agent", "o-hb"),
+            ns="h",
+        )
+    seen: list[tuple[str, str]] = []
+    for ref_id in ("hb", "no-such-row"):
+        ref = {"id": ref_id, "version": 1, "source": "source-b"}
+        before = _te_bytes(env, "h1")
+        with pytest.raises(VersionConflictError) as refused:
+            if mode == "legacy":
+                env.store.promote(
+                    "h1",
+                    user_stated=False,
+                    candidate_refs=[ref],
+                    access=MemoryAccess.legacy(
+                        env.root,
+                        ["source-a", "source-b", "source-c"],
+                        owner_scope=env.owner,
+                        operation="write",
+                    ),
+                )
+            else:
+                _te_promote(env, "h1", candidate_refs=[ref])
+        seen.append((str(refused.value), refused.value.code))
+        assert _te_bytes(env, "h1") == before
+    assert (
+        seen[0]
+        == seen[1]
+        == (
+            "promotion corroborator changed since review",
+            "E_NOT_VISIBLE",
+        )
+    ), seen
+    bodies = []
+    for ref_id in ("hb", "no-such-row"):
+        tool = MemoryTool().run(
+            env.root,
+            operation="promote",
+            subject=SUBJECT,
+            content={"text": "needle h"},
+            source="source-a",
+            symbol_ref="mod.py::sym_h",
+            owner_scope=env.owner.as_dict(),
+            request={
+                "apply": True,
+                "source_id": "h1",
+                "expected_version": 1,
+                "candidate_refs": [
+                    {"id": "h1", "version": 1, "source": "source-a"},
+                    {"id": ref_id, "version": 1, "source": "source-b"},
+                ],
+            },
+            permissions=_T04_PERM,
+        )
+        body = dict(_rd(tool))
+        body.pop("duration_ms", None)
+        bodies.append(body)
+    assert bodies[0] == bodies[1], bodies
+
+    if mode == "policy":
+        # A foreign-owner target is `E_NOT_VISIBLE` under Alice's write access.
+        _te_row(
+            env,
+            "bob1",
+            source="source-a",
+            owner=BOB,
+            origin=("agent", "o-bob1"),
+            ns="u",
+        )
+        with pytest.raises(VersionConflictError) as foreign:
+            env.store.promote("bob1", user_stated=False, access=_te_promote_access(env))
+        assert foreign.value.code == "E_NOT_VISIBLE"
+        # `access=None` with a policy file present: a grant is required, no effects.
+        before = _te_bytes(env, "x1")
+        with pytest.raises(MemoryPolicyError) as bare:
+            env.store.promote("x1", user_stated=True, access=None)
+        assert (bare.value.code, bare.value.reason) == (
+            "E_PERMISSION",
+            "policy_grant_required",
+        )
+        assert _te_bytes(env, "x1") == before
+
+
+def _te_reviewed_env(tmp_path: Path, mode: str, name: str, *, third: bool) -> _TE:
+    env = _te_env(
+        tmp_path,
+        mode=mode,
+        name=name,
+        bob=False,
+        sources=("source-a", "source-b", "source-c"),
+    )
+    _te_row(env, "sel", source="source-a", origin=("agent", "o-sel"), ns="rev")
+    _te_row(env, "peer", source="source-b", origin=("agent", "o-peer"), ns="rev")
+    if third:
+        _te_row(env, "peer2", source="source-c", origin=("agent", "o-peer2"), ns="rev")
+    return env
+
+
+def _te_reviewed_promote(env: _TE, refs: list[dict[str, Any]]) -> Any:
+    return MemoryTool().run(
+        env.root,
+        operation="promote",
+        subject=SUBJECT,
+        content={"text": "needle rev"},
+        source="source-a",
+        symbol_ref="mod.py::sym_rev",
+        user_stated=False,
+        owner_scope=env.owner.as_dict(),
+        request={
+            "apply": True,
+            "source_id": "sel",
+            "expected_version": 1,
+            "candidate_refs": refs,
+        },
+        permissions=_T04_PERM,
+    )
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t04_promote_reviewed_source_ref_not_counted(mode: str, tmp_path: Path) -> None:
+    # TUI-shaped refs [selected(source-a), peer(source-b)] -> STATED, count 2.
+    env = _te_reviewed_env(tmp_path, mode, "both", third=False)
+    done = _te_reviewed_promote(env, [_te_ref(env, "sel"), _te_ref(env, "peer")])
+    raw = _rd(done)
+    assert (raw.get("promoted"), raw.get("new_tier")) == (True, "STATED"), _dump(raw)
+    assert raw["corroboration_count"] == 2
+
+    # refs naming only the selected row while the agreeing peer stays eligible.
+    only = _te_reviewed_env(tmp_path, mode, "only", third=False)
+    before = _te_bytes(only, "sel")
+    denied = _te_reviewed_promote(only, [_te_ref(only, "sel")])
+    raw = _rd(denied)
+    assert _code_of(denied) != "E_VERSION", _dump(raw)
+    assert raw.get("denial_reason") == "insufficient_corroboration", _dump(raw)
+    assert raw.get("corroboration_count") == 1
+    assert _te_bytes(only, "sel") == before
+
+    # an unnamed agreeing peer in a third granted source is not counted.
+    third = _te_reviewed_env(tmp_path, mode, "third", third=True)
+    done = _te_reviewed_promote(third, [_te_ref(third, "sel"), _te_ref(third, "peer")])
+    raw = _rd(done)
+    assert (raw.get("new_tier"), raw.get("corroboration_count")) == ("STATED", 2)
+
+    # in-process: `candidate_refs=[]` never counts the stored peers.
+    inproc = _te_reviewed_env(tmp_path, mode, "inproc", third=True)
+    before = _te_bytes(inproc, "sel")
+    _, decision = _te_promote(inproc, "sel", candidate_refs=[], expected_version=1)
+    assert (decision.promoted, decision.denial_reason) == (
+        False,
+        "insufficient_corroboration",
+    )
+    assert decision.corroboration_count == 1
+    assert _te_bytes(inproc, "sel") == before
+
+    # MCP refs-only request: applied with `apply`, a zero-write preview without.
+    mcp = _te_reviewed_env(tmp_path, mode, "mcp", third=False)
+    peer = _te_ref(mcp, "peer")
+    arguments: dict[str, Any] = {
+        "path": str(mcp.root),
+        "operation": "promote",
+        "subject": SUBJECT,
+        "content": {"text": "needle rev"},
+        "source": "source-a",
+        "symbol_ref": "mod.py::sym_rev",
+        "owner_scope": mcp.owner.as_dict(),
+        "allow_cache_write": True,
+    }
+    digest = _sha_file(mcp.db)
+    preview = _mcp_memory(**arguments, request={"candidate_refs": [peer]})
+    assert preview["status"] == "ok", preview
+    assert _sha_file(mcp.db) == digest
+    applied = _mcp_memory(
+        **arguments, request={"apply": True, "candidate_refs": [peer]}
+    )
+    assert applied["raw"]["promoted"] is True, applied
+
+
+# --- R11 -----------------------------------------------------------------------
+
+
+def _te_elapsed_row(env: _TE, artifact_id: str, **kwargs: Any) -> MemoryArtifact:
+    """A DERIVED row whose 14-day TTL has elapsed; unanchored, distinct content."""
+    kwargs.setdefault("anchored", False)
+    kwargs.setdefault("content", {"text": f"needle elapsed {artifact_id}"})
+    kwargs.setdefault("created_at", env.tick() - 15 * DAY)
+    return _te_row(env, artifact_id, **kwargs)
+
+
+def test_t04_expiry_and_revisions_scoped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import expiry, maintenance
+    from rush.memory import store as store_module
+    from rush.memory.maintenance import MaintenanceAccessDenied, RevisionConflict
+
+    env = _te_env(tmp_path, sources=("source-a", "intent:*"))
+    for rid, src, owner in (
+        ("ea", "source-a", None),
+        ("ef", "intent:abc", None),  # a family grant admits `intent:abc`
+        ("er", "intent:", None),  # ... and refuses the empty suffix
+        ("ez", "source-z", None),  # outside the grant
+        ("eb", "source-a", BOB),  # another owner
+    ):
+        _te_elapsed_row(env, rid, source=src, owner=owner)
+    access = _te_acc(env, apply=True)
+
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = expiry.expired_candidate_rows(
+            conn, env.root, access=access, batch_size=500, now=time.time()
+        )
+    assert sorted(r["id"] for r in rows) == ["ea", "ef"]
+
+    # every `_SELECT_SQL` task applies the same owner and D40 source predicate.
+    for task, subject in (
+        ("promotion_sweep", SUBJECT),
+        ("skill_admission_check", "skill_pattern"),
+        ("staleness_sweep", SUBJECT),
+    ):
+        named = [f"{task}-{k}" for k in ("in", "fam", "empty", "out", "bob")]
+        for rid, src, owner in zip(
+            named,
+            ("source-a", "intent:abc", "intent:", "source-z", "source-a"),
+            (None, None, None, None, BOB),
+            strict=True,
+        ):
+            _te_row(
+                env,
+                rid,
+                source=src,
+                owner=owner,
+                subject=subject,
+                anchored=task == "staleness_sweep",
+                content={"text": f"needle {rid}"},
+            )
+        with contextlib.closing(sqlite3.connect(env.db)) as conn:
+            conn.row_factory = sqlite3.Row
+            picked = maintenance._select_rows(
+                task,  # type: ignore[arg-type]
+                conn,
+                env.root,
+                access=access,
+                batch_size=500,
+                candidate_ids=named,
+                now=time.time(),
+            )
+        assert sorted(r["id"] for r in picked) == sorted(named[:2]), task
+
+    # corroborating peers use the same owner and source predicate.
+    _te_row(
+        env, "pc", source="source-a", origin=("agent", "o-pc"), anchored=False, ns="p"
+    )
+    for rid, src, owner in (
+        ("pf", "intent:abc", None),
+        ("pe", "intent:", None),
+        ("pz", "source-z", None),
+        ("pb", "source-b", BOB),
+    ):
+        _te_row(
+            env,
+            rid,
+            source=src,
+            owner=owner,
+            origin=("agent", f"o-{rid}"),
+            anchored=False,
+            ns="p",
+        )
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conn.row_factory = sqlite3.Row
+        candidate = conn.execute(
+            "SELECT * FROM memory_artifacts WHERE id = 'pc'"
+        ).fetchone()
+        peers, contradicted = store_module.corroborating_peers(
+            conn, env.store, candidate, access=access, evidence_identity=True
+        )
+    assert contradicted is False
+    assert [p.id for p in peers] == ["pf"]
+
+    # expected_revisions naming an out-of-scope id and an absent id.
+    foreign = _te_row(env, "foreign", source="source-a", owner=BOB, anchored=False)
+    result = _te_run(
+        env,
+        "promotion_sweep",
+        expected_revisions={"foreign": foreign.artifact_version, "absent": 1},
+    )
+    assert tuple(result.refused) == (
+        RevisionConflict("foreign", foreign.artifact_version, None, "not_visible"),
+        RevisionConflict("absent", 1, None, "not_visible"),
+    )
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conflicts = expiry.reviewed_version_conflicts(
+            conn,
+            {"foreign": foreign.artifact_version, "absent": 1},
+            access=access,
+            project_root=env.root,
+        )
+    assert [tuple(c)[:3] for c in conflicts] == [
+        ("foreign", foreign.artifact_version, None),
+        ("absent", 1, None),
+    ]
+
+    # `recheck_failure` after the lease and before every commit.
+    for failure, code in (
+        (("E_PERMISSION", "revoked"), "E_PERMISSION"),
+        (("E_RESTART", "access_changed"), "E_RESTART"),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(maintenance, "recheck_failure", lambda _access, f=failure: f)
+            with pytest.raises(MaintenanceAccessDenied) as denied:
+                _te_run(env, "promotion_sweep", candidate_ids=["ea"])
+        assert denied.value.code == code
+        assert denied.value.reason == failure[1]
+
+    # the public sweeps are gone.
+    with pytest.raises(ImportError):
+        from rush.memory.expiry import (  # type: ignore[attr-defined]
+            sweep_expired,  # noqa: F401
+        )
+    with pytest.raises(ImportError):
+        from rush.memory.expiry import (  # type: ignore[attr-defined]
+            sweep_reviewed_expired,  # noqa: F401
+        )
+
+
+def test_t04_maintenance_expiry_between_batches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    from rush.memory import authorization as auth
+    from rush.memory import maintenance
+    from rush.memory.maintenance import MaintenanceAccessDenied
+
+    real_now = auth._now
+
+    def flip() -> None:
+        monkeypatch.setattr(auth, "_now", lambda: real_now() + 100_000.0)
+
+    # promotion_sweep: the grant expires after row 1 commits -> rows 2.. unprocessed.
+    env = _te_env(tmp_path, bob=False, grant_expires_at=time.time() + 600)
+    ids = _te_distinct_rows(env, 3)
+    original = maintenance.note_committed_write
+
+    def after_first_commit(*args: Any, **kwargs: Any) -> None:
+        original(*args, **kwargs)
+        flip()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(maintenance, "note_committed_write", after_first_commit)
+        with pytest.raises(MaintenanceAccessDenied) as denied:
+            _te_sweep(env)
+    assert (denied.value.code, denied.value.reason) == ("E_PERMISSION", "expired")
+    assert tuple(denied.value.unprocessed) == (ids[1], ids[2])
+    assert [_te_get(env, rid)["artifact_version"] for rid in ids] == [2, 1, 1]
+    monkeypatch.setattr(auth, "_now", real_now)
+
+    # expiry_sweep: one batch transaction -> nothing stamped, every id unprocessed.
+    batch = _te_env(
+        tmp_path, name="batch", bob=False, grant_expires_at=time.time() + 600
+    )
+    elapsed = [f"x{i}" for i in (1, 2, 3)]
+    for rid in elapsed:
+        _te_elapsed_row(batch, rid)
+    real_renew = MeshLockManager.renew
+
+    def renew_then_expire(self: Any, *args: Any, **kwargs: Any) -> bool:
+        ok = real_renew(self, *args, **kwargs)
+        flip()
+        return ok
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MeshLockManager, "renew", renew_then_expire)
+        with pytest.raises(MaintenanceAccessDenied) as batch_denied:
+            _te_run(batch, "expiry_sweep")
+    assert batch_denied.value.reason == "expired"
+    assert tuple(batch_denied.value.unprocessed) == tuple(elapsed)
+    assert all(_te_get(batch, rid)["expired_at"] is None for rid in elapsed)
+
+
+_T04_AUDIT: dict[str, Any] = {"on": False, "opens": [], "installed": False}
+
+
+@contextlib.contextmanager
+def _t04_audited() -> Any:
+    """Record every `open` audit event argument while the block runs."""
+    if not _T04_AUDIT["installed"]:
+
+        def hook(event: str, args: tuple[Any, ...]) -> None:
+            if _T04_AUDIT["on"] and event == "open":
+                _T04_AUDIT["opens"].append(args[0])
+
+        sys.addaudithook(hook)
+        _T04_AUDIT["installed"] = True
+    _T04_AUDIT["opens"] = []
+    _T04_AUDIT["on"] = True
+    try:
+        yield _T04_AUDIT["opens"]
+    finally:
+        _T04_AUDIT["on"] = False
+
+
+def _t04_assert_contained_opens(
+    opens: list[Any],
+    tmp_path: Path,
+    root: Path,
+    data_root: Path,
+    forbidden: set[str],
+    *,
+    literal_backslash: bool = False,
+) -> None:
+    base = os.path.realpath(tmp_path)
+    for value in opens:
+        if isinstance(value, int):
+            continue  # an already-open fd handed to `os.fdopen`
+        text = os.fsdecode(value)
+        if os.path.isabs(text):
+            real = os.path.realpath(text)
+            assert real not in forbidden, text
+            if real == base or real.startswith(base + os.sep):
+                allowed = (os.path.realpath(root), os.path.realpath(data_root))
+                assert real.startswith(allowed), text
+        else:
+            assert "/" not in text, text
+            assert literal_backslash or "\\" not in text, text
+
+
+# Windows spellings of an escape: drive-relative, drive-absolute, rooted, UNC, and
+# backslash traversal. On Windows each is refused; on POSIX a backslash is a literal
+# file-name character, so the same spellings name an absent in-root file.
+_T04_WIN_SPELLINGS = (
+    "..\\outside.py",
+    "C:outside.py",
+    "C:\\outside.py",
+    "\\outside.py",
+    "\\\\server\\share\\outside.py",
+    "a\\..\\..\\outside.py",
+)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param("etc_hosts", id="etc_hosts", marks=pytest.mark.posix_only),
+        pytest.param("dotdot", id="dotdot"),
+        pytest.param("symlink", id="symlink", marks=pytest.mark.posix_only),
+        pytest.param("win_drive_relative", id="win_drive_relative"),
+        pytest.param("win_drive_absolute", id="win_drive_absolute"),
+        pytest.param("win_drive_posix_absolute", id="win_drive_posix_absolute"),
+        pytest.param("win_rooted", id="win_rooted"),
+        pytest.param("win_unc", id="win_unc"),
+        pytest.param(
+            "win_backslash_traversal",
+            id="win_backslash_traversal",
+            marks=pytest.mark.posix_only,
+        ),
+        pytest.param(
+            "posix_literal_backslash",
+            id="posix_literal_backslash",
+            marks=pytest.mark.posix_only,
+        ),
+        pytest.param("ntpath_lexical", id="ntpath_lexical"),
+        pytest.param("lone_surrogate_seam", id="lone_surrogate_seam"),
+        pytest.param(
+            "lone_surrogate_persisted",
+            id="lone_surrogate_persisted",
+            marks=pytest.mark.posix_only,
+        ),
+    ],
+)
+def test_t04_staleness_contained_no_cache(kind: str, tmp_path: Path) -> None:
+    env = _te_env(tmp_path, bob=False)
+    outside = tmp_path / "outside.py"
+    outside.write_text("def x():\n    return 1\n", encoding="utf-8")
+    forbidden: set[str] = {os.path.realpath(outside)}
+    literal_backslash = False
+    expected_stale = 1
+    if kind == "ntpath_lexical":
+        # Local ntpath sibling: the same lexical gate under Windows path semantics
+        # refuses every escape spelling before it joins or opens anything.
+        import pathlib
+
+        from rush.io import physical_paths
+
+        physical = physical_paths.PhysicalRoot(env.root)
+        with _t04_audited() as opens, pytest.MonkeyPatch.context() as patch:
+            patch.setattr(physical_paths, "Path", pathlib.PureWindowsPath)
+            for spelling in _T04_WIN_SPELLINGS:
+                with pytest.raises(physical_paths.ContainmentError):
+                    physical.open_contained(spelling)
+        assert not [o for o in opens if str(o).startswith(str(env.root))]
+        return
+    if kind == "lone_surrogate_seam":
+        # A path no file system can encode is a refused read, never an uncaught
+        # `UnicodeEncodeError`, and nothing outside the root is opened.
+        from rush.memory.trust import read_contained_source
+
+        with _t04_audited() as opens:
+            for spelling in ("\ud800.py", "pkg/\ud800.py", "ok\x00.py"):
+                assert read_contained_source(env.root, spelling) is None, spelling
+            assert read_contained_source(tmp_path / "bad\ud800root", "mod.py") is None
+        _t04_assert_contained_opens(opens, tmp_path, env.root, env.data_root, forbidden)
+        return
+    if kind == "etc_hosts":
+        symbol = "/etc/hosts::x"
+        digest = hashlib.sha256(Path("/etc/hosts").read_bytes()).hexdigest()
+        forbidden.add(os.path.realpath("/etc/hosts"))
+    elif kind == "dotdot":
+        symbol = "../outside.py::x"
+        digest = _sha_file(outside)
+        forbidden.add(os.path.realpath(outside))
+    elif kind == "symlink":
+        target = tmp_path / "link-target.py"
+        target.write_text("def x():\n    return 1\n", encoding="utf-8")
+        (env.root / "link.py").symlink_to(target)
+        symbol = "link.py::x"
+        digest = _sha_file(target)
+        forbidden.add(os.path.realpath(target))
+    elif kind == "posix_literal_backslash":
+        # POSIX semantics stay intact: the backslash is a file-name character, so an
+        # in-root file with one in its name is read and its matching hash stays fresh.
+        literal = env.root / "lit\\back.py"
+        literal.write_text("def x():\n    return 2\n", encoding="utf-8")
+        symbol, digest = "lit\\back.py::x", _sha_file(literal)
+        literal_backslash, expected_stale = True, 0
+    elif kind == "lone_surrogate_persisted":
+        symbol, digest = "persisted.py::x", _sha_file(outside)
+    else:
+        symbol = {
+            "win_drive_relative": "C:outside.py::x",
+            "win_drive_absolute": "C:\\outside.py::x",
+            "win_drive_posix_absolute": f"C:{outside}::x",
+            "win_rooted": "\\outside.py::x",
+            "win_unc": "\\\\server\\share\\outside.py::x",
+            "win_backslash_traversal": "..\\outside.py::x",
+        }[kind]
+        digest = _sha_file(outside)
+        literal_backslash = kind == "win_backslash_traversal"
+    _te_row(env, "st1", anchored=False, symbol_ref=symbol, content_hash=digest)
+    if kind == "lone_surrogate_persisted":
+        # A source path whose stored bytes decode to a lone surrogate (CESU-8 U+D800).
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET symbol_ref = CAST(X'EDA0802E70793A3A78' AS TEXT)"
+            " WHERE id = 'st1'",
+        )
+    assert _te_get(env, "st1")["stale"] == 0
+    with _t04_audited() as opens:
+        result = _te_run(env, "staleness_sweep", candidate_ids=["st1"])
+    _t04_assert_contained_opens(
+        opens,
+        tmp_path,
+        env.root,
+        env.data_root,
+        forbidden,
+        literal_backslash=literal_backslash,
+    )
+    assert result.errors == ()
+    if kind != "lone_surrogate_persisted":
+        assert _te_get(env, "st1")["stale"] == expected_stale
+    assert not (env.root / ".rush" / "cache").exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("chmod_000", id="chmod_000", marks=pytest.mark.posix_nonroot),
+        pytest.param("non_utf8", id="non_utf8"),
+        pytest.param("unchanged", id="unchanged"),
+        pytest.param("bom", id="bom"),
+        pytest.param("missing", id="missing"),
+        pytest.param("symlink_loop", id="symlink_loop", marks=pytest.mark.posix_only),
+    ],
+)
+def test_t04_staleness_unreadable_or_non_utf8_marks_stale(
+    case: str, tmp_path: Path
+) -> None:
+    env = _te_env(tmp_path, bob=False)
+    target = env.root / "mod.py"
+    digest = _sha_file(target)
+    if case == "bom":
+        target.write_bytes(b"\xef\xbb\xbf" + target.read_bytes())
+        # the stored hash is the hash of the text a read returns (BOM kept).
+        digest = hashlib.sha256(
+            target.read_text(encoding="utf-8").encode("utf-8")
+        ).hexdigest()
+    _te_row(env, "st1", ns="shared", content_hash=digest)
+    if case == "chmod_000":
+        target.chmod(0o000)
+    elif case == "non_utf8":
+        target.write_bytes(b"\xff\xfe")
+    elif case == "missing":
+        target.unlink()
+    elif case == "symlink_loop":
+        target.unlink()
+        target.symlink_to(target)
+    try:
+        result = _te_run(env, "staleness_sweep", candidate_ids=["st1"])
+    finally:
+        if case == "chmod_000":
+            target.chmod(0o644)
+    assert result.errors == ()
+    assert _te_get(env, "st1")["stale"] == (0 if case in ("unchanged", "bom") else 1)
+
+
+# --- R12 -----------------------------------------------------------------------
+
+_REVOKE_TRUST_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    from rush.plugins.trust_store import PluginTrustStore
+    args = json.loads(sys.argv[1])
+    Path(args["started"]).write_text("started")
+    revoked = PluginTrustStore(repo_root=Path(args["root"])).revoke_trust(args["plugin"])
+    print(json.dumps({"revoked": revoked, "ts": time.time()}))
+    """
+)
+
+_CYCLE_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    from rush.memory.maintenance import run_maintenance_cycle
+    from rush.memory.retrieval import MemoryAccess
+    from rush.memory.store import OwnerScope
+    args = json.loads(sys.argv[1])
+    root = Path(args["root"])
+    owner = OwnerScope(args["owner"]["kind"], args["owner"]["id"])
+    access = MemoryAccess.resolve(
+        root, operation="maintain", apply=True, owner_scope=owner
+    )
+    assert access is not None
+    started = time.time()
+    result = run_maintenance_cycle(args["task"], project_root=root, access=access)
+    print(json.dumps({"changed": result.changed, "elapsed": time.time() - started}))
+    """
+)
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        pytest.param("revoke_blocks_until_commit", id="revoke_blocks_until_commit"),
+        pytest.param("lock_spy", id="lock_spy"),
+        pytest.param("dashboard_and_cycle", id="dashboard_and_cycle"),
+        pytest.param(
+            "name_240_bytes", id="name_240_bytes", marks=pytest.mark.posix_only
+        ),
+    ],
+)
+def test_t04_trust_lock_and_renew(
+    part: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.dashboard import state as dashboard_state
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    from rush.memory import maintenance
+    from rush.plugins.trust_store import PluginTrustStore
+
+    if part == "name_240_bytes":
+        root = tmp_path / "long"
+        root.mkdir()
+        manager = MeshLockManager(root)
+        target = Path("a" * 240)
+        acquired = manager.acquire(target, "agent-a", return_capability=True)
+        assert isinstance(acquired, tuple) and acquired[0] is True
+        capability = acquired[1]
+        assert capability is not None
+        assert manager.renew(target, capability) is True
+        assert manager.release(target, capability=capability) is True
+        assert sorted((root / ".rush" / "locks").glob("*.tmp")) == []
+        return
+
+    if part == "lock_spy":
+        env = _te_skill_env(tmp_path, "spy")
+        store = PluginTrustStore(repo_root=env.root)
+        key = "plugin-trust:" + str(store.ledger_path)
+        calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+        real = dashboard_state.cross_process_project_lock
+
+        @contextlib.contextmanager
+        def spy(*args: Any, **kwargs: Any) -> Any:
+            calls.append((args, kwargs))
+            with real(*args, **kwargs):
+                yield
+
+        digest = hashlib.sha256(b"another-closure").hexdigest()
+        with monkeypatch.context() as patch:
+            patch.setattr(dashboard_state, "cross_process_project_lock", spy)
+            store.grant_trust("spy-plugin", digest)
+            assert store.revoke_trust("spy-plugin") is True
+            absent = PluginTrustStore(ledger_path=tmp_path / "none" / "ledger.json")
+            assert absent.revoke_trust("spy-plugin") is False
+        want = ((key,), {"data_root": None})
+        assert calls[0] == want and calls[1] == want, calls
+        assert calls[2] == (
+            ("plugin-trust:" + str(absent.ledger_path),),
+            {"data_root": None},
+        )
+        assert len(calls) == 3
+        return
+
+    if part == "dashboard_and_cycle":
+        _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+        _action, _grant_all, _start_dashboard = (
+            _dmt._action,
+            _dmt._grant_all,
+            _dmt._start_dashboard,
+        )
+
+        env = _te_skill_env(tmp_path, "mixed")
+        record = register_project(env.root, data_root=env.data_root)
+        child_args = {
+            "root": str(env.root),
+            "task": "skill_admission_check",
+            "owner": env.owner.as_dict(),
+        }
+        server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+        child = None
+        try:
+            child = _spawn(_CYCLE_CHILD, **child_args)
+            started = time.monotonic()
+            status, body = _action(
+                base_url,
+                record.project_id,
+                cookie,
+                csrf,
+                operation="memory_maintain",
+                arguments={
+                    "task": "skill_admission_check",
+                    "owner_scope": env.owner.as_dict(),
+                    "sources": ["source-a", "source-b"],
+                },
+                grants=_grant_all(),
+            )
+            dashboard_seconds = time.monotonic() - started
+            code, out, err = _reap(child, timeout=60)
+        finally:
+            server.shutdown()
+            server.server_close()
+            if child is not None and child.poll() is None:
+                child.kill()
+                child.communicate()
+        assert status == 200, body
+        assert dashboard_seconds < 10, dashboard_seconds
+        assert code == 0, err
+        assert json.loads(out.strip().splitlines()[-1])["elapsed"] < 10
+        return
+
+    # revoke_blocks_until_commit: a `revoke_trust` in another process waits for the
+    # admission transaction.
+    env = _te_skill_env(tmp_path, "block")
+    entered, gate = threading.Event(), threading.Event()
+    real_promote = maintenance.promote_stored_artifact
+
+    def barrier(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        gate.wait(30)
+        return real_promote(*args, **kwargs)
+
+    started_file = tmp_path / "revoke-started"
+    child = None
+    with monkeypatch.context() as patch:
+        patch.setattr(maintenance, "promote_stored_artifact", barrier)
+        thread, box = _run_in_thread(
+            lambda: _te_run(env, "skill_admission_check", candidate_ids=["s1"])
+        )
+        try:
+            assert entered.wait(15), "the admission transaction never started"
+            child = _spawn(
+                _REVOKE_TRUST_CHILD,
+                root=str(env.root),
+                plugin="demo-plugin",
+                started=str(started_file),
+            )
+            _wait_for_file(started_file, child)
+            deadline = time.monotonic() + 1.0
+            while time.monotonic() < deadline:
+                assert child.poll() is None, "revoke ran inside the admission window"
+                time.sleep(0.05)
+            released_at = time.time()
+        finally:
+            gate.set()
+            thread.join(30)
+    assert child is not None
+    code, out, err = _reap(child)
+    assert code == 0, err
+    payload = json.loads(out.strip().splitlines()[-1])
+    assert payload["revoked"] is True and payload["ts"] > released_at
+    assert box["result"].changed == 1
+
+
+def test_t04_expiry_renew_fail_rolls_back_batch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _te_env(tmp_path, bob=False)
+    ids = ["x1", "x2", "x3"]
+    for rid in ids:
+        _te_elapsed_row(env, rid)
+    with monkeypatch.context() as patch:
+        _te_renew_fails_at(patch, 1)
+        committed = _te_spy_commits(patch)
+        result = _te_run(env, "expiry_sweep")
+    assert result.lock_lost is True
+    assert tuple(result.unprocessed) == tuple(ids)
+    assert all(_te_get(env, rid)["expired_at"] is None for rid in ids)
+    assert committed == []
+
+
+def test_t04_per_row_renew_fail_keeps_prior(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _te_env(tmp_path, bob=False)
+    ids = _te_distinct_rows(env, 5)
+    with monkeypatch.context() as patch:
+        _te_renew_fails_at(patch, 3)
+        result = _te_sweep(env)
+    assert result.lock_lost is True
+    assert tuple(result.unprocessed) == tuple(ids[2:])
+    assert [_te_get(env, rid)["artifact_version"] for rid in ids] == [2, 2, 1, 1, 1]
+
+
+# --- R12: the mesh lease claim (D26) -------------------------------------------
+
+_LK_TARGET = Path("lease-target")
+
+
+def _lk_manager(tmp_path: Path, name: str = "lk") -> tuple[Any, Path]:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    root = tmp_path / name
+    root.mkdir()
+    return MeshLockManager(root), root
+
+
+def _lk_paths(root: Path, target: Path = _LK_TARGET) -> tuple[Path, Path, Path]:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    locks = root / ".rush" / "locks"
+    key = MeshLockManager._lock_name(target)
+    return locks, locks / f"{key}.claim", locks / f"{key}.lock"
+
+
+def _lk_acquire(manager: Any, target: Path = _LK_TARGET, **kwargs: Any) -> Any:
+    kwargs.setdefault("timeout_s", 3.0)
+    ok, capability = manager.acquire(
+        target, "agent-a", return_capability=True, **kwargs
+    )
+    assert ok is True and capability is not None
+    return capability
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        pytest.param("renew", id="renew"),
+        pytest.param("release", id="release"),
+        pytest.param(
+            "release_inode_swap", id="release_inode_swap", marks=pytest.mark.posix_only
+        ),
+        pytest.param("two_acquires", id="two_acquires"),
+    ],
+)
+def test_t04_renew_cannot_overwrite_new_holder(
+    part: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    manager_a, root = _lk_manager(tmp_path)
+    manager_b = MeshLockManager(root)
+    _locks, _claim, lease = _lk_paths(root)
+
+    if part == "two_acquires":
+        _lk_acquire(manager_a, ttl_s=0.05)
+        time.sleep(0.3)
+        results: list[Any] = []
+
+        def contender(manager: Any, agent: str) -> None:
+            results.append(
+                manager.acquire(_LK_TARGET, agent, timeout_s=1.5, ttl_s=60.0)
+            )
+
+        threads = [
+            threading.Thread(target=contender, args=(manager_a, "agent-1")),
+            threading.Thread(target=contender, args=(manager_b, "agent-2")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert sorted(bool(r) for r in results) == [False, True], results
+        return
+
+    capability = _lk_acquire(manager_a, ttl_s=0.4)
+    if part == "release_inode_swap":
+        swapped = {"fired": False}
+        real_stat = os.stat
+
+        def swapping_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if (
+                not swapped["fired"]
+                and kwargs.get("dir_fd") is not None
+                and kwargs.get("follow_symlinks") is False
+                and isinstance(path, str)
+                and path.endswith(".lock")
+            ):
+                swapped["fired"] = True
+                temp = lease.with_name("swap.tmp")
+                temp.write_bytes(b"replacement")
+                os.replace(temp, lease)
+            return real_stat(path, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "stat", swapping_stat)
+            released = manager_a.release(_LK_TARGET, capability=capability)
+        assert swapped["fired"], "release never made its identity stat"
+        assert released is False
+        assert lease.read_bytes() == b"replacement"
+        return
+
+    entered, gate = threading.Event(), threading.Event()
+    owner: dict[str, int] = {}
+    fired = {"n": 0}
+    real_open = os.open
+
+    def barrier(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if (
+            owner.get("tid") == threading.get_ident()
+            and isinstance(path, (str, os.PathLike))
+            and os.fsdecode(path).endswith(".claim")
+            and fired["n"] == 0
+        ):
+            fired["n"] += 1
+            entered.set()
+            gate.wait(30)
+        return real_open(path, flags, *args, **kwargs)
+
+    def run_a() -> bool:
+        owner["tid"] = threading.get_ident()
+        if part == "renew":
+            return bool(manager_a.renew(_LK_TARGET, capability, ttl_s=60.0))
+        return bool(manager_a.release(_LK_TARGET, capability=capability))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", barrier)
+        thread, box = _run_in_thread(run_a)
+        try:
+            assert entered.wait(5), f"{part} never opened the claim"
+            time.sleep(0.7)  # A's lease has expired
+            ok, _cap = manager_b.acquire(  # type: ignore[misc]
+                _LK_TARGET, "agent-b", timeout_s=3.0, ttl_s=60.0, return_capability=True
+            )
+            assert ok is True
+            holder_bytes = lease.read_bytes()
+        finally:
+            gate.set()
+            thread.join(30)
+    assert box["result"] is False
+    assert lease.read_bytes() == holder_bytes
+
+
+def test_t04_claim_open_error_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import errno
+
+    manager, root = _lk_manager(tmp_path)
+    capability = _lk_acquire(manager)
+    locks, _claim, lease = _lk_paths(root)
+    inventory = _digest_dir(locks)
+    lease_bytes = lease.read_bytes()
+    real_open = os.open
+    real_close = os.close
+
+    def failing(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if isinstance(path, (str, os.PathLike)) and os.fsdecode(path).endswith(
+            ".claim"
+        ):
+            raise OSError(errno.EIO, "injected claim open failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", failing)
+        assert manager.renew(_LK_TARGET, capability, ttl_s=60.0) is False
+        assert manager.release(_LK_TARGET, capability=capability) is False
+        assert manager.acquire(Path("other-target"), "agent-b", timeout_s=0.5) is False
+    assert lease.read_bytes() == lease_bytes
+    assert _digest_dir(locks) == inventory
+
+    # G3 cleanup beside the lease failure: every fd close fails as well. The refusal is
+    # still the answer, nothing raises, and the held lease is untouched.
+    def failing_close(fd: int) -> None:
+        real_close(fd)
+        raise OSError(errno.EIO, "injected close failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", failing)
+        patch.setattr(os, "close", failing_close)
+        assert manager.renew(_LK_TARGET, capability, ttl_s=60.0) is False
+        assert manager.release(_LK_TARGET, capability=capability) is False
+        assert manager.acquire(Path("other-target"), "agent-b", timeout_s=0.5) is False
+    assert lease.read_bytes() == lease_bytes
+    assert _digest_dir(locks) == inventory
+
+    # A close failure alone (no claim failure) never raises out of the lease calls.
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "close", failing_close)
+        assert isinstance(
+            manager.renew(_LK_TARGET, capability, ttl_s=60.0, timeout_s=1.0), bool
+        )
+        assert isinstance(
+            manager.release(_LK_TARGET, capability=capability, timeout_s=1.0), bool
+        )
+
+
+_ACQUIRE_RACE_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    args = json.loads(sys.argv[1])
+    base = Path(args["base"])
+    (base / ("ready-" + args["agent"])).write_text("ready")
+    for run in range(args["runs"]):
+        go = base / f"go-{run}"
+        deadline = time.monotonic() + 60
+        while not go.exists():
+            if time.monotonic() > deadline:
+                sys.exit(3)
+            time.sleep(0.001)
+        manager = MeshLockManager(base / f"race-{run}")
+        won = bool(manager.acquire(Path("race-target"), args["agent"], timeout_s=1.5, ttl_s=60.0))
+        part = base / f"part-{run}-{args['agent']}"
+        part.write_text(json.dumps(won))
+        part.replace(base / f"result-{run}-{args['agent']}")
+    """
+)
+
+
+def _lk_race_winners(tmp_path: Path, runs: int) -> list[int]:
+    """`runs` rounds of two processes acquiring one expired lease; winners per round."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    base = tmp_path / "race"
+    base.mkdir()
+    children = [
+        _spawn(_ACQUIRE_RACE_CHILD, base=str(base), agent=agent, runs=runs)
+        for agent in ("agent-1", "agent-2")
+    ]
+    winners: list[int] = []
+    try:
+        for agent in ("agent-1", "agent-2"):
+            _wait_for_file(base / f"ready-{agent}", *children)
+        for run in range(runs):
+            root = base / f"race-{run}"
+            root.mkdir()
+            seed = MeshLockManager(root)
+            assert seed.acquire(Path("race-target"), "seed", ttl_s=0.01) is True
+            time.sleep(0.05)
+            (base / f"go-{run}").write_text("go")
+            for agent in ("agent-1", "agent-2"):
+                deadline = time.monotonic() + 60
+                while not (base / f"result-{run}-{agent}").exists():
+                    for child in children:
+                        if child.poll() not in (None, 0):
+                            raise AssertionError(f"child exited {child.returncode}")
+                    assert time.monotonic() < deadline, f"run {run} timed out"
+                    time.sleep(0.005)
+            winners.append(
+                sum(
+                    json.loads((base / f"result-{run}-{agent}").read_text()) is True
+                    for agent in ("agent-1", "agent-2")
+                )
+            )
+        for child in children:
+            code, _out, err = _reap(child)
+            assert code == 0, err
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+                child.communicate()
+    return winners
+
+
+_STALLED_ACQUIRE_CHILD = textwrap.dedent(
+    """
+    import json, os, sys, time
+    from pathlib import Path
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    args = json.loads(sys.argv[1])
+    base = Path(args["base"])
+    real_open = os.open
+    fired = []
+
+    def stalling_open(path, flags, *a, **k):
+        if not fired and str(os.fsdecode(path)).endswith(".claim"):
+            fired.append(1)
+            (base / "stalled").write_text("stalled")
+            deadline = time.monotonic() + 60
+            while not (base / "resume").exists():
+                if time.monotonic() > deadline:
+                    sys.exit(3)
+                time.sleep(0.005)
+        return real_open(path, flags, *a, **k)
+
+    os.open = stalling_open
+    won = bool(
+        MeshLockManager(Path(args["root"])).acquire(
+            Path(args["target"]), "agent-b", timeout_s=1.5, ttl_s=60.0
+        )
+    )
+    (base / "result").write_text(json.dumps(won))
+    """
+)
+
+
+def test_t04_concurrent_acquire_one_winner(tmp_path: Path) -> None:
+    # Deterministic interleave across processes: B has read the expired lease and stalls
+    # opening its claim; A completes a full acquire; B then resumes and must re-read A's
+    # live lease instead of overwriting it.
+    manager_a, root = _lk_manager(tmp_path, "det")
+    _locks, _claim, lease = _lk_paths(root)
+    _lk_acquire(manager_a, ttl_s=0.05)
+    time.sleep(0.3)
+    base = tmp_path / "stall"
+    base.mkdir()
+    child = _spawn(
+        _STALLED_ACQUIRE_CHILD, base=str(base), root=str(root), target=str(_LK_TARGET)
+    )
+    try:
+        _wait_for_file(base / "stalled", child)
+        assert (
+            manager_a.acquire(_LK_TARGET, "agent-a", timeout_s=3.0, ttl_s=60.0) is True
+        )
+        holder_bytes = lease.read_bytes()
+        (base / "resume").write_text("go")
+        code, _out, err = _reap(child)
+        assert code == 0, err
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.communicate()
+    assert json.loads((base / "result").read_text()) is False, (
+        "the stalled acquire overwrote the live holder"
+    )
+    assert lease.read_bytes() == holder_bytes
+
+    assert _lk_race_winners(tmp_path, 20) == [1] * 20
+
+
+@pytest.mark.posix_only
+def test_t04_claim_leaf_symlink_refused(tmp_path: Path) -> None:
+    manager, root = _lk_manager(tmp_path)
+    _locks, claim, lease = _lk_paths(root)
+    outside = tmp_path / "outside-claim-target"
+    claim.symlink_to(outside)
+    started = time.monotonic()
+    assert manager.acquire(_LK_TARGET, "agent-a", timeout_s=3.0) is False
+    assert time.monotonic() - started < 1.5, (
+        "a symlinked claim is refused, not waited on"
+    )
+    assert not outside.exists()
+    assert not lease.exists()
+
+
+@pytest.mark.posix_only
+def test_t04_claim_parent_symlink_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    root = tmp_path / "project"
+    (root / ".rush").mkdir(parents=True)
+    outside = tmp_path / "outside-locks"
+    outside.mkdir()
+    (root / ".rush" / "locks").symlink_to(outside)
+    manager = MeshLockManager(root)
+    touched: list[str] = []
+    real_open = os.open
+
+    def recording(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if isinstance(path, (str, os.PathLike)):
+            real = os.path.realpath(os.fsdecode(path))
+            if real == str(outside.resolve()) or real.startswith(
+                str(outside.resolve()) + os.sep
+            ):
+                touched.append(real)
+        return real_open(path, flags, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", recording)
+        assert manager.acquire(_LK_TARGET, "agent-a", timeout_s=1.0) is False
+    assert touched == []
+    assert _tree(outside) == []
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("replacement", ["symlink", "real_dir"])
+@pytest.mark.parametrize("barrier", ["claim_open", "flock", "publish"])
+@pytest.mark.parametrize("op", ["acquire", "renew", "release"])
+def test_t04_claim_dir_relocated_after_walk_refused(
+    op: str,
+    barrier: str,
+    replacement: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import fcntl
+
+    manager, root = _lk_manager(tmp_path)
+    locks, _claim, lease = _lk_paths(root)
+    capability = None
+    if op != "acquire":
+        capability = _lk_acquire(manager)
+    pre = _digest_dir(locks)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    relocated = outside / "relocated-locks"
+    outside_before = _digest_dir(outside)
+    fired = {"n": 0}
+
+    def relocate() -> None:
+        if fired["n"]:
+            return
+        fired["n"] += 1
+        os.rename(locks, relocated)
+        if replacement == "symlink":
+            os.symlink(relocated, locks)
+        else:
+            os.mkdir(locks)
+
+    real_open, real_flock = os.open, fcntl.flock
+    real_replace, real_unlink = os.replace, os.unlink
+
+    def hooked_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if (
+            barrier == "claim_open"
+            and isinstance(path, (str, os.PathLike))
+            and os.fsdecode(path).endswith(".claim")
+        ):
+            relocate()
+        return real_open(path, flags, *args, **kwargs)
+
+    def hooked_flock(fd: int, operation: int) -> Any:
+        if barrier == "flock":
+            relocate()
+        return real_flock(fd, operation)
+
+    def hooked_replace(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+        if barrier == "publish" and os.fsdecode(src).startswith(".rush-lock-"):
+            relocate()
+        return real_replace(src, dst, *args, **kwargs)
+
+    def hooked_unlink(path: Any, *args: Any, **kwargs: Any) -> Any:
+        if (
+            barrier == "publish"
+            and kwargs.get("dir_fd") is not None
+            and os.fsdecode(path).endswith(".lock")
+        ):
+            relocate()
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", hooked_open)
+        patch.setattr(fcntl, "flock", hooked_flock)
+        patch.setattr(os, "replace", hooked_replace)
+        patch.setattr(os, "unlink", hooked_unlink)
+        if op == "acquire":
+            result = manager.acquire(_LK_TARGET, "agent-a", timeout_s=1.0)
+        elif op == "renew":
+            result = manager.renew(_LK_TARGET, capability, ttl_s=60.0)
+        else:
+            result = manager.release(_LK_TARGET, capability=capability)
+    assert fired["n"] == 1, f"{op} never reached the {barrier} barrier"
+    assert result is False
+
+    if replacement == "real_dir":
+        assert list(locks.iterdir()) == [], "the replacement directory got an entry"
+    after = _digest_dir(relocated)
+    if barrier != "publish":
+        assert after == pre
+    else:
+        lease_name = lease.name
+        others = {k: v for k, v in after.items() if k != lease_name}
+        assert others == {k: v for k, v in pre.items() if k != lease_name}
+        assert not [k for k in after if k.endswith(".tmp")]
+        if op == "release":
+            assert lease_name not in after
+        else:
+            assert lease_name in after
+            if op == "renew":
+                assert after[lease_name] != pre[lease_name]
+    unrelocated = {
+        k: v
+        for k, v in _digest_dir(outside).items()
+        if k != "relocated-locks" and not k.startswith("relocated-locks/")
+    }
+    assert unrelocated == {
+        k: v for k, v in outside_before.items() if not k.startswith("relocated-locks")
+    }
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("kind", ["fifo", "hardlink"])
+def test_t04_claim_special_or_hardlink_refused(kind: str, tmp_path: Path) -> None:
+    manager, root = _lk_manager(tmp_path)
+    _locks, claim, lease = _lk_paths(root)
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"keep")
+    if kind == "fifo":
+        os.mkfifo(claim)
+    else:
+        os.link(outside, claim)
+    started = time.monotonic()
+    assert manager.acquire(_LK_TARGET, "agent-a") is False
+    elapsed = time.monotonic() - started
+    assert elapsed < 3.0, elapsed  # refused promptly, well inside the 5.5 s bound
+    assert not lease.exists()
+    if kind == "fifo":
+        assert stat.S_ISFIFO(os.stat(claim).st_mode)
+    else:
+        assert outside.read_bytes() == b"keep"
+
+
+@pytest.mark.posix_only
+def test_t04_claim_persistent_identity_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    manager, root = _lk_manager(tmp_path)
+    locks, claim, _lease = _lk_paths(root)
+    capability = _lk_acquire(manager, ttl_s=30.0)
+    inode = os.stat(claim).st_ino
+    assert manager.renew(_LK_TARGET, capability, ttl_s=30.0) is True
+    assert os.stat(claim).st_ino == inode
+    assert manager.release(_LK_TARGET, capability=capability) is True
+    assert os.stat(claim).st_ino == inode
+
+    # A claim replaced between its open and its `flock`: the retry holds the path's inode.
+    other = Path("second-target")
+    _locks, claim2, _lease2 = _lk_paths(root, other)
+    real_flock = fcntl.flock
+    swapped: dict[str, int] = {}
+
+    def swapping_flock(fd: int, operation: int) -> Any:
+        if not swapped:
+            fresh = locks / "swap-claim.tmp"
+            fresh.write_bytes(b"")
+            os.chmod(fresh, 0o600)
+            swapped["ino"] = os.stat(fresh).st_ino
+            os.replace(fresh, claim2)
+        return real_flock(fd, operation)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fcntl, "flock", swapping_flock)
+        assert manager.acquire(other, "agent-b", timeout_s=3.0) is True
+    assert swapped, "the claim flock never ran"
+    assert os.stat(claim2).st_ino == swapped["ino"]
+
+    assert _lk_race_winners(tmp_path, 20) == [1] * 20
+
+
+def test_t04_claim_windows_reparse_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh import lock_manager
+
+    manager, root = _lk_manager(tmp_path, "win")
+    directory_fds: set[int] = set()
+    opened_flags: list[int] = []
+    real_open, real_fstat = os.open, os.fstat
+
+    class FakeKernel32:
+        def CreateFileW(self, *args: Any) -> int:
+            return 4242
+
+        def CloseHandle(self, handle: Any) -> int:
+            return 1
+
+    def open_osfhandle(handle: int, flags: int) -> int:
+        fd = real_open(str(root), os.O_RDONLY)
+        directory_fds.add(fd)
+        return fd
+
+    class AttributeStat:
+        def __init__(self, real: Any) -> None:
+            self._real = real
+            self.st_file_attributes = 0x10 | 0x400  # DIRECTORY | REPARSE_POINT
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._real, name)
+
+    def fstat(fd: int) -> Any:
+        real = real_fstat(fd)
+        return AttributeStat(real) if fd in directory_fds else real
+
+    def spy_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        opened_flags.append(flags)
+        return real_open(path, flags, *args, **kwargs)
+
+    fake_msvcrt = types.SimpleNamespace(
+        open_osfhandle=open_osfhandle,
+        locking=lambda *args: None,
+        LK_NBLCK=2,
+        LK_UNLCK=0,
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(lock_manager, "sys", _Proxy(sys, platform="win32"))
+        patch.setattr(lock_manager, "_kernel32", lambda: FakeKernel32())
+        patch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+        patch.setattr(os, "open", spy_open)
+        patch.setattr(os, "fstat", fstat)
+        assert manager.acquire(_LK_TARGET, "agent-a", timeout_s=0.5) is False
+    assert not any(flags & os.O_CREAT for flags in opened_flags), opened_flags
+
+
+@pytest.mark.windows_only
+def test_t04_claim_containment_windows_native(tmp_path: Path) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    # A junction `.rush/locks` pointing at an outside directory.
+    root = tmp_path / "junction-project"
+    (root / ".rush").mkdir(parents=True)
+    outside = tmp_path / "outside-locks"
+    outside.mkdir()
+    done = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(root / ".rush" / "locks"), str(outside)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    before = _tree(outside)
+    assert MeshLockManager(root).acquire(_LK_TARGET, "agent-a", timeout_s=1.0) is False
+    assert _tree(outside) == before
+
+    # A leaf `os.symlink` claim.
+    manager, project = _lk_manager(tmp_path, "leaf-project")
+    _locks, claim, _lease = _lk_paths(project)
+    target = tmp_path / "outside-claim-target"
+    target.write_text("keep")
+    os.symlink(target, claim)
+    assert manager.acquire(_LK_TARGET, "agent-a", timeout_s=1.0) is False
+    assert target.read_text() == "keep"
+
+
+# --- R13 -----------------------------------------------------------------------
+
+
+def test_t04_unanchored_different_content_not_contradicted(tmp_path: Path) -> None:
+    env = _te_env(tmp_path, bob=False)
+    _te_row(
+        env,
+        "u1",
+        source="source-a",
+        origin=("agent", "o-1"),
+        anchored=False,
+        content={"text": "needle u one"},
+        ns="u",
+    )
+    _te_row(
+        env,
+        "u2",
+        source="source-b",
+        origin=("agent", "o-2"),
+        anchored=False,
+        content={"text": "needle u two"},
+        ns="u",
+    )
+    _, decision = _te_promote(env, "u1")
+    assert decision.promoted is False
+    assert decision.denial_reason == "insufficient_corroboration"
+    assert decision.corroboration_count == 1
+
+
+def test_t04_unanchored_equal_content_corroborates(tmp_path: Path) -> None:
+    env = _te_env(tmp_path, bob=False)
+    _te_row(
+        env, "u1", source="source-a", origin=("agent", "o-1"), anchored=False, ns="u"
+    )
+    _te_row(
+        env, "u2", source="source-b", origin=("agent", "o-2"), anchored=False, ns="u"
+    )
+    _, decision = _te_promote(env, "u1")
+    assert (decision.promoted, decision.corroboration_count) == (True, 2)
+
+
+@pytest.mark.parametrize(
+    "peer_content",
+    [
+        pytest.param({"text": "needle v"}, id="equal_content"),
+        pytest.param({"text": "needle v a different claim"}, id="different_content"),
+    ],
+)
+def test_t04_stated_peer_neither_counts_nor_contradicts(
+    peer_content: dict[str, Any], tmp_path: Path
+) -> None:
+    env = _te_env(tmp_path, bob=False)
+    _te_row(
+        env,
+        "peer",
+        source="source-b",
+        origin=("agent", "o-peer"),
+        ns="v",
+        content=peer_content,
+    )
+    _te_row(env, "cand", source="source-a", origin=("agent", "o-cand"), ns="v")
+    stated, decision = env.store.promote(
+        "peer", user_stated=True, access=_te_promote_access(env)
+    )
+    assert decision.promoted is True and stated.trust_tier == "STATED"
+    _, result = _te_promote(env, "cand")
+    assert result.promoted is False
+    assert result.denial_reason == "insufficient_corroboration"
+    assert result.corroboration_count == 1
+
+
+def test_t04_anchored_different_content_contradicted(tmp_path: Path) -> None:
+    env = _te_env(tmp_path, bob=False)
+    _te_row(env, "cand", source="source-a", origin=("agent", "o-1"), ns="w")
+    _te_row(
+        env,
+        "peer",
+        source="source-b",
+        origin=("agent", "o-2"),
+        ns="w",
+        content={"text": "needle w the opposite"},
+    )
+    _, decision = _te_promote(env, "cand")
+    assert decision.promoted is False and decision.denial_reason == "contradicted"
+
+
+# --- R14 -----------------------------------------------------------------------
+
+
+def test_t04_dashboard_promote_refs_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _action, _grant_all, _start_dashboard = (
+        _dmt._action,
+        _dmt._grant_all,
+        _dmt._start_dashboard,
+    )
+
+    env = _te_env(tmp_path, mode="legacy", name="dash")
+    record = register_project(env.root, data_root=env.data_root)
+    owner = OwnerScope("project", record.project_id)
+    peer = _te_row(
+        env, "peer", source="source-b", origin=("agent", "o-peer"), ns="q", owner=owner
+    )
+    calls: list[dict[str, Any]] = []
+    real_run = MemoryTool.run
+
+    def recording(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return real_run(self, *args, **kwargs)
+
+    base_arguments = {
+        "subject": SUBJECT,
+        "content": {"text": "needle q"},
+        "source": "source-a",
+        "symbol_ref": "mod.py::sym_q",
+        "owner_scope": owner.as_dict(),
+    }
+    server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+    try:
+
+        def promote(**extra: Any) -> tuple[int, dict[str, Any]]:
+            return _action(
+                base_url,
+                record.project_id,
+                cookie,
+                csrf,
+                operation="memory_promote",
+                arguments={**base_arguments, **extra},
+                grants=_grant_all(),
+            )
+
+        with monkeypatch.context() as patch:
+            patch.setattr(MemoryTool, "run", recording)
+            digest = _sha_file(env.db)
+            status, body = promote(candidate_sources=["invented1", "invented2"])
+            assert status == 400, body
+            assert body["error"]["code"] == "malformed_request"
+            assert (
+                "candidate_sources requires candidate_refs" in body["error"]["message"]
+            )
+            assert calls == []
+            assert _sha_file(env.db) == digest
+
+            fake = "ID@1@source-b,ID2@3@source-c"
+            promote(candidate_refs=fake)
+            assert calls[-1]["request"] == {
+                "apply": True,
+                "candidate_refs": [
+                    {"id": "ID", "version": 1, "source": "source-b"},
+                    {"id": "ID2", "version": 3, "source": "source-c"},
+                ],
+            }
+            assert "source_id" not in calls[-1]["request"]
+
+            for malformed in ("x@y", "x@notint@s", "x@0@s", "x@1@", ["x@1@s"], 7):
+                status, body = promote(candidate_refs=malformed)
+                assert status == 400, (malformed, body)
+                assert body["error"]["code"] == "malformed_request", malformed
+
+        status, body = promote(
+            candidate_refs=f"{peer.id}@{peer.artifact_version}@{peer.source}"
+        )
+        assert status == 200, body
+        assert body["data"]["raw"]["new_tier"] == "STATED", body
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- R15 -----------------------------------------------------------------------
+
+
+def test_t04_expiry_preserves_selection_batch_and_revisions(tmp_path: Path) -> None:
+    from rush.memory.maintenance import RevisionConflict
+
+    env = _te_env(tmp_path)
+    for rid in ("e1", "e2", "e3", "e4"):
+        _te_elapsed_row(env, rid)
+    bob = _te_elapsed_row(env, "b1", owner=BOB)
+    env.store.edit(
+        "e2",
+        {"text": "needle elapsed e2 revised"},
+        expected_version=1,
+        scope=SUBJECT,
+        owner_scope=ALICE,
+        apply=True,
+    )
+    versions = {
+        rid: _te_get(env, rid)["artifact_version"] for rid in ("e1", "e2", "e3", "e4")
+    }
+    assert versions["e2"] == 2
+    before = {rid: _te_bytes(env, rid) for rid in ("e3", "e4")}
+    result = _te_run(
+        env,
+        "expiry_sweep",
+        batch_size=1,
+        candidate_ids=["e1", "e2", "e3"],
+        expected_revisions={
+            "e1": versions["e1"],
+            "e2": versions["e2"] - 1,
+            "b1": bob.artifact_version,
+        },
+    )
+    assert result.changed == 1
+    assert _te_get(env, "e1")["expired_at"] is not None
+    assert sorted(result.refused, key=lambda c: c.id) == [
+        RevisionConflict("b1", bob.artifact_version, None, "not_visible"),
+        RevisionConflict("e2", versions["e2"] - 1, versions["e2"], None),
+    ]
+    assert {rid: _te_bytes(env, rid) for rid in ("e3", "e4")} == before
+    assert _te_get(env, "e2")["expired_at"] is None
+
+
+# --- R16 -----------------------------------------------------------------------
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("case", ["symlink_leaf", "symlink_parent"])
+def test_t04_staleness_source_swap(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.io import physical_paths
+
+    env = _te_env(tmp_path, bob=False)
+    text = "def x():\n    return 1\n"
+    (env.root / "b.py").write_text(text, encoding="utf-8")
+    (env.root / "sub").mkdir()
+    (env.root / "sub" / "a.py").write_text(text, encoding="utf-8")
+    outside_dir = tmp_path / "outside-dir"
+    outside_dir.mkdir()
+    (outside_dir / "a.py").write_text(text, encoding="utf-8")
+    outside_file = tmp_path / "outside.py"
+    outside_file.write_text(text, encoding="utf-8")
+    rel = "b.py" if case == "symlink_leaf" else "sub/a.py"
+    _te_row(
+        env,
+        "sw1",
+        anchored=False,
+        symbol_ref=f"{rel}::x",
+        content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    )
+    outside_before = _digest_dir(tmp_path / "outside-dir")
+    forbidden = {
+        os.path.realpath(outside_file),
+        os.path.realpath(outside_dir / "a.py"),
+    }
+
+    def swap() -> None:
+        if case == "symlink_leaf":
+            (env.root / "b.py").unlink()
+            (env.root / "b.py").symlink_to(outside_file)
+        else:
+            # rename, not rmtree: rmtree audits an absolute open of <root>/sub, which
+            # resolves outside the root once `sub` is a symlink.
+            os.rename(env.root / "sub", tmp_path / "sub-moved")
+            (env.root / "sub").symlink_to(outside_dir)
+
+    real = physical_paths.PhysicalRoot.open_contained
+
+    def swapping(self: Any, relative_path: Any, purpose: str = "read") -> Any:
+        validated = real(self, relative_path, purpose)
+        if sys._getframe(1).f_code.co_name == "open_contained_file":
+            swap()
+        return validated
+
+    with monkeypatch.context() as patch:
+        patch.setattr(physical_paths.PhysicalRoot, "open_contained", swapping)
+        with _t04_audited() as opens:
+            result = _te_run(env, "staleness_sweep", candidate_ids=["sw1"])
+    _t04_assert_contained_opens(opens, tmp_path, env.root, env.data_root, forbidden)
+    assert result.errors == ()
+    assert _te_get(env, "sw1")["stale"] == 1
+    assert _digest_dir(tmp_path / "outside-dir") == outside_before
+    assert outside_file.read_text(encoding="utf-8") == text
+
+
+# --- R17 -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "ops", [("list",), ("list", "write")], ids=["list_only", "list_write"]
+)
+def test_t04_preview_access_cannot_promote_or_maintain(
+    ops: tuple[str, ...], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+    from rush.memory import retrieval
+    from rush.memory.authorization import MemoryPolicyError
+    from rush.memory.maintenance import MaintenanceAccessDenied
+    from rush.memory.retrieval import MemoryAccess
+
+    env = _te_env(tmp_path, bob=False, ops=ops)
+    _te_row(env, "x1", source="source-a", origin=("agent", "o-1"), ns="x")
+    _te_row(env, "x2", source="source-b", origin=("agent", "o-2"), ns="x")
+    skill = _te_skill_env(tmp_path, "r17skill")
+    acc = MemoryAccess.resolve(
+        env.root,
+        operation="write",
+        apply=False,
+        owner_scope=ALICE,
+        data_root=env.data_root,
+    )
+    assert acc is not None
+    assert acc.required_operations == frozenset({"list"})
+    assert retrieval.is_write_access(acc) is False
+
+    before = _te_bytes(env, "x1")
+    with pytest.raises(MemoryPolicyError) as refused:
+        env.store.promote(
+            "x1", user_stated=True, access=acc, receipt_operation_id="r17-promote"
+        )
+    assert (refused.value.code, refused.value.reason) == (
+        "E_PERMISSION",
+        "policy_grant_required",
+    )
+    assert _te_bytes(env, "x1") == before
+    assert env.store.get_receipt("r17-promote") is None
+
+    acquires: list[int] = []
+    real_acquire = MeshLockManager.acquire
+
+    def counting(self: Any, *args: Any, **kwargs: Any) -> Any:
+        acquires.append(1)
+        return real_acquire(self, *args, **kwargs)
+
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MeshLockManager, "acquire", counting)
+        for task, target_env in (
+            ("promotion_sweep", env),
+            ("skill_admission_check", skill),
+        ):
+            skill_acc = MemoryAccess.resolve(
+                target_env.root,
+                operation="write",
+                apply=False,
+                owner_scope=ALICE,
+                data_root=target_env.data_root,
+            )
+            assert skill_acc is not None
+            with pytest.raises(MaintenanceAccessDenied) as denied:
+                run_maintenance_cycle(
+                    task,  # type: ignore[arg-type]
+                    project_root=target_env.root,
+                    access=skill_acc,
+                )
+            assert (denied.value.code, denied.value.reason) == (
+                "E_PERMISSION",
+                "policy_grant_required",
+            )
+    assert acquires == []
+    assert _te_get(env, "x1")["trust_tier"] == "DERIVED"
+    assert _te_get(skill, "s1")["trust_tier"] == "DERIVED"
+
+    if ops == ("list",):
+        promoted = _mcp_memory(
+            path=str(env.root),
+            operation="promote",
+            subject=SUBJECT,
+            content={"text": "needle x"},
+            source="source-a",
+            owner_scope=ALICE.as_dict(),
+            allow_cache_write=True,
+            request={"apply": True},
+        )
+        assert _code_of(promoted["raw"]) == "E_PERMISSION", promoted
+        maintained = _mcp_memory(
+            path=str(env.root),
+            operation="maintain",
+            task="promotion_sweep",
+            owner_scope=ALICE.as_dict(),
+            allow_cache_write=True,
+        )
+        assert _code_of(maintained["raw"]) == "E_PERMISSION", maintained
+
+
+# --- R18 -----------------------------------------------------------------------
+
+
+def test_t04_imported_rows_never_corroborate_or_auto_promote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import store as store_module
+
+    env = _te_env(tmp_path, bob=False)
+    # (a) an IMPORTED equal-content peer with a distinct origin is not counted.
+    _te_row(env, "a1", source="source-a", origin=("agent", "o-a1"), ns="a")
+    _te_row(
+        env, "ia", source="source-b", origin=("agent", "o-ia"), ns="a", trust="IMPORTED"
+    )
+    _, counted = _te_promote(env, "a1")
+    assert (counted.promoted, counted.corroboration_count) == (False, 1)
+    # (b) an IMPORTED anchored different-content peer does not contradict.
+    _te_row(env, "b1", source="source-a", origin=("agent", "o-b1"), ns="b")
+    _te_row(
+        env,
+        "ib",
+        source="source-b",
+        origin=("agent", "o-ib"),
+        ns="b",
+        trust="IMPORTED",
+        content={"text": "needle b different"},
+    )
+    _, quiet = _te_promote(env, "b1")
+    assert quiet.denial_reason == "insufficient_corroboration"
+    # (c) auto-promotion of an IMPORTED row is refused with no peer scan and no effects.
+    _te_row(
+        env, "c1", source="source-a", origin=("agent", "o-c1"), ns="c", trust="IMPORTED"
+    )
+    _te_row(env, "c2", source="source-b", origin=("agent", "o-c2"), ns="c")
+    scans: list[int] = []
+    original = getattr(store_module, "corroborating_peers", None)
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        scans.append(1)
+        assert original is not None
+        return original(*args, **kwargs)
+
+    before = _te_bytes(env, "c1")
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "corroborating_peers", spy, raising=True)
+        _, refused = _te_promote(env, "c1")
+    assert (refused.promoted, refused.denial_reason) == (False, "imported_unverified")
+    assert scans == []
+    assert _te_bytes(env, "c1") == before
+    assert "c1" not in {c["id"] for c in _te_preview(env, "promotion_sweep")}
+    # (d) an explicit user confirmation promotes it.
+    stated, confirmed = _te_promote(env, "c1", user_stated=True)
+    assert confirmed.promoted is True and stated.trust_tier == "STATED"
+
+
+# --- R19 -----------------------------------------------------------------------
+
+_REVOKE_AT_GO_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    import rush.dashboard.state as ds
+    import rush.memory.authorization as auth
+    args = json.loads(sys.argv[1])
+    ds._DIRECTORY_LOCK_TIMEOUT_S = 0.5
+    Path(args["started"]).write_text("started")
+    deadline = time.monotonic() + 90
+    while not Path(args["go"]).exists():
+        if time.monotonic() > deadline:
+            sys.exit(3)
+        time.sleep(0.002)
+    try:
+        revoked = auth.revoke_memory_scope(
+            grant_id=args["grant_id"],
+            expected_policy_revision=args["revision"],
+            consent=True,
+            data_root=Path(args["data_root"]),
+        )
+        out = {"revoked": revoked["revoked"], "ts": time.time()}
+    except auth.MemoryPolicyError as exc:
+        out = {"code": exc.code, "reason": exc.reason}
+    Path(args["out"]).write_text(json.dumps(out))
+    print(json.dumps(out))
+    """
+)
+
+_HOLD_PLUGIN_LOCK_CHILD = textwrap.dedent(
+    """
+    import json, sys, time
+    from pathlib import Path
+    from rush.dashboard.state import cross_process_project_lock
+    args = json.loads(sys.argv[1])
+    Path(args["imported"]).write_text("imported")
+    start = Path(args["start"])
+    while not start.exists():
+        time.sleep(0.001)
+    with cross_process_project_lock("plugin-trust:" + args["ledger"], data_root=None):
+        Path(args["ready"]).write_text("held")
+        time.sleep(args["hold"])
+    """
+)
+
+
+class _Revoker:
+    """A child process that revokes the Alice grant once `go()` is called, with the
+    directory-lock wait patched to 0.5 s (so a held lock reads as `E_LOCK`)."""
+
+    def __init__(self, env: _TE, tmp_path: Path) -> None:
+        from rush.memory import authorization as auth
+
+        self.go_file = tmp_path / "revoker-go"
+        self.out_file = tmp_path / "revoker-out"
+        started = tmp_path / "revoker-started"
+        self.child = _spawn(
+            _REVOKE_AT_GO_CHILD,
+            grant_id=env.grants["alice"]["grant_id"],
+            revision=_revision(auth, env.data_root),
+            data_root=str(env.data_root),
+            started=str(started),
+            go=str(self.go_file),
+            out=str(self.out_file),
+        )
+        _wait_for_file(started, self.child)
+
+    def go(self) -> None:
+        self.go_file.write_text("go")
+
+    def finished(self) -> bool:
+        return self.out_file.exists()
+
+    def result(self) -> dict[str, Any]:
+        if not self.go_file.exists():
+            self.go()
+        code, out, err = _reap(self.child, timeout=60)
+        assert code == 0, err
+        return json.loads(out.strip().splitlines()[-1])
+
+    def close(self) -> None:
+        if self.child.poll() is None:
+            self.go()
+            self.child.kill()
+            self.child.communicate()
+
+
+def _te_lock_hook(patch: pytest.MonkeyPatch, hook: Any) -> None:
+    """Wrap `maintenance.hold_policy_lock` so `hook()` runs as it is entered."""
+    from rush.memory import maintenance
+
+    real = maintenance.hold_policy_lock
+
+    @contextlib.contextmanager
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        hook()
+        with real(*args, **kwargs):
+            yield
+
+    patch.setattr(maintenance, "hold_policy_lock", wrapped)
+
+
+def _te_holder(
+    env: _TE, hold_seconds: float
+) -> tuple[threading.Thread, threading.Event]:
+    """A second connection holding `BEGIN IMMEDIATE` on memory.db for `hold_seconds`."""
+    holding = threading.Event()
+
+    def hold() -> None:
+        conn = sqlite3.connect(env.db, timeout=0, isolation_level=None)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            holding.set()
+            time.sleep(hold_seconds)
+            conn.execute("ROLLBACK")
+        finally:
+            conn.close()
+
+    thread = threading.Thread(target=hold)
+    return thread, holding
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("a_slow_rows_past_budget", id="a_slow_rows_past_budget"),
+        pytest.param("b_blocked_preparation", id="b_blocked_preparation"),
+        pytest.param("c_busy_write_lock", id="c_busy_write_lock"),
+        pytest.param("d_plugin_trust_lock", id="d_plugin_trust_lock"),
+        pytest.param("e_statement_interrupted", id="e_statement_interrupted"),
+        pytest.param("f_prepared_evidence_drift", id="f_prepared_evidence_drift"),
+    ],
+)
+def test_t04_policy_lock_hold_bounded(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import maintenance, trust
+    from rush.memory import store as store_module
+    from rush.memory.maintenance import MaintenanceAccessDenied, run_maintenance_cycle
+
+    if case == "d_plugin_trust_lock":
+        env = _te_skill_env(tmp_path, "bounded", count=3)
+        task = "skill_admission_check"
+        ids = ["s1", "s2", "s3"]
+        mutate = "_mutate_skill_admission_check"
+    elif case == "b_blocked_preparation":
+        env = _te_env(tmp_path, name="bounded", bob=False)
+        ids = ["r1", "r2", "r3"]
+        for rid in ids:
+            _te_row(
+                env,
+                rid,
+                anchored=False,
+                symbol_ref="mod.py::sym_x",
+                content_hash="deadbeef",
+                content={"text": f"needle bounded {rid}"},
+            )
+        task = "staleness_sweep"
+        mutate = "_mutate_staleness_sweep"
+    else:
+        env = _te_env(tmp_path, name="bounded", bob=False)
+        ids = _te_distinct_rows(env, 10 if case.startswith("a_") else 3, prefix="r")
+        task = "promotion_sweep"
+        mutate = "_mutate_promotion_sweep"
+    access = _te_acc(env, apply=True)
+    before = {rid: _te_bytes(env, rid) for rid in ids}
+    revoker = _Revoker(env, tmp_path)
+    real_mutate = getattr(maintenance, mutate)
+    calls = {"n": 0}
+    holder: dict[str, Any] = {}
+    committed = _te_spy_commits(monkeypatch)
+    try:
+        if case == "d_plugin_trust_lock":
+            from rush.plugins.trust_store import PluginTrustStore
+
+            holder["child"] = _spawn(
+                _HOLD_PLUGIN_LOCK_CHILD,
+                ledger=str(PluginTrustStore(repo_root=env.root).ledger_path),
+                imported=str(tmp_path / "plugin-lock-imported"),
+                start=str(tmp_path / "plugin-lock-start"),
+                ready=str(tmp_path / "plugin-lock-held"),
+                hold=1.0,
+            )
+            _wait_for_file(tmp_path / "plugin-lock-imported", holder["child"])
+        with monkeypatch.context() as patch:
+            patch.setattr(maintenance, "POLICY_LOCK_HOLD_BUDGET_S", 0.2)
+            if case == "a_slow_rows_past_budget":
+
+                def slow(*args: Any, **kwargs: Any) -> Any:
+                    calls["n"] += 1
+                    if calls["n"] == 2:
+                        revoker.go()
+                    time.sleep(0.1)
+                    return real_mutate(*args, **kwargs)
+
+                patch.setattr(maintenance, mutate, slow)
+            elif case == "b_blocked_preparation":
+
+                def blocked(*args: Any, **kwargs: Any) -> Any:
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        revoker.go()
+                        deadline = time.monotonic() + 30
+                        while not revoker.finished():
+                            assert time.monotonic() < deadline, "revoke stayed blocked"
+                            time.sleep(0.01)
+                    return trust_read(*args, **kwargs)
+
+                trust_read = trust.read_contained_source
+                patch.setattr(trust, "read_contained_source", blocked)
+                patch.setattr(
+                    maintenance, "read_contained_source", blocked, raising=False
+                )
+            elif case in ("c_busy_write_lock", "d_plugin_trust_lock"):
+                _te_lock_hook(patch, revoker.go)
+
+                def second_row(*args: Any, **kwargs: Any) -> Any:
+                    calls["n"] += 1
+                    if calls["n"] == 2:
+                        if case == "c_busy_write_lock":
+                            thread, holding = _te_holder(env, 1.0)
+                            thread.start()
+                            assert holding.wait(10)
+                            holder["thread"] = thread
+                        else:
+                            # the child already imported (before the timed window);
+                            # only the lock acquire happens inside the mutate call.
+                            (tmp_path / "plugin-lock-start").write_text("go")
+                            _wait_for_file(
+                                tmp_path / "plugin-lock-held", holder["child"]
+                            )
+                    return real_mutate(*args, **kwargs)
+
+                patch.setattr(maintenance, mutate, second_row)
+            elif case == "e_statement_interrupted":
+                _te_lock_hook(patch, revoker.go)
+                original = store_module.corroborating_peers
+
+                def hang(conn: Any, store: Any, row: Any, **kwargs: Any) -> Any:
+                    calls["n"] += 1
+                    if calls["n"] == 1:
+                        conn.execute(
+                            "WITH RECURSIVE c(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM c) "
+                            "SELECT count(*) FROM c"
+                        ).fetchone()
+                    return original(conn, store, row, **kwargs)
+
+                patch.setattr(store_module, "corroborating_peers", hang)
+            else:
+                assert case == "f_prepared_evidence_drift"
+
+                def drift() -> None:
+                    env.store.edit(
+                        ids[0],
+                        {"text": "needle edited between stages"},
+                        expected_version=1,
+                        scope=SUBJECT,
+                        owner_scope=ALICE,
+                        apply=True,
+                    )
+
+                _te_lock_hook(patch, drift)
+            if case == "b_blocked_preparation":
+                with pytest.raises(MaintenanceAccessDenied) as denied:
+                    run_maintenance_cycle(
+                        task,  # type: ignore[arg-type]
+                        project_root=env.root,
+                        access=access,
+                    )
+                result = None
+            else:
+                result = run_maintenance_cycle(
+                    task,  # type: ignore[arg-type]
+                    project_root=env.root,
+                    access=access,
+                )
+        if case != "f_prepared_evidence_drift":
+            out = revoker.result()
+            assert out.get("revoked") is True and "code" not in out, out
+    finally:
+        revoker.close()
+        for held in holder.values():
+            if isinstance(held, threading.Thread):
+                held.join(10)
+            else:
+                held.communicate(timeout=30)
+
+    if case == "b_blocked_preparation":
+        assert (denied.value.code, denied.value.reason) == ("E_PERMISSION", "revoked")
+        assert {rid: _te_bytes(env, rid) for rid in ids} == before
+        assert committed == []
+        return
+    assert result is not None
+    assert result.lock_lost is False
+    assert set(result.errors).isdisjoint(result.unprocessed)
+    if case == "a_slow_rows_past_budget":
+        assert result.unprocessed and set(result.unprocessed) <= set(ids)
+        with pytest.raises(MaintenanceAccessDenied) as later:
+            run_maintenance_cycle(
+                task,  # type: ignore[arg-type]
+                project_root=env.root,
+                access=access,  # type: ignore[arg-type]
+            )
+        assert later.value.reason == "revoked"
+    elif case in ("c_busy_write_lock", "d_plugin_trust_lock"):
+        assert result.errors == ()
+        assert tuple(result.unprocessed) == tuple(ids[1:])
+        assert (
+            _te_get(env, ids[0])["artifact_version"]
+            == _te_version_of(before, ids[0]) + 1
+        )
+        assert _te_bytes(env, ids[1]) == before[ids[1]]
+    elif case == "e_statement_interrupted":
+        assert result.errors == ()
+        assert ids[0] in result.unprocessed
+        assert _te_bytes(env, ids[0]) == before[ids[0]]
+    else:
+        assert tuple(result.unprocessed) == (ids[0],)
+        assert result.errors == ()
+        assert _te_get(env, ids[0])["artifact_version"] == 2
+        assert _te_get(env, ids[0])["corroboration_count"] == 0
+        assert _te_get(env, ids[1])["artifact_version"] == 2
+
+
+def _te_version_of(before: dict[str, tuple[Any, ...]], artifact_id: str) -> int:
+    """`artifact_version` out of a `_te_bytes` tuple."""
+    return int(before[artifact_id][2])
+
+
+_T04_BATCH_CASES = [
+    pytest.param(0, False, id="zero"),
+    pytest.param(1001, False, id="over_max"),
+    pytest.param(True, False, id="bool"),
+    pytest.param("5", False, id="str"),
+    pytest.param(5.0, False, id="float"),
+    pytest.param(float("nan"), False, id="nan"),
+    pytest.param(float("inf"), False, id="inf"),
+    pytest.param(10**400, False, id="huge"),
+    pytest.param(1, True, id="min"),
+    pytest.param(1000, True, id="max"),
+]
+
+
+@pytest.mark.parametrize(("value", "valid"), _T04_BATCH_CASES)
+def test_t04_batch_size_bounds(
+    value: Any, valid: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.mcp_support.request_models import validate_and_normalize
+    from rush.memory.maintenance import (
+        preview_maintenance_candidates,
+        run_maintenance_cycle,
+    )
+
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _action, _grant_all, _start_dashboard = (
+        _dmt._action,
+        _dmt._grant_all,
+        _dmt._start_dashboard,
+    )
+
+    env = _te_env(tmp_path, bob=False)
+    _te_row(env, "b1", source="source-a", anchored=False)
+    record = register_project(env.root, data_root=env.data_root)
+    base = {
+        "path": str(env.root),
+        "operation": "maintain",
+        "task": "promotion_sweep",
+        "owner_scope": ALICE.as_dict(),
+    }
+
+    # MCP strict model.
+    outcome = validate_and_normalize("rush_memory", {**base, "batch_size": value})
+    assert outcome.rejected is (not valid), outcome
+    if not valid:
+        assert _nn(outcome.error)["data"]["details"][0]["loc"][0] == "batch_size"
+
+    snapshot = _digest_dir(env.root)
+    # MemoryTool.
+    tool = MemoryTool().run(
+        env.root,
+        operation="maintain",
+        task="promotion_sweep",
+        owner_scope=ALICE.as_dict(),
+        batch_size=value,
+        request={"apply": False},
+        permissions=_T04_PERM,
+    )
+    if valid:
+        assert tool["status"] == "ok", _dump(_rd(tool))
+    else:
+        assert _code_of(tool) == "E_INPUT", _dump(_rd(tool))
+        assert _digest_dir(env.root) == snapshot
+
+    # in-process.
+    for call in (
+        lambda: preview_maintenance_candidates(
+            "promotion_sweep",
+            project_root=env.root,
+            access=_te_acc(env, apply=False),
+            batch_size=value,
+        ),
+        lambda: run_maintenance_cycle(
+            "promotion_sweep",
+            project_root=env.root,
+            access=_te_acc(env, apply=True),
+            batch_size=value,
+        ),
+    ):
+        if valid:
+            call()
+        else:
+            with pytest.raises(ValueError):
+                call()
+    if not valid:
+        assert _digest_dir(env.root) == snapshot
+
+    # CLI (click `IntRange`).
+    monkeypatch.chdir(env.root)
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "maintain",
+            "--task",
+            "promotion_sweep",
+            "--batch-size",
+            str(value),
+            "--allow-cache-write",
+            "--json",
+        ],
+    )
+    # the CLI takes text: the string "5" is a valid count there.
+    assert (cli_result.exit_code == 0) is (valid or value == "5"), cli_result.output
+
+    # dashboard.
+    server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+    try:
+        snapshot = _digest_dir(env.root)
+        status, body = _action(
+            base_url,
+            record.project_id,
+            cookie,
+            csrf,
+            operation="memory_maintain",
+            arguments={"task": "promotion_sweep", "batch_size": value},
+            grants=_grant_all(),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    if valid:
+        assert status == 200, body
+    else:
+        assert status == 400, body
+        assert body["error"]["code"] == "malformed_request"
+        assert _digest_dir(env.root) == snapshot
+
+
+# --- addendum: summary rows, MCP maintain preview/apply, TUI sources ---------------
+
+_T04_SUMMARY = "consolidated_episode_summary"
+
+
+@pytest.mark.parametrize("mode", ["legacy", "policy"])
+def test_t04_summary_rows_never_corroborate(
+    mode: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import store as store_module
+    from rush.memory.store import VersionConflictError
+
+    env = _te_env(
+        tmp_path, mode=mode, bob=False, sources=("source-a", "source-b", "source-c")
+    )
+    summary = {"kind": _T04_SUMMARY, "text": "needle s summary"}
+    # a summary target with an agreeing summary peer and an anchored contrary one.
+    _te_row(
+        env, "S1", source="source-a", origin=("agent", "o-S1"), ns="s", content=summary
+    )
+    _te_row(
+        env, "S2", source="source-b", origin=("agent", "o-S2"), ns="s", content=summary
+    )
+    _te_row(
+        env,
+        "S3",
+        source="source-c",
+        origin=("agent", "o-S3"),
+        ns="s",
+        content={"kind": _T04_SUMMARY, "text": "needle s contrary"},
+    )
+    scans: list[int] = []
+    original = getattr(store_module, "corroborating_peers", None)
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        scans.append(1)
+        assert original is not None
+        return original(*args, **kwargs)
+
+    before = _te_bytes(env, "S1")
+    rows_before = _te_count(env)
+    with monkeypatch.context() as patch:
+        patch.setattr(store_module, "corroborating_peers", spy)
+        _, decision = _te_promote(env, "S1")
+    assert (decision.promoted, decision.denial_reason) == (
+        False,
+        "insufficient_corroboration",
+    )
+    assert decision.corroboration_count == 1
+    assert scans == []
+    assert _te_bytes(env, "S1") == before and _te_count(env) == rows_before
+
+    # an ordinary candidate: a contrary summary peer neither contradicts nor is nameable.
+    _te_row(env, "C1", source="source-a", origin=("agent", "o-C1"), ns="s")
+    _, ordinary = _te_promote(env, "C1")
+    assert ordinary.denial_reason == "insufficient_corroboration"
+    with pytest.raises(VersionConflictError) as named:
+        _te_promote(env, "C1", candidate_refs=[_te_ref(env, "S3")])
+    assert named.value.code == "E_VERSION"
+    assert "promotion corroborator changed since review" in str(named.value)
+
+    # neither sweep selects a summary row.
+    skill_summary = _te_row(
+        env,
+        "K1",
+        source="source-a",
+        origin=("agent", "o-K1"),
+        subject="skill_pattern",
+        anchored=False,
+        content={"kind": _T04_SUMMARY, "plugin_name": "demo-plugin"},
+    )
+    for task in ("promotion_sweep", "skill_admission_check"):
+        picked = {c["id"] for c in _te_preview(env, task)}
+        assert not picked & {"S1", "S2", "S3", skill_summary.id}, task
+
+    # positive control: an ordinary pair with distinct origins still promotes.
+    _te_row(env, "T1", source="source-a", origin=("agent", "o-T1"), ns="t")
+    _te_row(env, "T2", source="source-b", origin=("agent", "o-T2"), ns="t")
+    _, control = _te_promote(env, "T1")
+    assert (control.promoted, control.corroboration_count) == (True, 2)
+
+
+def test_t04_mcp_maintain_preview_and_reviewed_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    env = _te_env(tmp_path, bob=False)
+    ids = _te_distinct_rows(env, 3)
+    arguments: dict[str, Any] = {
+        "path": str(env.root),
+        "operation": "maintain",
+        "task": "promotion_sweep",
+        "allow_cache_write": True,
+    }
+    before = _digest_dir(env.root)
+    preview = _mcp_memory(**arguments, request={"apply": False})
+    assert preview["status"] == "ok", preview
+    raw = preview["raw"]
+    assert sorted(raw["candidate_ids"]) == sorted(ids)
+    assert _digest_dir(env.root) == before
+
+    selected = ids[0]
+    revisions = {selected: raw["expected_revisions"][selected]}
+    applied = _mcp_memory(
+        **arguments,
+        request={
+            "apply": True,
+            "candidate_ids": [selected],
+            "expected_revisions": revisions,
+        },
+    )
+    assert applied["status"] in ("ok", "warn"), applied
+    assert [_te_get(env, rid)["artifact_version"] for rid in ids] == [2, 1, 1]
+
+    # an edit between preview and apply: the exact revision refusal, no mutation.
+    victim = ids[1]
+    env.store.edit(
+        victim,
+        {"text": "needle edited after preview"},
+        expected_version=1,
+        scope=SUBJECT,
+        owner_scope=ALICE,
+        apply=True,
+    )
+    frozen = _te_bytes(env, victim)
+    refused = _mcp_memory(
+        **arguments,
+        request={
+            "apply": True,
+            "candidate_ids": [victim],
+            "expected_revisions": {victim: 1},
+        },
+    )
+    assert refused["raw"]["changed"] == 0
+    assert refused["raw"]["refused"][0]["id"] == victim
+    assert _te_bytes(env, victim) == frozen
+
+    # strict request model: refused before any store construction.
+    constructed: list[int] = []
+    original_init = TypedArtifactStore.__init__
+
+    def counting(self: Any, *args: Any, **kwargs: Any) -> None:
+        constructed.append(1)
+        original_init(self, *args, **kwargs)
+
+    bad_requests: tuple[Any, ...] = (
+        {"apply": False, "unknown_key": 1},
+        {"apply": True, "candidate_ids": ["a"], "expected_revisions": {"a": True}},
+        {"apply": True, "candidate_ids": ["a"], "expected_revisions": {"a": 10**30}},
+        {"apply": "yes"},
+        # untyped JSON shapes where a list, a map or a string belongs
+        {"apply": True, "candidate_ids": {"a": 1}},
+        {"apply": True, "candidate_ids": [["a"]]},
+        {"apply": True, "candidate_ids": ["a"], "expected_revisions": [1]},
+        {"apply": True, "required_grants": "write"},
+        {"apply": ["yes"]},
+        "x",
+        ["apply"],
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(TypedArtifactStore, "__init__", counting)
+        for request in bad_requests:
+            outcome = validate_and_normalize(
+                "rush_memory", {**arguments, "request": request}
+            )
+            assert outcome.rejected, request
+            published = _mcp_memory(**arguments, request=request)
+            assert published["status"] == "error", (request, published)
+            assert _code_of(published["raw"]) == "E_INPUT", (request, published)
+        denied = _mcp_memory(
+            **arguments, sources=["source-z"], request={"apply": False}
+        )
+    assert _code_of(denied["raw"]) == "E_SCOPE", denied
+    assert constructed == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("legacy_path_owner", id="legacy_path_owner"),
+        pytest.param(
+            "legacy_registered_owner_refused", id="legacy_registered_owner_refused"
+        ),
+        pytest.param("policy_registered_owner", id="policy_registered_owner"),
+    ],
+)
+def test_t04_tui_maintain_sources_and_owner_modes(case: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+
+    r1 = importlib.import_module("tests.test_phase70_t28d_review1")
+
+    calls: list[dict[str, Any]] = []
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.run = MemoryTool().run
+
+        def __call__(self, root: Path, **kwargs: Any) -> Any:
+            calls.append(dict(kwargs))
+            return self.run(root, **kwargs)
+
+    old = time.time() - 15 * DAY
+    root = r1._root(tmp_path, "tui")
+    if case == "legacy_path_owner":
+        r1._seed(root, "zq01", created_at=old)
+        r1._seed(
+            root, "zq02", created_at=old, owner=OwnerScope("project", "someone-else")
+        )
+        state = r1._state(tmp_path, root)
+    else:
+        project_id = r1._register(tmp_path, root)
+        owner = OwnerScope("project", project_id)
+        r1._seed(root, "zq01", created_at=old, owner=owner)
+        r1._seed(root, "zq02", created_at=old, owner=legacy_owner_scope(root))
+        if case == "policy_registered_owner":
+            data_root = default_data_root()
+            register_project(root, name=root.name, data_root=data_root)
+            auth.grant_memory_scope(
+                project_root=root,
+                owner_scope=owner,
+                approved_sources=["s1"],
+                allowed_operations=["ask", "expand", "list", "write"],
+                expected_policy_revision=_revision(auth, data_root),
+                consent=True,
+                data_root=data_root,
+            )
+        state = r1._state(tmp_path, root, project_ids=(project_id,))
+    actions = r1._actions(Recorder())  # type: ignore[arg-type]
+    r1._enter_memory(state, actions)
+    r1._keys(state, actions, "w")
+    r1._keys(state, actions, "y")
+
+    maintain = [c for c in calls if c.get("operation") == "maintain"]
+    assert maintain, "the TUI never called maintain"
+    assert all(c.get("sources") == ["s1"] for c in maintain), maintain
+    selected = r1._row(root, "zq01")
+    other = r1._row(root, "zq02")
+    # The held tasks apply in preview order: promotion_sweep selects the TTL-elapsed
+    # row (its predicate keys on `expires_at`, still NULL) and its first sweep rewrites
+    # `corroboration_count` 0 -> 1 (v1 -> v2); the held expiry_sweep, reviewed at v1,
+    # is then refused. D9: held candidate ids and expected revisions are preserved.
+    if case == "legacy_path_owner":
+        assert selected["artifact_version"] == 2 and selected["expired_at"] is None
+        assert other["artifact_version"] == 1
+    elif case == "legacy_registered_owner_refused":
+        assert selected["artifact_version"] == 1 and selected["expired_at"] is None
+        assert other["artifact_version"] == 1
+        assert state.memory_pending_maintain in (None, []) or all(
+            not entry["candidate_ids"] for entry in state.memory_pending_maintain
+        )
+    else:
+        assert selected["artifact_version"] == 2 and selected["expired_at"] is None
+        assert other["artifact_version"] == 1 and other["expired_at"] is None
+
+
+# =============================================================================
+# R9 / G2: the route x mode matrix for `maintain` and `promote` (D8, D9).
+#
+# Rows are the seven maintain routes M1-M7 and seven promote routes P1-P7
+# (inproc=MemoryTool.run, cli, mcp, bridge, dashboard, tui, store=in-process API).
+# pytest ids are `<route>-<dimension>-<value>`, never containing `=`. A dimension a
+# route does not accept is one cell asserting the strict-model refusal (MCP, dashboard,
+# in-process API) or, where the transport has no such field, byte-identical output.
+# =============================================================================
+
+_M_TRANSPORTS = ("inproc", "cli", "mcp", "bridge", "dashboard", "tui", "store")
+_M_DIMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("access", ("policy", "legacy_allowlist", "overlay")),
+    ("policy_state", ("missing_no_marker", "missing_marker", "ok", "invalid")),
+    ("mode", ("ordinary", "inspect", "historical")),
+    ("representation", ("base64", "utf8")),
+    ("retrieval", ("lexical", "hybrid")),
+    ("store", ("present", "absent", "old_schema")),
+    ("apply", ("preview", "apply")),
+    ("cache_write", ("on", "off")),
+    ("grant_ops", ("exact", "missing_one")),
+    ("row_state", ("active", "archived", "expired", "tampered", "pending", "rejected")),
+    ("ack", ("ack", "no_ack")),
+    ("capability_ids", ("selected", "unselected")),
+)
+_M_TASKS = (
+    "promotion_sweep",
+    "staleness_sweep",
+    "skill_admission_check",
+    "expiry_sweep",
+)
+_M_PRODUCER = {
+    ("access", "overlay"): "producer-72-T05",
+    ("row_state", "rejected"): "producer-72-T05",
+}
+# G15: persisted source-path spellings (a Windows escape on a POSIX host names an absent
+# in-root file, a refusal on Windows) and untyped JSON discriminators (a list or a dict
+# where a task or an owner kind belongs). `outside.py` exists beside the project and
+# carries the stored hash, so a leaked read would leave the row fresh.
+_M_SOURCE_PATHS = {
+    "traversal": "../outside.py::x",
+    "win_drive_relative": "C:outside.py::x",
+    "win_drive_absolute": "C:\\outside.py::x",
+    "win_rooted": "\\outside.py::x",
+    "win_unc": "\\\\server\\share\\outside.py::x",
+}
+_M_SOURCE_PATH_TRANSPORTS = ("inproc", "cli", "mcp", "dashboard", "store")
+_M_DISCRIMINATORS = ("task_list", "task_dict", "owner_kind_list", "owner_kind_dict")
+_M_TASK_DISC_TRANSPORTS = ("inproc", "mcp", "bridge", "dashboard", "store")
+_M_OWNER_DISC_TRANSPORTS = ("inproc", "mcp", "dashboard", "store")
+_M_BAD_TASKS: dict[str, Any] = {
+    "task_list": ["promotion_sweep"],
+    "task_dict": {"task": "promotion_sweep"},
+}
+_M_BAD_OWNERS: dict[str, Any] = {
+    "owner_kind_list": {"kind": ["user"], "id": "alice"},
+    "owner_kind_dict": {"kind": {"k": "user"}, "id": "alice"},
+}
+
+
+def _m_cells() -> list[Any]:
+    cells = []
+    for family in ("maintain", "promote"):
+        for transport in _M_TRANSPORTS:
+            route = f"{transport}.{family}"
+            for dim, values in _M_DIMS:
+                for value in values:
+                    ident = f"{route}-{dim}-{value}"
+                    suffix = _M_PRODUCER.get((dim, value))
+                    if suffix:
+                        ident += f"-{suffix}"
+                    cells.append(pytest.param(family, transport, dim, value, id=ident))
+            if family == "maintain" and transport in ("inproc", "store"):
+                for task in _M_TASKS:
+                    cells.append(
+                        pytest.param(
+                            family, transport, "task", task, id=f"{route}-task-{task}"
+                        )
+                    )
+            if family == "maintain" and transport in _M_SOURCE_PATH_TRANSPORTS:
+                for value in _M_SOURCE_PATHS:
+                    cells.append(
+                        pytest.param(
+                            family,
+                            transport,
+                            "source_path",
+                            value,
+                            id=f"{route}-source_path-{value}",
+                        )
+                    )
+            for value in _M_DISCRIMINATORS:
+                kind = "task" if value.startswith("task") else "owner"
+                if kind == "task" and (
+                    family != "maintain" or transport not in _M_TASK_DISC_TRANSPORTS
+                ):
+                    continue
+                if kind == "owner" and transport not in _M_OWNER_DISC_TRANSPORTS:
+                    continue
+                cells.append(
+                    pytest.param(
+                        family,
+                        transport,
+                        "discriminator",
+                        value,
+                        id=f"{route}-discriminator-{value}",
+                    )
+                )
+    return cells
+
+
+@dataclasses.dataclass
+class _MS:
+    """One matrix scenario: a baseline with at most one dimension changed."""
+
+    family: str
+    transport: str
+    legacy: bool = False
+    policy_state: str = "ok"
+    apply: bool = True
+    cache_write: bool = True
+    ops: tuple[str, ...] = ("list", "write")
+    store: str = "present"
+    row_state: str = "active"
+    selected: bool = False
+    unselected: bool = False
+    overlay: bool = False
+    task: str = "promotion_sweep"
+    source_path: str | None = None
+    discriminator: str | None = None
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+
+def _m_scenario(family: str, transport: str, dim: str, value: str) -> _MS:
+    sc = _MS(family=family, transport=transport)
+    if dim == "access":
+        sc.legacy = value == "legacy_allowlist"
+        sc.overlay = value == "overlay"
+    elif dim == "policy_state":
+        sc.legacy = value == "missing_no_marker"
+        sc.policy_state = value if value in ("missing_marker", "invalid") else "ok"
+    elif dim in ("mode", "representation", "retrieval"):
+        if value not in ("ordinary", "lexical"):
+            sc.extra[dim] = value
+    elif dim == "ack":
+        sc.extra["ack"] = value == "ack"
+    elif dim == "store":
+        sc.store = value
+    elif dim == "apply":
+        sc.apply = value == "apply"
+    elif dim == "cache_write":
+        sc.cache_write = value == "on"
+    elif dim == "grant_ops":
+        sc.ops = ("list", "write") if value == "exact" else ("list",)
+    elif dim == "row_state":
+        sc.row_state = value
+    elif dim == "capability_ids":
+        sc.selected = value == "selected"
+        sc.unselected = value == "unselected"
+    elif dim == "task":
+        sc.task = value
+    elif dim == "source_path":
+        sc.task = "staleness_sweep"
+        sc.source_path = value
+    elif dim == "discriminator":
+        sc.discriminator = value
+    return sc
+
+
+@dataclasses.dataclass
+class _MOut:
+    status: Any = None
+    code: Any = None
+    reason: Any = None
+    processed: Any = None
+    changed: Any = None
+    promoted: Any = None
+    tier: Any = None
+    count: Any = None
+    denial: Any = None
+    ids: tuple[str, ...] = ()
+    raised: str | None = None
+    http: int | None = None
+    http_code: str | None = None
+    message: str = ""
+
+    def key(self) -> tuple[Any, ...]:
+        return (
+            self.status,
+            self.code,
+            self.reason,
+            self.processed,
+            self.changed,
+            self.promoted,
+            self.tier,
+            self.count,
+            self.denial,
+            self.ids,
+            self.raised,
+            self.http,
+            self.http_code,
+        )
+
+
+def _m_from_tool(result: Any) -> _MOut:
+    raw = _rd(result)
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    return _MOut(
+        status=result.get("status") if hasattr(result, "get") else None,
+        code=_code_of(result),
+        reason=_reason_of(result),
+        processed=raw.get("processed"),
+        changed=raw["changed"] if isinstance(raw.get("changed"), int) else None,
+        promoted=raw.get("promoted"),
+        tier=raw.get("new_tier"),
+        count=raw.get("corroboration_count"),
+        denial=raw.get("denial_reason"),
+        ids=tuple(raw.get("candidate_ids") or ()),
+        message=str(raw.get("message") or (data or {}).get("message") or "")
+        + str(result.get("summary") if hasattr(result, "get") else ""),
+    )
+
+
+def _m_owner(env: _TE, sc: _MS) -> OwnerScope:
+    if sc.overlay:
+        from rush.memory import authorization as auth
+
+        return auth.user_overlay_owner_scope(data_root=env.data_root)
+    return env.owner
+
+
+def _m_env(tmp_path: Path, sc: _MS, name: str) -> _TE:
+    from rush.memory import authorization as auth
+
+    env = _te_env(
+        tmp_path,
+        mode="legacy" if sc.legacy else "policy",
+        name=name,
+        bob=False,
+        ops=sc.ops,
+        project_owner=sc.transport == "tui" and not sc.legacy,
+    )
+    if sc.transport == "dashboard" and sc.legacy and sc.family == "promote":
+        # the dashboard promote route requires the registered project's own owner.
+        env.owner = OwnerScope(
+            "project", register_project(env.root, data_root=env.data_root).project_id
+        )
+    target = "a1" if sc.family == "maintain" or sc.transport == "store" else "a2"
+    pending = sc.row_state == "pending"
+    _te_row(
+        env,
+        "a1",
+        source="source-a",
+        origin=("agent", "o-a1"),
+        trust="IMPORTED" if pending and target == "a1" else "DERIVED",
+    )
+    _te_row(
+        env,
+        "a2",
+        source="source-b",
+        origin=("agent", "o-a2"),
+        trust="IMPORTED" if pending and target == "a2" else "DERIVED",
+    )
+    _te_row(env, "b1", source="source-a", origin=("agent", "o-b1"), owner=BOB)
+    if sc.task == "staleness_sweep" and sc.source_path is not None:
+        outside = env.root.parent / "outside.py"
+        outside.write_text("def x():\n    return 1\n", encoding="utf-8")
+        _te_row(
+            env,
+            "st1",
+            source="source-a",
+            anchored=False,
+            symbol_ref=_M_SOURCE_PATHS[sc.source_path],
+            content_hash=_sha_file(outside),
+            content={"text": "needle stale"},
+        )
+    elif sc.task == "staleness_sweep":
+        _te_row(
+            env,
+            "st1",
+            source="source-a",
+            anchored=False,
+            symbol_ref="mod.py::sym_x",
+            content_hash="deadbeef",
+            content={"text": "needle stale"},
+        )
+    if sc.task == "expiry_sweep":
+        _te_elapsed_row(env, "ex1", source="source-a")
+    if sc.task == "skill_admission_check":
+        for index, src in enumerate(("source-a", "source-b")):
+            _te_row(
+                env,
+                f"sk{index}",
+                source=src,
+                origin=("agent", f"o-sk{index}"),
+                anchored=False,
+                subject="skill_pattern",
+                content={"plugin_name": "demo-plugin", "closure_digest": _T04_DIGEST},
+            )
+    if sc.row_state == "archived":
+        env.store.archive(
+            "a2", expected_version=1, scope=SUBJECT, owner_scope=env.owner, apply=True
+        )
+    elif sc.row_state == "expired":
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET expired_at = ?, expired_by = 'expiry_sweep', "
+            "expires_at = ? WHERE id = 'a2'",
+            time.time(),
+            time.time() - 60,
+        )
+    elif sc.row_state == "tampered":
+        _tamper(env.db, target)
+    if sc.policy_state == "missing_marker":
+        auth.policy_path(data_root=env.data_root).unlink()
+    elif sc.policy_state == "invalid":
+        auth.policy_path(data_root=env.data_root).write_bytes(b"{")
+    if sc.store == "absent":
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(f"{env.db}{suffix}").unlink(missing_ok=True)
+    elif sc.store == "old_schema":
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(f"{env.db}{suffix}").unlink(missing_ok=True)
+        with contextlib.closing(sqlite3.connect(env.db)) as conn:
+            conn.execute(
+                "CREATE TABLE memory_artifacts (id TEXT PRIMARY KEY, family TEXT NOT NULL, "
+                "subject TEXT NOT NULL, trust_tier TEXT NOT NULL, content TEXT NOT NULL, "
+                "source TEXT NOT NULL, created_at REAL NOT NULL, symbol_ref TEXT, "
+                "content_hash TEXT, corroboration_count INTEGER NOT NULL DEFAULT 0, "
+                "promoted_at REAL, stale INTEGER NOT NULL DEFAULT 0, signature TEXT, "
+                "origin_kind TEXT, origin_id TEXT, expires_at REAL, expired_at REAL, "
+                "expired_by TEXT)"
+            )
+            conn.commit()
+    return env
+
+
+def _m_ref(env: _TE, artifact_id: str) -> dict[str, Any] | None:
+    if not env.db.exists():
+        return None
+    try:
+        return _te_ref(env, artifact_id)
+    except (AssertionError, sqlite3.DatabaseError):
+        return None
+
+
+def _m_perm(sc: _MS) -> ExecutionPermissions:
+    return ExecutionPermissions(cache_write=sc.cache_write)
+
+
+def _m_sources(env: _TE) -> list[str] | None:
+    return ["source-a", "source-b"] if env.mode == "legacy" else None
+
+
+# --- executors ---------------------------------------------------------------------
+
+
+def _m_maintain_request(sc: _MS) -> dict[str, Any]:
+    request: dict[str, Any] = {"apply": sc.apply}
+    if sc.selected:
+        request["candidate_ids"] = ["a1", "b1"]
+    return request
+
+
+def _m_promote_parts(env: _TE, sc: _MS) -> dict[str, Any]:
+    ref = _m_ref(env, "a2")
+    refs = [] if sc.unselected or ref is None else [ref]
+    request: dict[str, Any] = {"apply": sc.apply}
+    if refs:
+        request["candidate_refs"] = refs
+    return {
+        "subject": SUBJECT,
+        "content": {"text": "needle shared"},
+        "source": "source-a",
+        "symbol_ref": "mod.py::sym_shared",
+        "request": request,
+        "refs": refs,
+    }
+
+
+def _m_exec(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    runner = {
+        "inproc": _mx_inproc,
+        "cli": _mx_cli,
+        "mcp": _mx_mcp,
+        "bridge": _mx_bridge,
+        "dashboard": _mx_dashboard,
+        "tui": _mx_tui,
+        "store": _mx_store,
+    }[sc.transport]
+    return runner(env, sc, tmp_path, monkeypatch)
+
+
+def _mx_inproc(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    owner = _m_owner(env, sc)
+    extra: dict[str, Any] = {}
+    if "mode" in sc.extra:
+        extra["include_archived"] = True
+    if sc.family == "maintain":
+        sources = _m_sources(env)
+        if sources is not None:
+            extra["sources"] = sources
+        result = MemoryTool().run(
+            env.root,
+            operation="maintain",
+            task=sc.task,  # type: ignore[arg-type]
+            owner_scope=owner.as_dict(),
+            request=_m_maintain_request(sc),
+            permissions=_m_perm(sc),
+            **extra,
+        )
+    else:
+        parts = _m_promote_parts(env, sc)
+        result = MemoryTool().run(
+            env.root,
+            operation="promote",
+            subject=parts["subject"],
+            content=parts["content"],
+            source=parts["source"],
+            symbol_ref=parts["symbol_ref"],
+            user_stated=False,
+            owner_scope=owner.as_dict(),
+            request=parts["request"],
+            permissions=_m_perm(sc),
+            **extra,
+        )
+    return _m_from_tool(result)
+
+
+def _cli_json(args: list[str], root: Path, monkeypatch: pytest.MonkeyPatch) -> _MOut:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    monkeypatch.chdir(root)
+    result = CliRunner().invoke(cli, args)
+    try:
+        payload = json.loads(result.output)
+    except json.JSONDecodeError:
+        return _MOut(raised="CliError", http=result.exit_code, message=result.output)
+    out = _m_from_tool(payload)
+    out.http = result.exit_code
+    return out
+
+
+def _mx_cli(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    owner = _m_owner(env, sc)
+    if sc.family == "maintain":
+        args = ["memory", "maintain", "--task", sc.task, "--json"]
+        for source in _m_sources(env) or ():
+            args += ["--source", source]
+        if sc.overlay:
+            args += ["--owner-kind", owner.kind, "--owner-id", owner.id]
+    else:
+        parts = _m_promote_parts(env, sc)
+        args = [
+            "memory",
+            "promote",
+            parts["subject"],
+            parts["source"],
+            "--content",
+            json.dumps(parts["content"]),
+            "--symbol-ref",
+            parts["symbol_ref"],
+            "--json",
+        ]
+        for ref in parts["refs"]:
+            args += ["--candidate-ref", f"{ref['id']}@{ref['version']}@{ref['source']}"]
+    if sc.cache_write:
+        args.append("--allow-cache-write")
+    return _cli_json(args, env.root, monkeypatch)
+
+
+def _mcp_arguments(env: _TE, sc: _MS) -> dict[str, Any]:
+    owner = _m_owner(env, sc)
+    arguments: dict[str, Any] = {
+        "path": str(env.root),
+        "owner_scope": owner.as_dict(),
+        "allow_cache_write": sc.cache_write,
+    }
+    if sc.family == "maintain":
+        arguments |= {
+            "operation": "maintain",
+            "task": sc.task,
+            "request": _m_maintain_request(sc),
+        }
+        sources = _m_sources(env)
+        if sources is not None:
+            arguments["sources"] = sources
+    else:
+        parts = _m_promote_parts(env, sc)
+        arguments |= {
+            "operation": "promote",
+            "subject": parts["subject"],
+            "content": parts["content"],
+            "source": parts["source"],
+            "symbol_ref": parts["symbol_ref"],
+            "request": parts["request"],
+        }
+    return arguments
+
+
+def _mx_mcp(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    arguments = _mcp_arguments(env, sc)
+    if sc.extra:
+        outcome = validate_and_normalize("rush_memory", {**arguments, **sc.extra})
+        if outcome.rejected:
+            loc = _nn(outcome.error)["data"]["details"][0]["loc"][0]
+            return _MOut(code="E_INPUT", reason=str(loc), raised="Rejected")
+        return _MOut(raised="NotRejected")
+    return _m_from_tool(_mcp_memory(**arguments))
+
+
+def _mx_bridge(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+    handler = build_memory_bridge_handler(
+        root=env.root, session_id="0" * 32, capability="none"
+    )
+    request = (
+        _m_maintain_request(sc) | {"task": sc.task}
+        if sc.family == "maintain"
+        else _m_promote_parts(env, sc)["request"]
+    )
+    body = handler(sc.family, request)
+    return _MOut(code=body.get("code"), message=json.dumps(body, sort_keys=True))
+
+
+def _mx_dashboard(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _action, _start_dashboard = _dmt._action, _dmt._start_dashboard
+
+    record = register_project(env.root, data_root=env.data_root)
+    owner = _m_owner(env, sc)
+    arguments: dict[str, Any] = {}
+    if env.mode == "policy" or sc.family == "promote":
+        arguments["owner_scope"] = owner.as_dict()
+    if sc.family == "maintain":
+        arguments["task"] = sc.task
+        sources = _m_sources(env)
+        if sources is not None:
+            arguments["sources"] = sources
+        operation = "memory_maintain"
+        if not sc.apply:
+            arguments["apply"] = False  # the dashboard route has no preview field
+    else:
+        parts = _m_promote_parts(env, sc)
+        arguments |= {
+            "subject": parts["subject"],
+            "content": parts["content"],
+            "source": parts["source"],
+            "symbol_ref": parts["symbol_ref"],
+        }
+        if parts["refs"]:
+            arguments["candidate_refs"] = ",".join(
+                f"{r['id']}@{r['version']}@{r['source']}" for r in parts["refs"]
+            )
+        operation = "memory_promote"
+        if not sc.apply:
+            arguments["apply"] = False
+    arguments |= sc.extra
+    server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+    try:
+        status, body = _action(
+            base_url,
+            record.project_id,
+            cookie,
+            csrf,
+            operation=operation,
+            arguments=arguments,
+            grants={"cache_write": sc.cache_write},
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    if isinstance(body.get("data"), dict) and "status" in body["data"]:
+        out = _m_from_tool(body["data"])
+    else:
+        out = _MOut(code=(body.get("error") or {}).get("code"))
+    out.http = status
+    out.http_code = (body.get("error") or {}).get("code")
+    return out
+
+
+def _mx_tui(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    r1 = importlib.import_module("tests.test_phase70_t28d_review1")
+
+    calls: list[tuple[dict[str, Any], Any]] = []
+
+    class Recorder:
+        def __init__(self) -> None:
+            self.run = MemoryTool().run
+
+        def __call__(self, root: Path, **kwargs: Any) -> Any:
+            result = self.run(root, **kwargs)
+            calls.append((dict(kwargs), result))
+            return result
+
+    project_ids: tuple[str, ...] = ()
+    if env.mode == "policy":
+        project_ids = (env.owner.id,)
+    state = r1._state(tmp_path, env.root, project_ids=project_ids)
+    actions = r1._actions(Recorder())  # type: ignore[arg-type]
+    r1._enter_memory(state, actions)
+    if sc.family == "maintain":
+        r1._keys(state, actions, "w")
+        if sc.apply:
+            r1._keys(state, actions, "y")
+    else:
+        r1._keys(state, actions, "/", *"needle", "enter")
+        if "a1" in r1._ids(state):
+            r1._cursor_to(state, actions, "a1")
+            r1._keys(state, actions, "p")
+            if sc.apply:
+                r1._keys(state, actions, "y")
+
+    def of_family(kwargs: dict[str, Any]) -> bool:
+        return kwargs.get("operation") == sc.family and (
+            sc.family == "promote" or kwargs.get("task") == sc.task
+        )
+
+    wanted = [
+        result
+        for kwargs, result in calls
+        if of_family(kwargs) and (kwargs.get("request") or {}).get("apply") is sc.apply
+    ] or [result for kwargs, result in calls if of_family(kwargs)]
+    out = _m_from_tool(wanted[-1]) if wanted else _MOut(raised="NoCall")
+    out.message += state.memory_message or ""
+    return out
+
+
+def _mx_store(
+    env: _TE, sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> _MOut:
+    from rush.memory.maintenance import (
+        preview_maintenance_candidates,
+        run_maintenance_cycle,
+    )
+    from rush.memory.retrieval import MemoryAccess
+
+    owner = _m_owner(env, sc)
+    if env.mode == "policy":
+        access, why = MemoryAccess.resolve_with_reason(
+            env.root,
+            operation="maintain" if sc.family == "maintain" else "promote",
+            apply=sc.apply,
+            owner_scope=owner,
+            data_root=env.data_root,
+        )
+        if access is None:
+            return _MOut(code="E_PERMISSION", reason=why, raised="NoAccess")
+    else:
+        access = MemoryAccess.legacy(
+            env.root,
+            ["source-a", "source-b"],
+            owner_scope=owner,
+            operation="write" if sc.apply else "list",
+        )
+    extra = dict(sc.extra)
+    try:
+        if sc.family == "maintain":
+            if sc.apply:
+                result = run_maintenance_cycle(
+                    sc.task,  # type: ignore[arg-type]
+                    project_root=env.root,
+                    access=access,
+                    candidate_ids=["a1", "b1"] if sc.selected else None,
+                    **extra,
+                )
+                return _MOut(processed=result.processed, changed=result.changed)
+            rows = preview_maintenance_candidates(
+                sc.task,  # type: ignore[arg-type]
+                project_root=env.root,
+                access=access,
+                candidate_ids=["a1", "b1"] if sc.selected else None,
+                **extra,
+            )
+            return _MOut(ids=tuple(str(r["id"]) for r in rows))
+        parts = _m_promote_parts(env, sc)
+        artifact, decision = env.store.promote(
+            "a1",
+            user_stated=False,
+            candidate_refs=parts["refs"] or None,
+            access=None if env.mode == "legacy" else access,
+            **extra,
+        )
+        return _MOut(
+            promoted=decision.promoted,
+            tier=artifact.trust_tier,
+            count=decision.corroboration_count,
+            denial=decision.denial_reason,
+        )
+    except Exception as exc:  # noqa: BLE001 - the matrix classifies by exception type
+        return _MOut(
+            raised=type(exc).__name__,
+            code=getattr(exc, "code", None),
+            reason=getattr(exc, "reason", None),
+            message=str(exc),
+        )
+
+
+# --- matrix assertions -------------------------------------------------------------
+
+
+def _m_state(env: _TE, transport: str) -> dict[str, Any]:
+    if transport == "dashboard":
+        return {"db": _sha_file(env.db) if env.db.exists() else None}
+    return _te_effects(env)
+
+
+def _m_ok(out: _MOut, sc: _MS) -> None:
+    assert out.raised is None, out
+    if sc.transport == "store":
+        return
+    assert out.status in ("ok", "warn"), out
+    if sc.transport == "dashboard":
+        assert out.http == 200, out
+    if sc.transport == "cli":
+        assert out.http == 0, out
+
+
+def _m_denied(out: _MOut, reason: str | None = None) -> None:
+    if out.raised == "NoCall":
+        return  # the TUI refused before it called any route
+    assert out.code == "E_PERMISSION", out
+    if reason is not None:
+        assert out.reason == reason, out
+
+
+def _m_overlay_reason(env: _TE, sc: _MS) -> str:
+    from rush.memory.retrieval import MemoryAccess
+
+    access, why = MemoryAccess.resolve_with_reason(
+        env.root,
+        operation="maintain" if sc.family == "maintain" else "promote",
+        apply=sc.apply,
+        owner_scope=_m_owner(env, sc),
+        data_root=env.data_root,
+    )
+    assert access is None and why != "granted"
+    return why
+
+
+def _m_second(
+    sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str, **changes: Any
+) -> tuple[_TE, _MS, _MOut, dict[str, Any]]:
+    """The same route under a changed scenario, in its own project."""
+    second = dataclasses.replace(sc, **changes)
+    env = _m_env(tmp_path, second, label)
+    before = _m_state(env, second.transport)
+    return env, second, _m_exec(env, second, tmp_path, monkeypatch), before
+
+
+def _m_no_construction(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Spies for the effects a refusal must precede: a writable store, the lease."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    seen: list[str] = []
+    real_init, real_acquire = TypedArtifactStore.__init__, MeshLockManager.acquire
+
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        seen.append("TypedArtifactStore")
+        real_init(self, *args, **kwargs)
+
+    def acquire(self: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append("MeshLockManager.acquire")
+        return real_acquire(self, *args, **kwargs)
+
+    monkeypatch.setattr(TypedArtifactStore, "__init__", init)
+    monkeypatch.setattr(MeshLockManager, "acquire", acquire)
+    return seen
+
+
+def _opened_realpaths(opens: list[Any]) -> set[str]:
+    texts = [o for o in opens if isinstance(o, (str, bytes, os.PathLike))]
+    return {
+        os.path.realpath(os.fsdecode(o)) for o in texts if os.path.isabs(os.fsdecode(o))
+    }
+
+
+def _m_check_source_path(
+    sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A persisted source-path spelling that escapes the project marks the row stale:
+    nothing outside the root is opened and no cache is created."""
+    env = _m_env(tmp_path, sc, "cell")
+    outside = env.root.parent / "outside.py"
+    assert _te_get(env, "st1")["stale"] == 0
+    with _t04_audited() as opens:
+        out = _m_exec(env, sc, tmp_path, monkeypatch)
+    _m_ok(out, sc)
+    assert os.path.realpath(outside) not in _opened_realpaths(opens)
+    assert _te_get(env, "st1")["stale"] == 1
+    assert not (env.root / ".rush" / "cache").exists()
+
+
+def _m_check_discriminator(
+    sc: _MS, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A list or a dict where a task or an owner kind belongs is a controlled input
+    refusal on every route: no traceback, no writable store, no lease, no effect."""
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    env = _m_env(tmp_path, sc, "cell")
+    before = _m_state(env, sc.transport)
+    seen = _m_no_construction(monkeypatch)
+    bad_task = _M_BAD_TASKS.get(sc.discriminator or "")
+    bad_owner = _M_BAD_OWNERS.get(sc.discriminator or "")
+    owner_arg = bad_owner if bad_owner is not None else _m_owner(env, sc).as_dict()
+    transport = sc.transport
+    if transport == "inproc":
+        kwargs: dict[str, Any] = {
+            "operation": sc.family,
+            "owner_scope": owner_arg,
+            "permissions": _m_perm(sc),
+        }
+        if sc.family == "maintain":
+            kwargs["task"] = bad_task if bad_task is not None else sc.task
+            kwargs["request"] = _m_maintain_request(sc)
+            sources = _m_sources(env)
+            if sources is not None:
+                kwargs["sources"] = sources
+        else:
+            parts = _m_promote_parts(env, sc)
+            kwargs |= {k: parts[k] for k in ("subject", "content", "source")}
+            kwargs |= {"symbol_ref": parts["symbol_ref"], "request": parts["request"]}
+        result = MemoryTool().run(env.root, **kwargs)
+        assert _code_of(result) == "E_INPUT" or result["status"] == "error", _dump(
+            _rd(result)
+        )
+    elif transport == "mcp":
+        arguments = _mcp_arguments(env, sc)
+        if bad_task is not None:
+            arguments["task"] = bad_task
+        if bad_owner is not None:
+            arguments["owner_scope"] = bad_owner
+        assert validate_and_normalize("rush_memory", arguments).rejected, arguments
+        published = _mcp_memory(**arguments)
+        assert published["status"] == "error", published
+        assert _code_of(published["raw"]) == "E_INPUT", published
+    elif transport == "bridge":
+        from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+        handler = build_memory_bridge_handler(
+            root=env.root, session_id="0" * 32, capability="none"
+        )
+        body = handler("maintain", {"apply": True, "task": bad_task})
+        assert body.get("code") in ("E_PERMISSION", "E_INPUT"), body
+    elif transport == "dashboard":
+        _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+        _action, _start_dashboard = _dmt._action, _dmt._start_dashboard
+
+        record = register_project(env.root, data_root=env.data_root)
+        arguments = {"owner_scope": owner_arg}
+        if sc.family == "maintain":
+            arguments["task"] = bad_task if bad_task is not None else sc.task
+            sources = _m_sources(env)
+            if sources is not None:
+                arguments["sources"] = sources
+            operation = "memory_maintain"
+        else:
+            parts = _m_promote_parts(env, sc)
+            arguments |= {k: parts[k] for k in ("subject", "content", "source")}
+            arguments["symbol_ref"] = parts["symbol_ref"]
+            operation = "memory_promote"
+        server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+        try:
+            status, body = _action(
+                base_url,
+                record.project_id,
+                cookie,
+                csrf,
+                operation=operation,
+                arguments=arguments,
+                grants={"cache_write": sc.cache_write},
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert status == 400, body
+    else:
+        from rush.memory.maintenance import run_maintenance_cycle
+        from rush.memory.store import OwnerScopeError
+
+        if bad_owner is not None:
+            with pytest.raises((TypeError, ValueError, OwnerScopeError)):
+                OwnerScope(bad_owner["kind"], bad_owner["id"])
+        else:
+            with pytest.raises((TypeError, ValueError)):
+                run_maintenance_cycle(
+                    bad_task,  # type: ignore[arg-type]
+                    project_root=env.root,
+                    access=_te_acc(env, apply=True),
+                )
+    assert seen == [], seen
+    assert _m_state(env, transport) == before
+
+
+@pytest.mark.parametrize(("family", "transport", "dim", "value"), _m_cells())
+def test_t04_route_mode_matrix(
+    family: str,
+    transport: str,
+    dim: str,
+    value: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sc = _m_scenario(family, transport, dim, value)
+    if dim == "source_path":
+        _m_check_source_path(sc, tmp_path, monkeypatch)
+        return
+    if dim == "discriminator":
+        _m_check_discriminator(sc, tmp_path, monkeypatch)
+        return
+    if dim == "row_state" and value == "rejected":
+        # producer 72-T05: the `applicability` column does not exist at this HEAD.
+        env = _m_env(tmp_path, dataclasses.replace(sc, row_state="active"), "cell")
+        assert "applicability" not in _columns(env.db, "memory_artifacts")
+        return
+
+    def baseline() -> _MOut:
+        base_sc = _m_scenario(family, transport, "apply", "apply")
+        base_env = _m_env(tmp_path, base_sc, "baseline")
+        return _m_exec(base_env, base_sc, tmp_path, monkeypatch)
+
+    if transport == "bridge":
+        env = _m_env(tmp_path, sc, "cell")
+        before = _m_state(env, transport)
+        seen = _m_no_construction(monkeypatch)
+        out = _m_exec(env, sc, tmp_path, monkeypatch)
+        assert out.code == "E_PERMISSION", out
+        assert seen == []
+        assert _m_state(env, transport) == before
+        return
+
+    env = _m_env(tmp_path, sc, "cell")
+    before = _m_state(env, transport)
+    denial_cell = (
+        (dim == "access" and value == "overlay" and transport not in ("tui",))
+        or (dim == "policy_state" and value in ("missing_marker", "invalid"))
+        or (dim == "grant_ops" and value == "missing_one")
+        or (dim == "cache_write" and value == "off")
+    )
+    seen = (
+        _m_no_construction(monkeypatch) if denial_cell and transport != "store" else []
+    )
+    out = _m_exec(env, sc, tmp_path, monkeypatch)
+    after = _m_state(env, transport)
+
+    def untouched() -> None:
+        assert after == before
+        if denial_cell and transport != "store":
+            assert seen == [], seen
+
+    # --- access ---------------------------------------------------------------
+    if dim == "access":
+        if value == "policy" or value == "legacy_allowlist":
+            _m_ok(out, sc)
+        elif transport == "tui" or (transport == "cli" and family == "promote"):
+            # the TUI and the promote CLI carry no overlay owner: byte-identical.
+            assert out.key() == baseline().key()
+        else:
+            reason = _m_overlay_reason(env, sc)
+            _m_denied(out, reason)
+            untouched()
+        return
+    # --- policy state -----------------------------------------------------------
+    if dim == "policy_state":
+        if value == "missing_no_marker" or value == "ok":
+            _m_ok(out, sc)
+        else:
+            _m_denied(
+                out, "policy_missing" if value == "missing_marker" else "policy_invalid"
+            )
+            untouched()
+        return
+    # --- dimensions a route does not accept -----------------------------------------
+    if dim in ("mode", "representation", "retrieval", "ack") and sc.extra:
+        if transport == "mcp":
+            assert (out.code, out.reason) == ("E_INPUT", dim), out
+            untouched()
+        elif transport == "dashboard":
+            assert out.http == 400, out
+            untouched()
+        elif transport == "store":
+            assert out.raised == "TypeError" and f"'{dim}'" in out.message, out
+            untouched()
+        else:
+            # the route carries no such field: the apply is byte-identical to the baseline.
+            assert out.key() == baseline().key()
+        return
+    if dim in ("mode", "representation", "retrieval", "ack"):
+        _m_ok(out, sc)
+        return
+    # --- store state ---------------------------------------------------------------
+    if dim == "store":
+        if value == "present":
+            _m_ok(out, sc)
+            return
+        if value == "absent":
+            if family == "promote" and transport == "tui":
+                assert out.raised == "NoCall", out  # nothing to select
+                assert not env.db.exists()
+                return
+            if family == "promote" and transport == "store":
+                assert out.raised == "KeyError", out  # the HEAD contract: no such row
+                return
+            _m_ok(out, sc)
+            if transport != "tui":
+                # an authorized apply builds the writable store (G3 stage 1, first effect).
+                assert env.db.exists(), "an authorized apply creates the store"
+            if family == "maintain" and transport != "store":
+                assert out.processed in (0, None), out
+            env2, _sc2, out2, _ = _m_second(
+                sc, tmp_path, monkeypatch, "preview", apply=False
+            )
+            if transport in ("inproc", "mcp", "tui", "store"):
+                assert out2.raised is None, out2
+                assert not env2.db.exists(), "a preview created the store"
+                assert out2.ids in ((), ("a1", "a2")) or family == "promote"
+            return
+        # old schema
+        _env2, _sc2, out2, _ = _m_second(
+            sc, tmp_path, monkeypatch, "preview", apply=False
+        )
+        if transport in ("inproc", "mcp") and family == "maintain":
+            assert out2.status == "error", out2
+            assert "predates" in out2.message, out2
+        if family == "maintain":
+            assert out.raised is None, out
+        elif transport == "tui":
+            # the TUI selects through the read-only view, which never migrates.
+            assert out.raised == "NoCall" and "predates" in out.message, out
+        else:
+            assert out.raised in (None, "VersionConflictError", "KeyError"), out
+        return
+    # --- apply / preview -------------------------------------------------------------
+    if dim == "apply":
+        if value == "apply":
+            _m_ok(out, sc)
+            if family == "maintain" and transport not in ("tui", "store"):
+                assert (out.changed or 0) >= 1, out
+            if family == "promote":
+                assert out.promoted is True and out.tier == "STATED", out
+            return
+        if family == "promote" and transport == "store":
+            # the in-process API has no preview: a preview access cannot promote (R17).
+            assert out.raised == "MemoryPolicyError", out
+            assert (out.code, out.reason) == ("E_PERMISSION", "policy_grant_required")
+            untouched()
+            return
+        if transport in ("cli", "dashboard"):
+            if transport == "dashboard":
+                assert out.http == 400, out
+            else:
+                assert out.key() == baseline().key()
+            return
+        _m_ok(out, sc)
+        assert _m_state(env, transport) == before, "a preview changed state"
+        if family == "maintain" and transport in ("inproc", "mcp", "store"):
+            assert set(out.ids) == {"a1", "a2"}, out
+        if family == "promote" and transport != "store":
+            assert out.promoted is None, out
+        return
+    # --- cache_write ---------------------------------------------------------------------
+    if dim == "cache_write":
+        if value == "on":
+            _m_ok(out, sc)
+        elif transport == "dashboard":
+            assert out.http == 403, out
+            untouched()
+        elif transport in ("tui", "store"):
+            _m_ok(out, sc)
+        else:
+            assert out.status == "skipped", out
+            untouched()
+        if value == "off" and transport in ("inproc", "mcp"):
+            _env2, _sc2, preview, _b = _m_second(
+                sc, tmp_path, monkeypatch, "preview", apply=False
+            )
+            _m_ok(preview, sc)
+        return
+    # --- grant operations --------------------------------------------------------------------
+    if dim == "grant_ops":
+        if value == "exact":
+            _m_ok(out, sc)
+            return
+        _m_denied(out, "operation_not_granted")
+        untouched()
+        if transport not in ("cli", "dashboard"):
+            env2, _sc2, out2, before2 = _m_second(
+                sc, tmp_path, monkeypatch, "preview", apply=False, ops=("write",)
+            )
+            _m_denied(out2, "operation_not_granted")
+            assert _m_state(env2, transport) == before2
+        return
+    # --- row state -----------------------------------------------------------------------------
+    if dim == "row_state":
+        _m_check_row_state(family, transport, value, env, sc, out, tmp_path)
+        return
+    # --- selected ids / refs -----------------------------------------------------------------
+    if dim == "capability_ids":
+        _m_check_selected(family, transport, value, env, sc, out, tmp_path, monkeypatch)
+        return
+    # --- per-task baselines (inproc / store maintain) -------------------------------------------
+    assert dim == "task", dim
+    _m_ok(out, sc)
+
+
+def _m_check_row_state(
+    family: str,
+    transport: str,
+    value: str,
+    env: _TE,
+    sc: _MS,
+    out: _MOut,
+    tmp_path: Path,
+) -> None:
+    if value == "active":
+        _m_ok(out, sc)
+        return
+    if family == "maintain":
+        _m_ok(out, sc)
+        if value in ("archived", "expired"):
+            assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+            assert _te_get(env, "a1")["corroboration_count"] <= 1
+        elif value == "tampered":
+            assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
+            assert _te_get(env, "a1")["promoted_at"] is None
+        else:
+            assert value == "pending"
+            assert _te_get(env, "a1")["trust_tier"] == "IMPORTED"
+            assert _te_get(env, "a1")["promoted_at"] is None
+        return
+    # promote: a2 (the named peer) is archived / expired / tampered / pending.
+    assert out.promoted is not True, out
+    if transport == "store":
+        if value == "tampered" or value == "pending":
+            expected = (
+                "integrity_payload_mismatch"
+                if value == "tampered"
+                else "imported_unverified"
+            )
+            assert out.raised is None and out.denial == expected, out
+        else:
+            assert out.raised == "VersionConflictError", out
+            assert out.code in ("E_NOT_VISIBLE", "E_VERSION"), out
+    else:
+        assert out.code in (None, "E_NOT_VISIBLE", "E_VERSION", "OK") or out.denial, out
+    assert _te_get(env, "a2")["trust_tier"] != "STATED"
+
+
+def _m_check_selected(
+    family: str,
+    transport: str,
+    value: str,
+    env: _TE,
+    sc: _MS,
+    out: _MOut,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selecting = (
+        {"inproc", "mcp", "store"}
+        if family == "maintain"
+        else {
+            "inproc",
+            "cli",
+            "mcp",
+            "dashboard",
+            "store",
+        }
+    )
+    if family == "maintain":
+        if value == "unselected" or transport not in selecting:
+            _m_ok(out, sc)
+            return
+        _m_ok(out, sc)
+        # a Bob id in the reviewed set is never visited or reported.
+        if transport == "store":
+            assert out.processed == 1, out
+        else:
+            assert out.processed == 1 or out.processed is None, out
+        _env2, _sc2, preview, _b = _m_second(
+            sc, tmp_path, monkeypatch, "preview", apply=False
+        )
+        if transport != "store":
+            assert "b1" not in preview.ids and preview.ids == ("a1",), preview
+        else:
+            assert preview.ids == ("a1",), preview
+        return
+    # promote
+    if value == "unselected":
+        if transport == "store":
+            assert out.promoted is True, out  # the evidence-identity scan counts a2
+        elif transport in selecting:
+            assert out.promoted is False, out
+            assert out.denial == "insufficient_corroboration", out
+        else:
+            _m_ok(out, sc)
+        return
+    _m_ok(out, sc)
+    if transport in selecting and transport != "store":
+        assert out.promoted is True and out.tier == "STATED", out
+    # a ref naming Bob's row is `E_NOT_VISIBLE`, never counted.
+    env2 = _m_env(tmp_path, sc, "bobref")
+    parts_sc = dataclasses.replace(sc, selected=True)
+    ref = _te_ref(env2, "b1")
+    original = _m_ref
+
+    def bob_ref(e: _TE, artifact_id: str) -> dict[str, Any] | None:
+        return ref if artifact_id == "a2" else original(e, artifact_id)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys.modules[__name__], "_m_ref", bob_ref)
+        bob_out = _m_exec(env2, parts_sc, tmp_path, monkeypatch)
+    if transport in selecting:
+        assert bob_out.promoted is not True, bob_out
+        assert bob_out.code in (None, "E_NOT_VISIBLE", "E_VERSION") or bob_out.raised, (
+            bob_out
+        )
+        assert _te_get(env2, "b1")["trust_tier"] != "STATED"
+
+
+# --- G4: trust-boundary input rows --------------------------------------------------
+
+
+def _g4_env(tmp_path: Path) -> _TE:
+    env = _te_env(tmp_path, name="g4", bob=False)
+    _te_row(env, "a1", source="source-a", origin=("agent", "o-a1"), anchored=False)
+    return env
+
+
+def _g4_maintain(env: _TE, **kwargs: Any) -> Any:
+    request = kwargs.pop("request", {"apply": False})
+    return MemoryTool().run(
+        env.root,
+        operation="maintain",
+        task=kwargs.pop("task", "promotion_sweep"),
+        owner_scope=kwargs.pop("owner_scope", env.owner.as_dict()),
+        request=request,
+        permissions=_T04_PERM,
+        **kwargs,
+    )
+
+
+def _g4_promote(env: _TE, refs: Any, **kwargs: Any) -> Any:
+    return MemoryTool().run(
+        env.root,
+        operation="promote",
+        subject=SUBJECT,
+        content={"text": "needle shared"},
+        source="source-a",
+        owner_scope=env.owner.as_dict(),
+        request={"apply": True, "candidate_refs": refs},
+        permissions=_T04_PERM,
+        **kwargs,
+    )
+
+
+_G4_SOURCES = [
+    pytest.param("s1", id="str"),
+    pytest.param([1], id="int_item"),
+    pytest.param([""], id="empty"),
+    pytest.param(["a\x00b"], id="nul"),
+    pytest.param(["\ud800"], id="lone_surrogate"),
+    pytest.param(["a\x1fb"], id="cc"),
+    pytest.param(["a\u200bb"], id="cf"),
+    pytest.param(["intent:*"], id="wildcard"),
+]
+
+
+@pytest.mark.parametrize("bad", _G4_SOURCES)
+def test_t04_g4_sources_rows(bad: Any, tmp_path: Path) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _action, _grant_all, _start_dashboard = (
+        _dmt._action,
+        _dmt._grant_all,
+        _dmt._start_dashboard,
+    )
+
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    for apply in (False, True):
+        result = _g4_maintain(env, sources=bad, request={"apply": apply})
+        assert _code_of(result) == "E_INPUT", (apply, _dump(_rd(result)))
+        assert _rd(result).get("data", {}).get("field") == "sources"
+    assert _te_effects(env) == before
+    outcome = validate_and_normalize(
+        "rush_memory",
+        {
+            "path": str(env.root),
+            "operation": "maintain",
+            "task": "promotion_sweep",
+            "sources": bad,
+        },
+    )
+    if bad == "s1" or bad == [1]:
+        assert outcome.rejected  # the strict model: a list of strings
+    record = register_project(env.root, data_root=env.data_root)
+    server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+    try:
+        status, body = _action(
+            base_url,
+            record.project_id,
+            cookie,
+            csrf,
+            operation="memory_maintain",
+            arguments={"task": "promotion_sweep", "sources": bad},
+            grants=_grant_all(),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert status == 400, body
+    assert _te_effects(env, tree=False)["db"] == before["db"]
+
+
+_G4_REFS = [
+    pytest.param({"version": 1, "source": "source-b"}, id="missing_id"),
+    pytest.param({"id": "a2", "version": 1}, id="missing_source"),
+    pytest.param(
+        {"id": "a2", "version": 1, "source": "source-b", "x": 1}, id="extra_key"
+    ),
+    pytest.param(
+        {"id": "a2", "version": True, "source": "source-b"}, id="bool_version"
+    ),
+    pytest.param({"id": "a2", "version": 0, "source": "source-b"}, id="zero_version"),
+    pytest.param(
+        {"id": "a2", "version": 1.0, "source": "source-b"}, id="float_version"
+    ),
+    pytest.param(
+        {"id": "a2", "version": 10**400, "source": "source-b"}, id="huge_version"
+    ),
+    pytest.param({"id": "a\x00", "version": 1, "source": "source-b"}, id="nul_id"),
+    pytest.param(
+        {"id": "\ud800", "version": 1, "source": "source-b"}, id="surrogate_id"
+    ),
+    pytest.param({"id": "a\u200b2", "version": 1, "source": "source-b"}, id="cf_id"),
+]
+
+
+@pytest.mark.parametrize("ref", _G4_REFS)
+def test_t04_g4_candidate_refs_rows(ref: dict[str, Any], tmp_path: Path) -> None:
+    env = _g4_env(tmp_path)
+    _te_row(env, "a2", source="source-b", origin=("agent", "o-a2"), anchored=False)
+    before = _te_effects(env)
+    result = _g4_promote(env, [ref])
+    assert _code_of(result) == "E_INPUT" or result["status"] == "error", _dump(
+        _rd(result)
+    )
+    assert _te_effects(env) == before
+
+
+_G4_IDS = [
+    pytest.param([1], id="int_item"),
+    pytest.param(["x", "x"], id="duplicate"),
+    pytest.param(["a\x00"], id="nul"),
+    pytest.param(["\ud800"], id="lone_surrogate"),
+    pytest.param(["a\u200bb"], id="cf"),
+]
+
+
+@pytest.mark.parametrize("ids", _G4_IDS)
+def test_t04_g4_candidate_ids_rows(ids: Any, tmp_path: Path) -> None:
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    for apply in (False, True):
+        result = _g4_maintain(env, request={"apply": apply, "candidate_ids": ids})
+        assert _code_of(result) == "E_INPUT" or result["status"] == "error", (
+            apply,
+            _dump(_rd(result)),
+        )
+    assert _te_effects(env) == before
+
+
+_G4_REVISIONS = [
+    pytest.param({"a1": True}, id="bool"),
+    pytest.param({"a1": 0}, id="zero"),
+    pytest.param({"a1": 10**400}, id="huge"),
+    pytest.param({"a2": 1}, id="keys_differ_from_candidate_ids"),
+]
+
+
+@pytest.mark.parametrize("revisions", _G4_REVISIONS)
+def test_t04_g4_expected_revisions_rows(revisions: Any, tmp_path: Path) -> None:
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    result = _g4_maintain(
+        env,
+        request={
+            "apply": True,
+            "candidate_ids": ["a1"],
+            "expected_revisions": revisions,
+        },
+    )
+    assert _code_of(result) == "E_INPUT" or result["status"] == "error", _dump(
+        _rd(result)
+    )
+    assert _te_effects(env) == before
+
+
+_G4_OWNERS = [
+    pytest.param({"kind": ["x"], "id": "y"}, id="unhashable_kind"),
+    pytest.param({"kind": "bogus", "id": "y"}, id="bogus_kind"),
+    pytest.param({"kind": "user"}, id="missing_id"),
+]
+
+
+@pytest.mark.parametrize("owner", _G4_OWNERS)
+def test_t04_g4_owner_scope_rows(owner: Any, tmp_path: Path) -> None:
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    result = _g4_maintain(env, owner_scope=owner)
+    assert _code_of(result) == "E_INPUT" or result["status"] == "error", _dump(
+        _rd(result)
+    )
+    assert _te_effects(env) == before
+
+
+@pytest.mark.parametrize("task", ["nope", "promotion_sweep\x00"])
+def test_t04_g4_task_rows(task: str, tmp_path: Path) -> None:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    _dmt = importlib.import_module("tests.test_dashboard_memory_tokens")
+    _action, _grant_all, _start_dashboard = (
+        _dmt._action,
+        _dmt._grant_all,
+        _dmt._start_dashboard,
+    )
+
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    result = _g4_maintain(env, task=task)
+    assert _code_of(result) == "E_INPUT" or result["status"] == "error", _dump(
+        _rd(result)
+    )
+    with pytest.raises(ValueError):
+        run_maintenance_cycle(
+            task,  # type: ignore[arg-type]
+            project_root=env.root,
+            access=_te_acc(env, apply=True),
+        )
+    if "\x00" not in task:
+        cli_result = CliRunner().invoke(
+            cli, ["memory", "maintain", "--task", task, "--allow-cache-write"]
+        )
+        assert cli_result.exit_code == 2, cli_result.output
+    record = register_project(env.root, data_root=env.data_root)
+    server, base_url, cookie, csrf = _start_dashboard(record.project_id, env.root)
+    try:
+        status, body = _action(
+            base_url,
+            record.project_id,
+            cookie,
+            csrf,
+            operation="memory_maintain",
+            arguments={"task": task},
+            grants=_grant_all(),
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert status == 400, body
+    assert _te_effects(env, tree=False)["db"] == before["db"]
+
+
+@pytest.mark.parametrize("value", [123, "x"], ids=["int", "str"])
+def test_t04_g4_data_root_rows(value: Any, tmp_path: Path) -> None:
+    from rush.memory.maintenance import (
+        preview_maintenance_candidates,
+        run_maintenance_cycle,
+    )
+
+    env = _g4_env(tmp_path)
+    before = _te_effects(env)
+    with pytest.raises(ValueError):
+        run_maintenance_cycle(
+            "promotion_sweep",
+            project_root=env.root,
+            access=_te_acc(env, apply=True),
+            data_root=value,
+        )
+    with pytest.raises(ValueError):
+        preview_maintenance_candidates(
+            "promotion_sweep",
+            project_root=env.root,
+            access=_te_acc(env, apply=False),
+            data_root=value,
+        )
+    assert _te_effects(env) == before
+
+
+@pytest.mark.parametrize(
+    "bad", ["123", "nul", "surrogate"], ids=["non_path", "nul", "lone_surrogate"]
+)
+def test_t04_g4_path_rows(bad: str, tmp_path: Path) -> None:
+    target: Any = {"123": 123, "nul": "bad\x00path", "surrogate": "bad\ud800path"}[bad]
+    before = _tree(tmp_path)
+    for operation, extra in (
+        ("maintain", {"task": "promotion_sweep", "request": {"apply": True}}),
+        (
+            "promote",
+            {
+                "subject": SUBJECT,
+                "content": {"text": "x"},
+                "source": "s",
+                "request": {"apply": True},
+            },
+        ),
+    ):
+        result = MemoryTool().run(
+            target,
+            operation=operation,  # type: ignore[arg-type]
+            permissions=_T04_PERM,
+            **extra,  # type: ignore[arg-type]
+        )
+        assert _code_of(result) == "E_INPUT", (operation, _dump(_rd(result)))
+        assert _rd(result).get("data") == {
+            "field": "path",
+            "message": "invalid project path",
+        }
+        if isinstance(target, str):
+            # the published MCP route returns the same controlled refusal
+            published = _mcp_memory(
+                path=target,
+                operation=operation,
+                allow_cache_write=True,
+                **{k: v for k, v in extra.items() if k != "request"},
+                request=extra["request"],
+            )
+            assert published["status"] == "error", published
+            assert _code_of(published["raw"]) == "E_INPUT", published
+    assert _tree(tmp_path) == before
+
+
+def test_t04_g4_lock_target_nul(tmp_path: Path) -> None:
+    manager, root = _lk_manager(tmp_path, "nul-lock")
+    before = _digest_dir(root)
+    assert manager.acquire(Path("a\x00b"), "agent-a", timeout_s=0.5) is False
+    assert _digest_dir(root) == before
+
+
+def test_t04_g4_moved_and_case_variant_root(tmp_path: Path) -> None:
+    env = _g4_env(tmp_path)
+    canonical = _g4_maintain(env, sources=None)
+    assert _code_of(canonical) in ("OK", None), _dump(_rd(canonical))
+    variant = Path(str(env.root).swapcase())
+    if variant.exists() and variant != env.root:  # a case-insensitive file system
+        again = MemoryTool().run(
+            variant,
+            operation="maintain",
+            task="promotion_sweep",
+            owner_scope=env.owner.as_dict(),
+            request={"apply": False},
+            permissions=_T04_PERM,
+        )
+        assert _m_from_tool(again).key() == _m_from_tool(canonical).key()
+    moved = tmp_path / "moved"
+    shutil.move(str(env.root), str(moved))
+    result = MemoryTool().run(
+        moved,
+        operation="maintain",
+        task="promotion_sweep",
+        owner_scope=env.owner.as_dict(),
+        request={"apply": True},
+        permissions=_T04_PERM,
+    )
+    assert _code_of(result) == "E_PERMISSION", _dump(_rd(result))
+
+
+# --- G15: the evaluated view differs from the recorded view -----------------------
+
+
+def _te_before_write_stage(patch: pytest.MonkeyPatch, action: Any) -> None:
+    """Run `action` once, after the cycle's read-only preparation and before the write
+    stage takes its lease: the evaluated rows change under the recorded view."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    original = MeshLockManager.acquire
+    fired: list[int] = []
+
+    def acquire(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if not fired:
+            fired.append(1)
+            action()
+        return original(self, *args, **kwargs)
+
+    patch.setattr(MeshLockManager, "acquire", acquire)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "promotion_owner_changed",
+        "promotion_source_changed",
+        "staleness_version_bumped",
+        "skill_source_changed",
+        "expiry_version_bumped_after_preview",
+        "ref_source_changed",
+        "ref_owner_changed",
+        "ref_trust_changed",
+    ],
+)
+def test_t04_evaluated_view_differs_from_recorded_view(
+    case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.store import VersionConflictError
+
+    if case in ("promotion_owner_changed", "promotion_source_changed"):
+        env = _te_env(tmp_path, bob=False)
+        ids = _te_distinct_rows(env, 2)
+        snapshot: dict[str, Any] = {}
+        sql = (
+            "UPDATE memory_artifacts SET owner_scope_id = 'mallory' WHERE id = ?"
+            if case == "promotion_owner_changed"
+            else "UPDATE memory_artifacts SET source = 'source-z' WHERE id = ?"
+        )
+
+        def change() -> None:
+            _te_sql(env, sql, ids[0])
+            snapshot["bytes"] = _te_bytes(env, ids[0])
+
+        with monkeypatch.context() as patch:
+            _te_before_write_stage(patch, change)
+            result = _te_sweep(env)
+        assert "bytes" in snapshot, "the write stage never started"
+        assert _te_bytes(env, ids[0]) == snapshot["bytes"], (
+            "the changed row was written"
+        )
+        assert ids[0] not in result.errors
+        assert _te_get(env, ids[1])["artifact_version"] == 2
+        return
+    if case == "staleness_version_bumped":
+        env = _te_env(tmp_path, bob=False)
+        _te_row(
+            env,
+            "st1",
+            source="source-a",
+            anchored=False,
+            symbol_ref="mod.py::sym_x",
+            content_hash="deadbeef",
+            content={"text": "needle stale"},
+        )
+
+        def bump() -> None:
+            env.store.edit(
+                "st1",
+                {"text": "needle edited after preparation"},
+                expected_version=1,
+                scope=SUBJECT,
+                owner_scope=env.owner,
+                apply=True,
+            )
+
+        with monkeypatch.context() as patch:
+            _te_before_write_stage(patch, bump)
+            result = _te_run(env, "staleness_sweep", candidate_ids=["st1"])
+        assert tuple(result.unprocessed) == ("st1",)
+        assert result.errors == () and result.changed == 0
+        assert _te_get(env, "st1")["stale"] == 0
+        assert _te_get(env, "st1")["artifact_version"] == 2
+        return
+    if case == "skill_source_changed":
+        env = _te_skill_env(tmp_path, "skill-source")
+        snapshot = {}
+
+        def move() -> None:
+            _te_sql(
+                env, "UPDATE memory_artifacts SET source = 'source-z' WHERE id = 's1'"
+            )
+            snapshot["bytes"] = _te_bytes(env, "s1")
+
+        with monkeypatch.context() as patch:
+            _te_before_write_stage(patch, move)
+            result = _te_run(env, "skill_admission_check", candidate_ids=["s1"])
+        assert "bytes" in snapshot
+        assert result.changed == 0
+        assert _te_bytes(env, "s1") == snapshot["bytes"]
+        return
+    if case == "expiry_version_bumped_after_preview":
+        env = _te_env(tmp_path, bob=False)
+        for rid in ("e1", "e2"):
+            _te_elapsed_row(env, rid, source="source-a")
+        previewed = _te_preview(env, "expiry_sweep")
+        expected = {r["id"]: r["artifact_version"] for r in previewed}
+        assert sorted(expected) == ["e1", "e2"]
+        env.store.edit(
+            "e1",
+            {"text": "needle edited after preview"},
+            expected_version=expected["e1"],
+            scope=SUBJECT,
+            owner_scope=env.owner,
+            apply=True,
+        )
+        frozen = _te_bytes(env, "e1")
+        result = _te_run(
+            env,
+            "expiry_sweep",
+            candidate_ids=["e1", "e2"],
+            expected_revisions=expected,
+        )
+        assert [conflict.id for conflict in result.refused] == ["e1"]
+        assert _te_bytes(env, "e1") == frozen
+        assert _te_get(env, "e2")["expired_at"] is not None
+        return
+    # reviewed promotion refs: the named peer changes after the review captured it.
+    env = _te_reviewed_env(tmp_path, "policy", case, third=False)
+    selected, peer = _te_ref(env, "sel"), _te_ref(env, "peer")
+    if case == "ref_source_changed":
+        _te_sql(
+            env, "UPDATE memory_artifacts SET source = 'source-z' WHERE id = 'peer'"
+        )
+    elif case == "ref_owner_changed":
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET owner_scope_id = 'mallory' WHERE id = 'peer'",
+        )
+    else:
+        _te_promote(env, "peer", user_stated=True)
+    before = _te_bytes(env, "sel")
+    with pytest.raises(VersionConflictError) as refused:
+        _te_promote(env, "sel", candidate_refs=[selected, peer], expected_version=1)
+    assert "changed since review" in str(refused.value)
+    assert refused.value.code in ("E_NOT_VISIBLE", "E_VERSION")
+    assert _te_bytes(env, "sel") == before
+
+
+# --- G15: the preservation oracle must see every effect --------------------------
+
+
+def _te_default_row(env: _TE, table: str) -> None:
+    """Insert one all-default row (NOT NULL columns get a typed placeholder)."""
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+        columns, values = [], []
+        for _cid, name, kind, notnull, default, pk in info:
+            if default is not None or (not notnull and not pk):
+                continue
+            columns.append(f'"{name}"')
+            values.append(0 if kind.upper() in ("INTEGER", "REAL") else "x")
+        marks = ", ".join("?" for _ in values)
+        conn.execute(
+            f'INSERT INTO "{table}" ({", ".join(columns)}) VALUES ({marks})', values
+        )
+        conn.commit()
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        "project_file_changed",
+        "project_file_added",
+        "project_dir_added",
+        "db_row_content",
+        "db_row_version",
+        "db_receipt_row",
+        "db_version_history_row",
+        "policy_file",
+        "data_root_file_added",
+    ],
+)
+def test_t04_effect_snapshot_detects_each_component(
+    component: str, tmp_path: Path
+) -> None:
+    """The T04 effect snapshot is the oracle for every zero-effect assertion: change each
+    captured component on its own, inside the test's temporary storage, and the
+    snapshot must differ. A capture that omitted a component would pass vacuously."""
+    from rush.memory import authorization as auth
+
+    env = _te_env(tmp_path, bob=False)
+    _te_row(env, "a1", source="source-a", anchored=False)
+    before = _te_effects(env)
+    assert set(before) == {"root", "db", "counts", "data"}
+    assert before["root"] and before["db"] and before["data"]
+    assert before["counts"].get("memory_artifacts", 0) >= 1
+    assert _te_effects(env) == before, "the snapshot is not deterministic"
+    if component == "project_file_changed":
+        (env.root / "mod.py").write_text(_T04_MOD + "# edited\n", encoding="utf-8")
+    elif component == "project_file_added":
+        (env.root / "extra.txt").write_text("x", encoding="utf-8")
+    elif component == "project_dir_added":
+        (env.root / "extra-dir").mkdir()
+    elif component == "db_row_content":
+        _te_sql(env, "UPDATE memory_artifacts SET content = '{}' WHERE id = 'a1'")
+    elif component == "db_row_version":
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET artifact_version = artifact_version + 1"
+            " WHERE id = 'a1'",
+        )
+    elif component == "db_receipt_row":
+        _te_default_row(env, "mutation_receipts")
+    elif component == "db_version_history_row":
+        _te_default_row(env, "memory_artifact_versions")
+    elif component == "policy_file":
+        policy = auth.policy_path(data_root=env.data_root)
+        policy.write_bytes(policy.read_bytes() + b"\n")
+    else:
+        (env.data_root / "extra-data-file").write_text("x", encoding="utf-8")
+    assert _te_effects(env) != before, component
+
+
+# --- G8: one predicate row per access form -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        pytest.param("write_gate-pol-write", id="write_gate-pol-write"),
+        pytest.param("write_gate-pol-list", id="write_gate-pol-list"),
+        pytest.param("write_gate-leg-write", id="write_gate-leg-write"),
+        pytest.param("write_gate-leg-list", id="write_gate-leg-list"),
+        pytest.param(
+            "write_gate-leg-in-policy-mode", id="write_gate-leg-in-policy-mode"
+        ),
+        pytest.param(
+            "write_gate-ovl-producer-72-T05", id="write_gate-ovl-producer-72-T05"
+        ),
+        pytest.param("peer_scope-pol", id="peer_scope-pol"),
+        pytest.param("peer_scope-leg", id="peer_scope-leg"),
+        pytest.param(
+            "peer_scope-ovl-producer-72-T05", id="peer_scope-ovl-producer-72-T05"
+        ),
+        pytest.param("route-pol", id="route-pol"),
+        pytest.param("route-leg", id="route-leg"),
+        pytest.param("route-unavailable", id="route-unavailable"),
+        pytest.param("route-ovl-producer-72-T05", id="route-ovl-producer-72-T05"),
+    ],
+)
+def test_t04_g8_access_form_predicates(row: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory import store as store_module
+    from rush.memory.authorization import MemoryPolicyError
+    from rush.memory.retrieval import MemoryAccess
+
+    group, _, form = row.partition("-")
+    if row == "write_gate-ovl-producer-72-T05":
+        data_root = default_data_root()
+        overlay_root = Path(data_root) / "user"
+        overlay_root.mkdir(parents=True, exist_ok=True)
+        with pytest.raises(MemoryPolicyError) as refused:
+            TypedArtifactStore(overlay_root).promote(
+                "p1", user_stated=True, access=None
+            )
+        assert refused.value.reason == "overlay_storage_root"
+        return
+    if row in ("route-ovl-producer-72-T05", "peer_scope-ovl-producer-72-T05"):
+        # Pre-producer: the overlay owner resolves to no access, so no peer scope exists.
+        env = _te_env(tmp_path, bob=False)
+        overlay = auth.user_overlay_owner_scope(data_root=env.data_root)
+        access, why = MemoryAccess.resolve_with_reason(
+            env.root,
+            operation="maintain" if group == "route" else "promote",
+            apply=True,
+            owner_scope=overlay,
+            data_root=env.data_root,
+        )
+        assert access is None and why != "granted"
+        return
+    if row == "route-unavailable":
+        env = _te_env(tmp_path, bob=False)
+        auth.policy_path(data_root=env.data_root).write_bytes(b"{")
+        result = _te_mt_maintain(env, "promotion_sweep")
+        assert (_code_of(result), _reason_of(result)) == (
+            "E_PERMISSION",
+            "policy_invalid",
+        )
+        return
+
+    mode = (
+        "legacy"
+        if form.startswith("leg") and not form.endswith("policy-mode")
+        else "policy"
+    )
+    env = _te_env(tmp_path, mode=mode, bob=False)
+    _te_row(env, "x1", source="source-a", origin=("agent", "o-1"))
+    _te_row(env, "x2", source="source-b", origin=("agent", "o-2"))
+    if group == "write_gate":
+        from rush.memory.maintenance import (
+            MaintenanceAccessDenied,
+            run_maintenance_cycle,
+        )
+
+        if form == "leg-in-policy-mode":
+            access = MemoryAccess.legacy(
+                env.root,
+                ["source-a", "source-b"],
+                owner_scope=env.owner,
+                operation="write",
+            )
+            admitted = False
+        elif form.startswith("pol"):
+            admitted = form == "pol-write"
+            access = MemoryAccess.resolve(
+                env.root,
+                operation="write",
+                apply=admitted,
+                owner_scope=env.owner,
+                data_root=env.data_root,
+            )
+            assert access is not None
+        else:
+            admitted = form == "leg-write"
+            access = MemoryAccess.legacy(
+                env.root,
+                ["source-a", "source-b"],
+                owner_scope=env.owner,
+                operation="write" if admitted else "list",
+            )
+        before = _te_bytes(env, "x1")
+        if admitted:
+            _artifact, decision = env.store.promote(
+                "x1", user_stated=True, access=access
+            )
+            assert decision.promoted is True
+            cycle = run_maintenance_cycle(
+                "promotion_sweep", project_root=env.root, access=access
+            )
+            assert cycle.errors == ()
+        else:
+            with pytest.raises(MemoryPolicyError) as store_refused:
+                env.store.promote("x1", user_stated=True, access=access)
+            assert (store_refused.value.code, store_refused.value.reason) == (
+                "E_PERMISSION",
+                "policy_grant_required",
+            )
+            with pytest.raises(MaintenanceAccessDenied) as cycle_refused:
+                run_maintenance_cycle(
+                    "promotion_sweep", project_root=env.root, access=access
+                )
+            assert (cycle_refused.value.code, cycle_refused.value.reason) == (
+                "E_PERMISSION",
+                "policy_grant_required",
+            )
+            assert _te_bytes(env, "x1") == before
+        return
+    if group == "peer_scope":
+        with contextlib.closing(sqlite3.connect(env.db)) as conn:
+            conn.row_factory = sqlite3.Row
+            candidate = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = 'x1'"
+            ).fetchone()
+            narrow = (
+                MemoryAccess.resolve(
+                    env.root,
+                    operation="maintain",
+                    apply=True,
+                    owner_scope=env.owner,
+                    requested_sources=["source-a"],
+                    data_root=env.data_root,
+                )
+                if mode == "policy"
+                else MemoryAccess.legacy(
+                    env.root, ["source-a"], owner_scope=env.owner, operation="write"
+                )
+            )
+            wide = _te_acc(env, apply=True)
+            assert narrow is not None
+            none, _ = store_module.corroborating_peers(
+                conn, env.store, candidate, access=narrow, evidence_identity=True
+            )
+            some, _ = store_module.corroborating_peers(
+                conn, env.store, candidate, access=wide, evidence_identity=True
+            )
+        assert [p.id for p in none] == []
+        assert [p.id for p in some] == ["x2"]
+        return
+    # route rows: the request source list builds the access in `legacy`, the grant in `policy`.
+    assert group == "route"
+    if form == "pol":
+        done = _te_mt_maintain(env, "promotion_sweep", request={"apply": False})
+        assert sorted(_rd(done)["candidate_ids"]) == ["x1", "x2"]
+    else:
+        missing = MemoryTool().run(
+            env.root,
+            operation="maintain",
+            task="promotion_sweep",
+            request={"apply": False},
+            permissions=_T04_PERM,
+        )
+        assert (_code_of(missing), _reason_of(missing)) == (
+            "E_PERMISSION",
+            "sources_required",
+        )
+        named = _te_mt_maintain(
+            env, "promotion_sweep", sources=["source-a"], request={"apply": False}
+        )
+        assert sorted(_rd(named)["candidate_ids"]) == ["x1"]

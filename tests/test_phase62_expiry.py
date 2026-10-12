@@ -12,9 +12,11 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
-from rush.memory.expiry import sweep_expired
+from rush.memory.maintenance import run_maintenance_cycle
 from rush.memory.merkle_invalidator import MerkleInvalidator
+from rush.memory.retrieval import MemoryAccess
 from rush.memory.store import (
     MemoryArtifact,
     OwnerScope,
@@ -25,8 +27,20 @@ from rush.memory.store import (
 _DAY = 86400
 
 
+def sweep_expired(root: Path) -> int:
+    """72-T04 (D9): the public `sweep_expired` is gone; an expiry sweep is an
+    authorized `maintain` apply -- `run_maintenance_cycle("expiry_sweep", access=...)`
+    with a write access over this file's one source label."""
+    access = MemoryAccess.legacy(
+        root, ["test"], owner_scope=legacy_owner_scope(root), operation="write"
+    )
+    return run_maintenance_cycle(
+        "expiry_sweep", project_root=root, access=access
+    ).changed
+
+
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = {
+    defaults: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "family": "memory",
         "subject": "domain_knowledge",
@@ -78,9 +92,7 @@ def test_stated_records_never_expire(tmp_path: Path) -> None:
     _insert_stated_row(store.db_path, artifact_id, created_at=time.time() - 365 * _DAY)
 
     for _ in range(3):
-        sweep_expired(
-            store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-        )
+        sweep_expired(store.project_root)
 
     row = _expiry_columns(store.db_path, artifact_id)
     assert row["expired_at"] is None
@@ -94,9 +106,7 @@ def test_derived_record_expires_after_configured_ttl(tmp_path: Path) -> None:
     artifact = _artifact(trust_tier="DERIVED", created_at=time.time() - 15 * _DAY)
     store.write(artifact)
 
-    changed = sweep_expired(
-        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-    )
+    changed = sweep_expired(store.project_root)
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
@@ -114,9 +124,7 @@ def test_external_write_record_expires_after_configured_ttl(tmp_path: Path) -> N
     )
     store.write(artifact)
 
-    changed = sweep_expired(
-        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-    )
+    changed = sweep_expired(store.project_root)
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
@@ -131,9 +139,7 @@ def test_imported_record_expires_after_configured_ttl(tmp_path: Path) -> None:
     artifact = _artifact(trust_tier="IMPORTED", created_at=time.time() - 91 * _DAY)
     store.write(artifact)
 
-    changed = sweep_expired(
-        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-    )
+    changed = sweep_expired(store.project_root)
 
     assert changed == 1
     row = _expiry_columns(store.db_path, artifact.id)
@@ -154,9 +160,7 @@ def test_sweep_expired_never_touches_a_different_owners_rows(tmp_path: Path) -> 
     )
     store.write(someone_elses)
 
-    changed = sweep_expired(
-        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-    )
+    changed = sweep_expired(store.project_root)
     assert changed == 1
     assert _expiry_columns(store.db_path, mine.id)["expired_at"] is not None
     assert _expiry_columns(store.db_path, someone_elses.id)["expired_at"] is None
@@ -187,9 +191,7 @@ def test_expiry_and_staleness_are_independent(tmp_path: Path) -> None:
     )
     store.write(expired_not_stale)
 
-    sweep_expired(
-        store.project_root, owner_scope=legacy_owner_scope(store.project_root)
-    )
+    sweep_expired(store.project_root)
 
     results = store.recall("domain_knowledge", "default", session_allowlist=["test"])
     by_id = {a.id: a for a in results}

@@ -1,9 +1,10 @@
 """Per-type expiry policy and sweep (Phase 62 §6.3).
 
-`sweep_expired()` runs as the `"expiry_sweep"` `MaintenanceTask` (`src/rush/memory/maintenance.py`),
-stamping `expires_at`/`expired_at`/`expired_by` on rows whose TTL has elapsed — never silently
-recomputed on read (matches Phase 61's own invariant-writing style: `TypedArtifactStore.recall()`
-never mutates the DB).
+The private `_sweep_reviewed_expired()` runs only as the `"expiry_sweep"` `MaintenanceTask`
+(`src/rush/memory/maintenance.py`, 72-T04 D9: under the cycle's access, policy lock and
+lease), stamping `expires_at`/`expired_at`/`expired_by` on rows whose TTL has elapsed — never
+silently recomputed on read (matches Phase 61's own invariant-writing style:
+`TypedArtifactStore.recall()` never mutates the DB).
 """
 
 from __future__ import annotations
@@ -11,20 +12,22 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
-from collections.abc import Collection, Mapping
-from contextlib import closing
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rush.memory.store import (
     OwnerScope,
-    TypedArtifactStore,
     _content_or_none,
     _write_version,
     legacy_owner_scope,
     note_committed_write,
-    sqlite_text,
+    source_predicate_sql,
 )
+
+if TYPE_CHECKING:
+    from rush.memory.retrieval import MemoryAccess
 
 _DAY_SECONDS = 86400
 
@@ -61,19 +64,39 @@ def _policy_for(
     return None
 
 
+def _owner_of(access: MemoryAccess, project_root: Path) -> OwnerScope:
+    """The one owner a maintenance access acts for (legacy default when unset)."""
+    return access.owner_scope or legacy_owner_scope(project_root)
+
+
+def _scope_sql(access: MemoryAccess, project_root: Path) -> tuple[str, list[object]]:
+    """72-T04 D9: the owner and D40 source predicate every expiry read applies."""
+    legacy_default = legacy_owner_scope(project_root)
+    owner = _owner_of(access, project_root)
+    source_sql, source_params = source_predicate_sql("source", access.sources)
+    clause = (
+        "COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
+        f"AND {source_sql}"
+    )
+    return (
+        clause,
+        [legacy_default.kind, owner.kind, legacy_default.id, owner.id, *source_params],
+    )
+
+
 def expired_candidate_rows(
     conn: sqlite3.Connection,
     project_root: Path,
     *,
-    owner_scope: OwnerScope,
+    access: MemoryAccess,
     batch_size: int,
     now: float,
     candidate_ids: Collection[str] | None = None,
 ) -> list[sqlite3.Row]:
-    """The rows `sweep_expired()` would stamp: TTL elapsed, not yet expired, owned by
-    exactly `owner_scope`, and (when given) inside the reviewed `candidate_ids`. A pure
-    SELECT, so a read-only connection can run it for a zero-write preview."""
-    legacy_default = legacy_owner_scope(project_root)
+    """The rows the expiry sweep would stamp: TTL elapsed, not yet expired, not
+    archived, owned by `access`'s owner, in a source `access` grants (D40), and (when
+    given) inside the reviewed `candidate_ids`. A pure SELECT, so a read-only
+    connection can run it for a zero-write preview."""
     ttl_cases = []
     parameters: list[object] = []
     for policy in DEFAULT_POLICIES:
@@ -82,6 +105,7 @@ def expired_candidate_rows(
             (policy.trust_tier, policy.subject, policy.subject, policy.ttl_seconds)
         )
     ttl_sql = "CASE " + " ".join(ttl_cases) + " END"
+    scope_sql, scope_params = _scope_sql(access, project_root)
     candidate_sql = ""
     candidate_params: tuple[object, ...] = ()
     if candidate_ids is not None:
@@ -89,35 +113,38 @@ def expired_candidate_rows(
         candidate_params = (json.dumps(list(candidate_ids)),)
     return conn.execute(
         "SELECT id, subject, trust_tier, created_at, content, source, artifact_version "
-        f"FROM memory_artifacts WHERE expired_at IS NULL AND created_at + ({ttl_sql}) <= ? "
-        "AND COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
+        "FROM memory_artifacts WHERE expired_at IS NULL AND archived_at IS NULL "
+        f"AND created_at + ({ttl_sql}) <= ? AND {scope_sql} "
         + candidate_sql
         + "ORDER BY created_at ASC LIMIT ?",
-        (
-            *parameters,
-            now,
-            legacy_default.kind,
-            owner_scope.kind,
-            legacy_default.id,
-            owner_scope.id,
-            *candidate_params,
-            batch_size,
-        ),
+        (*parameters, now, *scope_params, *candidate_params, batch_size),
     ).fetchall()
 
 
 def reviewed_version_conflicts(
-    conn: sqlite3.Connection, expected_revisions: Mapping[str, int]
+    conn: sqlite3.Connection,
+    expected_revisions: Mapping[str, int],
+    *,
+    access: MemoryAccess | None = None,
+    project_root: Path | None = None,
 ) -> list[tuple[str, int, int | None]]:
-    """T28-D: `(id, reviewed version, current version or None if gone)` for every
-    reviewed id whose stored `artifact_version` differs, read on `conn` -- run it inside
-    the write transaction that mutates those rows so no edit can land in between."""
+    """T28-D: `(id, reviewed version, current version or None)` for every reviewed id
+    whose stored `artifact_version` differs, read on `conn` -- run it inside the write
+    transaction that mutates those rows so no edit can land in between. With `access`
+    (72-T04), a row of another owner or in a source the access does not grant reads as
+    absent (`None`), exactly like an id that does not exist."""
+    scope_sql = ""
+    scope_params: list[object] = []
+    if access is not None:
+        root = Path(project_root) if project_root is not None else access.project_root
+        clause, scope_params = _scope_sql(access, root)
+        scope_sql = f" AND {clause}"
     current = {
         row[0]: row[1]
         for row in conn.execute(
             "SELECT id, artifact_version FROM memory_artifacts "
-            "WHERE id IN (SELECT value FROM json_each(?))",
-            (json.dumps(list(expected_revisions)),),
+            "WHERE id IN (SELECT value FROM json_each(?))" + scope_sql,
+            (json.dumps(list(expected_revisions)), *scope_params),
         )
     }
     return [
@@ -127,65 +154,68 @@ def reviewed_version_conflicts(
     ]
 
 
-def sweep_expired(
-    project_root: Path | None = None,
+def _sweep_expired(
+    conn: sqlite3.Connection,
     *,
+    access: MemoryAccess,
+    renew: Callable[[list[str]], None],
     batch_size: int = 500,
-    owner_scope: OwnerScope | None = None,
     candidate_ids: Collection[str] | None = None,
 ) -> int:
-    """`sweep_reviewed_expired()` without a reviewed-version check; returns only the
+    """`_sweep_reviewed_expired()` without a reviewed-version check; returns only the
     count of rows stamped."""
-    return sweep_reviewed_expired(
-        project_root,
+    return _sweep_reviewed_expired(
+        conn,
+        access=access,
+        renew=renew,
         batch_size=batch_size,
-        owner_scope=owner_scope,
         candidate_ids=candidate_ids,
     )[0]
 
 
-def sweep_reviewed_expired(
-    project_root: Path | None = None,
+def _sweep_reviewed_expired(
+    conn: sqlite3.Connection,
     *,
+    access: MemoryAccess,
+    renew: Callable[[list[str]], None],
     batch_size: int = 500,
-    owner_scope: OwnerScope | None = None,
     candidate_ids: Collection[str] | None = None,
     expected_revisions: Mapping[str, int] | None = None,
 ) -> tuple[int, list[tuple[str, int, int | None]]]:
-    """Stamps `expires_at`/`expired_at`/`expired_by="expiry_sweep"` on rows whose TTL has
-    elapsed. Returns the count of rows stamped this pass.
+    """Stamps `expires_at`/`expired_at`/`expired_by="expiry_sweep"` on the selected
+    rows whose TTL has elapsed, in one `BEGIN IMMEDIATE` transaction on `conn` (the
+    maintenance cycle's connection, under its policy lock and lease).
 
-    Scoped to `expired_at IS NULL` so a row is never re-stamped by a later sweep, and `STATED`
-    rows (policy `ttl_seconds=None`) are never touched. P69-07 subsection h: also scoped to
-    exactly `owner_scope` (kind, id) -- omitted, defaults to `legacy_owner_scope(root)`
-    (this project's own path-form owner), never a wildcard sweep across owners.
-    `candidate_ids` (T28-D), when given, restricts the sweep to exactly those
-    previewed rows; `None` sweeps every eligible row as before.
-    `expected_revisions` (T28-D), when given, is re-checked inside the sweep's own
-    BEGIN IMMEDIATE: every reviewed id whose current version differs is left unstamped
-    and returned as a `reviewed_version_conflicts()` entry, and only the remaining
-    reviewed ids (`candidate_ids`, else the mapping's keys) are swept.
-    Returns `(rows stamped, conflicts)`.
+    Selection is `expired_candidate_rows()` under `access` (owner and D40 source), so a
+    row is never re-stamped, `STATED` rows (policy `ttl_seconds=None`) are never
+    touched, and archived rows are never selected. `candidate_ids` (T28-D), when given,
+    restricts the sweep to exactly those previewed rows. `expected_revisions`, when
+    given, is re-checked inside the transaction: every reviewed id whose current
+    version differs (or that `access` cannot see) is left unstamped and returned as a
+    conflict, and only the remaining reviewed ids are swept.
+
+    `renew(selected_ids)` runs after stamping and before the commit; when it raises
+    (lease lost, access changed), the whole batch rolls back and the exception
+    propagates. Returns `(rows stamped, conflicts)`.
     """
-    store = TypedArtifactStore(project_root)
-    scope = owner_scope or legacy_owner_scope(store.project_root)
+    project_root = access.project_root
     now = time.time()
     changed = 0
     expired: list[tuple[str, int, str]] = []
-    with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
-        conn.text_factory = sqlite_text
-        conn.row_factory = sqlite3.Row
-        conn.execute("BEGIN IMMEDIATE")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
         conflicts: list[tuple[str, int, int | None]] = []
         if expected_revisions is not None:
-            conflicts = reviewed_version_conflicts(conn, expected_revisions)
+            conflicts = reviewed_version_conflicts(
+                conn, expected_revisions, access=access, project_root=project_root
+            )
             conflict_ids = {conflict[0] for conflict in conflicts}
             reviewed = expected_revisions if candidate_ids is None else candidate_ids
             candidate_ids = [i for i in reviewed if i not in conflict_ids]
         rows = expired_candidate_rows(
             conn,
-            store.project_root,
-            owner_scope=scope,
+            project_root,
+            access=access,
             batch_size=batch_size,
             now=now,
             candidate_ids=candidate_ids,
@@ -211,7 +241,11 @@ def sweep_reviewed_expired(
                 )
                 expired.append((row["id"], new_version, row["source"]))
                 changed += 1
-        conn.commit()
+        renew([str(row["id"]) for row in rows])
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
     for artifact_id, new_version, source in expired:
         note_committed_write(artifact_id, new_version, source, "expire")
     return changed, conflicts

@@ -3144,12 +3144,16 @@ def _memory_known_sources(project: ProjectState) -> list[str]:
     return _memory_sources_and_state(project)[0]
 
 
-def _memory_sources_and_state(project: ProjectState) -> tuple[list[str], str | None]:
+def _memory_sources_and_state(
+    project: ProjectState, *, stored: bool = False
+) -> tuple[list[str], str | None]:
     """Every distinct `source` this project's memory store has ever recorded
     -- an admin session sees the whole project (mirrors the dashboard's own
     `_all_known_sources` in `server.py`), never a narrower cross-tool
     allowlist. Read-only: `TypedArtifactStore.list_artifact_refs()` is a
-    public read method, never a raw SQLite write."""
+    public read method, never a raw SQLite write. `stored=True` (`maintain`)
+    lists the store's sources in `policy` mode too; `MemoryTool` narrows them
+    to the grant (72-T04)."""
     from rush.memory.retrieval import RouteDenial, route_access
     from rush.memory.store import TypedArtifactStore, is_internal_memory_source
 
@@ -3158,7 +3162,7 @@ def _memory_sources_and_state(project: ProjectState) -> tuple[list[str], str | N
     access = route_access(Path(project.root), "list")
     if isinstance(access, RouteDenial):
         return [], None
-    if access.kind == "policy":
+    if access.kind == "policy" and not stored:
         return sorted(
             s for s in access.sources if not is_internal_memory_source(s)
         ), None
@@ -4098,6 +4102,7 @@ def _memory_maintain_preview(
                 operation="maintain",
                 task=task,
                 owner_scope=owner_scope,
+                sources=_memory_sources_and_state(project, stored=True)[0],
                 request={"apply": False, "required_grants": ["cache_write"]},
             )
         except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
@@ -4147,6 +4152,7 @@ def _memory_maintain_apply(
                 operation="maintain",
                 task=entry["task"],
                 owner_scope=entry["owner_scope"],
+                sources=_memory_sources_and_state(project, stored=True)[0],
                 permissions=_permissions_of(entry["required_grants"]),
                 request={
                     "apply": True,

@@ -63,7 +63,6 @@ from .memory.store import (
     MemorySubject,
     OwnerScope,
     OwnerScopeKind,
-    legacy_owner_scope,
 )
 from .permissions import ExecutionPermissions
 from .theme import FINDINGS_CAP
@@ -3588,6 +3587,21 @@ def memory_write_cmd(
     _render_session_result(dict(result), as_json)
 
 
+def _parse_candidate_refs(
+    _ctx: click.Context, _param: click.Parameter, values: tuple[str, ...]
+) -> list[dict[str, object]]:
+    """72-T04: `--candidate-ref ID@VERSION@SOURCE` values as reviewed corroborator refs."""
+    from .memory.trust import parse_candidate_ref
+
+    refs: list[dict[str, object]] = []
+    for value in values:
+        ref = parse_candidate_ref(value)
+        if ref is None:
+            raise click.BadParameter(f"{value!r} is not ID@VERSION@SOURCE")
+        refs.append(ref)
+    return refs
+
+
 @memory_group.command(name="promote")
 @click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
 @click.argument("source")
@@ -3608,7 +3622,14 @@ def memory_write_cmd(
     "--candidate-source",
     "candidate_sources",
     multiple=True,
-    help="Corroborating source id; repeat for multiple.",
+    help="Corroborating source id; repeat for multiple. Requires --candidate-ref.",
+)
+@click.option(
+    "--candidate-ref",
+    "candidate_refs",
+    multiple=True,
+    callback=_parse_candidate_refs,
+    help="Reviewed corroborator as ID@VERSION@SOURCE; repeat for multiple.",
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
@@ -3620,6 +3641,7 @@ def memory_promote_cmd(
     source_kind: SourceKind,
     user_stated: bool,
     candidate_sources: tuple[str, ...],
+    candidate_refs: list[dict[str, object]],
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -3635,6 +3657,13 @@ def memory_promote_cmd(
 
     from .tools.memory import MemoryTool
 
+    # 72-T04 (D8): reviewed corroborators travel as `request.candidate_refs`; raw
+    # `candidate_sources` without refs is refused (`E_INPUT`) by `MemoryTool`.
+    refs_request: dict[str, Any] = (
+        {"request": {"apply": True, "candidate_refs": candidate_refs}}
+        if candidate_refs
+        else {}
+    )
     result = MemoryTool().run(
         _memory_logical_root(),
         operation="promote",
@@ -3645,6 +3674,7 @@ def memory_promote_cmd(
         source_kind=source_kind,
         user_stated=user_stated,
         candidate_sources=list(candidate_sources) or None,
+        **refs_request,
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -3669,10 +3699,17 @@ def memory_promote_cmd(
 )
 @click.option(
     "--batch-size",
-    type=int,
+    type=click.IntRange(1, 1000),
     default=500,
     show_default=True,
-    help="Max rows processed in one sweep.",
+    help="Max rows processed in one sweep (1-1000).",
+)
+@click.option(
+    "--source",
+    "sources",
+    multiple=True,
+    help="Memory source id to maintain; repeat for multiple. Required without a "
+    "memory policy; with a policy, narrows the granted sources.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 @click.option(
@@ -3682,8 +3719,8 @@ def memory_promote_cmd(
     "--owner-kind",
     type=click.Choice(["project", "user", "agent", "session"]),
     default=None,
-    help="Explicit owner_scope kind. Defaults to this root's registered project "
-    "id, or its legacy path owner if unregistered.",
+    help="Explicit owner_scope kind. Defaults to the memory grant's owner, or this "
+    "root's legacy path owner without a memory policy.",
 )
 @click.option(
     "--owner-id",
@@ -3693,6 +3730,7 @@ def memory_promote_cmd(
 def memory_maintain_cmd(
     task: MaintenanceTask,
     batch_size: int,
+    sources: tuple[str, ...],
     as_json: bool,
     allow_cache_write: bool,
     owner_kind: OwnerScopeKind | None,
@@ -3700,23 +3738,17 @@ def memory_maintain_cmd(
 ) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
     from .tools.memory import MemoryTool
-    from .workflows.projects import ProjectNotFoundError, resolve_project
 
     root = _memory_logical_root()
+    # 72-T04 (D3): an owner is passed only when declared; otherwise the memory
+    # grant (policy mode) or `legacy_owner_scope(root)` (legacy mode) decides it.
+    owner_scope: OwnerScope | None = None
     if owner_kind is not None:
         if not owner_id:
             raise click.UsageError("--owner-kind requires --owner-id")
         owner_scope = OwnerScope(owner_kind, owner_id)
     elif owner_id is not None:
         raise click.UsageError("--owner-id requires --owner-kind")
-    else:
-        # M09: this CLI entry point's own explicitly-supported legacy fallback
-        # (M08 bullet 3) -- an unregistered root still maintains under its
-        # path-form owner rather than failing outright.
-        try:
-            owner_scope = OwnerScope("project", resolve_project(root)["project_id"])
-        except ProjectNotFoundError:
-            owner_scope = legacy_owner_scope(root)
 
     result = MemoryTool().run(
         root,
@@ -3724,6 +3756,7 @@ def memory_maintain_cmd(
         task=task,
         batch_size=batch_size,
         owner_scope=owner_scope,
+        sources=list(sources) or None,
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
     _render_session_result(dict(result), as_json)

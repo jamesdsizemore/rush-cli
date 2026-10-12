@@ -2035,10 +2035,15 @@ class TypedArtifactStore:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             if rush_created:
                 _write_local_gitignore(self.db_path.parent)
-            self._merkle = MerkleInvalidator(project_root=self.project_root)
             self._init_db()
 
     _readonly_conn: sqlite3.Connection | None = None
+
+    @property
+    def _merkle(self) -> MerkleInvalidator:
+        # 72-T04 R11: built on use only; constructing it creates `.rush/cache`, which
+        # opening a store (a maintenance sweep included) never does.
+        return MerkleInvalidator(project_root=self.project_root)
 
     def _connect(self) -> sqlite3.Connection:
         if self._readonly_conn is not None:
@@ -4152,6 +4157,7 @@ class TypedArtifactStore:
         expected_version: int | None = None,
         owner_scope: OwnerScope | None = None,
         receipt_operation_id: str | None = None,
+        access: MemoryAccess | None = None,
         commit_check: CommitCheck | None = None,
     ) -> tuple[MemoryArtifact, PromotionResult]:
         """Evaluate persisted bytes and atomically persist their signed promotion.
@@ -4162,77 +4168,84 @@ class TypedArtifactStore:
         apart from "candidate created *and* promoted" via two independently-addressable
         receipts rather than one conflated id.
 
-        S08 bullet 3: `owner_scope` is checked here under the same
-        compare-and-swap contract `edit()`/`archive()`/`delete_batch()`
-        already enforce (P69-07) -- a wrong owner rejects before any write,
-        same as a stale `expected_version`. Previously absent: promotion
-        could rewrite/upgrade any artifact's trust tier regardless of a
-        declared owner_scope mismatch."""
-        with self._connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute(
-                "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
-            ).fetchone()
-            if row is None:
-                raise KeyError(artifact_id)
-            self._require_owner(row, artifact_id, owner_scope)
-            if candidate_refs is not None:
-                candidate = _row_to_artifact(
-                    row, default_owner_scope=self._owner_scope_default
+        S08 bullet 3: `owner_scope` is checked under the same compare-and-swap
+        contract `edit()`/`archive()`/`delete_batch()` enforce (P69-07).
+
+        72-T04 D8: corroboration is only ever counted from rows the code selects
+        (`corroborating_peers`) under `access`; `candidate_sources` alone is refused
+        (`E_INPUT candidate_refs_required`) and is ignored beside `candidate_refs`.
+        `access=None` resolves the D1 mode: `policy` refuses (`policy_grant_required`),
+        `unavailable` refuses with its reason, `legacy` grants every stored non-internal
+        source to the declared (else legacy) owner. Always under the policy lock."""
+        from rush.memory import retrieval
+        from rush.memory.authorization import MemoryPolicyError, hold_policy_lock
+
+        if candidate_sources is not None and candidate_refs is None:
+            raise MemoryPolicyError("E_INPUT", "candidate_refs_required")
+        lock = ExitStack()
+        try:
+            lock.enter_context(
+                hold_policy_lock(
+                    data_root=access.data_root if access is not None else None
                 )
-                candidate_sources = []
-                found = _verified_binding(conn, self.project_root)
-                verifier = (
-                    BindingVerifier("bound", found[0], found[1])
-                    if found
-                    else UNBOUND_VERIFIER
-                )
-                for ref in candidate_refs:
-                    peer_row = conn.execute(
-                        "SELECT * FROM memory_artifacts WHERE id = ?", (ref["id"],)
-                    ).fetchone()
-                    peer = (
-                        _row_to_artifact(
-                            peer_row, default_owner_scope=self._owner_scope_default
-                        )
-                        if peer_row is not None
-                        else None
-                    )
-                    if (
-                        peer is None
-                        or peer.artifact_version != ref["version"]
-                        or peer.source != ref["source"]
-                        or peer.subject != candidate.subject
-                        or peer.symbol_ref != candidate.symbol_ref
-                        or peer.content != candidate.content
-                        or peer.owner_scope != candidate.owner_scope
-                        or peer.trust_tier == "STATED"
-                        or peer.stale
-                        or peer.archived_at is not None
-                        or verifier.row(peer_row) != "bound"
-                    ):
-                        raise VersionConflictError(
-                            f"promotion corroborator {ref['id']!r} changed since review"
-                        )
-                    candidate_sources.append(peer.source)
-            artifact, decision = promote_stored_artifact(
-                conn,
-                artifact_id,
-                project_root=self.project_root,
-                user_stated=user_stated,
-                candidate_sources=candidate_sources,
-                expected_version=expected_version,
             )
-            if receipt_operation_id and decision.promoted:
-                self._write_receipt(
-                    conn,
-                    receipt_operation_id,
-                    artifact_id,
-                    "promote",
-                    artifact.artifact_version,
-                    {"promoted": True},
+        except OSError as exc:
+            raise MemoryPolicyError("E_PERMISSION", "lock_unavailable") from exc
+        with lock:
+            if access is None:
+                mode, reason = retrieval.memory_policy_decision(self.project_root)
+                if mode == "unavailable":
+                    raise MemoryPolicyError("E_PERMISSION", reason or "policy_invalid")
+                if mode == "policy":
+                    raise MemoryPolicyError("E_PERMISSION", "policy_grant_required")
+            if not self.db_path.is_file():
+                # A removed store holds no such row; never recreate it here.
+                raise KeyError(artifact_id)
+            if access is None:
+                with self._connect() as conn:
+                    stored = {
+                        str(r[0])
+                        for r in conn.execute(
+                            "SELECT DISTINCT source FROM memory_artifacts"
+                        )
+                    }
+                access = retrieval.MemoryAccess.legacy(
+                    self.project_root,
+                    sorted(stored - INTERNAL_MEMORY_SOURCES),
+                    owner_scope=owner_scope or self._owner_scope_default,
+                    operation="write",
                 )
-            run_commit_check(conn, commit_check)
+            resolved = access
+            check: CommitCheck = commit_check or (
+                lambda: retrieval.recheck_failure(resolved)
+            )
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+                ).fetchone()
+                if row is None:
+                    raise KeyError(artifact_id)
+                self._require_owner(row, artifact_id, owner_scope)
+                artifact, decision = promote_stored_artifact(
+                    conn,
+                    artifact_id,
+                    store=self,
+                    access=resolved,
+                    user_stated=user_stated,
+                    candidate_refs=candidate_refs,
+                    expected_version=expected_version,
+                )
+                if receipt_operation_id and decision.promoted:
+                    self._write_receipt(
+                        conn,
+                        receipt_operation_id,
+                        artifact_id,
+                        "promote",
+                        artifact.artifact_version,
+                        {"promoted": True},
+                    )
+                run_commit_check(conn, check)
         # The `with` block commits on exit; only a real promotion wrote a revision.
         if decision.promoted:
             note_committed_write(
@@ -4375,26 +4388,163 @@ class TypedArtifactStore:
         return found if access.recheck() == "ok" else []
 
 
+_SUMMARY_KIND = "consolidated_episode_summary"
+
+
+def _decoded_canon(stored: Any) -> tuple[Any, str]:
+    """D8 canonical stored content: `json.dumps(sanitize_value(content).value,
+    sort_keys=True)`, with the decoded value."""
+    decoded = decode_content(stored)
+    return decoded, json.dumps(sanitize_value(decoded).value, sort_keys=True)
+
+
+def _is_summary(decoded: Any) -> bool:
+    return isinstance(decoded, dict) and decoded.get("kind") == _SUMMARY_KIND
+
+
+def _conn_verifier(conn: sqlite3.Connection, root: Path) -> BindingVerifier:
+    found = _verified_binding(conn, root)
+    return BindingVerifier("bound", found[0], found[1]) if found else UNBOUND_VERIFIER
+
+
+def _binding_ok(verifier: BindingVerifier, row: sqlite3.Row) -> bool:
+    """D41: in a bound store only a bound row is evidence; an unbound store has no
+    row bindings to check."""
+    return verifier.store != "bound" or verifier.row(row) == "bound"
+
+
+def corroborating_peers(
+    conn: sqlite3.Connection,
+    store: TypedArtifactStore,
+    candidate_row: sqlite3.Row,
+    *,
+    access: MemoryAccess,
+    evidence_identity: bool,
+    now: float | None = None,
+) -> tuple[list[MemoryArtifact], bool]:
+    """72-T04 D8: the agreeing peers that may count toward `candidate_row`'s
+    corroboration, and whether an eligible different-content anchored peer
+    contradicts it. Read on the caller's connection (its transaction).
+
+    A peer is eligible when it is current (not archived, expired or past
+    `expires_at`), not STATED/IMPORTED/internal/summary, in another source the
+    access grants (D40), of the access owner, bound when the store is bound,
+    payload-intact, decodable, and visible and usable as current. Agreement is equal
+    canonical content; each source and (with `evidence_identity`) each complete
+    non-null origin counts once, and a candidate or peer without a complete origin
+    never counts. Contradiction ignores evidence identity; an unanchored candidate is
+    never contradicted."""
+    from rush.memory.retrieval import evaluate_artifact_visibility
+
+    now = time.time() if now is None else now
+    symbol_ref = candidate_row["symbol_ref"]
+    candidate_origin = (
+        _row_value(candidate_row, "origin_kind"),
+        _row_value(candidate_row, "origin_id"),
+    )
+    origin_complete = None not in candidate_origin
+    if evidence_identity and not origin_complete and symbol_ref is None:
+        return [], False
+    legacy = legacy_owner_scope(store.project_root)
+    owner = access.owner_scope or legacy
+    internal, internal_params = internal_source_exclusion_sql()
+    granted, granted_params = source_predicate_sql("source", access.sources)
+    rows = conn.execute(
+        "SELECT * FROM memory_artifacts WHERE id != ? AND subject = ? "
+        "AND symbol_ref IS ? AND trust_tier NOT IN ('STATED', 'IMPORTED') "
+        "AND COALESCE(owner_scope_kind, ?) = ? AND COALESCE(owner_scope_id, ?) = ? "
+        "AND archived_at IS NULL AND expired_at IS NULL "
+        "AND (expires_at IS NULL OR expires_at > ?) AND source != ? "
+        f"AND {internal} AND {granted} ORDER BY created_at, id",
+        (
+            candidate_row["id"],
+            candidate_row["subject"],
+            symbol_ref,
+            legacy.kind,
+            owner.kind,
+            legacy.id,
+            owner.id,
+            now,
+            candidate_row["source"],
+            *internal_params,
+            *granted_params,
+        ),
+    ).fetchall()
+    _decoded, candidate_canon = _decoded_canon(candidate_row["content"])
+    verifier = _conn_verifier(conn, store.project_root)
+    peers: list[MemoryArtifact] = []
+    contradicted = False
+    seen_sources: set[str] = set()
+    seen_origins = {candidate_origin}
+    for peer in rows:
+        if not _binding_ok(verifier, peer) or payload_mismatched(
+            peer["content"], _row_value(peer, "payload_hash")
+        ):
+            continue
+        try:
+            decoded, canon = _decoded_canon(peer["content"])
+        except (ValueError, TypeError, RecursionError):
+            continue
+        if _is_summary(decoded):
+            continue
+        decision = evaluate_artifact_visibility(
+            store, peer, access=access, now=now, verifier=verifier
+        )
+        if not (decision.visible and decision.usable_as_current):
+            continue
+        if canon != candidate_canon:
+            contradicted = contradicted or symbol_ref is not None
+            continue
+        origin = (_row_value(peer, "origin_kind"), _row_value(peer, "origin_id"))
+        if evidence_identity and (
+            not origin_complete or None in origin or origin in seen_origins
+        ):
+            continue
+        if peer["source"] in seen_sources:
+            continue
+        seen_sources.add(peer["source"])
+        seen_origins.add(origin)
+        peers.append(_row_to_artifact(peer, default_owner_scope=legacy))
+    return peers, contradicted
+
+
 def promote_stored_artifact(
     conn: sqlite3.Connection,
     artifact_id: str,
     *,
-    project_root: Path,
+    store: TypedArtifactStore,
+    access: MemoryAccess,
     user_stated: bool,
-    candidate_sources: list[str] | None = None,
+    candidate_refs: list[dict[str, Any]] | None = None,
     expected_version: int | None = None,
 ) -> tuple[MemoryArtifact, PromotionResult]:
-    """Shared gate/update; caller owns transaction and commit.
+    """Shared gate/update; caller owns transaction and commit (72-T04 D8).
+
+    Order: write gate (`E_PERMISSION policy_grant_required`), target visibility by
+    root/source/owner (`E_NOT_VISIBLE`), payload binding, full visibility, IMPORTED
+    without user confirmation (`imported_unverified`, no peer scan), then the
+    user-stated path or the code-selected peer scan (`corroborating_peers`).
+    `candidate_refs` only narrow which agreeing peers count: a hidden or absent ref is
+    `E_NOT_VISIBLE`, a visible ref that is not a returned agreeing peer at its named
+    version and source is `E_VERSION`, and refs never hide a contrary peer.
 
     Routed through `_write_version` (MC01 §6.1) only when an actual promotion happens: a
     promotion is a real semantic change (trust-tier upgrade), so it always advances
     `artifact_version`, even if `content` is byte-identical to the prior version.
     """
+    from rush.memory import retrieval
+    from rush.memory.authorization import MemoryPolicyError
+
+    if not retrieval.is_write_access(access):
+        raise MemoryPolicyError("E_PERMISSION", "policy_grant_required")
+    project_root = store.project_root
     row = conn.execute(
         "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
     ).fetchone()
-    if row is None:
-        raise KeyError(artifact_id)
+    if row is None or not retrieval._access_allows(store, row, access, "ordinary"):
+        raise VersionConflictError(
+            "promotion target changed since review", code="E_NOT_VISIBLE"
+        )
     artifact = _row_to_artifact(
         row, default_owner_scope=legacy_owner_scope(project_root)
     )
@@ -4406,15 +4556,39 @@ def promote_stored_artifact(
             denial_reason="integrity_payload_mismatch",
             corroboration_count=artifact.corroboration_count,
         )
+    now = time.time()
+    if not retrieval.evaluate_artifact_visibility(
+        store, row, access=access, now=now
+    ).visible:
+        raise VersionConflictError(
+            "promotion target changed since review", code="E_NOT_VISIBLE"
+        )
+    if artifact.trust_tier == "IMPORTED" and not user_stated:
+        return artifact, PromotionResult(
+            promoted=False,
+            new_tier="IMPORTED",
+            denial_reason="imported_unverified",
+            corroboration_count=artifact.corroboration_count,
+        )
     artifact = dataclasses.replace(
         artifact, content=sanitize_value(artifact.content).value
     )
-    decision = evaluate_promotion(
-        artifact,
-        user_stated=user_stated,
-        candidate_sources=candidate_sources,
-        project_root=project_root,
-    )
+    if user_stated:
+        decision = evaluate_promotion(
+            artifact, user_stated=True, project_root=project_root
+        )
+    elif _is_summary(artifact.content):
+        # D6: a consolidated summary never promotes by agreement; no peer scan.
+        decision = PromotionResult(
+            promoted=False,
+            new_tier=artifact.trust_tier,
+            denial_reason="insufficient_corroboration",
+            corroboration_count=1,
+        )
+    else:
+        decision = _corroborated_decision(
+            conn, store, row, artifact, access=access, refs=candidate_refs, now=now
+        )
     if decision.promoted:
         new_version = _write_version(
             conn,
@@ -4455,3 +4629,68 @@ def promote_stored_artifact(
             ),
         )
     return artifact, decision
+
+
+def _corroborated_decision(
+    conn: sqlite3.Connection,
+    store: TypedArtifactStore,
+    row: sqlite3.Row,
+    artifact: MemoryArtifact,
+    *,
+    access: MemoryAccess,
+    refs: list[dict[str, Any]] | None,
+    now: float,
+) -> PromotionResult:
+    """D8 agreement decision: count the candidate's source plus each counted peer."""
+    from rush.memory import retrieval
+
+    peers, contradicted = corroborating_peers(
+        conn, store, row, access=access, evidence_identity=refs is None, now=now
+    )
+    counted = peers
+    if refs is not None:
+        returned = {(p.id, p.artifact_version, p.source) for p in peers}
+        named: set[tuple[Any, Any, Any]] = set()
+        for ref in refs:
+            key = (ref.get("id"), ref.get("version"), ref.get("source"))
+            if key[0] == row["id"]:
+                if key[1:] != (row["artifact_version"], row["source"]):
+                    raise VersionConflictError(
+                        "promotion corroborator changed since review", code="E_VERSION"
+                    )
+                continue
+            peer_row = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = ?", (key[0],)
+            ).fetchone()
+            if (
+                peer_row is None
+                or not retrieval._access_allows(store, peer_row, access, "ordinary")
+                or not retrieval.evaluate_artifact_visibility(
+                    store, peer_row, access=access, now=now
+                ).visible
+            ):
+                raise VersionConflictError(
+                    "promotion corroborator changed since review", code="E_NOT_VISIBLE"
+                )
+            if key not in returned:
+                raise VersionConflictError(
+                    "promotion corroborator changed since review", code="E_VERSION"
+                )
+            named.add(key)
+        counted = [p for p in peers if (p.id, p.artifact_version, p.source) in named]
+    if not _binding_ok(_conn_verifier(conn, store.project_root), row):
+        counted = []
+    pool = [artifact.source, *(p.source for p in counted)]
+    if contradicted:
+        return PromotionResult(
+            promoted=False,
+            new_tier=artifact.trust_tier,
+            denial_reason="contradicted",
+            corroboration_count=len(set(pool)),
+        )
+    return evaluate_promotion(
+        artifact,
+        user_stated=False,
+        candidate_sources=pool,
+        project_root=store.project_root,
+    )

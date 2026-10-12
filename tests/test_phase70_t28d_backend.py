@@ -10,21 +10,39 @@ reason recorded in its docstring. No source code is changed by this file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from rush.memory.maintenance import MaintenanceTask
-from rush.memory.store import MemoryArtifact, TypedArtifactStore, legacy_owner_scope
+from rush.memory.retrieval import MemoryAccess
+from rush.memory.store import (
+    MemoryArtifact,
+    MemoryFamily,
+    MemorySubject,
+    TrustTier,
+    TypedArtifactStore,
+    legacy_owner_scope,
+)
 from rush.permissions import ExecutionPermissions
 from rush.plugins.trust_store import PluginTrustStore
-from rush.tools.memory import MemoryTool
+from rush.tools.memory import MemoryOperation, MemoryTool
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
 
 _WRITE = ExecutionPermissions(cache_write=True)
 _DAY = 86400.0
+# 72-T04 (D9): a skill row's `closure_digest` is admitted only as a 64-hex digest.
+_DIGEST = hashlib.sha256(b"demo-closure").hexdigest()
 
 
 def _db_path(root: Path) -> Path:
@@ -36,24 +54,49 @@ def _db_bytes(root: Path) -> bytes | None:
     return path.read_bytes() if path.exists() else None
 
 
-def _owner_kwarg(root: Path) -> dict[str, dict[str, str]]:
+def _owner_kwarg(root: Path) -> dict[str, Any]:
     owner = legacy_owner_scope(root)
     return {"owner_scope": {"kind": owner.kind, "id": owner.id}}
+
+
+def _db_sources(root: Path, default: tuple[str, ...] = ("s1",)) -> list[str]:
+    """Every source label stored in the project's memory.db (or `default` when there
+    is no DB): the explicit source list 72-T04's `legacy` mode requires (D3)."""
+    path = _db_path(root)
+    if not path.exists():
+        return list(default)
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        rows = conn.execute("SELECT DISTINCT source FROM memory_artifacts").fetchall()
+    return sorted(str(r[0]) for r in rows) or list(default)
+
+
+def _sources_kwarg(root: Path) -> dict[str, Any]:
+    return {"sources": _db_sources(root)}
+
+
+def _legacy_access(root: Path, operation: str) -> MemoryAccess:
+    return MemoryAccess.legacy(
+        root,
+        _db_sources(root),
+        owner_scope=legacy_owner_scope(root),
+        operation=operation,
+    )
 
 
 def _seed_row(
     root: Path,
     *,
     artifact_id: str = "a1",
-    subject: str = "domain_knowledge",
-    family: str = "memory",
-    trust_tier: str = "DERIVED",
+    subject: MemorySubject = "domain_knowledge",
+    family: MemoryFamily = "memory",
+    trust_tier: TrustTier = "DERIVED",
     source: str = "s1",
     content: dict | None = None,
     created_at: float | None = None,
     symbol_ref: str | None = None,
     content_hash: str | None = None,
     stale: bool = False,
+    origin: tuple[str, str] | None = None,
 ) -> MemoryArtifact:
     store = TypedArtifactStore(root)
     return store.write(
@@ -68,6 +111,8 @@ def _seed_row(
             symbol_ref=symbol_ref,
             content_hash=content_hash,
             stale=stale,
+            origin_kind=origin[0] if origin else None,
+            origin_id=origin[1] if origin else None,
         )
     )
 
@@ -100,18 +145,18 @@ def _seed_eligible_rows(root: Path, task: str, artifact_ids: list[str]) -> None:
                 stale=False,
             )
     elif task in ("promotion_sweep", "skill_admission_check"):
-        subject = (
+        subject: MemorySubject = (
             "skill_pattern" if task == "skill_admission_check" else "domain_knowledge"
         )
-        family = "skill" if task == "skill_admission_check" else "memory"
+        family: MemoryFamily = "skill" if task == "skill_admission_check" else "memory"
         for i, aid in enumerate(artifact_ids):
+            # 72-T04 (D8): corroboration is equal stored content from distinct
+            # sources with distinct non-null `(origin_kind, origin_id)` pairs.
             content = (
-                {"plugin_name": "demo-plugin", "closure_digest": "abc123"}
+                {"plugin_name": "demo-plugin", "closure_digest": _DIGEST}
                 if task == "skill_admission_check"
-                else {"body": aid}
+                else {"body": "shared"}
             )
-            # Every row shares (subject, symbol_ref=None) so corroboration counting sees
-            # them all as one candidate pool.
             _seed_row(
                 root,
                 artifact_id=aid,
@@ -121,12 +166,13 @@ def _seed_eligible_rows(root: Path, task: str, artifact_ids: list[str]) -> None:
                 source=f"src-{aid}",
                 content=content,
                 created_at=time.time() - (len(artifact_ids) - i) * 10,
+                origin=("agent", f"origin-{aid}"),
             )
         if len(artifact_ids) > 1 and task == "promotion_sweep":
             # Two extra corroborating rows created *after* both candidates, so each
             # candidate is evaluated (created_at ASC) while the pool still has >= 2
-            # distinct non-STATED sources -- both promote in a real, unrestricted sweep,
-            # regardless of candidate_ids.
+            # distinct independent sources -- both promote in a real, unrestricted
+            # sweep, regardless of candidate_ids.
             for j in range(2):
                 _seed_row(
                     root,
@@ -135,13 +181,12 @@ def _seed_eligible_rows(root: Path, task: str, artifact_ids: list[str]) -> None:
                     family=family,
                     trust_tier="DERIVED",
                     source=f"helper-src-{j}",
-                    content={"body": f"helper-{j}"},
+                    content={"body": "shared"},
                     created_at=time.time(),
+                    origin=("agent", f"origin-helper{j}"),
                 )
         if len(artifact_ids) > 1 and task == "skill_admission_check":
-            # Two extra rows in the same corroboration pool that are never granted
-            # trust, so they never promote and permanently corroborate both candidates
-            # (>= 2 distinct sources) regardless of processing order.
+            # Two extra rows that are never granted trust, so they never promote.
             for j in range(2):
                 _seed_row(
                     root,
@@ -224,7 +269,7 @@ def test_memory_list_filters_trust_source_freshness_archived(tmp_path: Path) -> 
         archived_filter=False,
     )
 
-    returned_ids = {item["id"] for item in result["raw"]}
+    returned_ids = {item["id"] for item in _nn(result["raw"])}
     assert returned_ids == {fresh_reviewed.id}
     assert stale_derived.id not in returned_ids
     assert archived_reviewed.id not in returned_ids
@@ -232,7 +277,7 @@ def test_memory_list_filters_trust_source_freshness_archived(tmp_path: Path) -> 
 
 @pytest.mark.parametrize("operation", ["write", "promote", "maintain"])
 def test_promote_write_maintain_preview_writes_nothing(
-    tmp_path: Path, operation: str
+    tmp_path: Path, operation: MemoryOperation
 ) -> None:
     """`_run_write`/`_run_promote`/`_run_maintain` (memory.py:499-526, :1173-1340) never
     receive `request` at all from the dispatch table, so `apply=False` is silently
@@ -253,9 +298,12 @@ def test_promote_write_maintain_preview_writes_nothing(
             request=request,
             permissions=_WRITE,
             **_owner_kwarg(tmp_path),
+            **_sources_kwarg(tmp_path),
         )
         data = result["raw"]
-        assert "candidate_ids" in data, "maintain preview must return candidate_ids"
+        assert "candidate_ids" in _nn(data), (
+            "maintain preview must return candidate_ids"
+        )
     else:
         result = tool.run(
             tmp_path,
@@ -273,7 +321,7 @@ def test_promote_write_maintain_preview_writes_nothing(
             "expected_revisions",
             "owner_scope",
             "required_grants",
-        } <= set(data), (
+        } <= set(_nn(data)), (
             f"{operation} preview must return target ids/expected revisions/owner_scope/required_grants"
         )
 
@@ -286,7 +334,7 @@ def test_promote_write_maintain_preview_writes_nothing(
     ["promotion_sweep", "staleness_sweep", "skill_admission_check", "expiry_sweep"],
 )
 def test_maintain_apply_restricted_to_previewed_candidate_ids(
-    tmp_path: Path, task: str
+    tmp_path: Path, task: MaintenanceTask
 ) -> None:
     """`run_maintenance_cycle` (maintenance.py) has no candidate_ids parameter and
     `_run_maintain` never threads `request` into it, so a candidate_ids restriction is
@@ -295,7 +343,7 @@ def test_maintain_apply_restricted_to_previewed_candidate_ids(
     ids = ["cand1", "cand2"]
     _seed_eligible_rows(tmp_path, task, ids)
     if task == "skill_admission_check":
-        PluginTrustStore(repo_root=tmp_path).grant_trust("demo-plugin", "abc123")
+        PluginTrustStore(repo_root=tmp_path).grant_trust("demo-plugin", _DIGEST)
 
     MemoryTool().run(
         tmp_path,
@@ -304,6 +352,7 @@ def test_maintain_apply_restricted_to_previewed_candidate_ids(
         request={"apply": True, "candidate_ids": [ids[0]]},
         permissions=_WRITE,
         **_owner_kwarg(tmp_path),
+        **_sources_kwarg(tmp_path),
     )
 
     assert _row_changed(tmp_path, task, ids[0]) is True, (
@@ -316,7 +365,7 @@ def test_maintain_apply_restricted_to_previewed_candidate_ids(
 
 def _invoke_reviewed(
     tmp_path: Path,
-    operation: str,
+    operation: MemoryOperation,
     *,
     apply: bool,
     required_grants: list[str],
@@ -348,7 +397,7 @@ def _invoke_reviewed(
             tmp_path, operation=operation, request=request, permissions=permissions
         )
         after = _db_bytes(tmp_path)
-        data = result["raw"]["data"]
+        data = _nn(result["raw"])["data"]
     elif operation in ("write", "promote"):
         before = _db_bytes(tmp_path)
         request = {"apply": apply, "required_grants": required_grants}
@@ -375,6 +424,7 @@ def _invoke_reviewed(
             request=request,
             permissions=permissions,
             **_owner_kwarg(tmp_path),
+            **_sources_kwarg(tmp_path),
         )
         after = _db_bytes(tmp_path)
         data = result["raw"]
@@ -385,7 +435,7 @@ def _invoke_reviewed(
     "operation", ["edit", "archive", "delete", "promote", "write", "maintain"]
 )
 def test_requests_accept_reviewed_required_grants(
-    tmp_path: Path, operation: str
+    tmp_path: Path, operation: MemoryOperation
 ) -> None:
     """No request-gated operation has a `required_grants` field today (edit/archive's
     `_EDIT_REQUEST_KEYS`/`_ARCHIVE_REQUEST_KEYS`, delete's `_DELETE_REQUEST_KEYS` at
@@ -407,7 +457,7 @@ def test_requests_accept_reviewed_required_grants(
     "operation", ["edit", "archive", "delete", "promote", "write", "maintain"]
 )
 def test_apply_refused_when_permissions_differ_from_reviewed_grants(
-    tmp_path: Path, operation: str
+    tmp_path: Path, operation: MemoryOperation
 ) -> None:
     """Only the coarse cache_write gate is enforced today; a request's own
     required_grants is never checked against the call's actual permissions, so apply
@@ -435,7 +485,9 @@ def test_apply_refused_when_permissions_differ_from_reviewed_grants(
     "task",
     ["promotion_sweep", "staleness_sweep", "skill_admission_check", "expiry_sweep"],
 )
-def test_maintenance_candidate_preview_is_zero_write(tmp_path: Path, task: str) -> None:
+def test_maintenance_candidate_preview_is_zero_write(
+    tmp_path: Path, task: MaintenanceTask
+) -> None:
     """`run_maintenance_cycle` (maintenance.py) always constructs a writable
     `TypedArtifactStore`/connects to the real DB regardless of apply, and `_run_maintain`
     never threads apply=False into it -- fails today because a preview on a brand-new
@@ -451,6 +503,7 @@ def test_maintenance_candidate_preview_is_zero_write(tmp_path: Path, task: str) 
         request={"apply": False},
         permissions=_WRITE,
         **_owner_kwarg(empty_root),
+        **_sources_kwarg(empty_root),
     )
     assert not (empty_root / ".rush").exists(), (
         f"{task}: preview on a project with no memory.db must create no DB, -wal, "
@@ -461,7 +514,7 @@ def test_maintenance_candidate_preview_is_zero_write(tmp_path: Path, task: str) 
     populated_root.mkdir()
     _seed_eligible_rows(populated_root, task, ["p1"])
     if task == "skill_admission_check":
-        PluginTrustStore(repo_root=populated_root).grant_trust("demo-plugin", "abc123")
+        PluginTrustStore(repo_root=populated_root).grant_trust("demo-plugin", _DIGEST)
     before = _db_bytes(populated_root)
     tool.run(
         populated_root,
@@ -470,6 +523,7 @@ def test_maintenance_candidate_preview_is_zero_write(tmp_path: Path, task: str) 
         request={"apply": False},
         permissions=_WRITE,
         **_owner_kwarg(populated_root),
+        **_sources_kwarg(populated_root),
     )
     after = _db_bytes(populated_root)
     assert after == before, (
@@ -514,18 +568,22 @@ def _run_after_passed_precheck(
     version check inside the write transaction itself can refuse the row now."""
     from rush.memory import maintenance
 
-    owner = legacy_owner_scope(root)
     preview = maintenance.preview_maintenance_candidates(
-        task, project_root=root, owner_scope=owner, candidate_ids=[artifact_id]
+        task,
+        project_root=root,
+        access=_legacy_access(root, "list"),
+        candidate_ids=[artifact_id],
     )
     reviewed = {str(c["id"]): int(str(c["artifact_version"])) for c in preview}
     assert reviewed == {artifact_id: 1}
     _edit_to_v2(root, artifact_id, v2_content)
-    monkeypatch.setattr(maintenance, "_revision_conflicts", lambda _root, _exp: ())
+    monkeypatch.setattr(
+        maintenance, "_revision_conflicts", lambda _conn, _exp, **_kw: ()
+    )
     return maintenance.run_maintenance_cycle(
         task,
         project_root=root,
-        owner_scope=owner,
+        access=_legacy_access(root, "write"),
         expected_revisions=reviewed,
     )
 
@@ -565,10 +623,10 @@ def test_per_row_maintain_refuses_a_row_edited_after_the_check(
 
     _seed_eligible_rows(tmp_path, task, ["r1", "r2"])
     if task == "skill_admission_check":
-        PluginTrustStore(repo_root=tmp_path).grant_trust("demo-plugin", "abc123")
+        PluginTrustStore(repo_root=tmp_path).grant_trust("demo-plugin", _DIGEST)
         v2: dict = {
             "plugin_name": "demo-plugin",
-            "closure_digest": "abc123",
+            "closure_digest": _DIGEST,
             "note": "edited-v2",
         }
     else:

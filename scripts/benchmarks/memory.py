@@ -95,6 +95,8 @@ def _probe_stale_record(
         task="expiry_sweep",
         permissions=permissions,
         owner_scope=legacy_owner_scope(root),
+        # 72-T04 (D3): `legacy` mode maintains only the sources the caller names.
+        sources=["allowed"],
     )
     if swept["status"] != "ok":
         raise FixtureError(f"memory maintain failed: {swept['summary']}")

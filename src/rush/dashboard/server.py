@@ -333,6 +333,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "symbol_ref",
             "user_stated",
             "candidate_sources",
+            "candidate_refs",
             "owner_scope",
         }
     ),
@@ -365,7 +366,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
     "memory_propose": frozenset(
         {"subject", "content", "source", "source_kind", "symbol_ref", "owner_scope"}
     ),
-    "memory_maintain": frozenset({"task", "batch_size", "owner_scope"}),
+    "memory_maintain": frozenset({"task", "batch_size", "owner_scope", "sources"}),
     "data_export": frozenset(),
     "artifact_export": frozenset({"artifact_id"}),
 }
@@ -995,6 +996,10 @@ def _validate_memory_owner_scope(
     `{"kind", "id"}` dict so every dispatch function downstream sees exactly
     the same, already-validated owner."""
     if operation not in _MEMORY_OWNER_SCOPED_OPERATIONS:
+        return
+    if operation == "memory_maintain" and arguments.get("owner_scope") is None:
+        # 72-T04 (D3): an omitted maintain owner is decided by the memory grant
+        # (policy mode) or `legacy_owner_scope(root)` (legacy mode), never here.
         return
     try:
         owner = OwnerScope.from_value(arguments.get("owner_scope"))
@@ -2801,6 +2806,29 @@ def _dispatch_memory_promote(
         raise _ActionDenied(
             400, "malformed_request", "candidate_sources must be a list of strings"
         )
+    # 72-T04 (D8): reviewed corroborators arrive as `candidate_refs`
+    # (`ID@VERSION@SOURCE`, comma separated); raw `candidate_sources` alone is refused.
+    refs_request: dict[str, Any] = {}
+    candidate_refs = arguments.get("candidate_refs")
+    if candidate_refs is not None:
+        from rush.memory.trust import parse_candidate_ref
+
+        refs = (
+            [parse_candidate_ref(item) for item in candidate_refs.split(",")]
+            if isinstance(candidate_refs, str)
+            else [None]
+        )
+        if any(ref is None for ref in refs):
+            raise _ActionDenied(
+                400,
+                "malformed_request",
+                "candidate_refs must be comma-separated ID@VERSION@SOURCE items",
+            )
+        refs_request = {"request": {"apply": True, "candidate_refs": refs}}
+    elif candidate_sources is not None:
+        raise _ActionDenied(
+            400, "malformed_request", "candidate_sources requires candidate_refs"
+        )
     root = Path(resolve_project(project_id)["root"])
     # S04: `MemoryTool.run`'s promote path consumes two independently-reserved
     # effect ids -- `candidate_create` for the candidate-write receipt and
@@ -2816,12 +2844,23 @@ def _dispatch_memory_promote(
         source_kind=source_kind,
         user_stated=bool(arguments.get("user_stated", False)),
         candidate_sources=candidate_sources,
+        **refs_request,
         owner_scope=arguments.get("owner_scope"),
         permissions=_permissions_from_grants(grants),
         receipt_operation_ids=effect_ids or None,
     )
     status_code, body = _tool_result_response(result)
-    _refresh_project_memories_if_store_exists(ctx, project_id, root)
+    raw = result.get("raw")
+    data = raw.get("data") if isinstance(raw, dict) else None
+    # 72-T04: a refusal that precedes every effect (no candidate written) never
+    # opens a writable store just to refresh.
+    if not (
+        isinstance(raw, dict)
+        and raw.get("code")
+        and "artifact" not in raw
+        and not (isinstance(data, dict) and "artifact" in data)
+    ):
+        _refresh_project_memories_if_store_exists(ctx, project_id, root)
     return status_code, body
 
 
@@ -3212,9 +3251,24 @@ def _dispatch_memory_maintain(
             400, "malformed_request", "memory_maintain requires a valid task"
         )
     batch_size = arguments.get("batch_size", 500)
-    if not isinstance(batch_size, int) or isinstance(batch_size, bool):
+    if (
+        not isinstance(batch_size, int)
+        or isinstance(batch_size, bool)
+        or not 1 <= batch_size <= 1000
+    ):
         raise _ActionDenied(
-            400, "malformed_request", "memory_maintain batch_size must be an integer"
+            400,
+            "malformed_request",
+            "memory_maintain batch_size must be an integer from 1 to 1000",
+        )
+    sources = arguments.get("sources")
+    if sources is not None and not (
+        isinstance(sources, list) and all(isinstance(s, str) for s in sources)
+    ):
+        raise _ActionDenied(
+            400,
+            "malformed_request",
+            "memory_maintain sources must be a list of strings",
         )
     root = Path(resolve_project(project_id)["root"])
     result = MemoryTool().run(
@@ -3223,6 +3277,7 @@ def _dispatch_memory_maintain(
         task=task,
         batch_size=batch_size,
         owner_scope=arguments.get("owner_scope"),
+        sources=sources,
         permissions=_permissions_from_grants(grants),
     )
     status_code, body = _tool_result_response(result)

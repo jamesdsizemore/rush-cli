@@ -51,7 +51,7 @@ src/rush/
 │   ├── failure_ledger.py   # Negative knowledge failure ledger — thin view over TypedArtifactStore (formerly .rush/memory/failures.db)
 │   ├── mistake_miner.py    # Bi-temporal Git revert miner (pure; shapes failure candidates, does not persist)
 │   ├── maintenance.py      # run_maintenance_cycle() — promotion/staleness/skill-admission/expiry sweeps (Phase 62)
-│   ├── expiry.py           # ExpiryPolicy, DEFAULT_POLICIES, sweep_expired() — per-trust_tier TTL expiry (Phase 62)
+│   ├── expiry.py           # ExpiryPolicy, DEFAULT_POLICIES — per-trust_tier TTL expiry, run by run_maintenance_cycle("expiry_sweep") (Phase 62)
 │   └── decision_schema.py  # DecisionRecordFields — remediation-shaped fields reused by mistake_miner.py (Phase 62)
 └── tools/
     ├── ship/               # Pre-flight ship vectors and 7-vector cockpit

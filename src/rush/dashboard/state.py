@@ -66,6 +66,7 @@ def cross_process_project_lock(
     *,
     data_root: Path | None = None,
     storage: Literal["file", "directory"] = "file",
+    timeout_s: float | None = None,
 ) -> Iterator[None]:
     """S08 bullet 1: blocking cross-process mutual exclusion for one
     project's check-then-act mutation window (`_handle_action`'s
@@ -93,9 +94,16 @@ def cross_process_project_lock(
 
     72-T01 D2: `storage="directory"` locks the data root directory itself (no
     lock file); a `memory-policy:` id requires it, and a nested entry for such
-    an id must name the same resolved data root."""
+    an id must name the same resolved data root.
+
+    72-T04 D26: `timeout_s` bounds the wait of a `file` lock (`TimeoutError` when
+    it elapses); `None` keeps the blocking wait. A `directory` lock has its own
+    bounded wait, so a supplied `timeout_s` is refused before any effect. The
+    reentrant (already held) path ignores it."""
     if storage not in ("file", "directory"):
         raise ValueError(f"unknown lock storage {storage!r}")
+    if storage == "directory" and timeout_s is not None:
+        raise ValueError("timeout_s applies only to storage='file'")
     is_policy = project_id.startswith(_POLICY_LOCK_PREFIX)
     if is_policy and storage != "directory":
         raise ValueError("a memory-policy lock requires storage='directory'")
@@ -129,7 +137,9 @@ def cross_process_project_lock(
             ):
                 yield
         else:
-            with _acquire_cross_process_project_lock(project_id, data_root=data_root):
+            with _acquire_cross_process_project_lock(
+                project_id, data_root=data_root, timeout_s=timeout_s
+            ):
                 yield
     finally:
         held[project_id] = 0
@@ -218,9 +228,13 @@ def _acquire_cross_process_project_lock(
     *,
     data_root: Path | None = None,
     storage: Literal["file", "directory"] = "file",
+    timeout_s: float | None = None,
 ) -> Iterator[None]:
     """The real OS-level acquisition `cross_process_project_lock` above
-    calls exactly once per outermost entry on a given thread."""
+    calls exactly once per outermost entry on a given thread. `timeout_s`
+    (file storage only) bounds the wait; `TimeoutError` when it elapses."""
+    if storage == "directory" and timeout_s is not None:
+        raise ValueError("timeout_s applies only to storage='file'")
     if storage == "directory":
         with _acquire_directory_lock(project_id, _directory_lock_root(data_root)):
             yield
@@ -238,7 +252,11 @@ def _acquire_cross_process_project_lock(
         if not handle:
             raise OSError(f"CreateMutexW failed for {name!r}")
         _INFINITE = 0xFFFFFFFF
-        wait_result = kernel32.WaitForSingleObject(handle, _INFINITE)
+        wait_ms = _INFINITE if timeout_s is None else int(max(timeout_s, 0.0) * 1000)
+        wait_result = kernel32.WaitForSingleObject(handle, wait_ms)
+        if wait_result == 0x00000102:  # WAIT_TIMEOUT
+            kernel32.CloseHandle(handle)
+            raise TimeoutError(f"project lock {project_id!r} busy")
         if wait_result not in (0x00000000, 0x00000080):
             kernel32.CloseHandle(handle)
             raise OSError(f"WaitForSingleObject failed for {name!r}: {wait_result:#x}")
@@ -251,7 +269,20 @@ def _acquire_cross_process_project_lock(
     path = _project_mutation_lock_path(project_id, data_root=data_root)
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if timeout_s is None:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + timeout_s
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"project lock {project_id!r} busy"
+                        ) from None
+                    time.sleep(_DIRECTORY_LOCK_RETRY_S)
         yield
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)

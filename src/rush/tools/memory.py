@@ -7,6 +7,7 @@ import dataclasses
 import json
 import sqlite3
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
@@ -82,6 +83,7 @@ from ..memory.store import (
     owner_scope_for_row,
     readonly_state_code,
     readonly_view_reason,
+    sqlite_integer_in_range,
     store_generation,
 )
 from ..memory.trust import default_entry_tier
@@ -394,6 +396,7 @@ class MemoryTool(ToolFn):
         batch_size: int = 500,
         include_archived: bool = False,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        sources: list[str] | None = None,
         allow_cache_write: bool = False,
         allow_artifact_write: bool = False,
         allow_build: bool = False,
@@ -434,6 +437,7 @@ class MemoryTool(ToolFn):
             batch_size=batch_size,
             include_archived=include_archived,
             owner_scope=owner_scope,
+            sources=sources,
             permissions=ExecutionPermissions(
                 cache_write=allow_cache_write,
                 artifact_write=allow_artifact_write,
@@ -473,6 +477,9 @@ class MemoryTool(ToolFn):
         # request dict with an allowlist), so ownership has to be a real parameter
         # here, threaded through the dispatch lambdas below, to reach storage at all.
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        # 72-T04 D3: `maintain`'s explicit source list (the legacy-mode access, a
+        # narrowing of the grant in policy mode); any other operation refuses it.
+        sources: list[str] | None = None,
         permissions: ExecutionPermissions | None = None,
         request: dict[str, Any] | None = None,
         receipt_operation_ids: dict[str, str] | None = None,
@@ -523,6 +530,13 @@ class MemoryTool(ToolFn):
                 "error",
                 f"Unsupported memory operation: {operation}.",
                 operation=str(operation),
+            )
+        if sources is not None and operation != "maintain":
+            return self._envelope_result(
+                started,
+                str(operation),
+                "E_INPUT",
+                {"field": "sources", "message": "sources is a maintain field"},
             )
         list_filters = {
             "trust_filter": trust_filter,
@@ -683,7 +697,15 @@ class MemoryTool(ToolFn):
                 request,
             ),
             "maintain": lambda: self._run_maintain(
-                started, root, task, batch_size, granted, owner_scope, request
+                started,
+                root,
+                task,
+                batch_size,
+                granted,
+                owner_scope,
+                request,
+                sources,
+                session_allowlist,
             ),
             "link": lambda: self._link(started, root, granted, request, owner_scope),
             "related": lambda: self._related(
@@ -994,7 +1016,7 @@ class MemoryTool(ToolFn):
         candidate_ids = request.get("candidate_ids")
         if candidate_ids is not None and not (
             isinstance(candidate_ids, list)
-            and all(isinstance(c, str) and c for c in candidate_ids)
+            and all(_literal_id(c) for c in candidate_ids)
             and len(set(candidate_ids)) == len(candidate_ids)
         ):
             return False, None, None, "candidate_ids must be unique non-empty IDs."
@@ -2522,26 +2544,31 @@ class MemoryTool(ToolFn):
         owner_scope: dict[str, str] | OwnerScope | None = None,
         request: dict[str, Any] | None = None,
     ) -> ToolResult:
+        from ..memory.authorization import MemoryPolicyError, source_granted
+
+        root = _canonical_root(root)
         apply, grants, _, request_error = self._parse_mutation_request(
             request, _PROMOTE_REQUEST_KEYS
         )
         source_id = (request or {}).get("source_id")
         expected_version = (request or {}).get("expected_version")
+        candidate_refs = (request or {}).get("candidate_refs")
         if not request_error and (source_id is None) != (expected_version is None):
             request_error = "source_id and expected_version are given together."
         if (
             not request_error
             and source_id is not None
-            and not (
-                isinstance(source_id, str)
-                and source_id
-                and type(expected_version) is int
-                and expected_version >= 1
-            )
+            and not (_literal_id(source_id) and _revision_ok(expected_version))
         ):
             request_error = (
                 "source_id must be a non-empty ID and expected_version a positive int."
             )
+        if (
+            not request_error
+            and candidate_refs is not None
+            and not _candidate_refs_ok(candidate_refs)
+        ):
+            request_error = "invalid promotion candidate refs"
         if request_error:
             return self._result(
                 started,
@@ -2549,6 +2576,17 @@ class MemoryTool(ToolFn):
                 request_error,
                 operation="promote",
                 raw={"message": request_error},
+            )
+        if candidate_sources is not None and candidate_refs is None:
+            # 72-T04 D8: raw source labels are never evidence; only reviewed refs are.
+            return self._envelope_result(
+                started,
+                "promote",
+                "E_INPUT",
+                {
+                    "field": "candidate_sources",
+                    "message": "candidate_sources requires request.candidate_refs",
+                },
             )
         if apply:
             allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
@@ -2571,41 +2609,35 @@ class MemoryTool(ToolFn):
             )
         try:
             owner = self._parse_owner_scope(owner_scope, root)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             return self._result(
                 started, "error", f"invalid owner_scope: {exc}", operation="promote"
             )
-        resolved = self._read_access(root, "promote", [source], owner, apply=apply)
+        # 72-T04 D8: policy mode resolves every approved source (granted
+        # corroborators stay visible) and checks the candidate's source separately;
+        # legacy mode keeps the candidate-source allowlist for the candidate write.
+        policy = memory_policy_mode(root) == "policy"
+        resolved = self._read_access(
+            root, "promote", None if policy else [source], owner, apply=apply
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "promote", resolved)
+        if resolved.kind == "policy" and not source_granted(source, resolved.sources):
+            return self._envelope_result(
+                started,
+                "promote",
+                "E_SCOPE",
+                {
+                    "reason": "source_not_granted",
+                    "message": "memory promote denied: source_not_granted.",
+                },
+            )
         owner = _write_owner(owner, resolved)
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind, owner
         )
-        candidate_refs = (request or {}).get("candidate_refs")
+        store_refs: list[dict[str, Any]] | None = None
         if candidate_refs is not None:
-            if (
-                source_id is None
-                or not isinstance(candidate_refs, list)
-                or not 1 <= len(candidate_refs) <= 64
-                or any(
-                    not isinstance(ref, dict)
-                    or set(ref) != {"id", "version", "source"}
-                    or not isinstance(ref["id"], str)
-                    or not ref["id"]
-                    or type(ref["version"]) is not int
-                    or ref["version"] < 1
-                    or not isinstance(ref["source"], str)
-                    or not ref["source"]
-                    for ref in candidate_refs
-                )
-            ):
-                return self._result(
-                    started,
-                    "error",
-                    "invalid promotion candidate refs",
-                    operation="promote",
-                )
             view, store_state = TypedArtifactStore.open_readonly_view(root)
             if store_state is not None or view is None:
                 return self._result(
@@ -2616,51 +2648,24 @@ class MemoryTool(ToolFn):
                     raw={"code": "E_VERSION", "reason": store_state},
                 )
             try:
-                selected = view.get_current(source_id)
-                sources: set[str] = set()
-                valid = (
-                    selected is not None
-                    and selected.artifact_version == expected_version
+                refused = self._promote_refs_refusal(
+                    started,
+                    view,
+                    root,
+                    resolved,
+                    owner,
+                    artifact,
+                    source_id,
+                    expected_version,
+                    candidate_refs,
                 )
-                valid = valid and any(ref["id"] == source_id for ref in candidate_refs)
-                if valid and selected is not None:
-                    valid = (
-                        selected.source == source
-                        and selected.subject == subject
-                        and selected.symbol_ref == symbol_ref
-                        and selected.content == content
-                        and selected.owner_scope == owner
-                        and selected.archived_at is None
-                    )
-                if valid:
-                    for ref in candidate_refs:
-                        current = view.get_current(ref["id"])
-                        if (
-                            current is None
-                            or current.artifact_version != ref["version"]
-                            or current.source != ref["source"]
-                            or current.subject != subject
-                            or current.symbol_ref != symbol_ref
-                            or current.content != content
-                            or current.owner_scope != owner
-                            or current.trust_tier == "STATED"
-                            or current.stale
-                            or current.archived_at is not None
-                        ):
-                            valid = False
-                            break
-                        sources.add(current.source)
             finally:
                 view.close()
-            if not valid:
-                return self._result(
-                    started,
-                    "fail",
-                    "promotion candidates changed since review",
-                    operation="promote",
-                    raw={"code": "E_VERSION", "reason": "candidate changed"},
-                )
-            candidate_sources = sorted(sources)
+            if refused is not None:
+                return refused
+            # The reviewed source row is the candidate's own observation, never a
+            # corroborator of it: only the other refs reach the D8 evidence check.
+            store_refs = [ref for ref in candidate_refs if ref["id"] != source_id]
         if source_id is not None and isinstance(expected_version, int):
             stale = self._promote_source_conflict(root, source_id, expected_version)
             if stale is not None:
@@ -2677,7 +2682,9 @@ class MemoryTool(ToolFn):
                 return revoked
             preview = _new_artifact_preview(artifact, root, grants, granted)
             preview["user_stated"] = user_stated
-            preview["candidate_sources"] = list(candidate_sources or [])
+            preview["candidate_sources"] = sorted(
+                {str(ref["source"]) for ref in store_refs or []}
+            )
             return self._result(
                 started,
                 "ok",
@@ -2686,9 +2693,11 @@ class MemoryTool(ToolFn):
                 operation="promote",
                 raw=preview,
             )
-        with _policy_mutation(resolved) as refused:
-            if refused is not None:
-                return self._denied(started, "promote", refused)
+        promotion_error: VersionConflictError | None = None
+        policy_error: MemoryPolicyError | None = None
+        with _policy_mutation(resolved) as refused_access:
+            if refused_access is not None:
+                return self._denied(started, "promote", refused_access)
             store = TypedArtifactStore(root)
             # P69-01.2f/S04: promotion is two separately-committed effects (candidate
             # creation, then a distinct promotion decision) -- each consumes its own
@@ -2706,16 +2715,30 @@ class MemoryTool(ToolFn):
                 stored, decision = store.promote(
                     stored.id,
                     user_stated=user_stated,
-                    candidate_sources=candidate_sources,
-                    candidate_refs=candidate_refs,
+                    candidate_refs=store_refs,
                     expected_version=stored.artifact_version,
                     owner_scope=owner,
                     receipt_operation_id=reserved.get("promotion"),
+                    access=resolved if resolved.kind == "policy" else None,
                     commit_check=_commit_check(resolved),
                 )
-                promotion_error: VersionConflictError | None = None
             except VersionConflictError as conflict:
                 promotion_error = conflict
+            except MemoryPolicyError as exc:
+                policy_error = exc
+        if policy_error is not None:
+            reason = policy_error.reason or policy_error.code
+            # the candidate was already committed: name it, so adapters refresh.
+            return self._envelope_result(
+                started,
+                "promote",
+                policy_error.code,
+                {
+                    "reason": reason,
+                    "message": f"memory promote denied: {reason}.",
+                    "artifact": self._artifact_dict(stored),
+                },
+            )
         if promotion_error is not None:
             return self._result(
                 started,
@@ -2724,7 +2747,7 @@ class MemoryTool(ToolFn):
                 f"{promotion_error}",
                 operation="promote",
                 raw={
-                    "code": "E_VERSION",
+                    "code": getattr(promotion_error, "code", "E_VERSION"),
                     "reason": str(promotion_error),
                     "artifact": self._artifact_dict(stored),
                 },
@@ -2747,6 +2770,90 @@ class MemoryTool(ToolFn):
             started, "ok", summary, operation="promote", raw=promote_raw
         )
 
+    def _promote_refs_refusal(
+        self,
+        started: float,
+        view: Any,
+        root: Path,
+        access: MemoryAccess,
+        owner: OwnerScope | None,
+        artifact: MemoryArtifact,
+        source_id: str | None,
+        expected_version: int | None,
+        candidate_refs: list[dict[str, Any]],
+    ) -> ToolResult | None:
+        """72-T04 D8 review check before the candidate is written: the reviewed
+        source row (when named) must still be the live row it was, and every other
+        ref must name a row this access can see (`E_NOT_VISIBLE` otherwise -- a
+        hidden id and an absent id are indistinguishable) that still matches the
+        candidate at the reviewed version and source (`E_VERSION` otherwise). The
+        store re-checks the refs against its own peer scan inside the promotion
+        transaction."""
+        from ..memory.authorization import source_granted
+
+        message = "promotion corroborator changed since review"
+        if access.kind == "policy":
+            visible_sources = list(access.sources)
+            visible_owner = access.owner_scope
+        else:
+            visible_sources = sorted(
+                {artifact.source, *(str(ref["source"]) for ref in candidate_refs)}
+            )
+            visible_owner = owner or legacy_owner_scope(root)
+        if source_id is not None:
+            selected = view.get_current(source_id)
+            if not (
+                selected is not None
+                and selected.artifact_version == expected_version
+                and any(ref["id"] == source_id for ref in candidate_refs)
+                and selected.source == artifact.source
+                and selected.subject == artifact.subject
+                and selected.symbol_ref == artifact.symbol_ref
+                and selected.content == artifact.content
+                and selected.owner_scope == visible_owner
+                and selected.archived_at is None
+            ):
+                return self._result(
+                    started,
+                    "fail",
+                    "promotion candidates changed since review",
+                    operation="promote",
+                    raw={"code": "E_VERSION", "reason": "candidate changed"},
+                )
+        code: str | None = None
+        for ref in candidate_refs:
+            if ref["id"] == source_id:
+                continue
+            current = view.get_current(ref["id"])
+            if (
+                current is None
+                or not source_granted(current.source, visible_sources)
+                or current.owner_scope != visible_owner
+            ):
+                code = "E_NOT_VISIBLE"
+                break
+            if (
+                current.artifact_version != ref["version"]
+                or current.source != ref["source"]
+                or current.subject != artifact.subject
+                or current.symbol_ref != artifact.symbol_ref
+                or current.content != artifact.content
+                or current.trust_tier in ("STATED", "IMPORTED")
+                or current.stale
+                or current.archived_at is not None
+            ):
+                code = "E_VERSION"
+                break
+        if code is None:
+            return None
+        return self._result(
+            started,
+            "fail",
+            f"Promotion refused: {message}.",
+            operation="promote",
+            raw={"code": code, "reason": message},
+        )
+
     def _run_maintain(
         self,
         started: float,
@@ -2756,13 +2863,26 @@ class MemoryTool(ToolFn):
         granted: ExecutionPermissions,
         owner_scope: dict[str, str] | OwnerScope | None = None,
         request: dict[str, Any] | None = None,
+        sources: list[str] | None = None,
+        session_allowlist: list[str] | None = None,
     ) -> ToolResult:
+        from ..memory.authorization import literal_source_is_valid, source_granted
+        from ..memory.maintenance import MaintenanceAccessDenied
+
+        root = _canonical_root(root)
         if task is None:
             return self._result(
                 started,
                 "error",
                 "memory maintain requires task.",
                 operation="maintain",
+            )
+        if task not in get_args(MaintenanceTask):
+            return self._envelope_result(
+                started,
+                "maintain",
+                "E_INPUT",
+                {"field": "task", "message": "unknown maintenance task"},
             )
         apply, grants, candidate_ids, request_error = self._parse_mutation_request(
             request, _MAINTAIN_REQUEST_KEYS
@@ -2772,11 +2892,7 @@ class MemoryTool(ToolFn):
             if not (
                 isinstance(expected_revisions, dict)
                 and all(
-                    isinstance(k, str)
-                    and k
-                    and isinstance(v, int)
-                    and not isinstance(v, bool)
-                    and v >= 1
+                    _literal_id(k) and _revision_ok(v)
                     for k, v in expected_revisions.items()
                 )
             ):
@@ -2805,30 +2921,83 @@ class MemoryTool(ToolFn):
             refusal = self._grant_refusal(started, "maintain", grants or [], granted)
             if refusal is not None:
                 return refusal
+        if type(batch_size) is not int or not 1 <= batch_size <= 1000:
+            return self._envelope_result(
+                started,
+                "maintain",
+                "E_INPUT",
+                {"field": "batch_size", "message": "batch_size must be 1-1000"},
+            )
+        requested = sources if sources is not None else session_allowlist
+        if requested is not None and not (
+            isinstance(requested, list)
+            and all(literal_source_is_valid(s) for s in requested)
+        ):
+            return self._envelope_result(
+                started,
+                "maintain",
+                "E_INPUT",
+                {"field": "sources", "message": "sources must be literal labels"},
+            )
         try:
             owner = self._parse_owner_scope(owner_scope, root)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             return self._result(
                 started, "error", f"invalid owner_scope: {exc}", operation="maintain"
             )
-        if owner is None:
-            return self._result(
-                started,
-                "error",
-                "memory maintain requires owner_scope (M09: no silent "
-                "legacy-owner default at this boundary).",
-                operation="maintain",
+        # 72-T04 D9/D3: the access names the owner and sources every selection,
+        # peer scan and revision lookup is scoped to.
+        legacy_owner = legacy_owner_scope(root)
+        access: MemoryAccess
+        if memory_policy_mode(root) == "legacy":
+            if not requested:
+                return self._denied(
+                    started, "maintain", RouteDenial("E_PERMISSION", "sources_required")
+                )
+            if owner is not None and owner != legacy_owner:
+                return self._denied(
+                    started, "maintain", RouteDenial("E_NOT_VISIBLE", "not_visible")
+                )
+            access = MemoryAccess.legacy(
+                root,
+                requested,
+                owner_scope=legacy_owner,
+                operation="write" if apply else "list",
+                data_root=None,
             )
-        resolved = self._read_access(root, "maintain", None, owner, apply=apply)
-        if isinstance(resolved, RouteDenial):
-            return self._denied(started, "maintain", resolved)
+        else:
+            # Policy mode: the grant's approved sources, narrowed to the requested
+            # ones it grants (D9); a request naming none of them is `E_SCOPE`.
+            narrowed: list[str] | None = None
+            resolved = route_access(
+                root, "maintain", apply=apply, owner_scope=owner, data_root=None
+            )
+            if not isinstance(resolved, RouteDenial) and requested:
+                narrowed = [s for s in requested if source_granted(s, resolved.sources)]
+                if not narrowed:
+                    resolved = RouteDenial("E_PERMISSION", "source_not_granted")
+                else:
+                    resolved = route_access(
+                        root,
+                        "maintain",
+                        apply=apply,
+                        owner_scope=owner,
+                        session_allowlist=narrowed,
+                        data_root=None,
+                    )
+            if isinstance(resolved, RouteDenial):
+                if resolved.reason == "source_not_granted":
+                    resolved = RouteDenial("E_SCOPE", resolved.reason)
+                return self._denied(started, "maintain", resolved)
+            access = resolved
+        maintained_owner = access.owner_scope or legacy_owner
         if not apply:
             try:
                 candidates = preview_maintenance_candidates(
                     task,
+                    access=access,
                     batch_size=batch_size,
                     project_root=root,
-                    owner_scope=owner,
                     candidate_ids=candidate_ids,
                 )
             except (MemoryStoreUnreadableError, MemoryMigrationRequiredError) as exc:
@@ -2839,14 +3008,8 @@ class MemoryTool(ToolFn):
                     operation="maintain",
                     raw={"message": str(exc)},
                 )
-            candidates = _in_source_scope(
-                resolved,
-                candidates,
-                lambda: TypedArtifactStore.open_readonly_view(root),
-            )
-            revoked = self._revoked(started, "maintain", resolved)
-            if revoked is not None:
-                return revoked
+            except MaintenanceAccessDenied as exc:
+                return self._maintenance_denied(started, exc)
             ids = [str(c["id"]) for c in candidates]
             effective = grants if grants is not None else ["cache_write"]
             return self._result(
@@ -2862,61 +3025,32 @@ class MemoryTool(ToolFn):
                     "expected_revisions": {
                         str(c["id"]): c["artifact_version"] for c in candidates
                     },
-                    "owner_scope": {"kind": owner.kind, "id": owner.id},
+                    "owner_scope": {
+                        "kind": maintained_owner.kind,
+                        "id": maintained_owner.id,
+                    },
                     "required_grants": effective,
                     "missing_grants": _missing_grants(effective, granted),
                 },
             )
         # Restricted only when a reviewed candidate set was sent; otherwise the
-        # legacy unrestricted call is unchanged.
+        # legacy unrestricted call is unchanged. The cycle owns its policy lock,
+        # lease and hold deadline (72-T04 D26): no adapter lock encloses it.
         restriction: dict[str, Any] = (
             {} if candidate_ids is None else {"candidate_ids": candidate_ids}
         )
         if expected_revisions is not None:
             restriction["expected_revisions"] = expected_revisions
-        with _policy_mutation(resolved) as refused:
-            if refused is not None:
-                return self._denied(started, "maintain", refused)
-            if resolved.kind == "policy":
-                # D40/D1: a policy-mode sweep visits only rows of the resolved
-                # owner whose source the grant approves.
-                try:
-                    scoped = _in_source_scope(
-                        resolved,
-                        preview_maintenance_candidates(
-                            task,
-                            batch_size=batch_size,
-                            project_root=root,
-                            owner_scope=owner,
-                            candidate_ids=candidate_ids,
-                        ),
-                        lambda: TypedArtifactStore.open_readonly_view(root),
-                    )
-                except (
-                    MemoryStoreUnreadableError,
-                    MemoryMigrationRequiredError,
-                ) as exc:
-                    return self._result(
-                        started,
-                        "error",
-                        str(exc),
-                        operation="maintain",
-                        raw={"message": str(exc)},
-                    )
-                restriction["candidate_ids"] = [str(c["id"]) for c in scoped]
-                if expected_revisions is not None:
-                    restriction["expected_revisions"] = {
-                        k: v
-                        for k, v in expected_revisions.items()
-                        if k in restriction["candidate_ids"]
-                    }
+        try:
             result = run_maintenance_cycle(
                 task,
+                access=access,
                 batch_size=batch_size,
                 project_root=root,
-                owner_scope=owner,
                 **restriction,
             )
+        except MaintenanceAccessDenied as exc:
+            return self._maintenance_denied(started, exc)
         maintain_raw = dataclasses.asdict(result)
         if grants is not None:
             maintain_raw["required_grants"] = grants
@@ -2929,15 +3063,35 @@ class MemoryTool(ToolFn):
         if result.refused:
             summary += " Refused (changed since review, left unchanged): " + ", ".join(
                 f"{c.id} reviewed v{c.expected}, now "
-                + ("deleted" if c.actual is None else f"v{c.actual}")
+                + ("not visible" if c.actual is None else f"v{c.actual}")
                 for c in result.refused
+            )
+        lock_lost = bool(getattr(result, "lock_lost", False))
+        if lock_lost:
+            summary += " Maintenance lease lost; unprocessed: " + ", ".join(
+                getattr(result, "unprocessed", ())
             )
         return self._result(
             started,
-            "warn" if result.refused else "ok",
+            "fail" if lock_lost else ("warn" if result.refused else "ok"),
             summary,
             operation="maintain",
             raw=maintain_raw,
+        )
+
+    def _maintenance_denied(self, started: float, exc: Any) -> ToolResult:
+        """A maintenance access refusal (72-T04 D9): its code and reason, and the
+        selected rows it left unprocessed."""
+        reason = str(getattr(exc, "reason", "") or "access_changed")
+        return self._envelope_result(
+            started,
+            "maintain",
+            str(getattr(exc, "code", "E_PERMISSION")),
+            {
+                "reason": reason,
+                "message": f"memory maintain denied: {reason}.",
+                "unprocessed": list(getattr(exc, "unprocessed", ())),
+            },
         )
 
     def _verify_attempt(
@@ -4555,6 +4709,48 @@ class _LazyTelemetry:
 # A mutation request may pin the `ExecutionPermissions` grant names reviewed in its
 # preview. Apply is refused, before any store is opened for writing, when the call's
 # own permissions lack any of them.
+
+
+def _canonical_root(root: Path) -> Path:
+    """72-T04 G4: the on-disk spelling of an existing project root (a case variant
+    on a case-insensitive file system names the same registered project)."""
+    from ..memory.store import _binding_root_text
+
+    return Path(_binding_root_text(root)) if root.is_dir() else root
+
+
+def _literal_id(value: Any) -> bool:
+    """72-T04 G4: a reviewed artifact ID is a non-empty string with no control,
+    format or lone-surrogate character."""
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and not any(unicodedata.category(ch) in {"Cc", "Cf", "Cs"} for ch in value)
+    )
+
+
+def _revision_ok(value: Any) -> bool:
+    """A reviewed revision: a positive int (never a bool) SQLite can store."""
+    return type(value) is int and value >= 1 and sqlite_integer_in_range(value)
+
+
+def _candidate_refs_ok(refs: Any) -> bool:
+    """72-T04 D8: 1-64 reviewed corroborators, each exactly `{id, version,
+    source}` with a literal ID, a reviewed revision and a literal source label."""
+    from ..memory.authorization import literal_source_is_valid
+
+    return (
+        isinstance(refs, list)
+        and 1 <= len(refs) <= 64
+        and all(
+            isinstance(ref, dict)
+            and set(ref) == {"id", "version", "source"}
+            and _literal_id(ref["id"])
+            and _revision_ok(ref["version"])
+            and literal_source_is_valid(ref["source"])
+            for ref in refs
+        )
+    )
 
 
 def _reviewed_grants(request: dict[str, Any]) -> tuple[list[str] | None, str]:

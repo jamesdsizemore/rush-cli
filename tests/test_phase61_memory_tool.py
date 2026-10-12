@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import click
 from click.testing import CliRunner
 
 from rush.catalog import TOOL_SPECS
@@ -34,7 +35,7 @@ def test_memory_tool_registers_as_both_cli_and_mcp() -> None:
 
     # (c) cli.commands contains a "memory" group with ask/write/promote/list/recall subcommands.
     memory_group = cli.commands.get("memory")
-    assert memory_group is not None
+    assert isinstance(memory_group, click.Group)
     for sub_name in ("ask", "write", "promote", "list", "recall"):
         assert sub_name in memory_group.commands, (
             f"missing 'memory {sub_name}' subcommand"
@@ -70,6 +71,8 @@ def test_memory_maintain_cli_runs_with_task_option(tmp_path: Path, monkeypatch) 
             "maintain",
             "--task",
             "promotion_sweep",
+            "--source",
+            "source-a",
             "--allow-cache-write",
             "--json",
         ],

@@ -140,12 +140,6 @@
       "task": "72-T01"
     },
     {
-      "module": "memory/expiry.py",
-      "function": "sweep_reviewed_expired",
-      "route": "maintenance_expiry",
-      "task": "72-T01"
-    },
-    {
       "module": "memory/intent.py",
       "function": "_resolve_authorized_statement",
       "route": "intent_module",
@@ -173,12 +167,6 @@
       "module": "memory/invariant_graph.py",
       "function": "get_all",
       "route": "invariant_graph",
-      "task": "72-T01"
-    },
-    {
-      "module": "memory/maintenance.py",
-      "function": "_revision_conflicts",
-      "route": "maintenance_expiry",
       "task": "72-T01"
     },
     {
@@ -515,12 +503,6 @@
       "module": "tools/memory.py",
       "function": "_run_delete",
       "route": "delete",
-      "task": "72-T01"
-    },
-    {
-      "module": "tools/memory.py",
-      "function": "_run_maintain",
-      "route": "maintain",
       "task": "72-T01"
     },
     {

@@ -288,6 +288,27 @@ class PluginTrustStore:
             verifier_record=vr.to_dict(),
         )
 
+        # 72-T04 D26: read -> ledger write -> receipt under the plugin-trust lock.
+        with self._trust_lock():
+            self._commit_grant(plugin_name, record, digest, rel_snap, now_utc)
+        return record
+
+    def _trust_lock(self) -> Any:
+        # Function-local: `rush.dashboard` imports this module's importers (R1).
+        from rush.dashboard import state
+
+        return state.cross_process_project_lock(
+            "plugin-trust:" + str(self.ledger_path), data_root=None
+        )
+
+    def _commit_grant(
+        self,
+        plugin_name: str,
+        record: TrustedPluginRecord,
+        digest: str,
+        rel_snap: str,
+        now_utc: str,
+    ) -> None:
         store = self.load_trust_store()
         store[plugin_name] = record
 
@@ -331,10 +352,12 @@ class PluginTrustStore:
                 "trust.json", SanitizedJsonValue.from_value(receipt_data)
             )
 
-        return record
-
     def revoke_trust(self, plugin_name: str) -> bool:
-        """Removes record from user ledger atomically."""
+        """Removes record from user ledger atomically, under the plugin-trust lock."""
+        with self._trust_lock():
+            return self._commit_revoke(plugin_name)
+
+    def _commit_revoke(self, plugin_name: str) -> bool:
         if not self.ledger_path.is_file():
             return False
         store = self.load_trust_store()

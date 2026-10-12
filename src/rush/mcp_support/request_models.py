@@ -37,8 +37,10 @@ from pydantic import (
     Tag,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     WithJsonSchema,
     create_model,
+    field_validator,
     model_validator,
 )
 from pydantic.json_schema import models_json_schema
@@ -143,10 +145,14 @@ def _drop_default(schema: dict[str, Any]) -> None:
 
 
 def _model(
-    name: str, fields: Mapping[str, Any], defaults: Mapping[str, Any] | None = None
+    name: str,
+    fields: Mapping[str, Any],
+    defaults: Mapping[str, Any] | None = None,
+    validators: Mapping[str, Any] | None = None,
 ) -> Any:
     """A strict model. An optional field takes its public default from `defaults`;
-    one that cannot be null publishes no `default: null` placeholder."""
+    one that cannot be null publishes no `default: null` placeholder. `validators`
+    are pydantic field/model validators attached to the built model."""
     built: dict[str, Any] = {}
     for key, (annotation, default) in fields.items():
         if default is _OPTIONAL:
@@ -154,7 +160,9 @@ def _model(
             if default is None and type(None) not in get_args(annotation):
                 default = Field(default=None, json_schema_extra=_drop_default)
         built[key] = (annotation, default)
-    return create_model(name, __config__=_STRICT, **built)
+    return create_model(
+        name, __config__=_STRICT, __validators__=dict(validators or {}), **built
+    )
 
 
 # --- rush_project ------------------------------------------------------------
@@ -334,6 +342,91 @@ class MemoryDeleteRequest(BaseModel):
             )
         return self
 
+
+def _sqlite_version(value: int) -> int:
+    # `store.sqlite_integer_in_range`: a revision SQLite stores as INTEGER.
+    from rush.memory.store import sqlite_integer_in_range
+
+    if not sqlite_integer_in_range(value):
+        raise ValueError("must be an integer SQLite can store")
+    return value
+
+
+Revision = Annotated[StrictInt, Field(ge=1), AfterValidator(_sqlite_version)]
+
+
+class MemoryCandidateRef(BaseModel):
+    """72-T04 D8: one reviewed corroborator, `{id, version, source}`."""
+
+    model_config = _STRICT
+
+    id: ArtifactId
+    version: Revision
+    source: MemorySource
+
+
+class MemoryPromoteRequest(BaseModel):
+    """`MemoryTool._run_promote`'s review contract: `apply`, the grants pinned at
+    review, the reviewed source row and its version (given together), and the
+    reviewed corroborators."""
+
+    model_config = _STRICT
+
+    apply: StrictBool = False
+    required_grants: list[StrictStr] | None = None
+    source_id: ArtifactId | None = None
+    expected_version: Revision | None = None
+    candidate_refs: (
+        Annotated[list[MemoryCandidateRef], Field(min_length=1, max_length=64)] | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _source_pair(self) -> MemoryPromoteRequest:
+        if (self.source_id is None) != (self.expected_version is None):
+            raise ValueError("source_id and expected_version are given together")
+        return self
+
+
+class MemoryMaintainRequest(BaseModel):
+    """`MemoryTool._run_maintain`'s review contract: `apply`, the grants pinned at
+    review, and the previewed candidate set with its reviewed revisions."""
+
+    model_config = _STRICT
+
+    apply: StrictBool = False
+    required_grants: list[StrictStr] | None = None
+    candidate_ids: list[ArtifactId] | None = None
+    expected_revisions: dict[ArtifactId, Revision] | None = None
+
+    @model_validator(mode="after")
+    def _ids_match_revisions(self) -> MemoryMaintainRequest:
+        ids = self.candidate_ids
+        if ids is not None and len(set(ids)) != len(ids):
+            raise ValueError("candidate_ids must be unique")
+        if (
+            ids is not None
+            and self.expected_revisions is not None
+            and set(self.expected_revisions) != set(ids)
+        ):
+            raise ValueError("expected_revisions must cover exactly candidate_ids")
+        return self
+
+
+def _candidate_sources_need_refs(value: Any, info: ValidationInfo) -> Any:
+    # 72-T04 D8: raw candidate sources are never evidence; only reviewed refs are.
+    request = info.data.get("request")
+    if value is not None and (request is None or request.candidate_refs is None):
+        raise ValueError("candidate_sources requires request.candidate_refs")
+    return value
+
+
+_MEMORY_VALIDATORS: dict[str, dict[str, Any]] = {
+    "promote": {
+        "_candidate_sources_need_refs": field_validator("candidate_sources")(
+            _candidate_sources_need_refs
+        )
+    }
+}
 
 _MUTATION = {
     "scope": (MemorySubject, _REQUIRED),
@@ -612,6 +705,8 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
         {
             **_WRITE,
             "user_stated": (StrictBool, _OPTIONAL),
+            # `request` precedes `candidate_sources`: its validator reads the refs.
+            "request": (MemoryPromoteRequest | None, _OPTIONAL),
             "candidate_sources": (StrList | None, _OPTIONAL),
         },
     ),
@@ -619,8 +714,12 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
         "maintain",
         {
             "task": (MaintenanceTask, _REQUIRED),
-            "owner_scope": (MemoryOwnerScope, _REQUIRED),
-            "batch_size": (StrictInt, _OPTIONAL),
+            # 72-T04 D9: policy mode takes the owner from the grant; legacy mode
+            # applies the D3 owner rule.
+            "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+            "batch_size": (_bounded(1, 1000), _OPTIONAL),
+            "sources": (StrList | None, _OPTIONAL),
+            "request": (MemoryMaintainRequest | None, _OPTIONAL),
         },
     ),
     **{
@@ -668,12 +767,14 @@ def _operation_model(
     extra: Mapping[str, Any],
     tag: str | None = None,
     defaults: Mapping[str, Any] | None = None,
+    validators: Mapping[str, Any] | None = None,
 ) -> Any:
     op_default = "ask" if (prefix == "Memory" and operation == "ask") else _REQUIRED
     return _model(
         f"{prefix}{_camel(tag or operation)}",
         {"operation": (Literal[operation], op_default), **extra, **fields},
         defaults,
+        validators,
     )
 
 
@@ -743,7 +844,13 @@ def _memory_spec() -> _ToolSpec:
     }
     named = {
         tag: _operation_model(
-            "Memory", op, fields, extra=_MEMORY_COMMON, tag=tag, defaults=defaults
+            "Memory",
+            op,
+            fields,
+            extra=_MEMORY_COMMON,
+            tag=tag,
+            defaults=defaults,
+            validators=_MEMORY_VALIDATORS.get(tag),
         )
         for tag, (op, fields) in MEMORY_FIELDS.items()
     }

@@ -66,9 +66,11 @@ class _RealMemoryRun:
     def __init__(self) -> None:
         self._run = MemoryTool().run
         self.operations: list[str] = []
+        self.calls: list[dict[str, Any]] = []
 
     def __call__(self, root: Path, **kwargs: Any) -> Any:
         self.operations.append(str(kwargs.get("operation")))
+        self.calls.append(dict(kwargs))
         return self._run(root, **kwargs)
 
 
@@ -327,12 +329,48 @@ def test_r1_switch_project_drops_held_maintenance_preview(tmp_path: Path) -> Non
         created_at=time.time() - 15 * _DAY,  # DERIVED ttl is 14 days
         owner=OwnerScope("project", ids[0]),
     )
+    # 72-T04 (D3/D9): A's row is owned by its registered project id, which legacy
+    # `maintain` refuses (`E_NOT_VISIBLE`), so A runs in `policy` mode: the grant
+    # supplies that owner and the TUI's source list narrows nothing.
+    from rush.memory import authorization as auth
+    from rush.setup.provision import default_data_root
+
+    policy_root = default_data_root()
+    register_project(a, name=a.name, data_root=policy_root)  # same id (descriptor)
+    auth.grant_memory_scope(
+        project_root=a,
+        owner_scope=OwnerScope("project", ids[0]),
+        approved_sources=["s1"],
+        allowed_operations=["ask", "expand", "list", "write"],
+        expected_policy_revision=int(
+            auth.load_policy_readonly(data_root=policy_root)["policy_revision"] or 0
+        ),
+        consent=True,
+        data_root=policy_root,
+    )
+    # 72-T04 (D40/D9): a due row of the same owner in a source the grant does not name
+    # is outside the granted scope, so the held preview never counts it.
+    _seed(
+        a,
+        "zq02",
+        source="s2",
+        created_at=time.time() - 15 * _DAY,
+        owner=OwnerScope("project", ids[0]),
+    )
     b_files = _files(b)
     state = _state(tmp_path, a, b, project_ids=ids)
-    actions = _actions()
+    run = _RealMemoryRun()
+    actions = _actions(run)
     _enter_memory(state, actions)
     _keys(state, actions, "w")
     assert "expiry_sweep 1" in state.memory_message
+    # 72-T04 (A1): every reviewed maintain call forwards the project's known sources;
+    # the grant narrows them to `s1`, which is why the preview above counts one row.
+    forwarded = [
+        c.get("sources") for c in run.calls if c.get("operation") == "maintain"
+    ]
+    assert forwarded
+    assert all(sorted(s or []) == ["s1", "s2"] for s in forwarded)
 
     _switch_project(state, actions, 1)
     assert "expiry_sweep 1" not in _screen(state)

@@ -115,7 +115,11 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
             "content": {"k": "v"},
             "source": "t",
             "user_stated": True,
-            "candidate_sources": ["t"],
+            # 72-T04 (D8): corroborators are named only through `request.candidate_refs`.
+            "request": {
+                "apply": False,
+                "candidate_refs": [{"id": "peer", "version": 1, "source": "other"}],
+            },
         },
         "source",
     ),
@@ -562,6 +566,9 @@ def test_t06_memory_missing_required_field_rejects_with_zero_effects(
     after = _snapshot_dir(tmp_path)
     assert outcome.rejected
     assert outcome.error["data"]["details"][0]["loc"][0] == dropped
+    # 72-T04: the dropped field is the only validation error; every other field of the
+    # minimum valid request (including promote's `request.candidate_refs`) is accepted.
+    assert {d["loc"][0] for d in outcome.error["data"]["details"]} == {dropped}
     assert before == after
     if operation == "list":
         # 72-T01 R5: `session_allowlist` is optional on the query models, so a request

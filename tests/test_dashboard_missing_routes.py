@@ -57,6 +57,12 @@ from tests.test_dashboard_scan_actions import (
     _wait_until,
 )
 
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
+
 pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
 
 
@@ -589,7 +595,7 @@ def test_scan_resume_202_response_attempt_id_matches_the_attempt_resume_scan_run
 
         _wait_until(lambda: _new_manifest_path() is not None, timeout=30.0)
 
-        manifest = json.loads(_new_manifest_path().read_text())
+        manifest = json.loads(_nn(_new_manifest_path()).read_text())
         real_attempt_id = manifest["attempt_id"]
 
         assert response_attempt_id == real_attempt_id
@@ -635,7 +641,7 @@ def test_rescan_202_response_attempt_id_matches_the_attempt_rescan_project_run_a
 
         _wait_until(lambda: _new_manifest_path() is not None, timeout=30.0)
 
-        manifest = json.loads(_new_manifest_path().read_text())
+        manifest = json.loads(_nn(_new_manifest_path()).read_text())
         real_attempt_id = manifest["attempt_id"]
 
         assert response_attempt_id == real_attempt_id
@@ -869,10 +875,9 @@ def test_memory_maintain_action_dispatches_maintain(
             cookie,
             csrf,
             operation="memory_maintain",
-            arguments={
-                "task": "staleness_sweep",
-                "owner_scope": {"kind": "project", "id": project_id},
-            },
+            # 72-T04 (D3): `legacy` mode maintains only the sources it is told and
+            # only `legacy_owner_scope(root)` (no declared owner).
+            arguments={"task": "staleness_sweep", "sources": ["source-a"]},
             grants={"cache_write": True},
         )
         assert status == 200
