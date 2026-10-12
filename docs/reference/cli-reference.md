@@ -38,9 +38,53 @@ On a narrow terminal (for example `COLUMNS=40`) the help keeps the start of ever
 
 ## Memory (Phase 61)
 
-`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY` and require `--session SOURCE`; all apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
+`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY`. In a project with a memory grant they read what the grant approves and `--session SOURCE` only narrows it; a revoked or expired grant, or an invalid policy, is denied. A project that was never enrolled keeps the legacy rule: the read needs a `--session SOURCE`, and without one it is skipped and reads nothing. All apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
 
 Bare `rush memory [--offset N --generation TOKEN] [--include-internal] [--json]` (no subcommand) is a read-only overview: this project's 20 most recent useful memory records, newest first (archived, expired, and internal bookkeeping rows hidden by default; pass `--include-internal` to also show them). `--offset`/`--generation` page through older rows — `--offset` above 0 requires the `--generation` continuation token the previous page printed. A store needing migration reports `migration_required`; an unreadable store reports `corrupt`.
+
+### Memory command leaves
+
+Every `rush memory` leaf, the operation it runs, and what it does. Each leaf accepts `--json` and `--help`. A leaf that changes the store applies only with `--allow-cache-write`; every permission flag is per call and never implied.
+
+| Command | Operation | What it does |
+|---|---|---|
+| `rush memory ask` | `ask` | Asks the memory store a question about a subject. |
+| `rush memory recall` | `recall` | Recalls memory artifacts for a subject and query. |
+| `rush memory list` | `list` | Lists defended memory artifacts for a subject. |
+| `rush memory expand` | `expand` | Expands the exact stored bytes of one artifact version by id and version, as `base64` or `utf8`. |
+| `rush memory history` | `history` | Shows the version history of one artifact; `--historical` includes archived and superseded versions. |
+| `rush memory explain` | `explain` | Explains the retrieval decision for one artifact id or for a `--query`. |
+| `rush memory related` | `related` | Traverses the authorized relations from one seed artifact, bounded. |
+| `rush memory write` | `write` | Writes a memory artifact. |
+| `rush memory promote` | `promote` | Evaluates and persists a candidate artifact for `STATED` promotion. |
+| `rush memory edit` | `edit` | Edits one artifact under compare-and-swap; previews unless applied. |
+| `rush memory archive` | `archive` | Sets or clears the archived marker on one artifact; previews unless applied. |
+| `rush memory delete` | `delete` | Batch-deletes artifacts by id, revision and scope; previews unless applied. |
+| `rush memory link` | `link` | Adds a versioned evidence edge between two artifacts. |
+| `rush memory consolidate` | `consolidate` | Consolidates duplicate episodes into one summary. |
+| `rush memory maintain` | `maintain` | Runs a bounded maintenance sweep, for example `--task expiry_sweep`. |
+| `rush memory preference` | `preference` | Resolves, records, corrects, ends or migrates preferences (actions `resolve`, `record`, `correct`, `end_task`, `migrate`) from an `--input` file. |
+| `rush memory intent` | `intent` | Creates, confirms, supersedes or checks confirmed user intent. |
+| `rush memory recipe` | `recipe` | Records, resolves or records the outcome of a reusable recipe. |
+| `rush memory plan-checks` | `plan_checks` | Ranks required checks by evidence without dropping required membership. |
+| `rush memory last-success-diagnose` | `last_success_diagnose` | Compares a current failure with the last successful behavior. |
+| `rush memory prepare` | `prepare` | Prepares bounded repair evidence for a failing task; executes no commands. |
+| `rush memory resume` | `resume` | Resumes bounded repair evidence for a failing task; executes no commands. |
+| `rush memory verify-attempt` | `verify_attempt` | Runs a real sandboxed check against a proposed patch. |
+| `rush memory handoff` | `handoff` | Prepares a bounded cross-tool memory handoff. |
+| `rush memory receive` | `receive` | Receives a bounded delta as a restricted handoff receiver. |
+| `rush memory capsule preview-export` | `capsule` | Previews a portable memory capsule export and writes nothing. |
+| `rush memory capsule export` | `capsule` | Exports a portable memory capsule to a file, with the `--expected-digest` the preview printed. |
+| `rush memory capsule preview-import` | `capsule` | Previews importing a capsule from `--input FILE` and writes nothing. |
+| `rush memory capsule import` | `capsule` | Imports a previewed capsule with `--apply`, after you confirm each constraint with `--confirm-constraint-id` and pass the preview's `--expected-digest`. Imported rows are `IMPORTED`, never `STATED`. |
+| `rush memory capsule bridge` | `capsule` | Reserved for the bridge action; until the bridge ships it returns `E_INPUT` with reason `bridge_not_available` and changes nothing. |
+| `rush memory capsule mapping create` | `capsule` | Previews or, with `--approve`, records a capsule owner mapping. |
+| `rush memory capsule mapping revoke` | `capsule` | Previews or, with `--approve`, revokes a capsule owner mapping. |
+| `rush memory grant` | none | Previews or, with `--approve`, writes a memory grant for the project; `--overlay` grants the personal overlay. |
+| `rush memory revoke` | none | Previews or, with `--approve`, revokes a memory grant; the next call on every route is denied. |
+| `rush memory bind-store` | none | Previews or, with `--approve --expected-digest`, binds the existing store to its grant. |
+
+`grant`, `revoke` and `bind-store` change the memory policy and run only from the CLI; no MCP operation writes a grant. In a project with a grant, every read resolves through it and `--session SOURCE` only narrows what the grant approves. A revoked grant, an expired grant and an invalid policy deny every route with `E_PERMISSION` and a `next_action`.
 
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 

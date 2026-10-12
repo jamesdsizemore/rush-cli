@@ -98,6 +98,18 @@ jobs:
           uv run --no-sync env -u PYTHONPATH -u NO_COLOR python -m pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
           uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'posix-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
 
+      - name: Verify T09 live installed-artifact acceptance (Linux)
+        if: ${{ !cancelled() }}
+        env:
+          TERM: xterm-256color
+          RUSH_T09_LIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-linux-x86_64.tar.gz
+          RUSH_T09_LIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_T09_LIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-t09-live
+        run: |
+          mkdir -p "$RUSH_T09_LIVE_RECEIPT_DIR"
+          uv run --no-sync pytest tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes tests/test_phase72_memory_acceptance.py::test_t09_live_pas_import tests/test_phase72_memory_acceptance.py::test_t09_live_pty_walkthrough -q -rA
+          uv run --no-sync python -c "import json, os; from pathlib import Path; paths = sorted(Path(os.environ['RUSH_T09_LIVE_RECEIPT_DIR']).glob('*.json')); assert paths; [print('RUSH_T09_RECEIPT=' + p.name + ' ' + json.dumps(json.loads(p.read_text()), sort_keys=True)) for p in paths]"
+
       - name: Release gate typecheck (mypy)
         if: ${{ !cancelled() }}
         run: uv run mypy src/rush
@@ -325,6 +337,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           uv run pytest "tests/test_phase72_memory_public.py::test_t06_import_path_containment" "tests/test_phase72_memory_public.py::test_t06_import_crash_after_link" -q -rA
 
+      - name: Verify Windows Phase 72 acceptance contracts
+        if: ${{ !cancelled() }}
+        run: |
+          uv run pytest tests/test_phase72_memory_acceptance.py -q -rA -m windows_only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify T09 live installed-artifact acceptance (Windows)
+        if: ${{ !cancelled() }}
+        env:
+          RUSH_T09_LIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-windows-x86_64.zip
+          RUSH_T09_LIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_T09_LIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-t09-live
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:RUSH_T09_LIVE_RECEIPT_DIR | Out-Null
+          uv run pytest tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes tests/test_phase72_memory_acceptance.py::test_t09_live_pas_import tests/test_phase72_memory_acceptance.py::test_t09_live_windows_console -q -rA
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          uv run --no-sync python -c "import json, os; from pathlib import Path; paths = sorted(Path(os.environ['RUSH_T09_LIVE_RECEIPT_DIR']).glob('*.json')); assert paths; [print('RUSH_T09_RECEIPT=' + p.name + ' ' + json.dumps(json.loads(p.read_text()), sort_keys=True)) for p in paths]"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   artifact-probes:
     name: Isolated artifact probes (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -407,3 +438,20 @@ jobs:
             dist/rush-darwin-*.tar.gz
             dist/SHA256SUMS
             dist/SOURCE_COMMIT
+
+      - name: Verify T09 live installed-artifact acceptance (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          TERM: xterm-256color
+          RUSH_T09_LIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_T09_LIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-t09-live
+        run: |
+          unset PYTHONPATH PYTHONHOME
+          archives=(dist/rush-darwin-*.tar.gz)
+          test "${#archives[@]}" -eq 1
+          test -f "${archives[0]}"
+          export RUSH_T09_LIVE_ARCHIVE="$GITHUB_WORKSPACE/${archives[0]}"
+          mkdir -p "$RUSH_T09_LIVE_RECEIPT_DIR"
+          uv run --no-sync --python 3.12 pytest tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes tests/test_phase72_memory_acceptance.py::test_t09_live_pas_import tests/test_phase72_memory_acceptance.py::test_t09_live_pty_walkthrough -q -rA
+          uv run --no-sync --python 3.12 python -c "import json, os; from pathlib import Path; paths = sorted(Path(os.environ['RUSH_T09_LIVE_RECEIPT_DIR']).glob('*.json')); assert paths; [print('RUSH_T09_RECEIPT=' + p.name + ' ' + json.dumps(json.loads(p.read_text()), sort_keys=True)) for p in paths]"

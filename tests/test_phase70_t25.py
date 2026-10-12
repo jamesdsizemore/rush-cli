@@ -541,16 +541,17 @@ def _resolve_citation(citation: str) -> str | None:
         return f"{citation!r}: unknown command {root_name!r}"
 
     effective = root_cmd
-    if getattr(root_cmd, "commands", None) and len(rest) > 1:
-        sub_token = rest[1]
-        if not sub_token.startswith("-") and not _is_placeholder_token(sub_token):
-            candidates = re.split(r"[|/]", sub_token)
-            if not all(c in root_cmd.commands for c in candidates):
-                return (
-                    f"{citation!r}: unknown subcommand {sub_token!r} of {root_name!r}"
-                )
-            if len(candidates) == 1:
-                effective = root_cmd.commands[candidates[0]]
+    for sub_token in rest[1:]:
+        if not isinstance(effective, click.Group):
+            break
+        if sub_token.startswith("-") or _is_placeholder_token(sub_token):
+            break
+        candidates = re.split(r"[|/]", sub_token)
+        if not all(c in effective.commands for c in candidates):
+            return f"{citation!r}: unknown subcommand {sub_token!r} of {root_name!r}"
+        if len(candidates) != 1:
+            break
+        effective = effective.commands[candidates[0]]
 
     valid_opts = {"--help"}
     for param in getattr(effective, "params", []):

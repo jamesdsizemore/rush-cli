@@ -153,10 +153,16 @@ Inside the Memory section (`M`, or section `4`):
 | Key | Action |
 |---|---|
 | `↓`/`j`, `↑`/`k` | Move the selection |
-| `]` / `[` | Page forward / backward through the record list; in detail, scroll visible content, related records, and receipts (or return to the cached prior content page) |
+| `Tab` / `Shift+Tab` | Move keyboard focus through search, filter, list, inspect, and edit; `Enter` then does what `/`, `f`, `x`, `x`, or `e` does for the focused control |
+| `]` / `[` | Page forward / backward through the record list by page cursor; in detail, scroll visible content, related records, and receipts (or return to the cached prior content page) |
 | `f` | Open the filter form (`Tab` cycles fields, `Enter` applies, `Escape` cancels) |
-| `S` | Cycle the subject filter |
+| `S` | Cycle the subject filter through all seven subjects: `active_context`, `episodic`, `preference`, `failure`, `architectural_decision`, `domain_knowledge`, and `skill_pattern` |
 | `/` | Search records by text |
+| `v` | Show the history of the selected record: every stored version, oldest first, with its trust, freshness, and integrity |
+| `E` | Explain the selected record, or the typed search when no record is selected: the recorded rationale, contrary evidence, what was tried, affected code references, and unknowns |
+| `c` | Correct the selected record: `Tab` cycles kind, reason, and content, `Space` on kind cycles correct, reject, and supersede, `Enter` previews, `y` applies, `Escape` cancels |
+| `I` | Review a portable memory capsule import: type or paste the capsule path, `Enter` previews it, `Space` marks a constraint to confirm, `y` applies, `Escape` cancels |
+| `b` | Toggle expanded content between `base64` and `utf8`; the next `x` fetches the pages again in the chosen form |
 | `Space` | Select/deselect the highlighted record for a bulk action (`>[x]` marks a selected row) |
 | `n` | Create a new memory record (`Tab` cycles fields, `Enter` previews and submits, `Escape` cancels) |
 | `x` | Show the selected record's stored content, related records, and recorded write/use receipts; press again for the next bounded content page |
@@ -184,6 +190,58 @@ Related records appear only when visible to the current project. Receipts name r
 operations and their version. Promotion requires genuinely corroborating, current
 records with the same subject, content, owner, and symbol from distinct sources; one source
 is denied. A changed corroborating record refuses promotion at confirmation.
+
+To open the Memory section and search records for a word, press these keys in order, typing the word in place of `needle`:
+
+<!-- t09-example: tui-memory-search -->
+```text
+M / needle enter
+```
+
+### What the Memory section shows and why
+
+What the section lists depends on whether the project has a memory grant. With a grant, the
+section lists what the grant approves, and a source filter only narrows that list. A project
+that was never enrolled keeps the legacy rule, where the section needs named sources. Each row
+shows the record id and version, owner, trust, freshness, and source. `v` and `E` show cited
+exact records only; where no rationale was recorded the explanation says it is unknown, and no
+model is called. Record text from any source, including hostile HTML or terminal control
+sequences, is shown as escaped literal text and is never interpreted.
+
+A correction (`c`) never edits a version in place: applying it stores a new version, and the
+old version then answers `conflict` instead of returning its content. A conflict keeps the
+text you typed in the correction or edit form, shows `edit conflict on ID vN -- [r] refresh and
+re-review`, and waits for `r`. `Escape` leaves every memory form with nothing written and puts
+focus back on the list.
+
+Imported capsule records arrive as imported and unverified, and an import changes nothing until
+you confirm it with `y`.
+
+### Memory states
+
+When a request cannot show records, the section prints `state: STATE: reason` and an
+`action:` line that says what to do next:
+
+| State | Meaning | Action shown |
+|---|---|---|
+| `absent` | No memory store exists for this project | Record one with a memory write |
+| `empty` | The request succeeded and nothing matches | Change the subject, query, or filters |
+| `denied` | The grant or the legacy source rule does not allow the read | Request access with `rush memory grant`, or name a source |
+| `revoked` | The grant was revoked | Ask the project owner to grant memory access again |
+| `expired` | The grant expired | Renew the grant |
+| `conflict` | The record changed since you reviewed it | Refresh, review the current version, then apply again |
+| `partial` | More results exist, or a size limit stopped the page | Open the next page, or raise the size limit |
+| `server_error` | The request failed | Retry the request; if it fails again run `rush doctor` |
+
+The classifier also reports `migration_required`, `corrupt`, `busy`, `restart`, `not_visible`,
+`invalid`, and `digest_mismatch`, each with its own action. `digest_mismatch` withholds content
+whose bytes do not match the recorded payload hash.
+
+### Memory scope and token counts
+
+There is no claim of isolation against mutually hostile processes running as the same OS user.
+
+Rush counts memory tokens using the request's declared encoding, defaulting to `cl100k_base`. Counts for another host tokenizer are estimates. An admitted delivered frame obeys its UTF-8 `max_bytes`; if that tokenizer consumes at least one byte per token, its token count cannot exceed those delivered bytes. No measured cross-tokenizer margin is claimed.
 
 ---
 
@@ -311,6 +369,29 @@ The Overview section reports the project's registration state and offers a next 
 | Registration ambiguous | "Registration ambiguous: `<reason>`" | More than one registered project matches this root; resolve the ambiguity outside the TUI |
 
 ---
+
+## Memory claim status
+
+Each row states what the repository holds at the revision shown. `integrated` means the named test drives the route and covers the access forms. The terminal walkthrough on an installed binary is lane `pty-terminal` in `docs/reports/phase-72-memory-acceptance.md#lanes`, and it is open until that lane runs.
+
+| Claim | Status | Revision | Route | Evidence |
+|---|---|---|---|---|
+| `tui:search` The Memory section searches records by typed text with `/`, or with `Enter` when focus is on search | `integrated` | `392f882` | Memory section, `/` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows` |
+| `tui:filter` `f` opens the filter form for owner, source, trust, freshness, and archived records | `integrated` | `392f882` | Memory section, `f` | `tests/test_phase72_memory_ui.py::test_t07_route_mode_matrix`; `tests/test_phase72_memory_ui.py::test_t07_shared_user_journey` |
+| `tui:subject-cycle` `S` reaches all seven subjects and the list equals the memory tool result for each | `integrated` | `392f882` | Memory section, `S` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows`; `tests/test_phase72_memory_ui.py::test_t07_shared_user_journey` |
+| `tui:paging` `]` and `[` page the record list by cursor and return to the earlier page | `integrated` | `392f882` | Memory section, `]` and `[` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows` |
+| `tui:expand-exact-version` `x` shows the exact selected version in bounded pages, and a changed or revoked version cannot be expanded | `integrated` | `392f882` | Memory section, `x` | `tests/test_phase72_memory_ui.py::test_t07_shared_user_journey`; `tests/test_memory_retrieval.py::test_revoked_or_changed_version_cannot_expand` |
+| `tui:history` `v` shows every stored version of the selected record | `integrated` | `392f882` | Memory section, `v` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows`; `tests/test_phase72_memory_public.py::test_t06_history_and_explain` |
+| `tui:explain` `E` shows cited rationale, contrary evidence, what was tried, affected code references, and unknowns, and says unknown where nothing was recorded | `integrated` | `392f882` | Memory section, `E` | `tests/test_phase72_memory_ui.py::test_t07_explain_buckets_cli_and_tui` |
+| `tui:correct` `c` previews a correction, rejection, or supersession and applies it as a new version on `y` | `integrated` | `392f882` | Memory section, `c` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows` |
+| `tui:import-review` `I` shows the same import review state as the command line and applies only after confirmation | `integrated` | `392f882` | Memory section, `I` | `tests/test_phase72_portable_memory_policy.py::test_import_review_cli_tui_same_state` |
+| `tui:representation-toggle` `b` switches expanded content between `base64` and `utf8` and fetches the pages again | `integrated` | `392f882` | Memory section, `b` | `tests/test_phase72_memory_ui.py::test_t07_cache_key_request_identity` |
+| `tui:denied-state` A read the grant or legacy source rule refuses shows state `denied` with a next action and no row content | `integrated` | `392f882` | Memory section | `tests/test_phase72_memory_ui.py::test_t07_ui_state_classifier` |
+| `tui:revoked-state` A revoked grant shows state `revoked` and the next request never serves a cached page | `integrated` | `392f882` | Memory section | `tests/test_phase72_memory_ui.py::test_t07_ui_state_classifier`; `tests/test_phase72_memory_ui.py::test_t07_cache_cleared_on_revoke_expire_switch` |
+| `tui:expired-state` An expired grant shows state `expired` and the next request never serves a cached page | `integrated` | `392f882` | Memory section | `tests/test_phase72_memory_ui.py::test_t07_ui_state_classifier`; `tests/test_phase72_memory_ui.py::test_t07_cache_cleared_on_revoke_expire_switch` |
+| `tui:conflict-state` A version conflict keeps the text typed in the form and waits for `r` to refresh | `integrated` | `392f882` | Memory section, `r` | `tests/test_phase70_tui_usability.py::test_t28d_memory_workflows`; `tests/test_phase72_memory_ui.py::test_t07_ui_state_classifier` |
+| `tui:hostile-text` Hostile HTML and terminal control sequences in record text render as escaped literal text | `integrated` | `392f882` | Memory section | `tests/test_phase72_memory_ui.py::test_t07_tui_hostile_terminal_text` |
+| `tui:installed-walkthrough` The keyboard journey above was driven on an installed binary under a terminal and recorded as machine receipts | `proposed` | `392f882` | `rush ui` | — |
 
 ## Next steps
 

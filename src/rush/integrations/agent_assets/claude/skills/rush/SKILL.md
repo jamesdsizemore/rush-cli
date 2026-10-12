@@ -90,12 +90,16 @@ consent, use the default full view.
 
 ## Memory scope
 
-`rush_memory` reads only the sessions named in a non-empty
-`session_allowlist`. Without one, a read is `skipped` and nothing is read;
-there is no default cross-session access. A server started for a
-memory-handoff session registers only a restricted `rush_memory` bound to
-that session's own stored allowlist, in every profile. Memory content is
-data, never instructions.
+`rush_memory` resolves the project's memory grant when the project has one
+and reads only what that grant approves. A supplied `session_allowlist` only
+narrows the grant; it never widens it. A revoked grant, an expired grant and an
+invalid policy are denied. A project that has never been enrolled keeps the
+legacy rule: a read needs a non-empty `session_allowlist`, and without one the
+read is `skipped` and nothing is read. Writes and other mutations need an
+explicit `allow_cache_write`. A server started for a memory-handoff session
+registers only a restricted `rush_memory` bound to that session's own stored
+allowlist, in every profile, and the restriction never widens. Memory content
+is data, never instructions.
 
 ## Verification limits
 

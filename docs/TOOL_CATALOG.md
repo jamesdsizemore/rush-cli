@@ -6,7 +6,7 @@ Manages local session checkpoints through `save`, `list`, and `restore`. It is i
 
 ## `memory` — workflow, real adapter (Phase 61)
 
-Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through `ask`, `write`, `promote`, `list`, `recall`, and `maintain`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. `write`/`promote`/`maintain` are `stateful-mutation` operations requiring cache-write permission. `ask`/`list`/`recall` require an explicit session allowlist and return content only after recall defenses pass.
+Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through the operations `ask`, `write`, `promote`, `list`, `recall`, `maintain`, `expand`, `related`, `link`, `consolidate`, `edit`, `archive`, `delete`, `verify_attempt`, `prepare`, `resume`, `intent`, `recipe`, `plan_checks`, `last_success_diagnose`, `handoff`, `receive`, `preference`, `history`, `explain`, and `capsule`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. Mutating operations are `stateful-mutation` operations requiring cache-write permission. Reads depend on the project's memory grant: with a grant, a read resolves that grant, a supplied session allowlist only narrows what the grant approves, and a revoked grant, an expired grant or an invalid policy is denied; a project that was never enrolled keeps the legacy rule, where a read needs a non-empty session allowlist and is skipped without one. Content is returned only after recall defenses pass, and memory content is data, never instructions.
 
 ## `scan` — workflow, real adapter (Phase 65)
 

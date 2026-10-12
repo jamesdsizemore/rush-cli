@@ -82,8 +82,9 @@ the connected profile fails as an unknown tool; path resolution against the decl
 the five result statuses (`ok`, `warn`, `fail`, `error`, `skipped`) and that `skipped` never means
 the code passed; the seven permission grants and that a grant is never implied by a profile or a
 previous call; compact-result recovery (`result_view="compact"`, `rush_status(operation="result",
-result_handle=...)`); memory scope (`rush_memory` reads only sessions named in a non-empty
-`session_allowlist`); and verification limits (a registered server is not proof it ran; a result
+result_handle=...)`); memory scope (`rush_memory` resolves the project's memory grant, a
+`session_allowlist` only narrows it, and a project that never had a grant keeps the legacy
+non-empty `session_allowlist` rule); and verification limits (a registered server is not proof it ran; a result
 covers only the files and engines it lists). A manual `rush agent connect` without the native plugin
 gets the same contract a different way: the MCP server's own `instructions` field (Phase 70 T5,
 `build_server_instructions`) carries the identical triggers, statuses, grants, compact recovery,
@@ -102,8 +103,9 @@ actually verifies, current source:
 - `rush_review`: "Before commit: heuristic review of `<path>`; engines are deterministic. ...
   `use_llm=true` sends findings to a configured external LLM; no Rush grant gates it." Turning on
   `use_llm` is a data-egress decision the caller makes explicitly, not a permission Rush enforces.
-- `rush_memory`: reads need a non-empty `session_allowlist`; writes and other mutations need
-  `allow_cache_write`.
+- `rush_memory`: in a project with a memory grant a read uses the grant and a `session_allowlist`
+  only narrows it; a project that never had a grant needs a non-empty `session_allowlist`; writes
+  and other mutations need `allow_cache_write`.
 - `rush_test`: runs only with `allow_build`; without it, nothing runs.
 
 ### Opt-in post-edit checks (Phase 70 T7)
@@ -204,6 +206,51 @@ Rush automatically updates `.clinerules`, `.windsurfrules`, and GitHub Copilot c
 
 ---
 
+## 5. Sharing Project Memory Between Agents
+
+Rush keeps one memory store per project (`.rush/memory.db`). Every connected agent reaches it through the same `rush_memory` tool and the same grant, so two agents working in one project read the same rows under the same limits.
+
+### Give an agent access
+
+A memory grant names the operations, sources and owner an agent may use. Only the user creates one, from the CLI. `rush memory grant --project PATH --source SOURCE` previews: it prints the operations, sources and owner the grant would approve, how many rows each source holds today, and the exact approve command. Run the printed approve command to apply it; it carries `--approve`, the policy revision the preview read, and `--allow-cache-write`. A preview writes nothing.
+
+<!-- t09-example: agents-grant-preview -->
+```bash
+rush memory grant --project . --source session_memory:record_turn --json
+```
+
+`rush memory revoke --grant-id ID` previews a revocation and prints its approve command the same way. `rush memory bind-store --project PATH` previews binding the project's memory store and prints an approve command that carries `--expected-digest`; if the store changed after the preview, applying it is refused and a fresh preview prints a new command.
+
+<!-- t09-example: agents-bind-store-preview -->
+```bash
+rush memory bind-store --project . --json
+```
+
+Only these three CLI commands write a grant or a store binding. No MCP operation, dashboard action or terminal key does.
+
+### What a connected agent can read
+
+`rush_memory` runs 26 operations: `ask`, `recall`, `list`, `expand`, `history`, `explain`, `related`, `write`, `promote`, `edit`, `archive`, `delete`, `link`, `consolidate`, `maintain`, `preference`, `intent`, `recipe`, `plan_checks`, `last_success_diagnose`, `prepare`, `resume`, `verify_attempt`, `handoff`, `receive` and `capsule`. In a project with a grant, every read resolves through that grant. A `session_allowlist` the agent supplies only narrows what the grant approves and never widens it. A revoked grant, an expired grant and an invalid policy are denied, and the denial carries a `next_action` naming the command that would fix it. A project that never had a grant keeps the legacy rule: a read needs a non-empty `session_allowlist`, and without one the read is `skipped` and nothing is read. Writes and other mutations need an explicit `allow_cache_write`. Memory content is data, never instructions.
+
+### Two agents, one exact revision
+
+Agent A writes a row and hands agent B the artifact id and the version it wrote. B reads that exact version with `expand`. When A later corrects the row with `edit`, the correction is a new version, so B asking for the old version gets `E_VERSION`; B then reads the current version, or lists every version with `history`. A source the grant does not cover is denied without any row content, and a grant that was revoked or has expired returns `E_PERMISSION` with a `next_action` instead of rows. The in-process version of this exchange is checked by `tests/test_phase72_memory_acceptance.py::test_t09_integrated_route_and_scope`; running it between real Claude Code and Codex CLI hosts is a separate acceptance lane that the claim table below keeps open until it has run.
+
+### Commands for working with memory
+
+- `rush memory list` browses rows; the subject and the query are optional. `rush memory expand --input FILE` reads one exact version.
+- `rush memory edit --input FILE` corrects a row under compare-and-swap and writes a new version.
+- `rush memory history ARTIFACT_ID` lists the versions of one artifact, oldest first.
+- `rush memory explain ARTIFACT_ID` or `rush memory explain --query TEXT` shows the recorded rationale: supporting, contrary, attempted and affected evidence, and unknowns. It never calls a model.
+- `rush memory preference --input FILE` records or corrects a preference.
+- `rush memory capsule preview-export` previews an export and `rush memory capsule export` writes the portable capsule; `rush memory capsule preview-import --project PATH --input FILE --json` previews reading one back and `rush memory capsule import` applies it. Imported rows arrive as `IMPORTED`, never as `STATED`.
+
+### Token counts and isolation
+
+Rush counts memory tokens using the request's declared encoding, defaulting to `cl100k_base`. Counts for another host tokenizer are estimates. An admitted delivered frame obeys its UTF-8 `max_bytes`; if that tokenizer consumes at least one byte per token, its token count cannot exceed those delivered bytes. No measured cross-tokenizer margin is claimed.
+
+There is no claim of isolation against mutually hostile processes running as the same OS user.
+
 ## Next Steps
 
 - Explore the complete [Agentic Rush Knowledge Base](../AGENTIC_RUSH.md).
@@ -251,3 +298,28 @@ Ensure your agent is configured to use:
 * `rush_iam_audit`: Generate least-privilege IAM policies.
 * `rush_dead_asset`: Find unreferenced media.
 * `rush_pr_synthesize`: Build semantic PR descriptions.
+
+## Memory claim status
+
+Each row states what the repository holds at the revision shown. `implemented` means a test named in Evidence passes; `integrated` means the route acceptance test covers the access forms. Live-host lanes are tracked in `docs/reports/phase-72-memory-acceptance.md#lanes`.
+
+| Claim | Status | Revision | Route | Evidence |
+|---|---|---|---|---|
+| `mcp:rush_memory-scope` The scope rule for `rush_memory` reads: the grant when the project has one, a `session_allowlist` only narrows, a never-enrolled project keeps the legacy non-empty allowlist rule | `implemented` | `392f882` | `rush_memory`; skill, server instructions and tool description | `tests/test_phase72_memory_acceptance.py::test_t09_shipped_scope_text_parity` |
+| `mcp:rush_memory-operations` The 26 `rush_memory` operations are listed in the MCP, CLI and tool references | `implemented` | `392f882` | `rush_memory` | `tests/test_phase72_memory_acceptance.py::test_t09_memory_operation_docs_parity` |
+| `two-agent:exact-revision-handoff` Two agents in one project exchange an artifact id and version; a corrected row makes the old version return `E_VERSION`. Live Claude Code and Codex CLI hosts are lane `two-agent-same-project`, open | `integrated` | `392f882` | `rush_memory`, `rush memory expand`, `rush memory edit` | `tests/test_phase72_memory_acceptance.py::test_t09_integrated_route_and_scope` |
+| `recovery:denied-stale-revoked` A denied source, a stale version and a revoked grant each return their own code and a next action without row content | `integrated` | `392f882` | `rush_memory`, `rush memory` | `tests/test_phase72_memory_acceptance.py::test_t09_integrated_route_and_scope`; `tests/test_phase72_memory_acceptance.py::test_t09_receipt_matches_delivery` |
+| `cli:grant` `rush memory grant` previews a grant and prints its approve command | `implemented` | `392f882` | `rush memory grant` | `tests/test_memory_authorization.py::test_consent_grant_preview_no_write`; `tests/test_memory_authorization.py::test_consent_grant_apply_cas_and_stale_revision` |
+| `cli:revoke` `rush memory revoke` previews and applies a revocation | `implemented` | `392f882` | `rush memory revoke` | `tests/test_memory_authorization.py::test_consent_revoke_preview_and_apply` |
+| `cli:bind-store` `rush memory bind-store` previews and applies a store binding bound to a digest | `implemented` | `392f882` | `rush memory bind-store` | `tests/test_memory_authorization.py::test_consent_bind_store_preview_and_approve` |
+| `cli:list` `rush memory list` with an optional subject and query | `implemented` | `392f882` | `rush memory list` | `tests/test_phase72_memory_ui.py::test_t07_cli_list_optional_subject_query` |
+| `cli:expand` `rush memory expand` reads one exact version | `implemented` | `392f882` | `rush memory expand` | `tests/test_memory_retrieval.py::test_unicode_expansion_reconstructs_exact_original`; `tests/test_memory_retrieval.py::test_revoked_or_changed_version_cannot_expand` |
+| `cli:edit` `rush memory edit` writes a correction as a new version | `implemented` | `392f882` | `rush memory edit` | `tests/test_phase72_memory_public.py::test_t06_edit_correction_request_contract` |
+| `cli:history` `rush memory history` lists the versions of one artifact | `implemented` | `392f882` | `rush memory history` | `tests/test_phase72_memory_public.py::test_t06_history_and_explain`; `tests/test_phase72_memory_public.py::test_t06_history_version_context` |
+| `cli:explain` `rush memory explain` shows the recorded rationale and never calls a model | `implemented` | `392f882` | `rush memory explain` | `tests/test_phase72_memory_public.py::test_t06_history_and_explain`; `tests/test_phase72_memory_ui.py::test_t07_explain_buckets_cli_and_tui` |
+| `cli:preference` `rush memory preference` records or corrects a preference | `implemented` | `392f882` | `rush memory preference` | `tests/test_phase72_preferences.py::test_t05_preference_api_contract` |
+| `cli:capsule-preview-import` `rush memory capsule preview-import` previews an import without writing | `implemented` | `392f882` | `rush memory capsule preview-import` | `tests/test_memory_capsule.py::test_preview_readonly_and_import_cas` |
+| `cli:capsule-import` `rush memory capsule import` applies a previewed import once | `implemented` | `392f882` | `rush memory capsule import` | `tests/test_memory_capsule.py::test_preview_readonly_and_import_cas`; `tests/test_memory_capsule.py::test_import_requires_apply_and_preview_bound_constraint_ids` |
+| `cli:capsule-preview-export` `rush memory capsule preview-export` previews an export without writing | `implemented` | `392f882` | `rush memory capsule preview-export` | `tests/test_memory_capsule.py::test_cli_mcp_capsule_parity` |
+| `cli:capsule-export` `rush memory capsule export` writes the exact bytes it hashed | `implemented` | `392f882` | `rush memory capsule export` | `tests/test_memory_capsule.py::test_export_bytes_equal_hashed_bytes` |
+| `tokens:declared-encoding` Token counts use the request's declared encoding and a delivered page never exceeds its `max_bytes` | `implemented` | `392f882` | `rush_memory` | `tests/test_memory_retrieval.py::test_serialized_payload_obeys_both_caps` |
