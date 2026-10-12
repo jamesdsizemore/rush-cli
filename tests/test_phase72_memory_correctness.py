@@ -1391,16 +1391,24 @@ def test_t01_relations_and_hybrid_never_disclose_excluded_neighbors(
     store.archive(
         "row-a2", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
     )
-    for target in ("row-a2", "row-b1", "row-c1"):
-        added = add_relation(
+    # 72-T03: add_relation now refuses archived and cross-owner endpoints, so the
+    # two ineligible edges are seeded as an older writer could have left them.
+    for target in ("row-a2", "row-b1"):
+        _t03_edge(
             store,
-            source_id="row-a1",
-            source_version=1,
-            target_id=target,
-            target_version=_version(store.db_path, target),
-            kind="depends_on",
+            ("row-a1", 1),
+            (target, _version(store.db_path, target)),
+            "depends_on",
         )
-        assert added["code"] == "OK", added
+    added = add_relation(
+        store,
+        source_id="row-a1",
+        source_version=1,
+        target_id="row-c1",
+        target_version=_version(store.db_path, "row-c1"),
+        kind="depends_on",
+    )
+    assert added["code"] == "OK", added
 
     _grant(auth, root, ALICE, data_root)
     access = MemoryAccess.resolve(root, operation="ask", data_root=data_root)
@@ -16788,8 +16796,10 @@ def _g2_related_supports() -> dict[str, dict[str, _G2Expect]]:
         "row_state": {
             "active": _ex("OK"),
             "archived": _ex("E_NOT_VISIBLE", exact=()),
-            "expired": _ex("OK", exact=()),
-            "tampered": _ex("OK", exact=()),
+            # 72-T03: the root is decided by the shared decision, so an expired or
+            # tampered root is not visible, as an archived one is.
+            "expired": _ex("E_NOT_VISIBLE", exact=()),
+            "tampered": _ex("E_NOT_VISIBLE", exact=()),
         },
     }
 
@@ -16963,6 +16973,15 @@ def _g2_nothing_committed(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) 
 
 def _g2_consolidate_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
     raw = _rd(out.body)
+    if "missing_no_marker" in cell.row and env.extra["transport"] != "cli":
+        # 72-T03 R2: a legacy allowlist with no policy marker resolves no owner (the
+        # CLI falls back to the project owner and reaches the episode search).
+        assert raw["code"] == "E_NOT_VISIBLE", raw
+        assert raw["data"] == {
+            "message": "memory consolidate owner_scope is not visible"
+        }, raw
+        assert out.committed == 0
+        return
     assert raw["code"] == "E_INPUT", raw
     assert raw["data"] == {"message": "no episodes found for symptom 'needle'"}, raw
     assert out.committed == 0
@@ -17066,7 +17085,8 @@ def _g2_more_specs() -> list[_G2Spec]:
         perm=True,
         supports={
             "store": {
-                "absent": _ex("E_INPUT", same=False, memory_same=False),
+                # 72-T03: an absent store has no visible endpoint to link.
+                "absent": _ex("E_NOT_VISIBLE", same=False, memory_same=False),
                 "old_schema": _ex(
                     "OK", same=False, memory_same=False, check=_g2_link_check
                 ),
@@ -17094,7 +17114,8 @@ def _g2_more_specs() -> list[_G2Spec]:
         },
         perm=True,
         allowlist=True,
-        ok_codes=frozenset({"E_INPUT"}),
+        # 72-T03 R2: a legacy allowlist with no policy marker has no visible owner.
+        ok_codes=frozenset({"E_INPUT", "E_NOT_VISIBLE"}),
         supports={
             "store": {
                 "absent": _ex("E_INPUT", same=False, memory_same=False),
@@ -17105,6 +17126,8 @@ def _g2_more_specs() -> list[_G2Spec]:
                 "off": _ex("E_PERMISSION"),
             },
         },
+        # 72-T03 B17: a consolidate grant also approves the summary's own source.
+        writer_family="consolidation",
         check_ok=_g2_consolidate_check,
         check_legacy=_g2_consolidate_check,
         request_strict=True,
@@ -21425,6 +21448,13 @@ def _g2_run_policy_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) ->
         assert out.code in ("E_INPUT", "E_PERMISSION") or out.status == "error", detail
         assert _g2_effects(route, env.root, env.data_root) == before, detail
         return
+    if row.endswith("owner-omitted") and route.key in ("link", "consolidate"):
+        # 72-T03 R2 (AM8): the fixture holds Alice and Bob grants, so the owner is
+        # required as an input error naming the field, with zero effects.
+        assert out.code == "E_INPUT", detail
+        assert _rd(out.body)["data"].get("field") == "owner_scope", detail
+        assert _g2_effects(route, env.root, env.data_root) == before, detail
+        return
     for suffix, expected in _G2_DENIAL_REASONS.items():
         if row.endswith("owner-omitted") and route.owner_fixed:
             break
@@ -22569,6 +22599,30 @@ def test_t01_existing_apply_and_historical_are_real_cells(
             assert out.code == "E_PERMISSION", detail
             assert out.reason == "operation_not_granted", detail
         assert _g2_effects(route, env.root, env.data_root) == before, route.ident
+
+    # 72-T03 R12 (72-T01 R22): the 72-T03 matrix obeys the same rule and the id grammar
+    # `[<transport>.]<route>-<dimension>-<value>[-...][-producer-<task>]`.
+    m3_ids = [p.id for p in _m3_params()]
+    assert len(m3_ids) == len(set(m3_ids))
+    grammar = re.compile(
+        r"^(inproc|mcp|bridge|cli|dashboard|tui|internal)\.[a-z0-9_]+-[A-Za-z0-9_-]+$"
+    )
+    assert [i for i in m3_ids if not grammar.match(i) or "=" in i] == []
+    staged = [i for i in m3_ids if "producer" in i]
+    assert all(re.search(r"-producer-\d+-T\d+(_CODEC)?$", i) for i in staged), staged
+    # Every apply cell of an existing writer and the historical related cell are real.
+    for writer in ("edit", "archive", "delete"):
+        assert (
+            f"internal.{writer}-member_mutation-{writer}-apply-apply" in m3_ids
+            or any(
+                i.startswith(f"internal.{writer}-member_mutation-{writer}-apply")
+                for i in m3_ids
+            )
+        ), writer
+    real_historical = [
+        i for i in m3_ids if "mode-historical" in i and "producer" not in i
+    ]
+    assert "inproc.related-mode-historical" in real_historical
 
 
 def test_t01_g2a_producer_staged_cells() -> None:
@@ -24490,3 +24544,5896 @@ def test_t01_fix3_continuity_session_memory_unavailable_on_old_schema_tamper(
         "records": [],
     }
     assert "planted" not in _dump(degraded)
+
+
+# --- 72-T03 relations and derived-memory validity (T006 design gate) ---------
+#
+# Bindings to committed T01/T02 code (T024): every `access` is a resolved
+# `MemoryAccess`. Link and consolidate use `MemoryAccess.resolve(operation="write")`
+# (T003 §4 maps `link`/`consolidate` to the `write` grant); reads use `ask`/`expand`;
+# T01-HIST is `MemoryAccess.resolve(operation="historical")` (the `history` grant);
+# T01-LEGACY is `MemoryAccess.legacy(root, allowlist)`; T01-RESOLVE is MemoryTool's
+# `read_access` at the default data root (HOME inside tmp_path).
+
+T03_ALICE_SOURCES = ("source-a", "source-s", "consolidation")
+T03_ALICE_OPS = ("write", "ask", "expand", "list", "bootstrap", "history")
+T03_BOB_OPS = ("ask", "expand", "list", "bootstrap")
+T03_ENDPOINT_BODY = {
+    "code": "E_NOT_VISIBLE",
+    "message": "relation endpoint is not visible",
+}
+T03_MISSING_ROOT = {
+    "code": "E_NOT_VISIBLE",
+    "items": [],
+    "complete": True,
+    "tokens": 0,
+    "bytes": 0,
+    "encoding": "cl100k_base",
+}
+
+
+def _t03_effects(root: Path, data_root: Path, *, tree: bool = True) -> dict[str, Any]:
+    """`_effects` without SQLite's `-wal`/`-shm` sidecars. A read-only count connection
+    (including `_effects` itself) leaves them once and they carry no logical state, so a
+    before/after comparison must not depend on whether a connection ran in between."""
+    state = _effects(root, data_root, tree=tree)
+    if state["root"] is not None:
+        state["root"] = {
+            key: value
+            for key, value in state["root"].items()
+            if not key.endswith(("-wal", "-shm"))
+        }
+    return state
+
+
+def _t03_tree(base: Path) -> list[str]:
+    return [p for p in _tree(base) if not p.endswith(("-wal", "-shm"))]
+
+
+def _t03_episode(**extra: Any) -> dict[str, Any]:
+    condition: dict[str, Any] = {"env": "ci", **extra}
+    return {
+        "kind": "observation",
+        "symptom": "timeout",
+        "condition": condition,
+        "attempt": "retry",
+        "outcome": "failed",
+    }
+
+
+def _t03_access(world: dict[str, Any], operation: str, **flags: Any) -> Any:
+    """D2 operation names: `link`, `consolidate`, `related`, `expand`, `history`,
+    `ask`; `historical=True` adds the `history` grant operation to a read."""
+    from rush.memory.retrieval import MemoryAccess
+
+    access = MemoryAccess.resolve(
+        world["root"],
+        operation=operation,
+        owner_scope=ALICE,
+        data_root=world["data_root"],
+        **flags,
+    )
+    assert access is not None, operation
+    return access
+
+
+def _t03_world(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    summary: bool = True,
+    alice_expires: float | None = None,
+) -> dict[str, Any]:
+    """The T006 §6 shared fixture: Alice and Bob grants through the real 73-T02
+    writers, m1 (Alice), m2 (Bob, same symptom, a distinct condition marker) and c1
+    (Alice), plus s1 = Alice's consolidation of `timeout` when `summary`."""
+    from rush.memory import authorization as auth
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    if alice_expires is None:
+        g1 = _grant(
+            auth, root, ALICE, data_root, sources=T03_ALICE_SOURCES, ops=T03_ALICE_OPS
+        )
+    else:
+        g1 = auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=ALICE,
+            approved_sources=list(T03_ALICE_SOURCES),
+            allowed_operations=list(T03_ALICE_OPS),
+            expected_policy_revision=_revision(auth, data_root),
+            consent=True,
+            expires_at=alice_expires,
+            data_root=data_root,
+        )
+    _grant(auth, root, BOB, data_root, sources=("source-a",), ops=T03_BOB_OPS)
+    _row(store, "m1", ALICE, "", subject="episodic", content=_t03_episode())
+    _row(
+        store,
+        "m2",
+        BOB,
+        "",
+        subject="episodic",
+        content=_t03_episode(who="bob-marker"),
+    )
+    _row(store, "c1", ALICE, "", content={"text": "timeout retry succeeds on ci"})
+    world: dict[str, Any] = {
+        "auth": auth,
+        "data_root": data_root,
+        "root": root,
+        "store": store,
+        "g1": g1,
+    }
+    for key, operation, flags in (
+        ("write", "link", {}),
+        ("consolidate", "consolidate", {}),
+        ("ask", "ask", {}),
+        ("expand", "expand", {}),
+        ("historical", "related", {"historical": True}),
+        ("history", "history", {}),
+    ):
+        world[key] = _t03_access(world, operation, **flags)
+    if summary:
+        from rush.memory.consolidation import consolidate_episodes
+
+        result = consolidate_episodes(
+            store,
+            symptom="timeout",
+            session_allowlist=None,
+            access=world["consolidate"],
+            source="source-s",
+        )
+        assert result["code"] == "OK", result
+        world["s1"] = result["summary"]["id"]
+    return world
+
+
+def _t03_edge(
+    store: TypedArtifactStore,
+    source: tuple[str, int],
+    target: tuple[str, int],
+    kind: str,
+) -> None:
+    """A raw `memory_relations` row, as an older writer could have left it."""
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "INSERT INTO memory_relations (source_id, source_version, target_id, "
+            "target_version, kind, origin_ref, created_at) VALUES (?,?,?,?,?,?,?)",
+            (*source, *target, kind, None, time.time()),
+        )
+        conn.commit()
+
+
+def _t03_edges(store: TypedArtifactStore) -> int:
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM memory_relations").fetchone()[0])
+
+
+def _t03_link(
+    store: TypedArtifactStore,
+    source: tuple[str, int],
+    target: tuple[str, int],
+    kind: str,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    from rush.memory.relations import add_relation
+
+    return add_relation(
+        store,
+        source_id=source[0],
+        source_version=source[1],
+        target_id=target[0],
+        target_version=target[1],
+        kind=kind,
+        **kwargs,
+    )
+
+
+def _t03_related(
+    store: TypedArtifactStore, artifact_id: str, version: int, **kwargs: Any
+) -> dict[str, Any]:
+    from rush.memory.relations import related_artifacts
+
+    args: dict[str, Any] = {"session_allowlist": None}
+    args.update(kwargs)
+    return related_artifacts(store, artifact_id=artifact_id, version=version, **args)
+
+
+def _t03_recall_ids(store: TypedArtifactStore, access: Any) -> list[str]:
+    from rush.memory.retrieval import recall_page
+
+    page = recall_page(store, subject="episodic", query="timeout", access=access)
+    assert page["code"] == "OK", page
+    return _ids(page)
+
+
+def _t03_current(store: TypedArtifactStore, artifact_id: str) -> MemoryArtifact:
+    artifact = store.get_current(artifact_id)
+    assert artifact is not None, artifact_id
+    return artifact
+
+
+def _t03_summary_current(world: dict[str, Any], content: Any, access: Any) -> bool:
+    from rush.memory.consolidation import summary_is_current
+
+    return summary_is_current(world["store"], content, access=access)
+
+
+def _t03_edit_m1(store: TypedArtifactStore) -> None:
+    edited = {**_t03_episode(), "outcome": "failed again"}
+    store.update_content("m1", edited, expected_version=1)
+
+
+# --- T03-1 ------------------------------------------------------------------
+
+
+def test_t03_owner_safe_edges_and_summary_invalidation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1, write = world["store"], world["s1"], world["write"]
+    original = store.get_version_content("m1", 1)
+
+    codes = []
+    for source, target, kind in (
+        (s1, "m2", "supersedes"),
+        (s1, "m1", "supersedes"),
+        ("m1", s1, "supersedes"),
+        ("c1", "m1", "contradicts"),
+    ):
+        result = _t03_link(store, (source, 1), (target, 1), kind, access=write)
+        codes.append((result["code"], _t03_edges(store)))
+    assert codes == [("E_NOT_VISIBLE", 0), ("OK", 1), ("E_INPUT", 1), ("OK", 2)]
+
+    content = _t03_current(store, s1).content
+    assert _t03_summary_current(world, content, world["ask"]) is True
+    _t03_edit_m1(store)
+    assert _t03_summary_current(world, content, world["ask"]) is False
+    ids = _t03_recall_ids(store, world["ask"])
+    assert s1 not in ids
+    assert "m1" in ids
+    related = _t03_related(store, "c1", 1, access=world["ask"])
+    assert related["code"] == "OK"
+    assert related["items"] == []
+    assert store.get_version_content("m1", 1) == original
+    assert _t03_edges(store) == 2
+
+
+# --- T03-2 ------------------------------------------------------------------
+
+
+def test_t03_link_missing_and_foreign_endpoint_bodies_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    other = tmp_path / "p2"
+    other.mkdir()
+    _row(TypedArtifactStore(other.resolve()), "p2x", ALICE, "p2x")
+
+    results = [
+        _t03_link(store, (s1, 1), (target, 1), "depends_on", access=world["write"])
+        for target in ("m2", "ghost", "p2x")
+    ]
+    assert results == [T03_ENDPOINT_BODY] * 3
+    serialized = _dump(results)
+    for name in ("m2", "ghost", "p2x"):
+        assert name not in serialized
+    assert _t03_edges(store) == 0
+
+
+# --- T03-3 ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("state", ["archived", "expired", "tampered", "source_stale"])
+def test_t03_link_rejects_ineligible_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    from rush.memory import expiry, retrieval
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store, root = world["store"], world["root"]
+    if state == "archived":
+        _row(store, "x1", ALICE, "x1")
+        applied = store.archive(
+            "x1", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+        )
+        assert applied["applied"] is True
+    elif state == "expired":
+        _row(store, "x1", ALICE, "x1", created_at=time.time() - 15 * DAY)
+        assert expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=["x1"]) == 1
+    elif state == "tampered":
+        _row(store, "x1", ALICE, "x1")
+        _tamper(store.db_path, "x1")
+    else:
+        source_file = root / "mod.py"
+        source_file.write_text("def f():\n    return 1\n", encoding="utf-8")
+        digest = retrieval.SourceValidationMemo().source_hash(root, "mod.py")
+        assert digest
+        _row(
+            store,
+            "x1",
+            ALICE,
+            "x1",
+            symbol_ref="mod.py::f",
+            content_hash=digest,
+        )
+        source_file.write_text("def f():\n    return 2\n", encoding="utf-8")
+    current = _version(store.db_path, "x1")
+
+    result = _t03_link(
+        store, ("c1", 1), ("x1", current), "depends_on", access=world["write"]
+    )
+    assert result == T03_ENDPOINT_BODY
+    assert _t03_edges(store) == 0
+
+
+# --- T03-4 ------------------------------------------------------------------
+
+
+def test_t03_link_noncurrent_version_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    _row(store, "x1", ALICE, "x1")
+    store.update_content("x1", {"text": "needle x1 edited"}, expected_version=1)
+
+    stale = _t03_link(store, ("c1", 1), ("x1", 1), "depends_on", access=world["write"])
+    assert stale["code"] == "E_VERSION"
+    assert _t03_edges(store) == 0
+    current = _t03_link(
+        store, ("c1", 1), ("x1", 2), "depends_on", access=world["write"]
+    )
+    assert current["code"] == "OK"
+    assert _t03_edges(store) == 1
+
+
+# --- T03-5 ------------------------------------------------------------------
+
+
+def test_t03_link_self_supersedes_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    legacy = TypedArtifactStore(legacy_root.resolve())
+    _row(legacy, "a1", None, "a1", source="allowed")
+    looped = _t03_link(legacy, ("a1", 1), ("a1", 1), "supersedes")
+    assert looped["code"] == "E_INPUT"
+    assert _t03_edges(legacy) == 0
+
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    summary_loop = _t03_link(
+        store, (s1, 1), (s1, 1), "supersedes", access=world["write"]
+    )
+    assert summary_loop["code"] == "E_INPUT"
+    assert _t03_edges(store) == 0
+
+
+# --- T03-6 ------------------------------------------------------------------
+
+
+def test_t03_link_access_project_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    other = tmp_path / "p2"
+    other.mkdir()
+    foreign = TypedArtifactStore(other.resolve())
+    _row(foreign, "q1", ALICE, "q1")
+    _row(foreign, "q2", ALICE, "q2")
+
+    result = _t03_link(
+        foreign, ("q1", 1), ("q2", 1), "depends_on", access=world["write"]
+    )
+    assert result == T03_ENDPOINT_BODY
+    assert _t03_edges(foreign) == 0
+
+
+# --- T03-7 ------------------------------------------------------------------
+
+
+def test_t03_legacy_link_cross_owner_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    _row(store, "a1", None, "a1", source="allowed")
+    _row(store, "b1", BOB, "b1", source="allowed")
+    _row(store, "a2", None, "a2", source="allowed")
+
+    cross = _t03_link(store, ("a1", 1), ("b1", 1), "depends_on")
+    assert cross == T03_ENDPOINT_BODY
+    assert _t03_edges(store) == 0
+    # B1/R16: an origin_ref no UTF-8 encoder accepts is refused as an input error
+    # before any effect, on the same-owner pair the legacy form links.
+    surrogate = _t03_link(
+        store, ("a1", 1), ("a2", 1), "validated_by", origin_ref="\ud800"
+    )
+    assert surrogate["code"] == "E_INPUT", surrogate
+    assert surrogate.get("field") == "origin_ref", surrogate
+    assert _t03_edges(store) == 0
+    same = _t03_link(store, ("a1", 1), ("a2", 1), "depends_on")
+    assert same["code"] == "OK"
+    assert _t03_edges(store) == 1
+
+
+# --- T03-8 ------------------------------------------------------------------
+
+
+def test_t03_related_hides_foreign_and_ineligible_without_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    # The hidden neighbor's edge comes first, so a cap checked before visibility
+    # would spend the only slot on it.
+    _t03_edge(store, (s1, 1), ("m2", 1), "supersedes")
+    _t03_edge(store, (s1, 1), ("m1", 1), "supersedes")
+
+    related = _t03_related(store, s1, 1, access=world["ask"], max_nodes=2)
+    assert related["code"] == "OK"
+    assert related["items"] == [
+        {"id": "m1", "version": 1, "kind": "supersedes", "direction": "outgoing"}
+    ]
+    assert related["complete"] is True
+    serialized = _dump(related)
+    assert "m2" not in serialized
+    assert "bob-marker" not in serialized
+
+
+# --- T03-9 ------------------------------------------------------------------
+
+
+def test_t03_legacy_related_same_owner_as_root(tmp_path: Path) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    _row(store, "r", None, "r", source="allowed")
+    _row(store, "n1", None, "n1", source="allowed")
+    _row(store, "b1", BOB, "b1", source="allowed")
+    _t03_edge(store, ("r", 1), ("b1", 1), "depends_on")
+    _t03_edge(store, ("r", 1), ("n1", 1), "depends_on")
+
+    related = _t03_related(store, "r", 1, session_allowlist=["allowed"], max_nodes=2)
+    assert related["code"] == "OK"
+    assert {item["id"] for item in related["items"]} == {"n1"}
+    assert related["complete"] is True
+    # B7/R16: a bool is not a version and a lone surrogate is not an id; both are
+    # input errors, never the root of a traversal.
+    boolean = _t03_related(store, "r", True, session_allowlist=["allowed"])
+    assert boolean["code"] == "E_INPUT", boolean
+    surrogate = _t03_related(store, "\ud800", 1, session_allowlist=["allowed"])
+    assert surrogate["code"] == "E_INPUT", surrogate
+    assert surrogate.get("field") == "id", surrogate
+
+
+# --- T03-10 -----------------------------------------------------------------
+
+
+def test_t03_related_ignores_edges_from_noncurrent_root_version(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "legacy"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    _row(store, "a1", None, "a1", source="allowed")
+    _row(store, "b", None, "b", source="allowed")
+    assert _t03_link(store, ("a1", 1), ("b", 1), "depends_on")["code"] == "OK"
+    store.update_content("a1", {"text": "needle a1 edited"}, expected_version=1)
+
+    related = _t03_related(store, "a1", 2, session_allowlist=["allowed"])
+    assert related["code"] == "OK"
+    assert related["items"] == []
+    # B7/R16: a bool is not a depth; the cap inputs are validated, not coerced.
+    boolean = _t03_related(store, "a1", 2, session_allowlist=["allowed"], depth=True)
+    assert boolean["code"] == "E_INPUT", boolean
+
+
+# --- T03-11 -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("state", ["archived", "invalid_summary", "foreign"])
+def test_t03_related_ineligible_root_not_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store = world["store"]
+    if state == "archived":
+        applied = store.archive(
+            "c1", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
+        )
+        assert applied["applied"] is True
+        root_id = "c1"
+    elif state == "invalid_summary":
+        _t03_edge(store, (world["s1"], 1), ("m1", 1), "supersedes")
+        _t03_edit_m1(store)
+        root_id = world["s1"]
+    else:
+        _t03_edge(store, ("m2", 1), ("m1", 1), "depends_on")
+        root_id = "m2"
+
+    related = _t03_related(
+        store, root_id, _version(store.db_path, root_id), access=world["ask"]
+    )
+    assert related == T03_MISSING_ROOT
+
+
+# --- T03-12 -----------------------------------------------------------------
+
+
+def _t03_bound_tamper(db: Path, artifact_id: str) -> None:
+    """Rewrite the current content and its `payload_hash` consistently in both
+    tables, with no version bump: integrity still holds, the bytes changed."""
+    from rush.memory.store import payload_digest
+
+    version = _version(db, artifact_id)
+    text = json.dumps({**_t03_episode(), "outcome": "silently rewritten"})
+    digest = payload_digest(text)
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ? WHERE id = ?",
+            (text, digest, artifact_id),
+        )
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+            "WHERE artifact_id = ? AND artifact_version = ?",
+            (text, digest, artifact_id, version),
+        )
+        conn.commit()
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["archive", "expire", "tamper", "bound_tamper", "edit", "revoke_source"],
+)
+def test_t03_summary_invalidation_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    from types import SimpleNamespace
+
+    from rush.memory import expiry
+    from rush.memory.retrieval import expand_artifact
+
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1, root = world["store"], world["s1"], world["root"]
+    _t03_edge(store, (s1, 1), ("m1", 1), "supersedes")
+    _t03_edge(store, ("c1", 1), ("m1", 1), "contradicts")
+    content = _t03_current(store, s1).content
+    ask, expand = world["ask"], world["expand"]
+
+    # Positive control: everything is current before the action.
+    assert _t03_summary_current(world, content, ask) is True
+    assert {s1, "m1"} <= set(_t03_recall_ids(store, ask))
+    assert [i["id"] for i in _t03_related(store, s1, 1, access=ask)["items"]] == ["m1"]
+
+    if action == "archive":
+        applied = store.archive(
+            "m1", expected_version=1, scope="episodic", owner_scope=ALICE, apply=True
+        )
+        assert applied["applied"] is True
+    elif action == "expire":
+        later = time.time() + 15 * DAY
+        with monkeypatch.context() as patch:
+            patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
+            swept = expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=["m1"])
+        assert swept == 1
+    elif action == "tamper":
+        _tamper(store.db_path, "m1")
+    elif action == "bound_tamper":
+        _t03_bound_tamper(store.db_path, "m1")
+    elif action == "edit":
+        _t03_edit_m1(store)
+    else:
+        auth, data_root = world["auth"], world["data_root"]
+        _fix1_revoke(auth, world["g1"], data_root)
+        _grant(auth, root, ALICE, data_root, sources=("source-s",), ops=T03_ALICE_OPS)
+        ask = _t03_access(world, "ask")
+        expand = _t03_access(world, "expand")
+
+    assert _t03_summary_current(world, content, ask) is False
+    assert s1 not in _t03_recall_ids(store, ask)
+    expanded = expand_artifact(
+        store, artifact_id=s1, version=_version(store.db_path, s1), access=expand
+    )
+    assert expanded["code"] == "E_NOT_VISIBLE"
+    neighbors = [i["id"] for i in _t03_related(store, "c1", 1, access=ask)["items"]]
+    if action == "bound_tamper":
+        assert neighbors == ["m1"]
+    else:
+        assert "m1" not in neighbors
+
+
+# --- T03-13 -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "empty_dict",
+        "missing",
+        "list",
+        "str_version",
+        "bool_version",
+        "overflow",
+        "ids_mismatch",
+        "refs_mismatch",
+        "summary_member",
+        "missing_member_refs",
+        "missing_member_ids",
+        "missing_payload_hash",
+        "missing_content_hash",
+        "ref_not_a_dict",
+        "ref_hash_wrong_type",
+        "surrogate_id",
+        "empty_id",
+    ],
+)
+def test_t03_summary_malformed_refs_never_current(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    content = dict(_t03_current(store, s1).content)
+    real_payload_hash = _payload_version_row(store.db_path, "m1", 1)[1]
+    variants: dict[str, dict[str, Any]] = {
+        "empty_dict": {"member_versions": {}, "member_ids": []},
+        "missing": {},
+        "list": {"member_versions": [["m1", 1]]},
+        "str_version": {"member_versions": {"m1": "1"}},
+        "bool_version": {"member_versions": {"m1": True}},
+        "overflow": {"member_versions": {"m1": 2**63}},
+        "ids_mismatch": {"member_ids": ["m1", "m9"]},
+        "refs_mismatch": {
+            "member_refs": {
+                "m1": {"version": 2, "payload_hash": None, "content_hash": None}
+            }
+        },
+        "summary_member": {"member_versions": {s1: 1}, "member_ids": [s1]},
+        "missing_member_refs": {},
+        "missing_member_ids": {},
+        "missing_payload_hash": {
+            "member_refs": {"m1": {"version": 1, "content_hash": None}}
+        },
+        "missing_content_hash": {
+            "member_refs": {"m1": {"version": 1, "payload_hash": real_payload_hash}}
+        },
+        "ref_not_a_dict": {"member_refs": {"m1": 1}},
+        "ref_hash_wrong_type": {
+            "member_refs": {
+                "m1": {"version": 1, "payload_hash": 5, "content_hash": None}
+            }
+        },
+        "surrogate_id": {
+            "member_versions": {"\ud800": 1},
+            "member_ids": ["\ud800"],
+            "member_refs": {
+                "\ud800": {"version": 1, "payload_hash": None, "content_hash": None}
+            },
+        },
+        "empty_id": {
+            "member_versions": {"": 1},
+            "member_ids": [""],
+            "member_refs": {
+                "": {"version": 1, "payload_hash": None, "content_hash": None}
+            },
+        },
+    }
+    if case == "missing":
+        content.pop("member_versions", None)
+    if case in ("summary_member", "missing", "missing_member_refs"):
+        content.pop("member_refs", None)
+    if case == "missing_member_ids":
+        content.pop("member_ids", None)
+    content.update(variants[case])
+    assert _t03_summary_current(world, content, world["ask"]) is False
+
+    _row(
+        store,
+        "forged",
+        ALICE,
+        "",
+        source="source-s",
+        subject="episodic",
+        content={
+            "kind": "consolidated_episode_summary",
+            "symptom": "timeout",
+            "member_versions": {},
+        },
+    )
+    assert "forged" not in _t03_recall_ids(store, world["ask"])
+
+
+# --- T03-14 -----------------------------------------------------------------
+
+
+def test_t03_consolidation_selects_only_authorized_owner_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    summary = _t03_current(store, s1)
+    m1_payload_hash = _payload_version_row(store.db_path, "m1", 1)[1]
+    assert m1_payload_hash
+
+    assert summary.content["member_ids"] == ["m1"]
+    assert summary.content["member_versions"] == {"m1": 1}
+    assert summary.content["member_refs"] == {
+        "m1": {"version": 1, "payload_hash": m1_payload_hash, "content_hash": None}
+    }
+    assert summary.owner_scope == ALICE
+    assert summary.source == "source-s"
+    assert summary.trust_tier == "DERIVED"
+    assert "bob-marker" not in _dump(summary.content)
+    assert "m2" not in _dump(summary.content)
+
+
+# --- T03-14b (owner decision 2026-10-05: provenance tier order) --------------
+
+
+def test_t03_consolidation_summary_tier_is_weakest_member(tmp_path: Path) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+
+    root = tmp_path / "legacy"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    cases = {
+        "importedmix": ("IMPORTED", "DERIVED"),
+        "externalmix": ("EXTERNAL_WRITE", "DERIVED"),
+        "derivedonly": ("DERIVED", "DERIVED"),
+        "statedonly": ("STATED", "STATED"),
+        # R9/R16: FTS syntax in the symptom is literal text; the tier rule is unchanged.
+        'quoted"mix': ("IMPORTED", "DERIVED"),
+    }
+    for symptom, tiers in cases.items():
+        for index, tier in enumerate(tiers):
+            artifact_id = f"{symptom.replace(chr(34), '')}-{index}"
+            content = {**_t03_episode(), "symptom": symptom}
+            written = "DERIVED" if tier == "STATED" else tier
+            _row(
+                store,
+                artifact_id,
+                None,
+                "",
+                source="allowed",
+                subject="episodic",
+                trust=written,
+                content=content,
+            )
+            if tier == "STATED":
+                _, promotion = store.promote(
+                    artifact_id, user_stated=True, expected_version=1
+                )
+                assert promotion.promoted is True
+            assert _t03_current(store, artifact_id).trust_tier == tier
+
+    tiers_out = {}
+    for symptom in cases:
+        result = consolidate_episodes(
+            store, symptom=symptom, session_allowlist=["allowed"]
+        )
+        assert result["code"] == "OK", result
+        tiers_out[symptom] = result["summary"]["trust_tier"]
+    assert tiers_out == {
+        "importedmix": "IMPORTED",
+        "externalmix": "EXTERNAL_WRITE",
+        "derivedonly": "DERIVED",
+        "statedonly": "DERIVED",
+        'quoted"mix': "IMPORTED",
+    }
+
+
+# --- T03-15 -----------------------------------------------------------------
+
+
+def test_t03_history_retains_originals_contradiction_labels_invalid_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import evaluate_artifact_visibility
+
+    world = _t03_world(tmp_path, monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    _t03_edge(store, ("c1", 1), ("m1", 1), "contradicts")
+    original = store.get_version_content("m1", 1)
+    _t03_edit_m1(store)
+
+    decision = evaluate_artifact_visibility(
+        store, store.get_current_row(s1), access=world["historical"], mode="historical"
+    )
+    assert decision.visible is True
+    assert decision.usable_as_current is False
+    assert "derived_member_not_current" in decision.reason_codes
+
+    historical = _t03_related(
+        store, "c1", 1, access=world["historical"], mode="historical"
+    )
+    assert historical["code"] == "OK"
+    assert historical["mode"] == "historical"
+    assert historical["actionable"] is False
+    by_id = {item["id"]: item for item in historical["items"]}
+    assert by_id["m1"]["usable_as_current"] is False
+    assert by_id["m1"]["edge_version"] == 1
+    assert by_id["m1"]["kind"] == "contradicts"
+
+    ordinary = _t03_related(store, "c1", 1, access=world["ask"])
+    assert ordinary["code"] == "OK"
+    assert ordinary["items"] == []
+    assert "mode" not in ordinary and "actionable" not in ordinary
+    assert store.get_version_content("m1", 1) == original
+    assert _t03_edges(store) == 1
+
+
+# --- T03-16 -----------------------------------------------------------------
+
+
+def test_t03_recall_item_relations_omit_invisible_neighbors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import recall_page
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    # Bob's neighbors come first and outnumber the node cap: a hidden neighbor
+    # must never take a slot from a visible one.
+    _t03_edge(store, ("m1", 1), ("m2", 1), "depends_on")
+    for index in range(31):
+        _row(store, f"bob-{index:02d}", BOB, f"bob-{index}")
+        _t03_edge(store, ("m1", 1), (f"bob-{index:02d}", 1), "depends_on")
+    _t03_edge(store, ("m1", 1), ("c1", 1), "contradicts")
+
+    page = recall_page(store, subject="episodic", query="timeout", access=world["ask"])
+    assert page["code"] == "OK"
+    (item,) = [item for item in page["items"] if item["id"] == "m1"]
+    assert item["relations"] == [
+        {"id": "c1", "version": 1, "kind": "contradicts", "direction": "outgoing"}
+    ]
+    serialized = _dump(page)
+    assert "m2" not in serialized
+    assert "bob-" not in serialized
+
+    # B8/R14: the traversal behind the item relations re-reads every kept neighbor
+    # before it returns, so a neighbor edited right after its decision is dropped.
+    fired = _t03_after_decision(
+        monkeypatch,
+        "c1",
+        lambda: store.update_content(
+            "c1", {"text": "timeout retry changed late"}, expected_version=1
+        ),
+    )
+    late = _t03_related(store, "m1", 1, access=world["ask"], max_nodes=32)
+    assert late["code"] == "OK", late
+    assert fired["n"] == 1, "the traversal never decided c1"
+    assert "error" not in fired, fired
+    assert late["items"] == [], late["items"]
+    assert "bob-" not in _dump(late) and "m2" not in _dump(late)
+
+
+# --- T03-17 -----------------------------------------------------------------
+
+
+def _t03_tool(world: dict[str, Any], owner: OwnerScope) -> Any:
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+
+    def run(operation: MemoryOperation, request: dict[str, Any]) -> dict[str, Any]:
+        return _raw(
+            tool.run(
+                world["root"],
+                operation=operation,
+                request=request,
+                owner_scope=owner.as_dict(),
+                permissions=perms,
+            )
+        )
+
+    return run
+
+
+def _t03_link_request(
+    source: tuple[str, int], target: tuple[str, int], kind: str
+) -> dict[str, Any]:
+    return {
+        "source_id": source[0],
+        "source_version": source[1],
+        "target_id": target[0],
+        "target_version": target[1],
+        "kind": kind,
+    }
+
+
+def test_t03_memory_tool_threads_grant_for_link_related_consolidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    alice, bob = _t03_tool(world, ALICE), _t03_tool(world, BOB)
+
+    consolidated = alice("consolidate", {"symptom": "timeout"})
+    assert consolidated["code"] == "OK", consolidated
+    summary = consolidated["data"]["summary"]
+    assert summary["member_ids"] == ["m1"]
+    s1 = summary["id"]
+
+    foreign = alice("link", _t03_link_request((s1, 1), ("m2", 1), "supersedes"))
+    assert foreign["code"] == "E_NOT_VISIBLE"
+    assert _t03_edges(store) == 0
+    # Bob's grant has no `write`: link maps to `write` (T003 §4).
+    no_write = bob("link", _t03_link_request(("m2", 1), ("m1", 1), "depends_on"))
+    assert no_write["code"] == "E_PERMISSION"
+    assert _t03_edges(store) == 0
+    linked = alice("link", _t03_link_request((s1, 1), ("m1", 1), "supersedes"))
+    assert linked["code"] == "OK"
+    assert _t03_edges(store) == 1
+
+    related = alice("related", {"id": s1, "version": 1})
+    assert related["code"] == "OK"
+    assert related["data"]["items"] == [
+        {"id": "m1", "version": 1, "kind": "supersedes", "direction": "outgoing"}
+    ]
+    assert _t03_edges(store) == 1
+
+
+# --- T03-18 -----------------------------------------------------------------
+
+
+def test_t03_memory_tool_related_revoked_mid_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    _t03_edge(store, ("c1", 1), ("m1", 1), "contradicts")
+    alice = _t03_tool(world, ALICE)
+
+    before = alice("related", {"id": "c1", "version": 1})
+    assert before["code"] == "OK", before
+    assert [item["id"] for item in before["data"]["items"]] == ["m1"]
+
+    fired = {"n": 0}
+
+    def revoke_once() -> None:
+        if fired["n"] == 0:
+            fired["n"] += 1
+            _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+
+    for name in ("get_current", "get_current_row"):
+        original = getattr(TypedArtifactStore, name)
+
+        def wrapper(
+            self: Any,
+            artifact_id: str,
+            *args: Any,
+            _original: Any = original,
+            **kwargs: Any,
+        ) -> Any:
+            if artifact_id == "m1":
+                revoke_once()
+            return _original(self, artifact_id, *args, **kwargs)
+
+        monkeypatch.setattr(TypedArtifactStore, name, wrapper)
+
+    during = alice("related", {"id": "c1", "version": 1})
+    assert fired["n"] == 1, "the neighbor was never fetched"
+    assert during["code"] == "E_PERMISSION", during
+    assert during["data"]["reason"] == "revoked", during
+    assert "items" not in during["data"]
+    assert "m1" not in _dump(during)
+
+
+# --- T03-19 -----------------------------------------------------------------
+
+
+def test_t03_link_holds_policy_lock_through_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import relations
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    alice = _t03_tool(world, ALICE)
+    entered = threading.Event()
+    original_connect = relations._connect
+    calls = {"n": 0}
+
+    def slow_connect(target: TypedArtifactStore) -> sqlite3.Connection:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            time.sleep(0.3)
+        return original_connect(target)
+
+    monkeypatch.setattr(relations, "_connect", slow_connect)
+    stamps: dict[str, float] = {}
+
+    def link() -> dict[str, Any]:
+        result = alice("link", _t03_link_request(("c1", 1), ("m1", 1), "contradicts"))
+        stamps["link_done"] = time.monotonic()
+        return result
+
+    thread, box = _run_in_thread(link)
+    assert entered.wait(10), "link never reached the relations connection"
+    _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+    stamps["revoke_done"] = time.monotonic()
+    thread.join(10)
+
+    assert box["result"]["code"] == "OK", box["result"]
+    assert _t03_edges(store) == 1
+    assert stamps["revoke_done"] >= stamps["link_done"], stamps
+    after = alice("link", _t03_link_request(("c1", 1), ("m1", 1), "validated_by"))
+    assert after["code"] == "E_PERMISSION"
+    assert _t03_edges(store) == 1
+
+
+# === 72-T03 G5 test author: defect tests R1-R21, G2 matrix, G4 rows ===========
+#
+# Written against the brief `phase72-gates/72-T03.md` (design brief, pre-gate
+# addendum, owner resolutions, decisions). Every symbol an earlier task adds is
+# imported inside the test body. Each defect test records its RED assertion in
+# the task handoff (G5/G16).
+
+T03_FAMILY_SOURCES = ("intent:*", "consolidation")
+CAROL = OwnerScope("user", "carol")
+T03_ENCODING = "cl100k_base"
+
+
+def _t03_sub(tmp_path: Path, name: str) -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    return path
+
+
+def _t03_count(
+    store: TypedArtifactStore, table: str = "memory_artifacts", where: str = "1 = 1"
+) -> int:
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        return int(
+            conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}").fetchone()[0]
+        )
+
+
+def _t03_summary_ids(store: TypedArtifactStore) -> list[str]:
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        rows = conn.execute("SELECT id, content FROM memory_artifacts").fetchall()
+    return sorted(r[0] for r in rows if "consolidated_episode_summary" in r[1])
+
+
+def _t03_legacy_store(tmp_path: Path, name: str = "legacy") -> TypedArtifactStore:
+    return TypedArtifactStore(_t03_sub(tmp_path, name).resolve())
+
+
+def _t03_ep(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    owner: OwnerScope | None,
+    *,
+    source: str = "source-a",
+    **extra: Any,
+) -> MemoryArtifact:
+    return _row(
+        store,
+        artifact_id,
+        owner,
+        "",
+        source=source,
+        subject="episodic",
+        content=_t03_episode(**extra),
+    )
+
+
+def _t03_grant_with_expiry(
+    auth: Any, root: Path, data_root: Path, expires: float
+) -> dict[str, Any]:
+    return auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=ALICE,
+        approved_sources=list(T03_ALICE_SOURCES),
+        allowed_operations=list(T03_ALICE_OPS),
+        expected_policy_revision=_revision(auth, data_root),
+        consent=True,
+        expires_at=expires,
+        data_root=data_root,
+    )
+
+
+def _t03_on_relation_insert(
+    monkeypatch: pytest.MonkeyPatch, action: Any
+) -> dict[str, int]:
+    """Run `action()` once, when the `memory_relations` INSERT starts: after
+    admission and inside the write transaction, before the commit."""
+    from rush.memory import relations
+
+    original = relations._connect
+    fired = {"n": 0}
+
+    def wrapper(store: Any) -> Any:
+        conn = original(store)
+
+        def trace(sql: str) -> None:
+            if (
+                sql.lstrip().startswith("INSERT INTO memory_relations")
+                and not fired["n"]
+            ):
+                fired["n"] += 1
+                try:
+                    action()
+                except BaseException as exc:  # noqa: BLE001 - a trace callback swallows errors
+                    fired["error"] = repr(exc)  # type: ignore[assignment]
+
+        conn.set_trace_callback(trace)
+        return conn
+
+    monkeypatch.setattr(relations, "_connect", wrapper)
+    return fired
+
+
+def _t03_after_summary_insert(
+    monkeypatch: pytest.MonkeyPatch, action: Any
+) -> dict[str, int]:
+    """Run `action()` once, right after the consolidation summary row is inserted
+    through `TypedArtifactStore._insert_row` (inside its transaction, before commit)."""
+    original = TypedArtifactStore._insert_row
+    fired = {"n": 0}
+
+    def wrapper(self: Any, conn: Any, stored: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original(self, conn, stored, *args, **kwargs)
+        content = stored.content if isinstance(stored.content, dict) else {}
+        if content.get("kind") == "consolidated_episode_summary" and not fired["n"]:
+            fired["n"] += 1
+            action()
+        return result
+
+    monkeypatch.setattr(TypedArtifactStore, "_insert_row", wrapper)
+    return fired
+
+
+# --- R1 ---------------------------------------------------------------------
+
+
+def test_t03_fix_legacy_write_access_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+    from rush.memory.retrieval import MemoryAccess
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store, root, data_root = world["store"], world["root"], world["data_root"]
+    legacy = MemoryAccess.legacy(
+        root, list(T03_ALICE_SOURCES), operation="write", data_root=data_root
+    )
+    rows = _t03_count(store)
+    versions = _t03_count(store, "memory_artifact_versions")
+
+    linked = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts", access=legacy)
+    assert (_code_of(linked), _reason_of(linked)) == (
+        "E_PERMISSION",
+        "policy_grant_required",
+    ), linked
+    assert _t03_edges(store) == 0
+    consolidated = consolidate_episodes(
+        store, symptom="timeout", session_allowlist=["source-a"], access=legacy
+    )
+    assert (_code_of(consolidated), _reason_of(consolidated)) == (
+        "E_PERMISSION",
+        "policy_grant_required",
+    ), consolidated
+    assert _t03_count(store) == rows
+    assert _t03_count(store, "memory_artifact_versions") == versions
+    assert _t03_summary_ids(store) == []
+
+    # D1 `legacy` mode: a cross-owner pair is not visible under a write access.
+    lstore = _t03_legacy_store(tmp_path)
+    _row(lstore, "a1", None, "a1", source="allowed")
+    _row(lstore, "b1", BOB, "b1", source="allowed")
+    write_access = MemoryAccess.legacy(
+        lstore.project_root, ["allowed"], operation="write"
+    )
+    cross = _t03_link(lstore, ("a1", 1), ("b1", 1), "depends_on", access=write_access)
+    assert cross == T03_ENDPOINT_BODY, cross
+    assert _t03_edges(lstore) == 0
+
+
+# --- R2 ---------------------------------------------------------------------
+
+
+def test_t03_fix_link_consolidate_require_grant_without_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import memory_policy_decision
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    auth, data_root, root, store, _grant1 = _policy_project(
+        tmp_path, sources=("source-a", "consolidation"), ops=FULL_OPS
+    )
+    _t03_ep(store, "e1", ALICE)
+    _t03_ep(store, "e2", ALICE)
+    _row(store, "c1", ALICE, "c1")
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+
+    def run(
+        operation: MemoryOperation, request: dict[str, Any], path: Path = root
+    ) -> Any:
+        return tool.run(path, operation=operation, request=request, permissions=perms)
+
+    # One granted owner: both routes resolve that owner without a declared one.
+    linked = run("link", _t03_link_request(("e1", 1), ("e2", 1), "depends_on"))
+    assert _code_of(linked) == "OK", _rd(linked)
+    assert _t03_edges(store) == 1
+    consolidated = run("consolidate", {"symptom": "timeout"})
+    assert _code_of(consolidated) == "OK", _rd(consolidated)
+    assert _rd(consolidated)["data"]["summary"]["member_ids"] == ["e1", "e2"]
+    summaries = _t03_summary_ids(store)
+    assert len(summaries) == 1
+
+    # Two granted owners: the owner is required, as an input error.
+    _grant(auth, root, BOB, data_root, ops=("ask", "expand", "list"))
+    edges, rows = _t03_edges(store), _t03_count(store)
+    for operation, request in (
+        ("link", _t03_link_request(("e1", 1), ("c1", 1), "validated_by")),
+        ("consolidate", {"symptom": "timeout"}),
+    ):
+        refused = run(cast(MemoryOperation, operation), request)
+        assert _code_of(refused) == "E_INPUT", (operation, _rd(refused))
+        assert _rd(refused)["data"].get("field") == "owner_scope", (
+            operation,
+            _rd(refused),
+        )
+    assert _t03_edges(store) == edges
+    assert _t03_count(store) == rows
+
+    # A marked project with no grant: `no_grant`, and no store is created.
+    other = _registered(tmp_path / "other", data_root)
+    (other / ".rush").mkdir(exist_ok=True)
+    (other / ".rush" / auth.REGISTRATION_MARKER).write_text("", encoding="utf-8")
+    assert memory_policy_decision(other) == ("unavailable", "no_grant")
+    before = _t03_effects(other, data_root)
+    for operation, request in (
+        ("link", _t03_link_request(("e1", 1), ("e2", 1), "depends_on")),
+        ("consolidate", {"symptom": "timeout"}),
+    ):
+        denied = run(cast(MemoryOperation, operation), request, other)
+        assert (_code_of(denied), _reason_of(denied)) == ("E_PERMISSION", "no_grant")
+        assert not (other / ".rush" / "memory.db").exists()
+    assert _t03_effects(other, data_root) == before
+
+    # A revoked sole grant: `revoked`, and no store is created.
+    solo = _registered(tmp_path / "solo", data_root)
+    solo_grant = _grant(
+        auth, solo, CAROL, data_root, sources=("source-a",), ops=FULL_OPS
+    )
+    _fix1_revoke(auth, solo_grant, data_root)
+    before = _t03_effects(solo, data_root)
+    for operation, request in (
+        ("link", _t03_link_request(("e1", 1), ("e2", 1), "depends_on")),
+        ("consolidate", {"symptom": "timeout"}),
+    ):
+        denied = run(cast(MemoryOperation, operation), request, solo)
+        assert (_code_of(denied), _reason_of(denied)) == ("E_PERMISSION", "revoked")
+        assert not (solo / ".rush" / "memory.db").exists()
+    assert _t03_effects(solo, data_root) == before
+
+
+# --- R3 ---------------------------------------------------------------------
+
+
+def _t03_twin_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Path]:
+    """Two registered projects with identical rows, Alice and Bob grants and one raw
+    `c1 -> m1` contradicts edge: one per transport, so a mutation on one never
+    shows on the other."""
+    from rush.memory import authorization as auth
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    roots: dict[str, Path] = {"data_root": data_root}
+    for name in ("cli", "mcp"):
+        root = _registered(tmp_path / f"{name}-project", data_root)
+        store = TypedArtifactStore(root)
+        _t03_ep(store, "m1", ALICE)
+        _row(store, "c1", ALICE, "c1")
+        _t03_edge(store, ("c1", 1), ("m1", 1), "contradicts")
+        _grant(
+            auth, root, ALICE, data_root, sources=T03_ALICE_SOURCES, ops=T03_ALICE_OPS
+        )
+        _grant(auth, root, BOB, data_root, sources=("source-a",), ops=T03_BOB_OPS)
+        roots[name] = root
+    return roots
+
+
+def _t03_cli(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf: str,
+    request: dict[str, Any],
+    *flags: str,
+) -> Any:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    path = root / f"{leaf}-request.json"
+    path.write_text(json.dumps(request), encoding="utf-8")
+    monkeypatch.chdir(root)
+    return CliRunner().invoke(
+        cli, ["memory", leaf, "--input", str(path), "--json", *flags]
+    )
+
+
+def _t03_cli_raw(outcome: Any) -> dict[str, Any]:
+    assert outcome.exception is None or isinstance(outcome.exception, SystemExit), (
+        outcome.output
+    )
+    try:
+        return json.loads(outcome.output)["raw"]
+    except (ValueError, KeyError):
+        raise AssertionError(
+            f"CLI exit {outcome.exit_code}, not a tool result: {outcome.output}"
+        ) from None
+
+
+def _t03_normalize(raw: dict[str, Any]) -> dict[str, Any]:
+    """Drop the one field that is fresh per call: the consolidation summary id."""
+    body = json.loads(json.dumps(raw))
+    summary = body.get("data", {}).get("summary")
+    if isinstance(summary, dict):
+        summary.pop("id", None)
+    return body
+
+
+def test_t03_cli_mcp_forward_owner_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import MemoryAccess
+
+    projects = _t03_twin_projects(tmp_path, monkeypatch)
+    original = MemoryAccess.resolve_with_reason.__func__  # type: ignore[attr-defined]
+    seen: list[tuple[Any, Any]] = []
+
+    def spy(cls: Any, project_root: Any, **kwargs: Any) -> Any:
+        seen.append((kwargs.get("operation"), kwargs.get("owner_scope")))
+        return original(cls, project_root, **kwargs)
+
+    monkeypatch.setattr(MemoryAccess, "resolve_with_reason", classmethod(spy))
+    owner_json = ALICE.as_dict()
+    requests = {
+        "link": _t03_link_request(("m1", 1), ("c1", 1), "validated_by"),
+        "related": {"id": "c1", "version": 1},
+        "consolidate": {"symptom": "timeout"},
+    }
+    for leaf, request in requests.items():
+        cli_flags = ["--owner", "user:alice"]
+        if leaf != "related":
+            cli_flags.append("--allow-cache-write")
+        seen.clear()
+        cli_out = _t03_cli(projects["cli"], monkeypatch, leaf, request, *cli_flags)
+        cli_raw = _t03_cli_raw(cli_out)
+        assert cli_raw["code"] == "OK", (leaf, cli_raw)
+        assert (leaf, ALICE) in seen, (leaf, seen)
+        assert all(owner == ALICE for op, owner in seen if op == leaf), seen
+
+        seen.clear()
+        mcp_args: dict[str, Any] = {
+            "path": str(projects["mcp"]),
+            "operation": leaf,
+            "request": request,
+            "owner_scope": owner_json,
+        }
+        if leaf != "related":
+            mcp_args["allow_cache_write"] = True
+        mcp_raw = _mcp_memory(**mcp_args)["raw"]
+        assert mcp_raw["code"] == "OK", (leaf, mcp_raw)
+        assert (leaf, ALICE) in seen, (leaf, seen)
+        assert all(owner == ALICE for op, owner in seen if op == leaf), seen
+        assert _t03_normalize(cli_raw) == _t03_normalize(mcp_raw), leaf
+
+    # Without the selector two grants are ambiguous: the owner is required.
+    ambiguous = _t03_cli_raw(
+        _t03_cli(
+            projects["cli"],
+            monkeypatch,
+            "link",
+            _t03_link_request(("m1", 1), ("c1", 1), "implements"),
+            "--allow-cache-write",
+        )
+    )
+    assert ambiguous["code"] == "E_INPUT"
+    assert ambiguous["data"].get("field") == "owner_scope"
+
+
+@pytest.mark.parametrize(
+    "selector", ["bad", "robot:x", "user:", "user:   ", "no-colon-here"]
+)
+def test_t03_cli_owner_selector_malformed_exits_before_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selector: str
+) -> None:
+    projects = _t03_twin_projects(tmp_path, monkeypatch)
+    calls: list[str] = []
+
+    def boom(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append("called")
+        raise AssertionError("the tool must not run for a malformed --owner")
+
+    monkeypatch.setattr(MemoryTool, "run", boom)
+    monkeypatch.setattr(MemoryTool, "__call__", boom)
+    for leaf, request in (
+        ("link", _t03_link_request(("m1", 1), ("c1", 1), "validated_by")),
+        ("related", {"id": "c1", "version": 1}),
+        ("consolidate", {"symptom": "timeout"}),
+    ):
+        outcome = _t03_cli(
+            projects["cli"], monkeypatch, leaf, request, "--owner", selector
+        )
+        assert outcome.exit_code == 2, (leaf, selector, outcome.output)
+        assert "No such option" not in outcome.output, outcome.output
+        assert "--owner" in outcome.output, outcome.output
+    assert calls == []
+
+
+# --- R4 ---------------------------------------------------------------------
+
+
+def test_t03_add_relation_rechecks_policy_in_txn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # (a) revoked between resolve and the call
+    world = _t03_world(_t03_sub(tmp_path, "w1"), monkeypatch, summary=False)
+    store = world["store"]
+    access = world["write"]
+    _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+    revoked = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts", access=access)
+    assert (_code_of(revoked), _reason_of(revoked)) == ("E_PERMISSION", "revoked")
+    assert _t03_edges(store) == 0
+
+    # (b) the grant replaced (new grant id) between resolve and the call
+    world = _t03_world(_t03_sub(tmp_path, "w2"), monkeypatch, summary=False)
+    store, auth, data_root = world["store"], world["auth"], world["data_root"]
+    access = world["write"]
+    _grant(
+        auth,
+        world["root"],
+        ALICE,
+        data_root,
+        sources=T03_ALICE_SOURCES,
+        ops=tuple(o for o in T03_ALICE_OPS if o != "history"),
+    )
+    replaced = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts", access=access)
+    assert (_code_of(replaced), _reason_of(replaced)) == (
+        "E_RESTART",
+        "access_changed",
+    )
+    assert _t03_edges(store) == 0
+
+    # (c) revoked inside the transaction, after the INSERT started: rolled back
+    world = _t03_world(_t03_sub(tmp_path, "w3"), monkeypatch, summary=False)
+    store = world["store"]
+
+    def revoke() -> None:
+        _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+
+    fired = _t03_on_relation_insert(monkeypatch, revoke)
+    late = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts", access=world["write"])
+    assert fired["n"] == 1, "the relation INSERT never ran"
+    assert "error" not in fired, fired
+    assert (_code_of(late), _reason_of(late)) == ("E_PERMISSION", "revoked"), late
+    assert _t03_edges(store) == 0
+
+
+# --- R5 ---------------------------------------------------------------------
+
+
+def test_t03_fix_m10_read_access_cannot_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import MemoryAccess
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    read = MemoryAccess.resolve(
+        world["root"],
+        operation="related",
+        owner_scope=ALICE,
+        data_root=world["data_root"],
+    )
+    assert read is not None
+    assert read.required_operations == frozenset({"ask"})
+    result = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts", access=read)
+    assert (_code_of(result), _reason_of(result)) == (
+        "E_PERMISSION",
+        "write_access_required",
+    ), result
+    assert _t03_edges(store) == 0
+
+
+# --- R6 ---------------------------------------------------------------------
+
+
+def test_t03_fix_m13_legacy_consolidate_single_owner(tmp_path: Path) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+
+    store = _t03_legacy_store(tmp_path)
+    _t03_ep(store, "e1", None, source="allowed")
+    _t03_ep(store, "e2", None, source="allowed")
+    _t03_ep(store, "eb", BOB, source="allowed")
+    result = consolidate_episodes(
+        store, symptom="timeout", session_allowlist=["allowed"]
+    )
+    assert result["code"] == "OK", result
+    assert result["summary"]["member_ids"] == ["e1", "e2"]
+    assert "eb" not in _dump(result)
+    # R9/R16: FTS syntax in a symptom is literal text, never a MATCH expression, and
+    # the single-owner rule holds for it too.
+    for artifact_id, owner in (("q1", None), ("q2", None), ("qb", BOB)):
+        _row(
+            store,
+            artifact_id,
+            owner,
+            "",
+            source="allowed",
+            subject="episodic",
+            content={**_t03_episode(), "symptom": 'q"x'},
+        )
+    quoted = consolidate_episodes(store, symptom='q"x', session_allowlist=["allowed"])
+    assert quoted["code"] == "OK", quoted
+    assert quoted["summary"]["member_ids"] == ["q1", "q2"]
+    assert "qb" not in _dump(quoted)
+
+
+# --- R7 ---------------------------------------------------------------------
+
+
+def test_t03_fix_m15_foreign_root_consolidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    foreign_root = _t03_sub(tmp_path, "p2").resolve()
+    foreign = TypedArtifactStore(foreign_root)
+    _t03_ep(foreign, "f1", ALICE)
+    _t03_ep(foreign, "f2", ALICE)
+    rows = _t03_count(foreign)
+    result = consolidate_episodes(
+        foreign,
+        symptom="timeout",
+        session_allowlist=None,
+        access=world["consolidate"],
+    )
+    assert (_code_of(result), _reason_of(result)) == (
+        "E_PERMISSION",
+        "project_mismatch",
+    ), result
+    assert _t03_count(foreign) == rows
+    assert _t03_summary_ids(foreign) == []
+
+
+# --- R8 ---------------------------------------------------------------------
+
+
+def test_t03_fix_m20_unanchored_member_hash_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import summary_invalid_reason
+
+    world = _t03_world(_t03_sub(tmp_path, "w1"), monkeypatch)
+    store, s1, ask = world["store"], world["s1"], world["ask"]
+    content = _t03_current(store, s1).content
+    ref = content["member_refs"]["m1"]
+    assert ref["content_hash"] is None
+    assert summary_invalid_reason(store, content, access=ask) is None
+    assert s1 in _t03_recall_ids(store, ask)
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute("UPDATE memory_artifacts SET content_hash = 'x' WHERE id = 'm1'")
+        conn.commit()
+    assert _version(store.db_path, "m1") == 1
+    assert (
+        summary_invalid_reason(store, content, access=ask)
+        == "derived_member_not_current"
+    )
+    assert _t03_summary_current(world, content, ask) is False
+    assert s1 not in _t03_recall_ids(store, ask)
+
+    # The exact-version payload hash of the member is bound too.
+    world = _t03_world(_t03_sub(tmp_path, "w2"), monkeypatch)
+    store, s1, ask = world["store"], world["s1"], world["ask"]
+    content = _t03_current(store, s1).content
+    assert content["member_refs"]["m1"]["payload_hash"]
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifact_versions SET payload_hash = 'rewritten' "
+            "WHERE artifact_id = 'm1' AND artifact_version = 1"
+        )
+        conn.commit()
+    assert (
+        summary_invalid_reason(store, content, access=ask)
+        == "derived_member_not_current"
+    )
+    assert _t03_summary_current(world, content, ask) is False
+    assert s1 not in _t03_recall_ids(store, ask)
+
+
+# --- R9 ---------------------------------------------------------------------
+
+
+def test_t03_consolidate_reads_members_and_writes_summary_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import consolidation
+    from rush.memory.consolidation import consolidate_episodes, summary_is_current
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store = world["store"]
+    stamps: dict[str, float] = {}
+    started: dict[str, Any] = {}
+    original_decide = consolidation.evaluate_artifact_visibility
+
+    def archive_m1() -> None:
+        try:
+            started["archive"] = store.archive(
+                "m1",
+                expected_version=1,
+                scope="episodic",
+                owner_scope=ALICE,
+                apply=True,
+            )
+        except BaseException as exc:  # noqa: BLE001 - the hook records any failure of the action
+            started["archive_error"] = repr(exc)
+        stamps["archive_done"] = time.monotonic()
+
+    def decide(*args: Any, **kwargs: Any) -> Any:
+        decision = original_decide(*args, **kwargs)
+        row: Any = args[1] if len(args) > 1 else kwargs.get("artifact")
+        row_id = row["id"] if hasattr(row, "keys") else getattr(row, "id", None)
+        if "thread" not in started and row_id == "m1":
+            thread = threading.Thread(target=archive_m1)
+            started["thread"] = thread
+            thread.start()
+            time.sleep(0.5)
+        return decision
+
+    monkeypatch.setattr(consolidation, "evaluate_artifact_visibility", decide)
+    original_note = TypedArtifactStore._note_inserted
+
+    def note(stored: Any, evicted: Any) -> None:
+        if isinstance(stored.content, dict) and (
+            stored.content.get("kind") == "consolidated_episode_summary"
+        ):
+            stamps["summary_commit"] = time.monotonic()
+        original_note(stored, evicted)
+
+    monkeypatch.setattr(TypedArtifactStore, "_note_inserted", staticmethod(note))
+
+    result = consolidate_episodes(
+        store,
+        symptom="timeout",
+        session_allowlist=None,
+        access=world["consolidate"],
+        source="source-s",
+    )
+    assert "thread" in started, "the member decision hook never fired"
+    started["thread"].join(30)
+    assert result["code"] == "OK", result
+    assert result["summary"]["member_ids"] == ["m1"]
+    assert "summary_commit" in stamps, "the summary was never committed"
+    assert stamps["archive_done"] > stamps["summary_commit"], stamps
+    assert "archive_error" not in started, started
+    assert started["archive"]["applied"] is True
+    content = _t03_current(store, result["summary"]["id"]).content
+    assert summary_is_current(store, content, access=world["ask"]) is False
+
+
+# --- R10 / G8: the D3 write gate, one row per access form -----------------------
+
+
+def test_t03_d3_legacy_access_forms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+    from rush.memory.retrieval import MemoryAccess
+
+    # policy mode: `access=None` is refused with zero effects
+    world = _t03_world(_t03_sub(tmp_path, "policy"), monkeypatch, summary=False)
+    store = world["store"]
+    rows = _t03_count(store)
+    refused = _t03_link(store, ("c1", 1), ("m1", 1), "contradicts")
+    assert (_code_of(refused), _reason_of(refused)) == (
+        "E_PERMISSION",
+        "policy_grant_required",
+    ), refused
+    assert _t03_edges(store) == 0
+    refused_c = consolidate_episodes(
+        store, symptom="timeout", session_allowlist=["source-a"]
+    )
+    assert (_code_of(refused_c), _reason_of(refused_c)) == (
+        "E_PERMISSION",
+        "policy_grant_required",
+    ), refused_c
+    assert _t03_count(store) == rows
+
+    # D1 `legacy` mode
+    lroot = _t03_sub(tmp_path, "legacy").resolve()
+    lstore = TypedArtifactStore(lroot)
+    for artifact_id in ("a1", "a2", "a3"):
+        _row(lstore, artifact_id, None, artifact_id, source="allowed")
+    _row(lstore, "x1", BOB, "x1", source="allowed")
+    _t03_ep(lstore, "e1", None, source="allowed")
+    _t03_ep(lstore, "e2", None, source="allowed")
+
+    ask = MemoryAccess.legacy(lroot, ["allowed"], operation="ask")
+    read_only = _t03_link(lstore, ("a1", 1), ("a2", 1), "depends_on", access=ask)
+    assert (_code_of(read_only), _reason_of(read_only)) == (
+        "E_PERMISSION",
+        "write_access_required",
+    ), read_only
+    assert _t03_edges(lstore) == 0
+
+    empty = MemoryAccess.legacy(lroot, [], operation="write")
+    no_sources = _t03_link(lstore, ("a1", 1), ("a2", 1), "depends_on", access=empty)
+    assert (_code_of(no_sources), _reason_of(no_sources)) == (
+        "E_PERMISSION",
+        "session_allowlist_required",
+    ), no_sources
+    assert _t03_edges(lstore) == 0
+
+    write = MemoryAccess.legacy(lroot, ["allowed"], operation="write")
+    foreign = _t03_link(lstore, ("a1", 1), ("x1", 1), "depends_on", access=write)
+    assert foreign == T03_ENDPOINT_BODY, foreign
+    assert _t03_edges(lstore) == 0
+
+    none_form = _t03_link(lstore, ("a1", 1), ("a2", 1), "depends_on")
+    assert none_form["code"] == "OK", none_form
+    assert _t03_edges(lstore) == 1
+
+    tool = MemoryTool()
+    perms = ExecutionPermissions(cache_write=True)
+
+    def run(operation: MemoryOperation, request: dict[str, Any], **kwargs: Any) -> Any:
+        return tool.run(
+            lroot, operation=operation, request=request, permissions=perms, **kwargs
+        )
+
+    other_owner = run(
+        "link",
+        _t03_link_request(("a1", 1), ("a3", 1), "validated_by"),
+        owner_scope=BOB.as_dict(),
+    )
+    assert _code_of(other_owner) == "E_NOT_VISIBLE", _rd(other_owner)
+    assert _t03_edges(lstore) == 1
+    same_owner = run(
+        "link",
+        _t03_link_request(("a1", 1), ("a3", 1), "validated_by"),
+        owner_scope=legacy_owner_scope(lroot).as_dict(),
+    )
+    assert _code_of(same_owner) == "OK", _rd(same_owner)
+    assert _t03_edges(lstore) == 2
+
+    summaries = len(_t03_summary_ids(lstore))
+    consolidate_other = run(
+        "consolidate",
+        {"symptom": "timeout"},
+        owner_scope=BOB.as_dict(),
+        session_allowlist=["allowed"],
+    )
+    assert _code_of(consolidate_other) == "E_NOT_VISIBLE", _rd(consolidate_other)
+    assert len(_t03_summary_ids(lstore)) == summaries
+    consolidate_legacy = run(
+        "consolidate",
+        {"symptom": "timeout"},
+        owner_scope=legacy_owner_scope(lroot).as_dict(),
+        session_allowlist=["allowed"],
+    )
+    assert _code_of(consolidate_legacy) == "OK", _rd(consolidate_legacy)
+    assert _rd(consolidate_legacy)["data"]["summary"]["member_ids"] == ["e1", "e2"]
+
+
+def _t03_gate_cases() -> list[Any]:
+    return [
+        pytest.param("policy-link", True, id="policy-write_in_required"),
+        pytest.param("policy-consolidate", True, id="policy-consolidate_write"),
+        pytest.param("policy-preview", False, id="policy-preview_list_only"),
+        pytest.param("policy-ask", False, id="policy-ask_only"),
+        pytest.param(
+            "policy-preview_with_write_grant",
+            False,
+            id="policy-preview_even_when_grant_has_write",
+        ),
+        pytest.param(
+            "legacy-write_legacy", True, id="legacy_allowlist-write_legacy_mode"
+        ),
+        pytest.param("legacy-ask_legacy", False, id="legacy_allowlist-ask_legacy_mode"),
+        pytest.param(
+            "legacy-link_name_legacy",
+            False,
+            id="legacy_allowlist-link_name_legacy_mode",
+        ),
+        pytest.param(
+            "legacy-write_policy", False, id="legacy_allowlist-write_policy_mode"
+        ),
+        pytest.param(
+            "legacy-write_unavailable",
+            False,
+            id="legacy_allowlist-write_unavailable_mode",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(("case", "expected"), _t03_gate_cases())
+def test_t03_write_gate_access_forms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, expected: bool
+) -> None:
+    """B2 / G8: `is_write_access(access)` is a predicate over the access fields,
+    one row per access form."""
+    from rush.memory.retrieval import MemoryAccess, is_write_access
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    root, data_root = world["root"], world["data_root"]
+    kind, _, variant = case.partition("-")
+    flags: dict[str, Any]
+    if kind == "policy":
+        operation, flags = {
+            "link": ("link", {}),
+            "consolidate": ("consolidate", {}),
+            "preview": ("write", {}),
+            "ask": ("related", {}),
+            "preview_with_write_grant": ("write", {}),
+        }[variant]
+        access = MemoryAccess.resolve(
+            root,
+            operation=operation,
+            owner_scope=ALICE,
+            data_root=data_root,
+            **flags,
+        )
+        assert access is not None
+        if variant == "preview":
+            assert access.required_operations == frozenset({"list"})
+    else:
+        legacy_root = _t03_sub(tmp_path, "legacy").resolve()
+        target, operation = legacy_root, "write"
+        if variant == "write_policy":
+            target = root
+        elif variant == "write_unavailable":
+            (legacy_root / ".rush").mkdir()
+            (legacy_root / ".rush" / world["auth"].REGISTRATION_MARKER).write_text(
+                "", encoding="utf-8"
+            )
+        elif variant == "ask_legacy":
+            operation = "ask"
+        elif variant == "link_name_legacy":
+            operation = "link"
+        access = MemoryAccess.legacy(
+            target, ["allowed"], operation=operation, data_root=data_root
+        )
+    assert is_write_access(access) is expected
+
+
+# --- R13 --------------------------------------------------------------------
+
+
+def test_t03_preview_access_cannot_link_or_consolidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+    from rush.memory.retrieval import MemoryAccess, is_write_access
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    auth, data_root, root, store, _g = _policy_project(
+        tmp_path, sources=("source-a", "consolidation"), ops=("list",)
+    )
+    _t03_ep(store, "e1", ALICE)
+    _t03_ep(store, "e2", ALICE)
+    _row(store, "c1", ALICE, "c1")
+    before = _counts(root)
+
+    def preview() -> Any:
+        access = MemoryAccess.resolve(
+            root,
+            operation="write",
+            apply=False,
+            owner_scope=ALICE,
+            data_root=data_root,
+        )
+        assert access is not None
+        assert access.required_operations == frozenset({"list"})
+        assert is_write_access(access) is False
+        return access
+
+    def assert_refused(access: Any, reason: str | None) -> None:
+        linked = _t03_link(store, ("e1", 1), ("e2", 1), "depends_on", access=access)
+        consolidated = consolidate_episodes(
+            store, symptom="timeout", session_allowlist=None, access=access
+        )
+        for outcome in (linked, consolidated):
+            assert _code_of(outcome) == "E_PERMISSION", outcome
+            if reason is not None:
+                assert _reason_of(outcome) == reason, outcome
+        assert _t03_edges(store) == 0
+        assert _t03_summary_ids(store) == []
+        assert _counts(root) == before
+
+    assert_refused(preview(), "write_access_required")
+    # A grant that does include `write` does not turn a preview access into a write.
+    _grant(
+        auth,
+        root,
+        ALICE,
+        data_root,
+        sources=("source-a", "consolidation"),
+        ops=("list", "write"),
+    )
+    assert_refused(preview(), "write_access_required")
+
+    # A forged required set passes the gate; the recheck against the grant denies it.
+    _grant(
+        auth,
+        root,
+        ALICE,
+        data_root,
+        sources=("source-a", "consolidation"),
+        ops=("list",),
+    )
+    forged = dataclasses.replace(preview(), required_operations=frozenset({"write"}))
+    assert is_write_access(forged) is True
+    assert_refused(forged, "operation_not_granted")
+
+
+# --- R14 --------------------------------------------------------------------
+
+
+def _t03_after_decision(
+    monkeypatch: pytest.MonkeyPatch, target: str, action: Any
+) -> dict[str, Any]:
+    """Run `action()` once, right after the traversal decision for `target`."""
+    from rush.memory import relations
+
+    original = relations.evaluate_artifact_visibility
+    fired: dict[str, Any] = {"n": 0}
+
+    def wrapper(store: Any, artifact: Any, *args: Any, **kwargs: Any) -> Any:
+        decision = original(store, artifact, *args, **kwargs)
+        row_id = (
+            artifact["id"]
+            if hasattr(artifact, "keys")
+            else getattr(artifact, "id", None)
+        )
+        if row_id == target and not fired["n"]:
+            fired["n"] += 1
+            try:
+                action()
+            except BaseException as exc:  # noqa: BLE001 - the hook records any failure of the action
+                fired["error"] = repr(exc)
+        return decision
+
+    monkeypatch.setattr(relations, "evaluate_artifact_visibility", wrapper)
+    return fired
+
+
+def _t03_late_change(
+    kind: str, world: dict[str, Any], target: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from rush.memory import expiry
+
+    store, root = world["store"], world["root"]
+    version = _version(store.db_path, target)
+    if kind == "archive":
+        applied = store.archive(
+            target,
+            expected_version=version,
+            scope="episodic",
+            owner_scope=ALICE,
+            apply=True,
+        )
+        assert applied["applied"] is True
+    elif kind == "expire":
+        later = time.time() + 15 * DAY
+        with monkeypatch.context() as patch:
+            patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
+            assert (
+                expiry.sweep_expired(root, owner_scope=ALICE, candidate_ids=[target])
+                == 1
+            )
+    elif kind == "tamper":
+        _tamper(store.db_path, target)
+    elif kind == "source_file":
+        (root / "mod.py").write_text("def f():\n    return 2\n", encoding="utf-8")
+    elif kind == "version":
+        store.update_content(
+            target,
+            {**_t03_episode(), "outcome": "edited late"},
+            expected_version=version,
+        )
+    elif kind == "owner":
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET owner_scope_kind = 'user', "
+                "owner_scope_id = 'bob' WHERE id = ?",
+                (target,),
+            )
+            conn.commit()
+    else:
+        assert kind == "source"
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET source = 'source-x' WHERE id = ?",
+                (target,),
+            )
+            conn.commit()
+
+
+def _t03_traversal_world(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> dict[str, Any]:
+    """Graph c1 -> t1 -> d1 and c1 -> x1 (all Alice's, `source-a`); `t1` is anchored
+    to the whole file `mod.py::` for the source-file change."""
+    from rush.memory import retrieval
+
+    world = _t03_world(tmp_path, monkeypatch, summary=False)
+    store, root = world["store"], world["root"]
+    if kind == "source_file":
+        (root / "mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        digest = retrieval.SourceValidationMemo().source_hash(root, "mod.py")
+        assert digest
+        _row(
+            store,
+            "t1",
+            ALICE,
+            "",
+            subject="episodic",
+            content=_t03_episode(),
+            symbol_ref="mod.py::",
+            content_hash=digest,
+        )
+    else:
+        _t03_ep(store, "t1", ALICE)
+    _t03_ep(store, "d1", ALICE)
+    _t03_ep(store, "x1", ALICE)
+    _t03_edge(store, ("c1", 1), ("t1", 1), "depends_on")
+    _t03_edge(store, ("t1", 1), ("d1", 1), "depends_on")
+    _t03_edge(store, ("c1", 1), ("x1", 1), "depends_on")
+    return world
+
+
+def _t03_edge_keys(items: list[dict[str, Any]]) -> set[tuple[Any, ...]]:
+    return {(i["id"], i["version"], i["kind"], i["direction"]) for i in items}
+
+
+_T03_LATE_KINDS = (
+    "archive",
+    "expire",
+    "tamper",
+    "source_file",
+    "version",
+    "owner",
+    "source",
+)
+
+
+@pytest.mark.parametrize("target", ["neighbor", "root"])
+@pytest.mark.parametrize("kind", _T03_LATE_KINDS)
+def test_t03_related_rechecks_root_and_hops_before_return(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, target: str
+) -> None:
+    from rush.memory.relations import _measure_related
+
+    world = _t03_traversal_world(tmp_path, monkeypatch, kind)
+    store, ask = world["store"], world["ask"]
+    root_id = "c1" if target == "neighbor" else "t1"
+    control = _t03_related(store, root_id, 1, access=ask, depth=2, max_nodes=8)
+    assert control["code"] == "OK", control
+    assert {"t1", "d1", "x1"} <= {i["id"] for i in control["items"]} | {root_id}, (
+        control
+    )
+    fired = _t03_after_decision(
+        monkeypatch, "t1", lambda: _t03_late_change(kind, world, "t1", monkeypatch)
+    )
+    related = _t03_related(store, root_id, 1, access=ask, depth=2, max_nodes=8)
+    assert fired["n"] == 1, "the traversal never decided t1"
+    assert "error" not in fired, fired
+    if target == "root":
+        assert related == T03_MISSING_ROOT, related
+        return
+    assert related["code"] == "OK", related
+    # t1 is gone, so is d1 (reached only through it); x1 stays.
+    assert _t03_edge_keys(related["items"]) == {("x1", 1, "depends_on", "outgoing")}
+    assert related["complete"] is True
+    measured = _measure_related(related["items"], related["encoding"])
+    assert (related["bytes"], related["tokens"]) == measured
+    dumped = _dump(related)
+    assert "t1" not in dumped and "d1" not in dumped
+
+
+def test_t03_related_final_pass_keeps_descendant_with_another_valid_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.relations import _measure_related
+
+    world = _t03_traversal_world(tmp_path, monkeypatch, "archive")
+    store, ask = world["store"], world["ask"]
+    _t03_edge(store, ("x1", 1), ("d1", 1), "depends_on")
+    fired = _t03_after_decision(
+        monkeypatch, "t1", lambda: _t03_late_change("archive", world, "t1", monkeypatch)
+    )
+    related = _t03_related(store, "c1", 1, access=ask, depth=2, max_nodes=8)
+    assert fired["n"] == 1
+    assert related["code"] == "OK", related
+    assert _t03_edge_keys(related["items"]) == {
+        ("x1", 1, "depends_on", "outgoing"),
+        ("d1", 1, "depends_on", "outgoing"),
+    }
+    assert (related["bytes"], related["tokens"]) == _measure_related(
+        related["items"], related["encoding"]
+    )
+    assert "t1" not in _dump(related)
+
+
+def test_t03_related_final_pass_rereads_past_an_immutable_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second writer commits while the first reader holds an immutable view: the
+    final pass opens a fresh view, so the committed archive is seen."""
+    world = _t03_traversal_world(tmp_path, monkeypatch, "archive")
+    ask = world["ask"]
+    view, state = TypedArtifactStore.open_readonly_view(world["root"])
+    assert state is None and view is not None
+    try:
+        fired = _t03_after_decision(
+            monkeypatch,
+            "t1",
+            lambda: _t03_late_change("archive", world, "t1", monkeypatch),
+        )
+        related = _t03_related(view, "c1", 1, access=ask, depth=2, max_nodes=8)
+    finally:
+        view.close()
+    assert fired["n"] == 1 and "error" not in fired, fired
+    assert related["code"] == "OK", related
+    assert _t03_edge_keys(related["items"]) == {("x1", 1, "depends_on", "outgoing")}
+
+
+# --- R15 --------------------------------------------------------------------
+
+
+def test_t03_summary_hidden_when_member_access_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.retrieval import evaluate_artifact_visibility, expand_artifact
+
+    world = _t03_world(_t03_sub(tmp_path, "w1"), monkeypatch)
+    store, s1, root = world["store"], world["s1"], world["root"]
+    auth, data_root = world["auth"], world["data_root"]
+    _row(store, "n1", ALICE, "n1", source="source-s")
+    _t03_edge(store, ("n1", 1), (s1, 1), "depends_on")
+    # Control: the full reader sees the summary.
+    assert s1 in _t03_recall_ids(store, world["ask"])
+
+    _grant(
+        auth,
+        root,
+        ALICE,
+        data_root,
+        sources=("source-s",),
+        ops=("ask", "list", "expand", "history"),
+    )
+    ask = _t03_access(world, "ask")
+    expand = _t03_access(world, "expand")
+    history = _t03_access(world, "related", historical=True)
+    row = store.get_current_row(s1)
+    for mode in ("ordinary", "inspect", "historical"):
+        decision = evaluate_artifact_visibility(store, row, access=history, mode=mode)
+        assert decision.visible is False, mode
+        assert decision.usable_as_current is False, mode
+
+    outputs: list[Any] = []
+    assert s1 not in _t03_recall_ids(store, ask)
+    listed = MemoryTool().run(
+        root,
+        operation="list",
+        subject="episodic",
+        query="timeout",
+        owner_scope=ALICE.as_dict(),
+        request={"view": "compact"},
+    )
+    outputs.append(_rd(listed))
+    assert s1 not in _dump(_rd(listed))
+    expanded = expand_artifact(store, artifact_id=s1, version=1, access=expand)
+    assert expanded["code"] == "E_NOT_VISIBLE", expanded
+    # the T01 refusal echoes the caller's own requested id; only that echo is excluded
+    outputs.append(json.loads(_dump(expanded).replace(s1, "<requested-id>")))
+    root_result = _t03_related(store, s1, 1, access=ask)
+    assert root_result == T03_MISSING_ROOT, root_result
+    neighbor = _t03_related(store, "n1", 1, access=ask)
+    assert neighbor["code"] == "OK"
+    assert neighbor["items"] == [], neighbor
+    outputs.extend([root_result, neighbor])
+    assert s1 not in _dump(outputs)
+
+    # Reader with every source, but m1 reviewed-deleted: the summary is gone too.
+    world = _t03_world(_t03_sub(tmp_path, "w2"), monkeypatch)
+    store, s1 = world["store"], world["s1"]
+    deleted = MemoryTool().run(
+        world["root"],
+        operation="delete",
+        permissions=_g2_perm(),
+        owner_scope=ALICE.as_dict(),
+        request={
+            "artifact_ids": ["m1"],
+            "expected_revisions": {"m1": 1},
+            "scope": "episodic",
+            "apply": True,
+            "owner_scope": ALICE.as_dict(),
+        },
+    )
+    assert _code_of(deleted) == "OK", _rd(deleted)
+    assert store.get_current_row("m1") is None
+    row = store.get_current_row(s1)
+    for mode in ("ordinary", "inspect", "historical"):
+        decision = evaluate_artifact_visibility(
+            store, row, access=world["historical"], mode=cast(VisibilityMode, mode)
+        )
+        assert decision.visible is False, mode
+    assert s1 not in _t03_recall_ids(store, world["ask"])
+    expanded = expand_artifact(store, artifact_id=s1, version=1, access=world["expand"])
+    assert expanded["code"] == "E_NOT_VISIBLE", expanded
+
+
+# --- R17 --------------------------------------------------------------------
+
+
+def test_t03_consolidate_member_sources_use_source_granted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.consolidation import consolidate_episodes
+    from rush.memory.retrieval import MemoryAccess
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    _auth, data_root, root, store, _g = _policy_project(
+        tmp_path, sources=T03_FAMILY_SOURCES, ops=FULL_OPS
+    )
+    _t03_ep(store, "e1", ALICE, source="intent:i1")
+    _t03_ep(store, "e2", ALICE, source="intent:i2")
+    access = MemoryAccess.resolve(
+        root, operation="consolidate", owner_scope=ALICE, data_root=data_root
+    )
+    assert access is not None
+    assert "intent:*" in access.sources
+
+    def run(allowlist: Any) -> dict[str, Any]:
+        return consolidate_episodes(
+            store, symptom="timeout", session_allowlist=allowlist, access=access
+        )
+
+    whole = run(None)
+    assert whole["code"] == "OK", whole
+    assert whole["summary"]["member_ids"] == ["e1", "e2"]
+    narrowed = run(["intent:i1"])
+    assert narrowed["code"] == "OK", narrowed
+    assert narrowed["summary"]["member_ids"] == ["e1"]
+    summaries = len(_t03_summary_ids(store))
+    denied = run(["source-b"])
+    assert (_code_of(denied), _reason_of(denied)) == (
+        "E_PERMISSION",
+        "source_not_granted",
+    ), denied
+    pattern = run(["*"])
+    assert (_code_of(pattern), _reason_of(pattern)) == (
+        "E_INPUT",
+        "source_pattern",
+    ), pattern
+    assert len(_t03_summary_ids(store)) == summaries
+
+
+# --- R18 --------------------------------------------------------------------
+
+
+def _t03_fire_on_neighbor_fetch(
+    monkeypatch: pytest.MonkeyPatch, action: Any, artifact_id: str = "m1"
+) -> dict[str, int]:
+    fired = {"n": 0}
+    for name in ("get_current", "get_current_row"):
+        original = getattr(TypedArtifactStore, name)
+
+        def wrapper(
+            self: Any, *args: Any, _original: Any = original, **kwargs: Any
+        ) -> Any:
+            if args and args[0] == artifact_id and fired["n"] == 0:
+                fired["n"] += 1
+                action()
+            return _original(self, *args, **kwargs)
+
+        monkeypatch.setattr(TypedArtifactStore, name, wrapper)
+    return fired
+
+
+def test_t03_related_policy_denial_is_e_permission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # revoked before the call
+    world = _t03_world(_t03_sub(tmp_path, "w1"), monkeypatch, summary=False)
+    _t03_edge(world["store"], ("c1", 1), ("m1", 1), "contradicts")
+    alice = _t03_tool(world, ALICE)
+    _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+    before = alice("related", {"id": "c1", "version": 1})
+    assert before["code"] == "E_PERMISSION", before
+    assert before["data"].get("reason") == "revoked", before
+    assert "items" not in before["data"]
+
+    # revoked during the traversal
+    world = _t03_world(_t03_sub(tmp_path, "w2"), monkeypatch, summary=False)
+    _t03_edge(world["store"], ("c1", 1), ("m1", 1), "contradicts")
+    alice = _t03_tool(world, ALICE)
+    ok = alice("related", {"id": "c1", "version": 1})
+    assert ok["code"] == "OK" and [i["id"] for i in ok["data"]["items"]] == ["m1"], ok
+    with monkeypatch.context() as patch:
+        fired = _t03_fire_on_neighbor_fetch(
+            patch,
+            lambda: _fix1_revoke(world["auth"], world["g1"], world["data_root"]),
+        )
+        during = alice("related", {"id": "c1", "version": 1})
+    assert fired["n"] == 1, "the neighbor was never fetched"
+    assert during["code"] == "E_PERMISSION", during
+    assert during["data"].get("reason") == "revoked", during
+    assert "items" not in during["data"]
+    assert "m1" not in _dump(during)
+
+    # grant replaced during the traversal
+    world = _t03_world(_t03_sub(tmp_path, "w3"), monkeypatch, summary=False)
+    _t03_edge(world["store"], ("c1", 1), ("m1", 1), "contradicts")
+    alice = _t03_tool(world, ALICE)
+
+    def replace_grant() -> None:
+        _grant(
+            world["auth"],
+            world["root"],
+            ALICE,
+            world["data_root"],
+            sources=T03_ALICE_SOURCES,
+            ops=tuple(o for o in T03_ALICE_OPS if o != "history"),
+        )
+
+    with monkeypatch.context() as patch:
+        fired = _t03_fire_on_neighbor_fetch(patch, replace_grant)
+        changed = alice("related", {"id": "c1", "version": 1})
+    assert fired["n"] == 1, "the neighbor was never fetched"
+    assert changed["code"] == "E_RESTART", changed
+    assert changed["data"].get("reason") == "access_changed", changed
+    assert "items" not in changed["data"]
+
+
+# --- R19 --------------------------------------------------------------------
+
+
+def _t03_owner_kinds() -> list[Any]:
+    return [
+        pytest.param("project", id="project"),
+        pytest.param("user", id="user"),
+        pytest.param("agent", id="agent"),
+        pytest.param("session", id="session"),
+    ]
+
+
+@pytest.mark.parametrize("kind", _t03_owner_kinds())
+def test_t03_legacy_link_same_owner_any_kind(tmp_path: Path, kind: str) -> None:
+    import uuid
+
+    from rush.memory.retrieval import MemoryAccess
+
+    store = _t03_legacy_store(tmp_path)
+    owner = OwnerScope(kind, str(uuid.uuid4()) if kind == "project" else f"{kind}-1")  # type: ignore[arg-type]
+    _row(store, "o1", owner, "o1", source="allowed")
+    _row(store, "o2", owner, "o2", source="allowed")
+    _row(store, "l1", None, "l1", source="allowed")
+    linked = _t03_link(store, ("o1", 1), ("o2", 1), "depends_on")
+    assert linked["code"] == "OK", linked
+    assert _t03_edges(store) == 1
+    # B1/R16: a bool is not a version; refused before any effect, for every owner kind.
+    boolean = _t03_link(store, ("o1", True), ("o2", 1), "validated_by")
+    assert boolean["code"] == "E_INPUT", boolean
+    assert boolean.get("field") == "source_version", boolean
+    assert _t03_edges(store) == 1
+    mixed = _t03_link(store, ("o1", 1), ("l1", 1), "depends_on")
+    assert mixed == T03_ENDPOINT_BODY, mixed
+    assert _t03_edges(store) == 1
+    # A declared owner narrows: the matching owner links, another does not.
+    write = MemoryAccess.legacy(
+        store.project_root, ["allowed"], owner_scope=owner, operation="write"
+    )
+    declared = _t03_link(store, ("o1", 1), ("o2", 1), "validated_by", access=write)
+    assert declared["code"] == "OK", declared
+    other = MemoryAccess.legacy(
+        store.project_root,
+        ["allowed"],
+        owner_scope=OwnerScope("user", "somebody-else"),
+        operation="write",
+    )
+    refused = _t03_link(store, ("o1", 1), ("o2", 1), "implements", access=other)
+    assert refused == T03_ENDPOINT_BODY, refused
+    assert _t03_edges(store) == 2
+
+
+# --- R20 --------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _t03_trace(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Ordered first-effect events: `lock`, `decision`, `resolve`, `store_init`."""
+    import rush.dashboard.state as dstate
+    from rush.memory import authorization, retrieval
+
+    events: list[str] = []
+    real_lock = dstate.cross_process_project_lock
+
+    @contextlib.contextmanager
+    def lock(project_id: str, *args: Any, **kwargs: Any) -> Any:
+        if str(project_id).startswith("memory-policy:"):
+            events.append("lock")
+        with real_lock(project_id, *args, **kwargs):
+            yield
+
+    real_decision = retrieval._memory_policy_decision
+
+    def decision(*args: Any, **kwargs: Any) -> Any:
+        events.append("decision")
+        return real_decision(*args, **kwargs)
+
+    real_resolve = authorization.resolve_memory_scope
+
+    def resolve(*args: Any, **kwargs: Any) -> Any:
+        events.append("resolve")
+        return real_resolve(*args, **kwargs)
+
+    real_init = TypedArtifactStore.__init__
+
+    def init(self: Any, *args: Any, **kwargs: Any) -> None:
+        events.append("store_init")
+        real_init(self, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(dstate, "cross_process_project_lock", lock)
+        patch.setattr(retrieval, "_memory_policy_decision", decision)
+        patch.setattr(authorization, "resolve_memory_scope", resolve)
+        patch.setattr(TypedArtifactStore, "__init__", init)
+        yield events
+
+
+def test_t03_first_effect_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _t03_world(_t03_sub(tmp_path, "policy"), monkeypatch, summary=False)
+    root = world["root"]
+    perms = ExecutionPermissions(cache_write=True)
+    lroot = _t03_sub(tmp_path, "legacy").resolve()
+    lstore = TypedArtifactStore(lroot)
+    _row(lstore, "a1", None, "a1", source="allowed")
+    _row(lstore, "a2", None, "a2", source="allowed")
+    _t03_ep(lstore, "e1", None, source="allowed")
+    tool = MemoryTool()
+
+    def call(
+        path: Path, operation: MemoryOperation, request: dict[str, Any], **kwargs: Any
+    ) -> Any:
+        return tool.run(path, operation=operation, request=request, **kwargs)
+
+    def ordered(events: list[str], *needs: str) -> None:
+        assert "store_init" in events, events
+        first_store = events.index("store_init")
+        for need in needs:
+            assert need in events[:first_store], (need, events)
+
+    link_request = _t03_link_request(("c1", 1), ("m1", 1), "contradicts")
+    with _t03_trace(monkeypatch) as events:
+        ok = call(
+            root, "link", link_request, permissions=perms, owner_scope=ALICE.as_dict()
+        )
+        assert _code_of(ok) == "OK", _rd(ok)
+    ordered(events, "lock", "decision", "resolve")
+    with _t03_trace(monkeypatch) as events:
+        ok = call(
+            root,
+            "consolidate",
+            {"symptom": "timeout"},
+            permissions=perms,
+            owner_scope=ALICE.as_dict(),
+        )
+        assert _code_of(ok) == "OK", _rd(ok)
+    ordered(events, "lock", "decision", "resolve")
+    with _t03_trace(monkeypatch) as events:
+        ok = call(
+            lroot,
+            "link",
+            _t03_link_request(("a1", 1), ("a2", 1), "depends_on"),
+            permissions=perms,
+        )
+        assert _code_of(ok) == "OK", _rd(ok)
+    ordered(events, "lock", "decision")
+    with _t03_trace(monkeypatch) as events:
+        ok = call(
+            lroot,
+            "consolidate",
+            {"symptom": "timeout"},
+            permissions=perms,
+            session_allowlist=["allowed"],
+        )
+        assert _code_of(ok) == "OK", _rd(ok)
+    ordered(events, "lock", "decision")
+
+    # Every denial constructs no store at all.
+    denials: list[tuple[str, Path, str, dict[str, Any], dict[str, Any]]] = [
+        (
+            "cache_write_off_link",
+            root,
+            "link",
+            link_request,
+            {"owner_scope": ALICE.as_dict(), "permissions": ExecutionPermissions()},
+        ),
+        (
+            "cache_write_off_consolidate",
+            root,
+            "consolidate",
+            {"symptom": "timeout"},
+            {"owner_scope": ALICE.as_dict(), "permissions": ExecutionPermissions()},
+        ),
+        ("owner_omitted_link", root, "link", link_request, {"permissions": perms}),
+        (
+            "owner_omitted_consolidate",
+            root,
+            "consolidate",
+            {"symptom": "timeout"},
+            {"permissions": perms},
+        ),
+        (
+            "bob_no_write_link",
+            root,
+            "link",
+            link_request,
+            {"owner_scope": BOB.as_dict(), "permissions": perms},
+        ),
+        (
+            "bob_no_write_consolidate",
+            root,
+            "consolidate",
+            {"symptom": "timeout"},
+            {"owner_scope": BOB.as_dict(), "permissions": perms},
+        ),
+        (
+            "legacy_empty_allowlist_consolidate",
+            lroot,
+            "consolidate",
+            {"symptom": "timeout"},
+            {"permissions": perms},
+        ),
+        (
+            "legacy_bad_owner_consolidate",
+            lroot,
+            "consolidate",
+            {"symptom": "timeout"},
+            {
+                "permissions": perms,
+                "session_allowlist": ["allowed"],
+                "owner_scope": BOB.as_dict(),
+            },
+        ),
+    ]
+    for label, path, operation, request, extra in denials:
+        with _t03_trace(monkeypatch) as events:
+            denied = call(path, cast(MemoryOperation, operation), request, **extra)
+        assert _code_of(denied) != "OK", (label, _rd(denied))
+        assert "store_init" not in events, (label, events)
+        if label.startswith("cache_write_off"):
+            assert "lock" not in events, (label, events)
+
+    # The read route builds no writable store.
+    with _t03_trace(monkeypatch) as events:
+        related = call(
+            root, "related", {"id": "c1", "version": 1}, owner_scope=ALICE.as_dict()
+        )
+        assert _code_of(related) in {"OK", "E_NOT_VISIBLE"}, _rd(related)
+    assert "store_init" not in events, events
+    with _t03_trace(monkeypatch) as events:
+        related = call(
+            lroot, "related", {"id": "a1", "version": 1}, session_allowlist=["allowed"]
+        )
+        assert _code_of(related) in {"OK", "E_NOT_VISIBLE"}, _rd(related)
+    assert "store_init" not in events, events
+
+
+# --- R21 --------------------------------------------------------------------
+
+
+def test_t03_policy_store_absent_creates_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    policy_root = _registered(tmp_path / "policy", data_root)
+    _grant(
+        auth,
+        policy_root,
+        ALICE,
+        data_root,
+        sources=("source-a", "consolidation"),
+        ops=FULL_OPS,
+    )
+    legacy_root = _t03_sub(tmp_path, "legacy").resolve()
+    perms = ExecutionPermissions(cache_write=True)
+    cases: tuple[tuple[str, Path, dict[str, Any]], ...] = (
+        ("policy", policy_root, {}),
+        ("legacy", legacy_root, {"session_allowlist": ["allowed"]}),
+    )
+    for label, path, extra in cases:
+        assert not (path / ".rush" / "memory.db").exists(), label
+        before = _t03_effects(path, data_root)
+        tree = _tree(path)
+        linked = MemoryTool().run(
+            path,
+            operation="link",
+            request=_t03_link_request(("a1", 1), ("a2", 1), "depends_on"),
+            permissions=perms,
+        )
+        assert _code_of(linked) == "E_NOT_VISIBLE", (label, _rd(linked))
+        consolidated = MemoryTool().run(
+            path,
+            operation="consolidate",
+            request={"symptom": "timeout"},
+            permissions=perms,
+            **extra,
+        )
+        assert _code_of(consolidated) == "E_INPUT", (label, _rd(consolidated))
+        assert _rd(consolidated)["data"]["message"] == (
+            f"no episodes found for symptom {'timeout'!r}"
+        ), label
+        assert not (path / ".rush" / "memory.db").exists(), label
+        assert _tree(path) == tree, label
+        assert _t03_effects(path, data_root) == before, label
+
+
+# --- R16: G4 trust-boundary rows (brief §5.4 with the pre-gate addendum) ----------
+
+
+def _t03_out(value: Any) -> dict[str, Any]:
+    """`{code, reason, field, message, data}` for an in-process result dict or a
+    MemoryTool / MCP / CLI `ToolResult` (its `raw` envelope)."""
+    if isinstance(value, dict) and isinstance(value.get("raw"), dict):
+        raw = value["raw"]
+        data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+        return {
+            "code": raw.get("code"),
+            "reason": data.get("reason"),
+            "field": data.get("field"),
+            "message": data.get("message"),
+            "data": data,
+        }
+    return {
+        "code": value.get("code"),
+        "reason": value.get("reason"),
+        "field": value.get("field"),
+        "message": value.get("message"),
+        "data": value,
+    }
+
+
+def _t03_cli_out(outcome: Any) -> dict[str, Any]:
+    # rush exits 2 on error status and 1 on fail: the JSON envelope is on every exit
+    try:
+        return _t03_out(json.loads(outcome.output))
+    except (ValueError, AttributeError):
+        pass
+    return {
+        "code": None,
+        "reason": None,
+        "field": None,
+        "message": None,
+        "data": {},
+        "exit": outcome.exit_code,
+        "output": outcome.output,
+    }
+
+
+class _G4:
+    """One policy world and the four transports of the three T03 routes."""
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.tmp_path = tmp_path
+        self.mp = monkeypatch
+        self.world = _t03_world(tmp_path, monkeypatch, summary=False)
+        self.store: TypedArtifactStore = self.world["store"]
+        self.root: Path = self.world["root"]
+        _t03_edge(self.store, ("c1", 1), ("m1", 1), "contradicts")
+        self.perms = ExecutionPermissions(cache_write=True)
+
+    def link(self, transport: str, **override: Any) -> dict[str, Any]:
+        from rush.memory.relations import add_relation
+
+        request = {
+            **_t03_link_request(("c1", 1), ("m1", 1), "implements"),
+            **override,
+        }
+        if transport == "inproc":
+            return _t03_out(
+                add_relation(self.store, access=self.world["write"], **request)
+            )
+        if transport == "internal":
+            return _t03_out(
+                MemoryTool().run(
+                    self.root,
+                    operation="link",
+                    request=request,
+                    owner_scope=ALICE.as_dict(),
+                    permissions=self.perms,
+                )
+            )
+        if transport == "mcp":
+            return _t03_out(
+                _mcp_memory(
+                    path=str(self.root),
+                    operation="link",
+                    request=request,
+                    owner_scope=ALICE.as_dict(),
+                    allow_cache_write=True,
+                )
+            )
+        assert transport == "cli"
+        return _t03_cli_out(
+            _t03_cli(
+                self.root,
+                self.mp,
+                "link",
+                request,
+                "--owner",
+                "user:alice",
+                "--allow-cache-write",
+            )
+        )
+
+    def related(self, transport: str, **override: Any) -> dict[str, Any]:
+        request = {"id": "c1", "version": 1, **override}
+        if transport == "inproc":
+            mapped = {
+                {"id": "artifact_id"}.get(key, key): value
+                for key, value in request.items()
+            }
+            return _t03_out(
+                _t03_related(
+                    self.store,
+                    mapped.pop("artifact_id"),
+                    mapped.pop("version"),
+                    access=self.world["ask"],
+                    **mapped,
+                )
+            )
+        if transport == "internal":
+            return _t03_out(
+                MemoryTool().run(
+                    self.root,
+                    operation="related",
+                    request=request,
+                    owner_scope=ALICE.as_dict(),
+                )
+            )
+        if transport == "mcp":
+            return _t03_out(
+                _mcp_memory(
+                    path=str(self.root),
+                    operation="related",
+                    request=request,
+                    owner_scope=ALICE.as_dict(),
+                )
+            )
+        assert transport == "cli"
+        return _t03_cli_out(
+            _t03_cli(self.root, self.mp, "related", request, "--owner", "user:alice")
+        )
+
+    def consolidate(
+        self,
+        transport: str,
+        symptom: Any = "timeout",
+        allowlist: Any = None,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        from rush.memory.consolidation import consolidate_episodes
+
+        if transport == "inproc":
+            return _t03_out(
+                consolidate_episodes(
+                    self.store,
+                    symptom=symptom,
+                    session_allowlist=allowlist,
+                    access=self.world["consolidate"],
+                    **extra,
+                )
+            )
+        request = {"symptom": symptom}
+        if transport == "internal":
+            return _t03_out(
+                MemoryTool().run(
+                    self.root,
+                    operation="consolidate",
+                    request=request,
+                    session_allowlist=allowlist,
+                    owner_scope=ALICE.as_dict(),
+                    permissions=self.perms,
+                )
+            )
+        if transport == "mcp":
+            arguments: dict[str, Any] = {
+                "path": str(self.root),
+                "operation": "consolidate",
+                "request": request,
+                "owner_scope": ALICE.as_dict(),
+                "allow_cache_write": True,
+            }
+            if allowlist is not None:
+                arguments["session_allowlist"] = allowlist
+            return _t03_out(_mcp_memory(**arguments))
+        assert transport == "cli"
+        flags = ["--owner", "user:alice", "--allow-cache-write"]
+        for item in allowlist or ():
+            flags += ["--session", item]
+        return _t03_cli_out(
+            _t03_cli(self.root, self.mp, "consolidate", request, *flags)
+        )
+
+
+_T03_G4: list[Any] = []
+_T03_ALL = ("inproc", "internal", "mcp", "cli")
+_T03_PUBLIC = ("internal", "mcp", "cli")
+
+
+def _g4_add(
+    row_id: str,
+    transports: tuple[str, ...],
+    check: Any,
+    marks: tuple[Any, ...] = (),
+) -> None:
+    for transport in transports:
+        _T03_G4.append(
+            pytest.param(check, transport, id=f"{row_id}-{transport}", marks=marks)
+        )
+
+
+def _g4_link_input(field: str | None = None, **override: Any) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        before = _t03_edges(g.store)
+        out = g.link(transport, **override)
+        assert out["code"] == "E_INPUT", out
+        if field is not None and transport == "inproc":
+            assert out["field"] == field, out
+        assert _t03_edges(g.store) == before
+
+    return check
+
+
+def _g4_link_not_visible(**override: Any) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        before = _t03_edges(g.store)
+        out = g.link(transport, **override)
+        assert out["code"] == "E_NOT_VISIBLE", out
+        assert _t03_edges(g.store) == before
+
+    return check
+
+
+def _g4_related_input(field: str | None = None, **override: Any) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        out = g.related(transport, **override)
+        assert out["code"] == "E_INPUT", out
+        if field is not None and transport == "inproc":
+            assert out["field"] == field, out
+
+    return check
+
+
+_g4_add("link_id_int", _T03_ALL, _g4_link_input("source_id", source_id=1))
+_g4_add("link_target_id_int", _T03_ALL, _g4_link_input("target_id", target_id=1))
+_g4_add(
+    "link_version_true", _T03_ALL, _g4_link_input("source_version", source_version=True)
+)
+_g4_add(
+    "link_version_str", _T03_ALL, _g4_link_input("source_version", source_version="1")
+)
+_g4_add(
+    "link_target_version_true",
+    _T03_ALL,
+    _g4_link_input("target_version", target_version=True),
+)
+_g4_add(
+    "link_version_huge",
+    _T03_ALL,
+    _g4_link_input("source_version", source_version=10**400),
+)
+_g4_add(
+    "link_version_below_range",
+    _T03_ALL,
+    _g4_link_input("source_version", source_version=-(2**63) - 1),
+)
+_g4_add(
+    "link_version_nan",
+    _T03_ALL,
+    _g4_link_input("source_version", source_version=float("nan")),
+)
+_g4_add(
+    "link_version_inf",
+    _T03_ALL,
+    _g4_link_input("target_version", target_version=float("inf")),
+)
+_g4_add(
+    "link_version_float",
+    ("inproc", "internal"),
+    _g4_link_input("source_version", source_version=1.0),
+)
+_g4_add("link_id_nul", _T03_ALL, _g4_link_not_visible(source_id="a\x00"))
+_g4_add("link_id_cf", _T03_ALL, _g4_link_not_visible(source_id="a\u200bb"))
+_g4_add("link_id_cc", _T03_ALL, _g4_link_not_visible(target_id="a\x07"))
+_g4_add("link_id_surrogate", _T03_ALL, _g4_link_input("source_id", source_id="\ud800"))
+_g4_add(
+    "link_target_id_surrogate",
+    _T03_ALL,
+    _g4_link_input("target_id", target_id="\ud800"),
+)
+_g4_add(
+    "link_origin_ref_surrogate",
+    _T03_ALL,
+    _g4_link_input("origin_ref", origin_ref="\ud800"),
+)
+_g4_add("link_kind_nul", _T03_ALL, _g4_link_input(None, kind="depends_on\x00"))
+_g4_add("link_kind_empty", _T03_ALL, _g4_link_input(None, kind=""))
+_g4_add("link_kind_int", _T03_ALL, _g4_link_input(None, kind=5))
+_g4_add("link_kind_unhashable", ("inproc",), _g4_link_input(None, kind=["depends_on"]))
+
+_g4_add("related_id_surrogate", _T03_ALL, _g4_related_input("id", id="\ud800"))
+for _name in ("version", "depth", "max_nodes", "max_tokens", "max_bytes"):
+    _g4_add(f"related_{_name}_true", _T03_ALL, _g4_related_input(None, **{_name: True}))
+    _g4_add(f"related_{_name}_str", _T03_ALL, _g4_related_input(None, **{_name: "1"}))
+    _g4_add(
+        f"related_{_name}_nan",
+        _T03_ALL,
+        _g4_related_input(None, **{_name: float("nan")}),
+    )
+
+
+def _g4_related_depth_huge(g: _G4, transport: str) -> None:
+    out = g.related(transport, depth=10**400)
+    assert out["code"] == "OK", out
+    assert {i["id"] for i in out["data"]["items"]} >= {"m1"}, out
+
+
+_g4_add("related_depth_huge", _T03_ALL, _g4_related_depth_huge)
+
+
+def _g4_related_zero_budget(g: _G4, transport: str) -> None:
+    out = g.related(transport, max_tokens=0)
+    # `related` has no C05 admission minimum: nothing fits, nothing is hidden
+    assert out["code"] == "OK", out
+    assert out["data"]["items"] == [], out
+    assert out["data"]["complete"] is False, out
+
+
+_g4_add("related_max_tokens_zero", _T03_ALL, _g4_related_zero_budget)
+
+
+def _g4_consolidate_literal(symptom: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        rows = _t03_count(g.store)
+        out = g.consolidate(transport, symptom=symptom)
+        assert out["code"] == "E_INPUT", out
+        assert out["message"] == f"no episodes found for symptom {symptom!r}", out
+        assert _t03_count(g.store) == rows
+
+    return check
+
+
+for _index, _symptom in enumerate(['"', 'q"x', "a AND", "*", "t\x00", "\ud800"]):
+    _g4_add(
+        f"consolidate_symptom_{_index}", _T03_ALL, _g4_consolidate_literal(_symptom)
+    )
+
+
+def _g4_consolidate_fts_exact(g: _G4, transport: str) -> None:
+    for artifact_id, symptom in (("fts1", 'q"x'), ("fts2", "a AND")):
+        _row(
+            g.store,
+            artifact_id,
+            ALICE,
+            "",
+            subject="episodic",
+            content={**_t03_episode(), "symptom": symptom},
+        )
+    out = g.consolidate(transport, symptom='q"x')
+    assert out["code"] == "OK", out
+    assert out["data"]["summary"]["member_ids"] == ["fts1"], out
+
+
+_g4_add("consolidate_symptom_fts_exact_match", _T03_ALL, _g4_consolidate_fts_exact)
+
+
+def _g4_consolidate_symptom_type(value: Any) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        out = g.consolidate(transport, symptom=value)
+        assert out["code"] == "E_INPUT", out
+        if transport == "inproc":
+            assert out["message"] == f"no episodes found for symptom {value!r}", out
+
+    return check
+
+
+_g4_add("consolidate_symptom_int", _T03_ALL, _g4_consolidate_symptom_type(5))
+_g4_add(
+    "consolidate_symptom_dict",
+    ("internal", "mcp", "cli"),
+    _g4_consolidate_symptom_type({}),
+)
+
+
+def _g4_consolidate_source_pattern(g: _G4, transport: str) -> None:
+    out = g.consolidate(transport, source="a*b")
+    assert out["code"] == "E_INPUT", out
+    assert out["reason"] == "source_pattern", out
+
+
+_g4_add("consolidate_source_pattern", ("inproc",), _g4_consolidate_source_pattern)
+
+
+def _g4_allowlist_pattern(item: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        rows = _t03_count(g.store)
+        out = g.consolidate(transport, allowlist=[item])
+        assert out["code"] == "E_INPUT", out
+        if transport in ("inproc", "internal"):
+            assert out["reason"] == "source_pattern", out
+        assert _t03_count(g.store) == rows
+
+    return check
+
+
+_g4_add("consolidate_allowlist_star", _T03_ALL, _g4_allowlist_pattern("*"))
+_g4_add("consolidate_allowlist_infix_star", _T03_ALL, _g4_allowlist_pattern("a*b"))
+
+
+def _g4_allowlist_str(g: _G4, transport: str) -> None:
+    out = g.consolidate(transport, allowlist="abc")
+    assert out["code"] == "E_INPUT", out
+    if transport == "internal":
+        assert out["field"] == "session_allowlist", out
+
+
+_g4_add("consolidate_allowlist_str", ("internal", "mcp"), _g4_allowlist_str)
+
+
+def _g4_owner_unhashable(g: _G4, route: str, transport: str) -> None:
+    owner = {"kind": ["user"], "id": "a"}
+    request = (
+        {"id": "c1", "version": 1}
+        if route == "related"
+        else _t03_link_request(("c1", 1), ("m1", 1), "implements")
+        if route == "link"
+        else {"symptom": "timeout"}
+    )
+    if transport == "internal":
+        out = _t03_out(
+            MemoryTool().run(
+                g.root,
+                operation=cast(MemoryOperation, route),
+                request=request,
+                owner_scope=cast(Any, owner),
+                permissions=g.perms,
+            )
+        )
+    else:
+        arguments: dict[str, Any] = {
+            "path": str(g.root),
+            "operation": route,
+            "request": request,
+            "owner_scope": owner,
+        }
+        if route != "related":
+            arguments["allow_cache_write"] = True
+        out = _t03_out(_mcp_memory(**arguments))
+    assert out["code"] == "E_INPUT", out
+    assert _t03_edges(g.store) == 1
+
+
+for _route in ("link", "consolidate", "related"):
+    for _transport in ("internal", "mcp"):
+        _T03_G4.append(
+            pytest.param(
+                lambda g, t, _r=_route: _g4_owner_unhashable(g, _r, t),
+                _transport,
+                id=f"{_route}_owner_unhashable_kind-{_transport}",
+            )
+        )
+
+
+_T03_BAD_OWNERS = {
+    "kind_robot": {"kind": "robot", "id": "x"},
+    "id_missing": {"kind": "user"},
+    "id_blank": {"kind": "user", "id": " "},
+    "plain_string": "user:a",
+}
+
+
+def _g4_owner_shape(shape: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        owner = _T03_BAD_OWNERS[shape]
+        for route, request in (
+            ("link", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+            ("consolidate", {"symptom": "timeout"}),
+            ("related", {"id": "c1", "version": 1}),
+        ):
+            if transport == "internal":
+                out = _t03_out(
+                    MemoryTool().run(
+                        g.root,
+                        operation=cast(MemoryOperation, route),
+                        request=request,
+                        owner_scope=cast(Any, owner),
+                        permissions=g.perms,
+                    )
+                )
+            else:
+                arguments: dict[str, Any] = {
+                    "path": str(g.root),
+                    "operation": route,
+                    "request": request,
+                    "owner_scope": owner,
+                }
+                if route != "related":
+                    arguments["allow_cache_write"] = True
+                out = _t03_out(_mcp_memory(**arguments))
+            assert out["code"] == "E_INPUT", (route, out)
+        assert _t03_edges(g.store) == 1
+
+    return check
+
+
+for _shape in _T03_BAD_OWNERS:
+    _g4_add(f"owner_shape_{_shape}", ("internal", "mcp"), _g4_owner_shape(_shape))
+
+
+def _g4_owner_cli(selector: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        for leaf, request in (
+            ("link", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+            ("consolidate", {"symptom": "timeout"}),
+            ("related", {"id": "c1", "version": 1}),
+        ):
+            outcome = _t03_cli(
+                g.root, g.mp, leaf, request, "--owner", selector, "--allow-cache-write"
+            )
+            assert outcome.exit_code == 2, (leaf, selector, outcome.output)
+            assert "No such option" not in outcome.output
+        assert _t03_edges(g.store) == 1
+
+    return check
+
+
+for _selector in ("robot:x", "user:", "user: ", "plain"):
+    _g4_add(
+        f"owner_cli_{_selector.replace(':', '_').replace(' ', 'sp')}",
+        ("cli",),
+        _g4_owner_cli(_selector),
+    )
+
+
+def _g4_owner_id_policy(owner_id: str, expected: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        owner = {"kind": "user", "id": owner_id}
+        for route, request in (
+            ("link", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+            ("consolidate", {"symptom": "timeout"}),
+        ):
+            out = _t03_out(
+                MemoryTool().run(
+                    g.root,
+                    operation=cast(MemoryOperation, route),
+                    request=request,
+                    owner_scope=owner,
+                    permissions=g.perms,
+                )
+            )
+            assert out["code"] == "E_PERMISSION", (route, out)
+            assert out["reason"] == expected, (route, out)
+        assert _t03_edges(g.store) == 1
+
+    return check
+
+
+_g4_add(
+    "owner_id_nul_policy",
+    ("internal",),
+    _g4_owner_id_policy("a\x00", "owner_not_granted"),
+)
+_g4_add(
+    "owner_id_cf_policy",
+    ("internal",),
+    _g4_owner_id_policy("a\u200bb", "owner_not_granted"),
+)
+_g4_add(
+    "owner_id_cc_policy",
+    ("internal",),
+    _g4_owner_id_policy("a\x07", "owner_not_granted"),
+)
+_g4_add(
+    "owner_id_surrogate_policy",
+    ("internal",),
+    _g4_owner_id_policy("\ud800", "invalid_request"),
+)
+
+
+def _g4_owner_id_legacy(owner_id: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        store = _t03_legacy_store(g.tmp_path, "legacy")
+        _row(store, "a1", None, "a1", source="allowed")
+        _row(store, "a2", None, "a2", source="allowed")
+        _t03_ep(store, "e1", None, source="allowed")
+        owner = {"kind": "user", "id": owner_id}
+        link = _t03_out(
+            MemoryTool().run(
+                store.project_root,
+                operation="link",
+                request=_t03_link_request(("a1", 1), ("a2", 1), "depends_on"),
+                owner_scope=owner,
+                permissions=g.perms,
+            )
+        )
+        assert link["code"] == "E_NOT_VISIBLE", link
+        consolidated = _t03_out(
+            MemoryTool().run(
+                store.project_root,
+                operation="consolidate",
+                request={"symptom": "timeout"},
+                session_allowlist=["allowed"],
+                owner_scope=owner,
+                permissions=g.perms,
+            )
+        )
+        assert consolidated["code"] == "E_NOT_VISIBLE", consolidated
+        assert _t03_edges(store) == 0
+        assert _t03_summary_ids(store) == []
+
+    return check
+
+
+_g4_add("owner_id_nul_legacy", ("internal",), _g4_owner_id_legacy("a\x00"))
+_g4_add("owner_id_cc_legacy", ("internal",), _g4_owner_id_legacy("a\x07"))
+_g4_add("owner_id_surrogate_legacy", ("internal",), _g4_owner_id_legacy("\ud800"))
+
+
+def _g4_bad_path(kind: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        if kind == "nul":
+            path: Any = str(g.tmp_path) + "/x\x00y"
+        else:
+            loop = g.tmp_path / "loop"
+            loop.symlink_to(loop)
+            path = loop
+        edges = _t03_edges(g.store)
+        effects = _t03_effects(g.root, g.world["data_root"])
+        for route, request in (
+            ("link", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+            ("consolidate", {"symptom": "timeout"}),
+            ("related", {"id": "c1", "version": 1}),
+        ):
+            if transport == "internal":
+                out = _t03_out(
+                    MemoryTool().run(
+                        path,
+                        operation=cast(MemoryOperation, route),
+                        request=request,
+                        owner_scope=ALICE.as_dict(),
+                        permissions=g.perms,
+                    )
+                )
+                assert out["code"] == "E_INPUT", (route, out)
+                assert out["field"] == "path", (route, out)
+                assert out["message"] == "invalid project path", (route, out)
+            else:
+                arguments: dict[str, Any] = {
+                    "path": str(path),
+                    "operation": route,
+                    "request": request,
+                    "owner_scope": ALICE.as_dict(),
+                }
+                if route != "related":
+                    arguments["allow_cache_write"] = True
+                # 72-T01 brief: transport errors stay transport errors before
+                # MemoryTool.run (shared target resolver, invocation/targets.py)
+                if kind == "nul":
+                    rejected = _mcp_memory(**arguments)
+                    assert rejected["status"] == "error", (route, rejected)
+                    assert rejected["raw"] is None, (route, rejected)
+                else:
+                    with pytest.raises(Exception, match="SYMLINK_DISALLOWED"):
+                        _mcp_memory(**arguments)
+        assert _t03_edges(g.store) == edges
+        assert _t03_effects(g.root, g.world["data_root"]) == effects
+
+    return check
+
+
+_g4_add("path_nul", ("internal", "mcp"), _g4_bad_path("nul"))
+_g4_add(
+    "path_symlink_loop",
+    ("internal", "mcp"),
+    _g4_bad_path("loop"),
+    marks=(pytest.mark.posix_only,),
+)
+
+
+def _g4_missing_dir_policy(g: _G4, transport: str) -> None:
+    gone = g.world["root"]
+    shutil.rmtree(gone)
+    for route, request in (
+        ("link", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+        ("consolidate", {"symptom": "timeout"}),
+    ):
+        out = _t03_out(
+            MemoryTool().run(
+                gone,
+                operation=cast(MemoryOperation, route),
+                request=request,
+                owner_scope=ALICE.as_dict(),
+                permissions=g.perms,
+            )
+        )
+        assert out["code"] == "E_PERMISSION", (route, out)
+        assert out["reason"] == "project_missing", (route, out)
+        assert not gone.exists(), route
+
+
+def _g4_missing_dir_legacy(g: _G4, transport: str) -> None:
+    gone = g.tmp_path / "nowhere"
+    link = _t03_out(
+        MemoryTool().run(
+            gone,
+            operation="link",
+            request=_t03_link_request(("a1", 1), ("a2", 1), "depends_on"),
+            permissions=g.perms,
+        )
+    )
+    assert link["code"] == "E_NOT_VISIBLE", link
+    consolidated = _t03_out(
+        MemoryTool().run(
+            gone,
+            operation="consolidate",
+            request={"symptom": "timeout"},
+            session_allowlist=["allowed"],
+            permissions=g.perms,
+        )
+    )
+    assert consolidated["code"] == "E_INPUT", consolidated
+    assert not gone.exists()
+
+
+_g4_add("path_missing_directory_policy", ("internal",), _g4_missing_dir_policy)
+_g4_add("path_missing_directory_legacy", ("internal",), _g4_missing_dir_legacy)
+
+
+def _g4_bad_data_root(kind: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        from rush.memory.consolidation import consolidate_episodes
+
+        loop = g.tmp_path / "dloop"
+        loop.symlink_to(loop)
+        bad = {"int": 3, "nul": "/x\x00y", "loop": loop}[kind]
+        link_access = dataclasses.replace(g.world["write"], data_root=bad)
+        consolidate_access = dataclasses.replace(g.world["consolidate"], data_root=bad)
+        edges, rows = _t03_edges(g.store), _t03_count(g.store)
+        linked = _t03_link(
+            g.store, ("c1", 1), ("m1", 1), "implements", access=link_access
+        )
+        assert (_code_of(linked), _reason_of(linked)) == (
+            "E_PERMISSION",
+            "lock_unavailable",
+        ), linked
+        consolidated = consolidate_episodes(
+            g.store,
+            symptom="timeout",
+            session_allowlist=None,
+            access=consolidate_access,
+        )
+        assert (_code_of(consolidated), _reason_of(consolidated)) == (
+            "E_PERMISSION",
+            "lock_unavailable",
+        ), consolidated
+        assert _t03_edges(g.store) == edges
+        assert _t03_count(g.store) == rows
+
+    return check
+
+
+_g4_add("data_root_int", ("inproc",), _g4_bad_data_root("int"))
+_g4_add("data_root_nul", ("inproc",), _g4_bad_data_root("nul"))
+_g4_add(
+    "data_root_symlink_loop",
+    ("inproc",),
+    _g4_bad_data_root("loop"),
+    marks=(pytest.mark.posix_only,),
+)
+
+
+def _g4_source_path(spelling: str, literal_file: bool = False) -> Any:
+    """G15 class 1: a persisted `symbol_ref` path is read under the project root only.
+    Every traversal / drive / UNC spelling is a stale (not visible) endpoint, reads no
+    outside bytes and creates nothing; a literal-backslash POSIX file name inside the
+    root is an ordinary valid file."""
+
+    def check(g: _G4, transport: str) -> None:
+        from rush.memory import retrieval
+
+        text = "def f():\n    return 1\n"
+        outside = g.tmp_path / "outside.py"
+        outside.write_text(text, encoding="utf-8")
+        inside = g.root / ("back\\slash.py" if literal_file else "twin.py")
+        inside.write_text(text, encoding="utf-8")
+        digest = retrieval.SourceValidationMemo().source_hash(g.root, inside.name)
+        assert digest
+        ref = spelling.replace("{outside}", str(outside))
+        _row(g.store, "x1", ALICE, "x1", symbol_ref=f"{ref}::", content_hash=digest)
+        if not literal_file:
+            inside.unlink()
+        tree, outside_bytes = _t03_tree(g.root), outside.read_bytes()
+        edges = _t03_edges(g.store)
+        current = _version(g.store.db_path, "x1")
+        out = g.link(
+            transport, target_id="x1", target_version=current, kind="depends_on"
+        )
+        if literal_file:
+            assert out["code"] == "OK", out
+            assert _t03_edges(g.store) == edges + 1
+        else:
+            assert out["code"] == "E_NOT_VISIBLE", out
+            assert _t03_edges(g.store) == edges
+            assert _t03_tree(g.root) == tree
+        assert outside.read_bytes() == outside_bytes
+
+    return check
+
+
+for _tag, _spelling in (
+    ("dotdot", "../outside.py"),
+    ("dotdot_backslash", "..\\outside.py"),
+    ("absolute", "{outside}"),
+    ("drive_backslash", "C:\\outside.py"),
+    ("drive_slash", "C:/outside.py"),
+    ("unc", "\\\\host\\share\\outside.py"),
+):
+    _g4_add(f"source_path_{_tag}", ("inproc", "internal"), _g4_source_path(_spelling))
+_g4_add(
+    "source_path_posix_literal_backslash",
+    ("inproc", "internal"),
+    _g4_source_path("back\\slash.py", literal_file=True),
+    marks=(pytest.mark.posix_only,),
+)
+
+
+def _g4_cli_input_bytes(payload: bytes, expected: str, exit_code: int) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        calls: list[str] = []
+
+        def boom(self: Any, *args: Any, **kwargs: Any) -> Any:
+            calls.append("called")
+            raise AssertionError("the tool must not run for an undecodable --input")
+
+        g.mp.setattr(MemoryTool, "run", boom)
+        g.mp.setattr(MemoryTool, "__call__", boom)
+        g.mp.chdir(g.root)
+        for leaf in ("link", "consolidate", "related"):
+            path = g.root / f"{leaf}-bytes.json"
+            path.write_bytes(payload)
+            outcome = CliRunner().invoke(
+                cli, ["memory", leaf, "--input", str(path), "--json"]
+            )
+            assert outcome.exit_code == exit_code, (leaf, outcome.output)
+            assert expected in outcome.output, (leaf, outcome.output)
+        assert calls == []
+
+    return check
+
+
+_g4_add(
+    "cli_input_non_utf8",
+    ("cli",),
+    _g4_cli_input_bytes(b"\xff\xfe{}", "--input must be UTF-8 JSON", 1),
+)
+_g4_add(
+    "cli_input_utf8_bom",
+    ("cli",),
+    _g4_cli_input_bytes(b"\xef\xbb\xbf{}", "--input must be valid JSON", 1),
+)
+
+
+def _g4_moved_root(variant: str) -> Any:
+    def check(g: _G4, transport: str) -> None:
+        from rush.memory.authorization import resolve_memory_scope
+
+        moved = g.tmp_path / "moved-project"
+        if variant == "moved":
+            os.rename(g.root, moved)
+            target = moved
+        else:
+            target = g.root.parent / "PROJECT"
+            assert target.exists(), "case-variant probe"
+        effects = _t03_effects(target, g.world["data_root"], tree=False)
+        denied_all = True
+        for route, operation, request in (
+            ("link", "write", _t03_link_request(("c1", 1), ("m1", 1), "implements")),
+            ("consolidate", "write", {"symptom": "timeout"}),
+            ("related", "ask", {"id": "c1", "version": 1}),
+        ):
+            expected = resolve_memory_scope(
+                project_root=target,
+                operation=operation,
+                owner_scope=ALICE,
+                data_root=g.world["data_root"],
+            )
+            out = _t03_out(
+                MemoryTool().run(
+                    target,
+                    operation=cast(MemoryOperation, route),
+                    request=request,
+                    owner_scope=ALICE.as_dict(),
+                    permissions=g.perms,
+                )
+            )
+            if expected.get("access") in ("read", "write"):
+                denied_all = False
+                continue
+            assert out["code"] == "E_PERMISSION", (route, out)
+            assert out["reason"] == expected["reason"], (route, out, expected)
+        if denied_all:
+            assert _t03_effects(target, g.world["data_root"], tree=False) == effects
+
+    return check
+
+
+_g4_add("root_moved", ("internal",), _g4_moved_root("moved"))
+
+
+def _t03_fs_is_case_insensitive() -> bool:
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        probe = Path(raw) / "CaseProbe"
+        probe.mkdir()
+        return (Path(raw) / "caseprobe").exists()
+
+
+if _t03_fs_is_case_insensitive():
+    _g4_add("root_case_variant", ("internal",), _g4_moved_root("case"))
+
+
+@pytest.mark.parametrize(("check", "transport"), _T03_G4)
+def test_t03_trust_boundary_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check: Any, transport: str
+) -> None:
+    check(_G4(tmp_path, monkeypatch), transport)
+
+
+# === 72-T03 G5 test author, part 2: R11 lock and expiry, G15 scope-gate and
+# preservation-oracle self-checks ==================================================
+
+
+def _t03_pause_first(
+    monkeypatch: pytest.MonkeyPatch, module: Any, name: str
+) -> tuple[threading.Event, threading.Event]:
+    """Block the first call of `module.name` until `release` is set (60 s cap), after
+    `entered` is set: the paused helper keeps whatever lock it already holds."""
+    entered, release = threading.Event(), threading.Event()
+    original = getattr(module, name)
+    calls = {"n": 0}
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            release.wait(60)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, wrapper)
+    return entered, release
+
+
+def _t03_summary_call(world: dict[str, Any]) -> Any:
+    from rush.memory.consolidation import consolidate_episodes
+
+    return consolidate_episodes(
+        world["store"],
+        symptom="timeout",
+        session_allowlist=None,
+        access=world["consolidate"],
+        source="source-s",
+    )
+
+
+# --- R11: the policy lock spans the whole helper ---------------------------------
+
+
+@pytest.mark.parametrize("route", ["link", "consolidate"])
+def test_t03_relation_lock_two_process_barrier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    from rush.memory import consolidation, relations
+
+    def helper(world: dict[str, Any]) -> Any:
+        if route == "link":
+            return _t03_link(
+                world["store"],
+                ("c1", 1),
+                ("m1", 1),
+                "contradicts",
+                access=world["write"],
+            )
+        return _t03_summary_call(world)
+
+    def written(world: dict[str, Any]) -> int:
+        if route == "link":
+            return _t03_edges(world["store"])
+        return len(_t03_summary_ids(world["store"]))
+
+    # (a) a revoke in another process waits for the helper, which commits first.
+    world = _t03_world(_t03_sub(tmp_path, "held"), monkeypatch, summary=False)
+    auth, data_root = world["auth"], world["data_root"]
+    if route == "link":
+        entered, release = _t03_pause_first(monkeypatch, relations, "_connect")
+    else:
+        entered, release = _t03_pause_first(
+            monkeypatch, consolidation, "evaluate_artifact_visibility"
+        )
+    thread, box = _run_in_thread(lambda: helper(world))
+    child: subprocess.Popen[str] | None = None
+    try:
+        assert entered.wait(30), "the helper never reached its transaction"
+        started = tmp_path / "revoke-started"
+        revision = _revision(auth, data_root)
+        child = _spawn(
+            _REVOKE_CHILD,
+            grant_id=world["g1"]["grant_id"],
+            revision=revision,
+            data_root=str(data_root),
+            started=str(started),
+        )
+        _wait_for_file(started, child)
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            assert child.poll() is None, (
+                "revoke returned while the helper held the lock"
+            )
+            time.sleep(0.05)
+        released_at = time.time()
+        release.set()
+        thread.join(60)
+        assert not thread.is_alive()
+        code, out, err = _reap(child)
+        assert code == 0, err
+        revoked = json.loads(out.strip().splitlines()[-1])
+        assert revoked["policy_revision"] == revision + 1
+        assert revoked["ts"] > released_at
+    finally:
+        release.set()
+        if child is not None and child.poll() is None:
+            child.kill()
+            child.communicate()
+    assert _code_of(box["result"]) == "OK", box["result"]
+    assert written(world) == 1
+
+    # (b) a revoke committed before the helper's lock: refused, nothing written.
+    world = _t03_world(_t03_sub(tmp_path, "revoked"), monkeypatch, summary=False)
+    _fix1_revoke(world["auth"], world["g1"], world["data_root"])
+    rows = _t03_count(world["store"])
+    refused = helper(world)
+    assert (_code_of(refused), _reason_of(refused)) == ("E_PERMISSION", "revoked")
+    assert written(world) == 0
+    assert _t03_count(world["store"]) == rows
+
+
+# --- R11: an expiry that passes after admission is caught before the commit ------
+
+
+@pytest.mark.parametrize("route", ["link", "consolidate"])
+def test_t03_relation_expiry_before_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    from rush.memory import authorization
+
+    expires = time.time() + 3600
+    world = _t03_world(tmp_path, monkeypatch, summary=False, alice_expires=expires)
+    store = world["store"]
+    rows = _t03_count(store)
+    versions = _t03_count(store, "memory_artifact_versions")
+
+    def pass_expiry() -> None:
+        monkeypatch.setattr(authorization, "_now", lambda: expires + 10)
+
+    if route == "link":
+        fired = _t03_on_relation_insert(monkeypatch, pass_expiry)
+        result = _t03_link(
+            store, ("c1", 1), ("m1", 1), "contradicts", access=world["write"]
+        )
+    else:
+        fired = _t03_after_summary_insert(monkeypatch, pass_expiry)
+        result = _t03_summary_call(world)
+    assert fired["n"] == 1, "the write never started"
+    assert "error" not in fired, fired
+    assert (_code_of(result), _reason_of(result)) == ("E_PERMISSION", "expired"), result
+    assert _t03_edges(store) == 0
+    assert _t03_summary_ids(store) == []
+    assert _t03_count(store) == rows
+    assert _t03_count(store, "memory_artifact_versions") == versions
+
+
+# --- G15 class 6: the scope gate checks the staged blob and the worktree bytes ----
+
+
+def _t03_gate_script() -> Path:
+    return Path(__file__).resolve().parents[1] / "scripts" / "scope_gate.py"
+
+
+def _t03_gate_protected() -> dict[str, tuple[str, ...]]:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "t03_scope_gate_probe", _t03_gate_script()
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return dict(module.PROTECTED)
+
+
+T03_GATE_MODULE = "tests/test_phase72_memory_correctness.py"
+T03_GATE_TARGET = "test_t01_fix1_promote_refuses_payload_mismatched_row"
+
+
+def _t03_gate_function(name: str, *, assert_text: str = "1 + 1 == 2") -> str:
+    return (
+        f"def {name}():\n"
+        f"    assert {assert_text}\n"
+        f"    assert_called({name!r})\n"
+        f"    return {name!r}\n"
+    )
+
+
+def _t03_gate_module_text(names: tuple[str, ...]) -> str:
+    return "\n\n".join(_t03_gate_function(name) for name in names) + "\n"
+
+
+def _t03_gate_repo(tmp_path: Path) -> Path:
+    protected = _t03_gate_protected()
+    files = {
+        module: _t03_gate_module_text(names) for module, names in protected.items()
+    }
+    return _git_repo(tmp_path / "gate-repo", files)
+
+
+def _t03_gate_run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(_t03_gate_script()), *args],
+        cwd=repo,
+        env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def _t03_git_out(repo: Path, *args: str, data: bytes | None = None) -> bytes:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=dict(os.environ, GIT_OPTIONAL_LOCKS="0"),
+        input=data,
+        capture_output=True,
+        check=True,
+    ).stdout
+
+
+def _t03_git_capture(repo: Path) -> dict[str, Any]:
+    """Every Git component a read-only check must leave unchanged: HEAD, the raw
+    index bytes (an index-format change keeps `ls-files` output identical), the
+    index entries, the porcelain status and every worktree file."""
+    index = repo / ".git" / "index"
+    return {
+        "head": _t03_git_out(repo, "rev-parse", "HEAD"),
+        "index_raw": _sha_file(index) if index.exists() else None,
+        "index_entries": _t03_git_out(repo, "ls-files", "--stage", "-z"),
+        "status": _t03_git_out(
+            repo, "status", "--porcelain=v1", "-z", "--untracked-files=all"
+        ),
+        "files": {
+            k: v for k, v in _digest_dir(repo).items() if not k.startswith(".git")
+        },
+    }
+
+
+def _t03_stage_blob(repo: Path, rel: str, data: bytes, mode: str = "100644") -> None:
+    blob = (
+        _t03_git_out(repo, "hash-object", "-w", "--stdin", data=data).decode().strip()
+    )
+    _t03_git_out(repo, "update-index", "--add", "--cacheinfo", f"{mode},{blob},{rel}")
+
+
+def _t03_nested_assert(depth: int) -> str:
+    return _t03_gate_function(T03_GATE_TARGET, assert_text="0" + " + 0" * depth)
+
+
+def _t03_gate_mutation(kind: str) -> tuple[bytes, str | None]:
+    """The mutated module bytes (and a symlink target for `symlink`)."""
+    names = _t03_gate_protected()[T03_GATE_MODULE]
+    base = _t03_gate_module_text(names)
+    target = _t03_gate_function(T03_GATE_TARGET)
+    assert target in base
+    if kind == "change":
+        text = base.replace(
+            target, _t03_gate_function(T03_GATE_TARGET, assert_text="1 + 1 == 3")
+        )
+    elif kind == "delete":
+        text = base.replace(target + "\n\n", "")
+    elif kind == "duplicate":
+        text = base + "\n" + target
+    elif kind == "corrupt":
+        text = base + "\ndef broken(:\n"
+    elif kind == "deep_dump":
+        text = base.replace(target, _t03_nested_assert(1500))
+    elif kind == "deep_parse":
+        text = base.replace(target, _t03_nested_assert(60000))
+    else:
+        assert kind == "symlink", kind
+        return base.encode(), "outside-copy.py"
+    return text.encode(), None
+
+
+_T03_GATE_EXIT = {
+    "change": 1,
+    "delete": 1,
+    "duplicate": 1,
+    "symlink": 1,
+    "corrupt": 2,
+    "deep_dump": 2,
+    "deep_parse": 2,
+}
+_T03_GATE_WORDS = {
+    "change": "asserts changed",
+    "delete": "defined 0 times",
+    "duplicate": "defined 2 times",
+    "symlink": "missing",
+    "corrupt": "does not parse",
+    "deep_dump": "too deeply nested",
+    "deep_parse": "does not parse",
+}
+
+
+def _t03_gate_cases_params() -> list[Any]:
+    cases = []
+    for kind in _T03_GATE_EXIT:
+        marks = [pytest.mark.posix_only] if kind == "symlink" else []
+        for view in ("worktree", "index"):
+            cases.append(pytest.param(kind, view, id=f"{kind}-{view}", marks=marks))
+    return cases
+
+
+@pytest.mark.parametrize(("kind", "view"), _t03_gate_cases_params())
+def test_t03_scope_gate_checks_index_and_worktree(
+    tmp_path: Path, kind: str, view: str
+) -> None:
+    """One protected function is changed, deleted, duplicated, symlinked or made
+    unparseable in ONE view only (the staged blob, or the worktree bytes) while the
+    other view keeps the baseline bytes: `check` rejects it, names the module, and
+    leaves HEAD, the index, the status and every file untouched."""
+    repo = _t03_gate_repo(tmp_path)
+    baseline = tmp_path / "baseline.json"
+    recorded = _t03_gate_run(repo, "record", "--task", "72-T03", "--out", str(baseline))
+    assert recorded.returncode == 0, recorded.stderr
+    allowed = (T03_GATE_MODULE, "tests/test_memory_authorization.py")
+
+    untouched = _t03_gate_run(
+        repo, "check", "--baseline", str(baseline), "--allowed", *allowed
+    )
+    assert untouched.returncode == 0, untouched.stderr
+
+    data, link = _t03_gate_mutation(kind)
+    path = repo / T03_GATE_MODULE
+    original = path.read_bytes()
+    if view == "worktree":
+        if link is not None:
+            outside = tmp_path / link
+            outside.write_bytes(original)
+            path.unlink()
+            path.symlink_to(outside)
+        else:
+            path.write_bytes(data)
+    elif link is not None:
+        _t03_stage_blob(repo, T03_GATE_MODULE, link.encode(), mode="120000")
+        assert path.read_bytes() == original
+    else:
+        _t03_stage_blob(repo, T03_GATE_MODULE, data)
+        assert path.read_bytes() == original
+    captured = _t03_git_capture(repo)
+
+    checked = _t03_gate_run(
+        repo, "check", "--baseline", str(baseline), "--allowed", *allowed
+    )
+    assert checked.returncode == _T03_GATE_EXIT[kind], (kind, view, checked.stderr)
+    assert T03_GATE_MODULE in checked.stderr, checked.stderr
+    assert _T03_GATE_WORDS[kind] in checked.stderr, (kind, view, checked.stderr)
+    assert "check passed" not in checked.stdout
+    assert _t03_git_capture(repo) == captured
+
+
+def test_t03_scope_gate_ignores_changes_outside_protected_functions(
+    tmp_path: Path,
+) -> None:
+    """The control for the rows above: an edit that leaves every protected AST list
+    alone passes in either view, so a rejection is the protected function's."""
+    repo = _t03_gate_repo(tmp_path)
+    baseline = tmp_path / "baseline.json"
+    assert (
+        _t03_gate_run(
+            repo, "record", "--task", "72-T03", "--out", str(baseline)
+        ).returncode
+        == 0
+    )
+    path = repo / T03_GATE_MODULE
+    original = path.read_bytes()
+    benign = original + b"\n\ndef helper_outside_the_guards():\n    return 1\n"
+    path.write_bytes(benign)
+    allowed = (T03_GATE_MODULE, "tests/test_memory_authorization.py")
+    assert (
+        _t03_gate_run(
+            repo, "check", "--baseline", str(baseline), "--allowed", *allowed
+        ).returncode
+        == 0
+    )
+    _t03_stage_blob(repo, T03_GATE_MODULE, benign)
+    path.write_bytes(original)
+    assert (
+        _t03_gate_run(
+            repo, "check", "--baseline", str(baseline), "--allowed", *allowed
+        ).returncode
+        == 0
+    )
+
+
+# --- G15 class 7: each preservation oracle must see a change in what it captures ---
+
+
+def _t03_oracle_world(tmp_path: Path) -> dict[str, Any]:
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1")
+    (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+    (data_root / "extra.bin").write_bytes(b"data-root bytes")
+    return {"root": root, "data_root": data_root, "store": store}
+
+
+def _t03_sql(db: Path, sql: str) -> None:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(sql)
+        conn.commit()
+
+
+def _t03_oracle_changes() -> list[Any]:
+    def project_file(w: dict[str, Any]) -> None:
+        (w["root"] / "keep.txt").write_text("changed\n", encoding="utf-8")
+
+    def project_new(w: dict[str, Any]) -> None:
+        (w["root"] / "new.txt").write_text("new\n", encoding="utf-8")
+
+    def project_gone(w: dict[str, Any]) -> None:
+        (w["root"] / "keep.txt").unlink()
+
+    def db_value(w: dict[str, Any]) -> None:
+        # A version row carries no full-text trigger: every table keeps its row count.
+        _t03_sql(
+            w["store"].db_path,
+            "UPDATE memory_artifact_versions SET payload_hash = 'moved'",
+        )
+
+    def db_rows(w: dict[str, Any]) -> None:
+        _row(w["store"], "a2", ALICE, "mk-a2")
+
+    def db_gone(w: dict[str, Any]) -> None:
+        w["store"].db_path.unlink()
+
+    def data_file(w: dict[str, Any]) -> None:
+        (w["data_root"] / "extra.bin").write_bytes(b"other bytes")
+
+    def data_new(w: dict[str, Any]) -> None:
+        (w["data_root"] / "added.bin").write_bytes(b"x")
+
+    return [
+        pytest.param(project_file, {"root"}, id="project_file_bytes"),
+        pytest.param(project_new, {"root"}, id="project_file_added"),
+        pytest.param(project_gone, {"root"}, id="project_file_removed"),
+        # the db lives inside the project tree, so its bytes move `root` too
+        pytest.param(db_value, {"root", "db"}, id="db_value_same_counts"),
+        pytest.param(db_rows, {"root", "db", "counts"}, id="db_row_added"),
+        pytest.param(db_gone, {"root", "db", "counts"}, id="db_removed"),
+        pytest.param(data_file, {"data"}, id="data_root_file_bytes"),
+        pytest.param(data_new, {"data"}, id="data_root_file_added"),
+    ]
+
+
+@pytest.mark.parametrize(("change", "components"), _t03_oracle_changes())
+def test_t03_preservation_oracles_detect_captured_state_changes(
+    tmp_path: Path, change: Any, components: set[str]
+) -> None:
+    """`_effects` and the row oracles of the T03 tests report a change in every
+    component they claim to capture: a project file, the db bytes, the row counts
+    and the data root; a missing component is a difference, never an equality."""
+    world = _t03_oracle_world(tmp_path)
+    root, data_root = world["root"], world["data_root"]
+    # The oracle on a real denied route (R2/R20): a marked project with no grant is
+    # refused as `policy_missing` (no policy file) and every captured component, the db included, is equal.
+    from rush.memory import authorization as auth
+
+    other = _registered(tmp_path / "other", data_root)
+    (other / ".rush").mkdir(exist_ok=True)
+    (other / ".rush" / auth.REGISTRATION_MARKER).write_text("", encoding="utf-8")
+    denied_before = _effects(other, data_root)
+    denied = MemoryTool().run(
+        other,
+        operation="link",
+        request={
+            "source_id": "a1",
+            "source_version": 1,
+            "target_id": "a2",
+            "target_version": 1,
+            "kind": "depends_on",
+        },
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+    assert (_code_of(denied), _reason_of(denied)) == ("E_PERMISSION", "policy_missing")
+    assert not (other / ".rush" / "memory.db").exists()
+    assert _effects(other, data_root) == denied_before
+    # The first read-only count connection leaves its `-shm` sidecar once; capture the
+    # settled state, then require the oracle to be stable on it.
+    _effects(root, data_root)
+    before = _effects(root, data_root)
+    assert _effects(root, data_root) == before, "the oracle is not stable"
+    change(world)
+    after = _effects(root, data_root)
+    assert after != before
+    for component in components:
+        assert after[component] != before[component], component
+    for component in {"root", "db", "counts", "data"} - components:
+        assert after[component] == before[component], component
+    if "root" in components:
+        assert _effects(root, data_root, tree=False)["root"] is None
+
+
+def test_t03_preservation_oracle_exclusion_and_row_oracles(tmp_path: Path) -> None:
+    world = _t03_oracle_world(tmp_path)
+    root, data_root, store = world["root"], world["data_root"], world["store"]
+    locks = data_root / "dashboard" / "project_locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    _effects(root, data_root)  # settle the `-shm` sidecar the count connection leaves
+    before = _effects(root, data_root)
+    (locks / "a.lock").write_bytes(b"x")
+    assert _effects(root, data_root) == before, "lock files are the one exclusion"
+
+    rows, versions = _t03_count(store), _t03_count(store, "memory_artifact_versions")
+    edges = _t03_edges(store)
+    _t03_edge(store, ("a1", 1), ("a1", 1), "depends_on")
+    assert _t03_edges(store) == edges + 1
+    _row(store, "a2", ALICE, "mk-a2")
+    assert _t03_count(store) == rows + 1
+    assert _t03_count(store, "memory_artifact_versions") == versions + 1
+    assert _counts(root)["memory_relations"] == edges + 1
+    summary = {
+        "kind": "consolidated_episode_summary",
+        "symptom": "s",
+        "member_ids": [],
+    }
+    _row(store, "s1", ALICE, "", content=summary)
+    assert _t03_summary_ids(store) == ["s1"]
+    listing = _tree(root)
+    (root / "added.txt").write_text("x\n", encoding="utf-8")
+    assert _tree(root) == sorted([*listing, "added.txt"])
+
+
+@pytest.mark.parametrize("component", ["head", "index_entries", "index_raw", "status"])
+def test_t03_git_capture_detects_each_component(tmp_path: Path, component: str) -> None:
+    repo = _git_repo(tmp_path / "repo", {"a.txt": "one\n", "b.txt": "two\n"})
+    before = _t03_git_capture(repo)
+    assert _t03_git_capture(repo) == before, "the capture is not stable"
+    if component == "head":
+        (repo / "a.txt").write_text("three\n", encoding="utf-8")
+        _git(repo, "commit", "-am", "move head")
+    elif component == "index_entries":
+        _t03_git_out(repo, "rm", "--cached", "b.txt")
+    elif component == "index_raw":
+        _t03_git_out(repo, "update-index", "--index-version", "4")
+        assert (
+            _t03_git_out(repo, "ls-files", "--stage", "-z") == before["index_entries"]
+        )
+    else:
+        (repo / "untracked.txt").write_text("x\n", encoding="utf-8")
+    after = _t03_git_capture(repo)
+    assert after != before
+    assert after[component] != before[component], component
+    if component == "index_raw":
+        assert after["index_entries"] == before["index_entries"]
+        assert after["status"] == before["status"]
+
+
+@pytest.mark.posix_nonroot
+def test_t03_oracle_unreadable_component_is_not_equality(tmp_path: Path) -> None:
+    world = _t03_oracle_world(tmp_path)
+    root, data_root = world["root"], world["data_root"]
+    before = _t03_effects(root, data_root)
+    target = data_root / "extra.bin"
+    target.chmod(0)
+    try:
+        after = _t03_effects(root, data_root)
+    finally:
+        target.chmod(0o600)
+    assert after != before
+    assert after["data"]["extra.bin"] == "<unreadable>"
+
+    repo = _git_repo(tmp_path / "repo", {"a.txt": "one\n"})
+    captured = _t03_git_capture(repo)
+    index = repo / ".git" / "index"
+    index.chmod(0)
+    try:
+        with pytest.raises(OSError):
+            _t03_git_capture(repo)
+    finally:
+        index.chmod(0o600)
+    assert _t03_git_capture(repo) == captured
+
+
+# --- R12 / G2: route x mode matrix (brief 5.2; pre-gate id grammar) ----------------
+# Id grammar: `[<transport>.]<route>-<dimension>-<value>[-...][-producer-<task>]`.
+# Group A = link / consolidate (T03 mutations), Group B = related and the readers that
+# carry item relations, Group C = derived-summary readers, Group D = writers.
+
+_M3_ALL = ("inproc", "internal", "mcp", "cli")
+_M3_PUBLIC = ("internal", "mcp", "cli")
+_M3_AB = ("link", "consolidate", "related")
+_M3_CELLS: list[tuple[str, str, list[tuple[str, str]], Any, dict[str, Any]]] = []
+_M3_SUBJECT = {"m1": "episodic", "c1": SUBJECT, "m2": "episodic"}
+
+
+def _m3_cell(
+    cell: str,
+    mode: str = "policy_two",
+    routes: tuple[str, ...] = _M3_AB,
+    transports: tuple[str, ...] = _M3_ALL,
+    pairs: tuple[tuple[str, str], ...] | None = None,
+    **build: Any,
+) -> Any:
+    combos = (
+        list(pairs)
+        if pairs is not None
+        else [(tr, route) for route in routes for tr in transports]
+    )
+
+    def register(fn: Any) -> Any:
+        _M3_CELLS.append((cell, mode, combos, fn, build))
+        return fn
+
+    return register
+
+
+class _M3:
+    """One world for one matrix cell. Rows: `m1` (episodic, `timeout`) and `c1` (note)
+    with a raw `c1 -> m1 contradicts` edge; two-owner modes add Bob's `m2` and a raw
+    `c1 -> m2 depends_on` edge that Alice must never see."""
+
+    def __init__(
+        self,
+        tmp_path: Path,
+        mp: pytest.MonkeyPatch,
+        mode: str,
+        *,
+        aged: bool = False,
+        anchored: bool = False,
+    ) -> None:
+        from rush.memory import authorization as auth
+        from rush.memory.retrieval import SourceValidationMemo
+
+        self.tmp_path, self.mp, self.mode, self.auth = tmp_path, mp, mode, auth
+        self.data_root = _fix1_data_root(mp, tmp_path)
+        self.g1: dict[str, Any] | None = None
+        self.allow: list[str] | None = None
+        self.s1: str | None = None
+        created = time.time() - 15 * DAY if aged else None
+        m1_extra: dict[str, Any] = {}
+        c1_extra: dict[str, Any] = {}
+        if mode == "legacy":
+            self.root = _t03_sub(tmp_path, "legacy").resolve()
+            self.store = TypedArtifactStore(self.root)
+            self.allow = ["allowed"]
+            _row(
+                self.store,
+                "m1",
+                None,
+                "",
+                source="allowed",
+                subject="episodic",
+                content=_t03_episode(),
+            )
+            _t03_ep(self.store, "m3", None, source="allowed")
+            _t03_ep(self.store, "m2", BOB, source="allowed", who="bob-marker")
+            _row(
+                self.store,
+                "c1",
+                None,
+                "",
+                source="allowed",
+                content={"text": "timeout retry succeeds on ci"},
+            )
+            _t03_edge(self.store, ("c1", 1), ("m1", 1), "contradicts")
+            _t03_edge(self.store, ("c1", 1), ("m2", 1), "depends_on")
+            return
+        self.root = _registered(tmp_path / "project", self.data_root)
+        self.store = None  # type: ignore[assignment]
+        if mode != "policy_nostore":
+            if anchored:
+                memo = SourceValidationMemo()
+                for rel, body in (
+                    ("mod.py", "def f():\n    return 1\n"),
+                    ("mod2.py", "def g():\n    return 1\n"),
+                ):
+                    (self.root / rel).write_text(body, encoding="utf-8")
+                m1_extra = {
+                    "symbol_ref": "mod.py::",
+                    "content_hash": memo.source_hash(self.root, "mod.py"),
+                }
+                c1_extra = {
+                    "symbol_ref": "mod2.py::",
+                    "content_hash": memo.source_hash(self.root, "mod2.py"),
+                }
+            self.store = TypedArtifactStore(self.root)
+            _row(
+                self.store,
+                "m1",
+                ALICE,
+                "",
+                subject="episodic",
+                content=_t03_episode(),
+                created_at=created,
+                **m1_extra,
+            )
+            _row(
+                self.store,
+                "c1",
+                ALICE,
+                "",
+                created_at=created,
+                **c1_extra,
+                content={"text": "timeout retry succeeds on ci"},
+            )
+            _t03_edge(self.store, ("c1", 1), ("m1", 1), "contradicts")
+            if mode == "policy_two":
+                _t03_ep(self.store, "m2", BOB, who="bob-marker")
+                _t03_edge(self.store, ("c1", 1), ("m2", 1), "depends_on")
+        self.g1 = _grant(
+            auth,
+            self.root,
+            ALICE,
+            self.data_root,
+            sources=T03_ALICE_SOURCES,
+            ops=T03_ALICE_OPS,
+        )
+        if mode == "policy_two":
+            _grant(
+                auth,
+                self.root,
+                BOB,
+                self.data_root,
+                sources=("source-a",),
+                ops=T03_BOB_OPS,
+            )
+        if mode == "policy_summary":
+            from rush.memory.consolidation import consolidate_episodes
+
+            made = consolidate_episodes(
+                self.store,
+                symptom="timeout",
+                session_allowlist=None,
+                access=self.access("consolidate"),
+            )
+            assert made["code"] == "OK", made
+            self.s1 = made["summary"]["id"]
+        if mode == "unavail_marker":
+            auth.policy_path(data_root=self.data_root).unlink()
+        elif mode == "unavail_invalid":
+            auth.policy_path(data_root=self.data_root).write_bytes(b"{")
+
+    # -- access objects ----------------------------------------------------------
+    def access(self, operation: str, owner: OwnerScope = ALICE, **flags: Any) -> Any:
+        from rush.memory.retrieval import MemoryAccess
+
+        return MemoryAccess.resolve(
+            self.root,
+            operation=operation,
+            owner_scope=owner,
+            data_root=self.data_root,
+            **flags,
+        )
+
+    def legacy_access(self, operation: str, sources: Any = "default", **kw: Any) -> Any:
+        from rush.memory.retrieval import MemoryAccess
+
+        listed = self.allow if sources == "default" else sources
+        return MemoryAccess.legacy(self.root, listed, operation=operation, **kw)
+
+    # -- state -------------------------------------------------------------------
+    @property
+    def db(self) -> Path:
+        return self.root / ".rush" / "memory.db"
+
+    def counts(self) -> dict[str, int]:
+        return _table_counts(self.db)
+
+    def effects(self) -> dict[str, Any]:
+        return _t03_effects(self.root, self.data_root)
+
+    # -- calls -------------------------------------------------------------------
+    def request(self, route: str, **extra: Any) -> dict[str, Any]:
+        base: dict[str, Any] = {
+            "link": _t03_link_request(("c1", 1), ("m1", 1), "implements"),
+            "consolidate": {"symptom": "timeout"},
+            "related": {"id": "c1", "version": 1},
+        }[route]
+        return {**base, **extra}
+
+    def call(
+        self,
+        tr: str,
+        route: str,
+        *,
+        owner: OwnerScope | None = ALICE,
+        request: dict[str, Any] | None = None,
+        allow: list[str] | None = None,
+        access: Any = None,
+        cache_write: bool | str = True,
+        path: Path | None = None,
+        store: Any = None,
+    ) -> dict[str, Any]:
+        req = request if request is not None else self.request(route)
+        root = path if path is not None else self.root
+        mutating = route in ("link", "consolidate")
+        send_cache = bool(cache_write) and (mutating or cache_write == "force")
+        owner_json = owner.as_dict() if owner is not None else None
+        if tr == "inproc":
+            use = store if store is not None else self.store
+            if route == "link":
+                return _t03_out(
+                    _t03_link(
+                        use,
+                        (req["source_id"], req["source_version"]),
+                        (req["target_id"], req["target_version"]),
+                        req["kind"],
+                        access=access,
+                    )
+                )
+            if route == "consolidate":
+                from rush.memory.consolidation import consolidate_episodes
+
+                return _t03_out(
+                    consolidate_episodes(
+                        use,
+                        symptom=req["symptom"],
+                        session_allowlist=allow,
+                        access=access,
+                    )
+                )
+            extra = {"mode": req["mode"]} if "mode" in req else {}
+            return _t03_out(
+                _t03_related(
+                    use,
+                    req["id"],
+                    req["version"],
+                    access=access,
+                    session_allowlist=allow,
+                    **extra,
+                )
+            )
+        if tr == "internal":
+            kwargs: dict[str, Any] = {}
+            if mutating or send_cache:
+                kwargs["permissions"] = ExecutionPermissions(cache_write=send_cache)
+            return _t03_out(
+                MemoryTool().run(
+                    root,
+                    operation=cast(MemoryOperation, route),
+                    request=req,
+                    owner_scope=owner_json,
+                    session_allowlist=allow,
+                    **kwargs,
+                )
+            )
+        if tr == "mcp":
+            arguments: dict[str, Any] = {
+                "path": str(root),
+                "operation": route,
+                "request": req,
+            }
+            if owner_json is not None:
+                arguments["owner_scope"] = owner_json
+            if allow is not None:
+                arguments["session_allowlist"] = allow
+            if send_cache:
+                arguments["allow_cache_write"] = True
+            return _t03_out(_mcp_memory(**arguments))
+        assert tr == "cli", tr
+        flags: list[str] = []
+        if owner is not None:
+            flags += ["--owner", f"{owner.kind}:{owner.id}"]
+        if send_cache:
+            flags.append("--allow-cache-write")
+        for item in allow or ():
+            flags += ["--session", item]
+        return _m3_cli_out(self._cli(root, route, req, flags))
+
+    def _cli(
+        self, root: Path, leaf: str, request: dict[str, Any], flags: list[str]
+    ) -> Any:
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        requests = self.tmp_path / "cli-requests"
+        requests.mkdir(exist_ok=True)
+        path = requests / f"{leaf}-{len(list(requests.iterdir()))}.json"
+        path.write_text(json.dumps(request), encoding="utf-8")
+        self.mp.chdir(root)
+        return CliRunner().invoke(
+            cli, ["memory", leaf, "--input", str(path), "--json", *flags]
+        )
+
+
+def _m3_cli_out(outcome: Any) -> dict[str, Any]:
+    try:
+        return _t03_out(json.loads(outcome.output))
+    except (ValueError, AttributeError):
+        return {
+            "code": None,
+            "reason": None,
+            "field": None,
+            "message": None,
+            "data": {},
+            "exit": outcome.exit_code,
+            "output": outcome.output,
+        }
+
+
+def _m3_ok(
+    m: _M3,
+    route: str,
+    out: dict[str, Any],
+    before: dict[str, int],
+    members: tuple[str, ...] = ("m1",),
+) -> None:
+    assert out["code"] == "OK", (route, out)
+    after = m.counts()
+    if route == "link":
+        assert after["memory_relations"] == before["memory_relations"] + 1, out
+    elif route == "consolidate":
+        assert after["memory_artifacts"] == before["memory_artifacts"] + 1, out
+        assert out["data"]["summary"]["member_ids"] == list(members), out
+    else:
+        assert [i["id"] for i in out["data"]["items"]] == list(members), out
+
+
+def _m3_denied(
+    m: _M3,
+    out: dict[str, Any],
+    before: dict[str, Any],
+    code: str,
+    reason: str | None = None,
+    field: str | None = None,
+) -> None:
+    assert out["code"] == code, out
+    if reason is not None:
+        assert out["reason"] == reason, out
+    if field is not None:
+        assert out["field"] == field, out
+    after = m.effects()
+    assert after == before, ("a denied route changed state", _m3_changed(before, after))
+
+
+def _m3_changed(before: Any, after: Any, path: str = "") -> list[str]:
+    if isinstance(before, dict) and isinstance(after, dict):
+        changed: list[str] = []
+        for key in sorted(set(before) | set(after), key=str):
+            changed += _m3_changed(before.get(key), after.get(key), f"{path}/{key}")
+        return changed[:8]
+    return [] if before == after else [f"{path}: {before!r} -> {after!r}"[:200]]
+
+
+def _m3_missing_root(out: dict[str, Any]) -> None:
+    assert out["code"] == "E_NOT_VISIBLE", out
+    assert not out["data"].get("items"), out
+
+
+def _m3_state_before(m: _M3) -> dict[str, Any]:
+    return m.effects()
+
+
+# -- Group A/B: policy-mode cells ----------------------------------------------------
+
+
+@_m3_cell("access-policy-policy_state-ok-grant_ops-exact")
+def _m3_exact(m: _M3, route: str, tr: str) -> None:
+    before = m.counts()
+    out = m.call(tr, route, access=m.access(route) if tr == "inproc" else None)
+    _m3_ok(m, route, out, before)
+    if route == "consolidate":
+        summary = m.store.get_current(out["data"]["summary"]["id"])
+        assert summary is not None
+        assert summary.owner_scope == ALICE
+        assert summary.source == "consolidation"
+
+
+@_m3_cell("access-policy-policy_state-ok-grant_ops-missing_one")
+def _m3_missing_one(m: _M3, route: str, tr: str) -> None:
+    if route == "related":
+        _grant(
+            m.auth,
+            m.root,
+            ALICE,
+            m.data_root,
+            sources=T03_ALICE_SOURCES,
+            ops=tuple(o for o in T03_ALICE_OPS if o != "ask"),
+        )
+        if tr == "inproc":
+            assert m.access("related") is None
+            return
+        before = m.effects()
+        _m3_denied(
+            m, m.call(tr, route), before, "E_PERMISSION", "operation_not_granted"
+        )
+        return
+    before = m.effects()
+    if tr == "inproc":
+        out = m.call(tr, route, access=m.access("related", owner=BOB))
+        _m3_denied(m, out, before, "E_PERMISSION", "write_access_required")
+        return
+    _m3_denied(
+        m, m.call(tr, route, owner=BOB), before, "E_PERMISSION", "operation_not_granted"
+    )
+
+
+@_m3_cell("access-policy-policy_state-ok-grant-revoked")
+def _m3_revoked(m: _M3, route: str, tr: str) -> None:
+    access = m.access(route) if tr == "inproc" else None
+    pre = (
+        m.call(tr, route, access=access)
+        if route == "related" and tr == "inproc"
+        else None
+    )
+    _fix1_revoke(m.auth, _nn(m.g1), m.data_root)
+    before = m.effects()
+    out = m.call(tr, route, access=access)
+    if route == "related" and tr == "inproc":
+        # The helper takes a static access object; the route performs the recheck.
+        assert out == pre
+        return
+    _m3_denied(m, out, before, "E_PERMISSION", "revoked")
+
+
+@_m3_cell("access-policy-policy_state-ok-owner-omitted-single_owner", mode="policy_one")
+def _m3_owner_omitted_single(m: _M3, route: str, tr: str) -> None:
+    before_counts, before = m.counts(), m.effects()
+    out = m.call(tr, route, owner=None)
+    if tr == "inproc":
+        if route == "related":
+            _m3_missing_root(out)
+        else:
+            _m3_denied(m, out, before, "E_PERMISSION", "policy_grant_required")
+        return
+    _m3_ok(m, route, out, before_counts)
+
+
+@_m3_cell("access-policy-policy_state-ok-owner-omitted-two_owners")
+def _m3_owner_omitted_two(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    out = m.call(tr, route, owner=None)
+    if tr == "inproc":
+        if route == "related":
+            _m3_missing_root(out)
+        else:
+            _m3_denied(m, out, before, "E_PERMISSION", "policy_grant_required")
+        return
+    if route == "related":
+        _m3_denied(m, out, before, "E_PERMISSION", "owner_required")
+    else:
+        _m3_denied(m, out, before, "E_INPUT", field="owner_scope")
+
+
+@_m3_cell("access-legacy_allowlist-policy_state-ok-source-ungranted")
+def _m3_legacy_allowlist(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    if tr == "inproc":
+        if route == "related":
+            return
+        out = m.call(
+            tr, route, access=m.legacy_access("write", ["source-a"]), allow=["source-a"]
+        )
+        _m3_denied(m, out, before, "E_PERMISSION", "policy_grant_required")
+        return
+    if route == "link":
+        if tr == "mcp":
+            out = m.call(tr, route, allow=["source-a"])
+            assert out["code"] == "E_INPUT", out
+            assert m.effects() == before
+        elif tr == "internal":
+            counts = m.counts()  # link takes no allowlist: the call is the plain link
+            _m3_ok(m, route, m.call(tr, route, allow=["source-a"]), counts)
+        return
+    ungranted = ["source-b"] if route == "consolidate" else ["source-x"]
+    _m3_denied(
+        m,
+        m.call(tr, route, allow=ungranted),
+        before,
+        "E_PERMISSION",
+        "source_not_granted",
+    )
+
+
+for _unavail, _reason in (
+    ("unavail_marker", "policy_missing"),
+    ("unavail_invalid", "policy_invalid"),
+):
+
+    def _m3_unavailable(m: _M3, route: str, tr: str, _reason: str = _reason) -> None:
+        before = m.effects()
+        out = m.call(tr, route)
+        if tr == "inproc":
+            if route == "related":
+                _m3_missing_root(out)
+            else:
+                _m3_denied(m, out, before, "E_PERMISSION", _reason)
+            return
+        _m3_denied(m, out, before, "E_PERMISSION", _reason)
+
+    _cell_name = (
+        "access-policy-policy_state-missing_marker"
+        if _unavail == "unavail_marker"
+        else "access-policy-policy_state-invalid"
+    )
+    _m3_cell(_cell_name, mode=_unavail)(_m3_unavailable)
+
+
+# -- legacy mode cells ---------------------------------------------------------------
+
+
+@_m3_cell(
+    "access-legacy_allowlist-policy_state-missing_no_marker-owner-omitted",
+    mode="legacy",
+)
+def _m3_legacy_default(m: _M3, route: str, tr: str) -> None:
+    before = m.counts()
+    allow = m.allow if route != "link" else None
+    access = None
+    if tr == "inproc" and route == "related":
+        access = m.legacy_access("related")
+    out = m.call(tr, route, owner=None, allow=allow, access=access)
+    if route == "consolidate":
+        _m3_ok(m, route, out, before, members=("m1", "m3"))
+    else:
+        _m3_ok(m, route, out, before)
+
+
+@_m3_cell(
+    "access-legacy_allowlist-policy_state-missing_no_marker-owner-declared_other",
+    mode="legacy",
+)
+def _m3_legacy_other_owner(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    allow = m.allow if route != "link" else None
+    if tr == "inproc":
+        if route == "consolidate":
+            return
+        access = m.legacy_access(
+            "write" if route == "link" else "related", owner_scope=BOB
+        )
+        out = m.call(tr, route, owner=None, access=access)
+    else:
+        out = m.call(tr, route, owner=BOB, allow=allow)
+    assert out["code"] == "E_NOT_VISIBLE", out
+    assert m.effects() == before
+
+
+@_m3_cell(
+    "access-legacy_allowlist-policy_state-missing_no_marker-allowlist-empty",
+    mode="legacy",
+)
+def _m3_legacy_empty(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    if route == "link":
+        if tr != "inproc":
+            return
+        out = m.call(tr, route, access=m.legacy_access("write", []))
+        _m3_denied(m, out, before, "E_PERMISSION", "session_allowlist_required")
+    elif route == "consolidate":
+        out = m.call(tr, route, owner=None, allow=[] if tr == "inproc" else None)
+        _m3_denied(m, out, before, "E_PERMISSION")
+    else:
+        access = m.legacy_access("related", []) if tr == "inproc" else None
+        out = m.call(tr, route, owner=None, access=access)
+        _m3_missing_root(out)
+        assert m.effects() == before
+
+
+@_m3_cell(
+    "access-legacy_allowlist-policy_state-missing_no_marker-owner-cross_owner",
+    mode="legacy",
+    routes=("link",),
+)
+def _m3_legacy_cross_owner(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    request = _t03_link_request(("c1", 1), ("m2", 1), "implements")
+    out = m.call(tr, route, owner=None, request=request)
+    assert out["code"] == "E_NOT_VISIBLE", out
+    assert m.effects() == before
+
+
+# -- overlay, strict-field and cache_write dimensions ---------------------------------
+
+
+@_m3_cell("access_form-overlay")
+def _m3_overlay(m: _M3, route: str, tr: str) -> None:
+    from rush.memory.retrieval import MemoryAccess
+
+    overlay = m.data_root / "user"
+    overlay.mkdir(parents=True, exist_ok=True)
+    if tr == "inproc":
+        assert (
+            MemoryAccess.resolve(
+                overlay, operation=route, owner_scope=ALICE, data_root=m.data_root
+            )
+            is None
+        )
+        return
+    before = m.effects()
+    _m3_denied(
+        m,
+        m.call(tr, route, path=overlay),
+        before,
+        "E_PERMISSION",
+        "overlay_storage_root",
+    )
+
+
+@_m3_cell("mode-inspect")
+def _m3_mode_inspect(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    if route == "related":
+        req = {**m.request("related"), "mode": "inspect"}
+        out = m.call(
+            tr,
+            route,
+            request=req,
+            access=m.access("related") if tr == "inproc" else None,
+        )
+        _m3_denied(m, out, before, "E_INPUT")
+        return
+    if tr == "inproc":
+        counts = m.counts()
+        _m3_ok(m, route, m.call(tr, route, access=m.access(route)), counts)
+        return
+    req = {**m.request(route), "mode": "inspect"}
+    _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+
+@_m3_cell("mode-historical", routes=("link", "consolidate", "related"))
+def _m3_mode_historical(m: _M3, route: str, tr: str) -> None:
+    before = m.effects()
+    if route == "related":
+        if tr != "inproc":
+            return
+        req = {**m.request("related"), "mode": "historical"}
+        with_history = m.call(
+            tr, route, request=req, access=m.access("related", historical=True)
+        )
+        assert with_history["code"] == "OK", with_history
+        assert with_history["data"]["mode"] == "historical"
+        assert with_history["data"]["actionable"] is False
+        without = m.call(tr, route, request=req, access=m.access("related"))
+        _m3_missing_root(without)
+        return
+    if tr == "inproc":
+        counts = m.counts()
+        _m3_ok(m, route, m.call(tr, route, access=m.access(route)), counts)
+        return
+    req = {**m.request(route), "mode": "historical"}
+    _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+
+@_m3_cell("mode-historical-producer-72-T06", routes=("related",), transports=_M3_PUBLIC)
+def _m3_mode_historical_producer(m: _M3, route: str, tr: str) -> None:
+    # `request.mode`/`archive_mode` is the 72-T06 producer: until it lands the strict
+    # request keys refuse it with no effect.
+    before = m.effects()
+    req = {**m.request("related"), "mode": "historical"}
+    _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+
+for _dim, _key, _val in (
+    ("representation-compact", "view", "compact"),
+    ("retrieval-hybrid", "retrieval", "hybrid"),
+    ("apply-apply", "apply", True),
+    ("ack-ack", "ack", True),
+):
+
+    def _m3_strict_key(
+        m: _M3, route: str, tr: str, _key: str = _key, _val: Any = _val
+    ) -> None:
+        before = m.effects()
+        if tr == "inproc":
+            counts = m.counts()
+            _m3_ok(m, route, m.call(tr, route, access=m.access(route)), counts)
+            return
+        req = {**m.request(route), _key: _val}
+        _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+    _m3_cell(_dim, routes=("link", "consolidate"))(_m3_strict_key)
+
+
+@_m3_cell("cache_write-off")
+def _m3_cache_write_off(m: _M3, route: str, tr: str) -> None:
+    if route == "related":
+        off = m.call(
+            tr,
+            route,
+            cache_write=False,
+            access=m.access("related") if tr == "inproc" else None,
+        )
+        on = m.call(
+            tr,
+            route,
+            cache_write="force",  # type: ignore[arg-type]
+            access=m.access("related") if tr == "inproc" else None,
+        )
+        assert off["data"] == on["data"] and off["code"] == on["code"] == "OK"
+        return
+    if tr == "inproc":
+        counts = m.counts()
+        _m3_ok(m, route, m.call(tr, route, access=m.access(route)), counts)
+        return
+    before = m.effects()
+    out = m.call(tr, route, cache_write=False)
+    _m3_denied(m, out, before, "E_PERMISSION")
+    assert re.search(r"cache[_-]write", json.dumps(out["data"])), out
+
+
+# -- store dimension -------------------------------------------------------------------
+
+
+@_m3_cell("store-absent", mode="policy_nostore")
+def _m3_store_absent(m: _M3, route: str, tr: str) -> None:
+    assert not m.db.exists()
+    tree = _tree(m.root)
+    if tr == "inproc":
+        out = m.call(
+            tr, route, access=m.access(route), store=TypedArtifactStore(m.root)
+        )
+    else:
+        out = m.call(tr, route)
+    expected = {
+        "link": "E_NOT_VISIBLE",
+        "consolidate": "E_INPUT",
+        "related": "E_NOT_VISIBLE",
+    }[route]
+    assert out["code"] == expected, out
+    if route == "consolidate":
+        assert out["message"] == f"no episodes found for symptom {'timeout'!r}", out
+    if tr != "inproc":
+        assert not m.db.exists(), "a refused route created the store"
+        assert _tree(m.root) == tree
+
+
+@_m3_cell("store-old_schema")
+def _m3_old_schema(m: _M3, route: str, tr: str) -> None:
+    _drop_payload_columns(m.db)
+    if tr == "inproc":
+        store = TypedArtifactStore(m.root)  # the caller's constructor migrates
+        counts = m.counts()
+        out = m.call(tr, route, access=m.access(route), store=store)
+        _m3_ok(m, route, out, counts)
+        return
+    if route == "related":
+        digest = _sha_file(m.db)
+        out = m.call(tr, route)
+        assert out["code"] == "E_MIGRATION", out
+        assert _sha_file(m.db) == digest
+        return
+    counts = m.counts()
+    out = m.call(tr, route)
+    _m3_ok(m, route, out, counts)
+    assert set(PAYLOAD_COLUMNS) <= _columns(m.db, "memory_artifacts")
+
+
+# -- row_state dimension -----------------------------------------------------------------
+
+
+def _m3_apply_state(m: _M3, state: str, artifact_id: str) -> None:
+    if state == "archived":
+        applied = m.store.archive(
+            artifact_id,
+            expected_version=1,
+            scope=_M3_SUBJECT[artifact_id],
+            owner_scope=ALICE,
+            apply=True,
+        )
+        assert applied["applied"] is True, applied
+    elif state == "expired":
+        from rush.memory import expiry
+
+        assert (
+            expiry.sweep_expired(m.root, owner_scope=ALICE, candidate_ids=[artifact_id])
+            == 1
+        )
+    elif state == "tampered":
+        _tamper(m.db, artifact_id)
+    else:
+        assert state == "source_stale", state
+        rel = "mod.py" if artifact_id == "m1" else "mod2.py"
+        (m.root / rel).write_text("def moved():\n    return 2\n", encoding="utf-8")
+
+
+def _m3_state_check(state: str) -> Any:
+    def check(m: _M3, route: str, tr: str) -> None:
+        access = m.access(route) if tr == "inproc" else None
+        _m3_apply_state(m, state, "m1")
+        before = m.counts()
+        if route == "link":
+            request = _t03_link_request(
+                ("c1", 1), ("m1", _version(m.db, "m1")), "implements"
+            )
+            out = m.call(tr, route, request=request, access=access)
+            assert out["code"] == "E_NOT_VISIBLE", out
+            assert out["message"] == T03_ENDPOINT_BODY["message"], out
+            assert m.counts()["memory_relations"] == before["memory_relations"]
+        elif route == "consolidate":
+            out = m.call(tr, route, access=access)
+            assert out["code"] == "E_INPUT", out
+            assert str(out["message"]).startswith("no episodes found"), out
+            assert m.counts() == before
+        else:
+            out = m.call(tr, route, access=access)
+            assert out["code"] == "OK" and out["data"]["items"] == [], out
+            assert "m1" not in _dump(out["data"]) and "m2" not in _dump(out["data"])
+            _m3_apply_state(m, state, "c1")
+            _m3_missing_root(m.call(tr, route, access=access))
+
+    return check
+
+
+for _state in ("archived", "expired", "tampered", "source_stale"):
+    _m3_cell(
+        f"row_state-{_state}",
+        aged=_state == "expired",
+        anchored=_state == "source_stale",
+    )(_m3_state_check(_state))
+
+
+@_m3_cell("row_state-foreign")
+def _m3_foreign(m: _M3, route: str, tr: str) -> None:
+    access = m.access(route) if tr == "inproc" else None
+    before = m.counts()
+    if route == "link":
+        request = _t03_link_request(("c1", 1), ("m2", 1), "implements")
+        out = m.call(tr, route, request=request, access=access)
+        assert out["code"] == "E_NOT_VISIBLE", out
+        assert out["message"] == T03_ENDPOINT_BODY["message"], out
+        assert m.counts() == before
+    elif route == "consolidate":
+        _m3_ok(m, route, m.call(tr, route, access=access), before, members=("m1",))
+    else:
+        out = m.call(tr, route, request={"id": "m2", "version": 1}, access=access)
+        _m3_missing_root(out)
+
+
+@_m3_cell("row_state-stale_version")
+def _m3_stale_version(m: _M3, route: str, tr: str) -> None:
+    access = m.access(route) if tr == "inproc" else None
+    before = m.counts()
+    if route == "link":
+        request = _t03_link_request(("c1", 1), ("m1", 2), "implements")
+        out = m.call(tr, route, request=request, access=access)
+        assert out["code"] == "E_VERSION", out
+        assert m.counts() == before
+    elif route == "consolidate":
+        if tr == "inproc":
+            _m3_ok(m, route, m.call(tr, route, access=access), before)
+        else:
+            req = {**m.request(route), "version": 2}
+            _m3_denied(m, m.call(tr, route, request=req), m.effects(), "E_INPUT")
+    else:
+        _m3_missing_root(
+            m.call(tr, route, request={"id": "c1", "version": 2}, access=access)
+        )
+
+
+@_m3_cell("row_state-archived_old_version")
+def _m3_archived_old_version(m: _M3, route: str, tr: str) -> None:
+    access = m.access(route) if tr == "inproc" else None
+    _t03_edit_m1(m.store)
+    archived = m.store.archive(
+        "m1", expected_version=2, scope="episodic", owner_scope=ALICE, apply=True
+    )
+    assert archived["applied"] is True, archived
+    before = m.counts()
+    if route == "link":
+        request = _t03_link_request(("c1", 1), ("m1", 1), "implements")
+        out = m.call(tr, route, request=request, access=access)
+        assert out["code"] == "E_NOT_VISIBLE", out  # the decision precedes the version
+        assert m.counts()["memory_relations"] == before["memory_relations"]
+    elif route == "consolidate":
+        out = m.call(tr, route, access=access)
+        assert out["code"] == "E_INPUT", out
+        assert m.counts() == before
+    else:
+        out = m.call(tr, route, access=access)
+        assert out["code"] == "OK" and out["data"]["items"] == [], out
+        _m3_missing_root(
+            m.call(tr, route, request={"id": "m1", "version": 1}, access=access)
+        )
+
+
+@_m3_cell(
+    "row_state-cross_project",
+    routes=("link", "consolidate", "related"),
+    transports=("inproc",),
+)
+def _m3_cross_project(m: _M3, route: str, tr: str) -> None:
+    other = _registered(m.tmp_path / "project-b", m.data_root)
+    foreign = TypedArtifactStore(other)
+    _row(foreign, "m1", ALICE, "", subject="episodic", content=_t03_episode())
+    _row(foreign, "c1", ALICE, "", content={"text": "timeout retry succeeds on ci"})
+    before = _table_counts(foreign.db_path)
+    out = m.call(tr, route, access=m.access(route), store=foreign)
+    if route == "related":
+        _m3_missing_root(out)
+    elif route == "link":
+        # The endpoint decision runs under the foreign access: the identical body.
+        assert out["code"] == "E_NOT_VISIBLE", out
+        assert out["message"] == T03_ENDPOINT_BODY["message"], out
+    else:
+        assert (out["code"], out["reason"]) == ("E_PERMISSION", "project_mismatch"), out
+    assert _table_counts(foreign.db_path) == before
+
+
+for _applic in ("rejected", "pending"):
+
+    def _m3_producer_t05(m: _M3, route: str, tr: str, _applic: str = _applic) -> None:
+        if tr == "inproc":
+            assert "applicability" not in _columns(m.db, "memory_artifacts")
+            return
+        before = m.effects()
+        req = {**m.request(route), "applicability": {"state": _applic}}
+        _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+    _m3_cell(f"row_state-{_applic}-producer-72-T05")(_m3_producer_t05)
+
+
+# -- Group B: readers that carry item relations / other transports ---------------------
+
+
+def _m3_item_relations(page: Any, artifact_id: str) -> list[dict[str, Any]]:
+    items = page["items"] if isinstance(page, dict) and "items" in page else []
+    (item,) = [i for i in items if i["id"] == artifact_id]
+    return item["relations"]
+
+
+_M3_C1_REL = [
+    {"id": "m1", "version": 1, "kind": "contradicts", "direction": "outgoing"}
+]
+
+
+def _m3_page(m: _M3, tr_route: str, access: Any) -> Any:
+    from rush.memory.retrieval import hybrid_page, recall_page
+
+    if tr_route == "retrieval_lexical":
+        return recall_page(m.store, subject=SUBJECT, query="timeout", access=access)
+    _calls, embed = _embed_spy()
+    return hybrid_page(
+        m.store,
+        subject=SUBJECT,
+        query="timeout",
+        access=access,
+        embed_config=_embed_config(),
+        embed_fn=embed,
+    )
+
+
+for _retr in ("lexical", "hybrid"):
+
+    def _m3_helper_exact(m: _M3, route: str, tr: str, _retr: str = _retr) -> None:
+        page = _m3_page(m, f"retrieval_{_retr}", m.access("ask"))
+        assert page["code"] == "OK", page
+        assert _m3_item_relations(page, "c1") == _M3_C1_REL, page
+        assert "m2" not in _dump(page)
+
+    def _m3_helper_revoked(m: _M3, route: str, tr: str, _retr: str = _retr) -> None:
+        access = m.access("ask")
+        _fix1_revoke(m.auth, _nn(m.g1), m.data_root)
+        page = _m3_page(m, f"retrieval_{_retr}", access)
+        assert page["code"] == "E_PERMISSION", page
+        assert "m1" not in _dump(page)
+
+    def _m3_helper_neighbor(m: _M3, route: str, tr: str, _retr: str = _retr) -> None:
+        _m3_apply_state(m, "archived", "m1")
+        page = _m3_page(m, f"retrieval_{_retr}", m.access("ask"))
+        assert page["code"] == "OK", page
+        assert _m3_item_relations(page, "c1") == []
+        assert "m1" not in _dump(page) and "m2" not in _dump(page)
+
+    _pair = (("inproc", "retrieval_helper"),)
+    _m3_cell(
+        f"retrieval-{_retr}-access-policy-policy_state-ok-grant_ops-exact", pairs=_pair
+    )(_m3_helper_exact)
+    _m3_cell(
+        f"retrieval-{_retr}-access-policy-policy_state-ok-grant-revoked", pairs=_pair
+    )(_m3_helper_revoked)
+    _m3_cell(f"retrieval-{_retr}-row_state-archived", pairs=_pair)(_m3_helper_neighbor)
+
+
+@_m3_cell(
+    "mode-ordinary-retrieval-lexical-access-policy-policy_state-ok-grant_ops-exact",
+    pairs=(("internal", "ask"), ("internal", "recall")),
+)
+def _m3_compact_exact(m: _M3, route: str, tr: str) -> None:
+    out = MemoryTool().run(
+        m.root,
+        operation=cast(MemoryOperation, route),
+        subject=SUBJECT,
+        query="timeout",
+        owner_scope=ALICE.as_dict(),
+        request={"view": "compact"},
+    )
+    assert _code_of(out) == "OK", _rd(out)
+    assert "m2" not in _dump(_rd(out))
+    assert "m1" in _dump(_rd(out))
+
+
+@_m3_cell(
+    "mode-ordinary-retrieval-lexical-access-policy-policy_state-ok-grant-revoked",
+    pairs=(("internal", "ask"), ("internal", "recall")),
+)
+def _m3_compact_revoked(m: _M3, route: str, tr: str) -> None:
+    _fix1_revoke(m.auth, _nn(m.g1), m.data_root)
+    out = MemoryTool().run(
+        m.root,
+        operation=cast(MemoryOperation, route),
+        subject=SUBJECT,
+        query="timeout",
+        owner_scope=ALICE.as_dict(),
+        request={"view": "compact"},
+    )
+    assert (_code_of(out), _reason_of(out)) == ("E_PERMISSION", "revoked"), _rd(out)
+    assert "m1" not in _dump(_rd(out))
+
+
+@_m3_cell("budget-max_bytes", routes=("related",))
+def _m3_budget(m: _M3, route: str, tr: str) -> None:
+    access = m.access("related") if tr == "inproc" else None
+    if tr == "inproc":
+        out = _t03_related(m.store, "c1", 1, access=access, max_bytes=1)
+        assert out["items"] == [] and out["complete"] is False, out
+        return
+    req = {**m.request("related"), "max_bytes": 1}
+    out = m.call(tr, route, request=req)
+    # 72-T03 brief section 5 budget row: `related` has no admission minimum
+    assert out["code"] == "OK", out
+    assert out["data"]["items"] == [] and out["data"]["complete"] is False, out
+
+
+@_m3_cell(
+    "access-policy-policy_state-ok-grant_ops-exact",
+    mode="policy_one",
+    pairs=(("dashboard", "dashboard_readers"),),
+)
+def _m3_dashboard_exact(m: _M3, route: str, tr: str) -> None:
+    from rush.dashboard import server
+
+    record = register_project(m.root, data_root=m.data_root)
+    section = server._build_memory_section(
+        record.project_id, {"related_id": ["c1"], "related_version": ["1"]}
+    )
+    assert "m1" in _dump(section), section
+
+
+@_m3_cell(
+    "access-policy-policy_state-ok-owner-omitted-two_owners",
+    pairs=(("dashboard", "dashboard_readers"),),
+)
+def _m3_dashboard_two(m: _M3, route: str, tr: str) -> None:
+    from rush.dashboard import server
+
+    record = register_project(m.root, data_root=m.data_root)
+    section = server._build_memory_section(
+        record.project_id, {"related_id": ["c1"], "related_version": ["1"]}
+    )
+    assert "m2" not in _dump(section), section
+
+
+@_m3_cell(
+    "access-policy-policy_state-ok-grant-revoked",
+    mode="policy_one",
+    pairs=(("dashboard", "dashboard_readers"),),
+)
+def _m3_dashboard_revoked(m: _M3, route: str, tr: str) -> None:
+    from rush.dashboard import server
+
+    record = register_project(m.root, data_root=m.data_root)
+    _fix1_revoke(m.auth, _nn(m.g1), m.data_root)
+    section = server._build_memory_section(
+        record.project_id, {"related_id": ["c1"], "related_version": ["1"]}
+    )
+    assert "m1" not in _dump(section), section
+
+
+def _m3_tui_state(m: _M3) -> tuple[Any, Any, Any]:
+    from rush.tui import ProjectState, ScanActions, TuiState
+
+    project = ProjectState(name="p", root=m.root)
+    actions = ScanActions(*([lambda *a, **k: None] * 8), memory_run=MemoryTool().run)  # type: ignore[misc,arg-type]
+    listed = MemoryTool().run(
+        m.root,
+        operation="list",
+        subject=SUBJECT,
+        query="timeout",
+        owner_scope=ALICE.as_dict(),
+        request={"view": "compact"},
+    )
+    assert _code_of(listed) == "OK", _rd(listed)
+    current = m.store.get_current("c1")
+    assert current is not None
+    item = {
+        "id": "c1",
+        "artifact_version": current.artifact_version,
+        "source": current.source,
+        "owner_scope": ALICE.as_dict(),
+    }
+    state = TuiState(projects=[project], active_index=0)
+    state.memory_items = [item]
+    return state, project, actions
+
+
+@_m3_cell(
+    "access-policy-policy_state-ok-grant_ops-exact",
+    mode="policy_one",
+    pairs=(("tui", "tui"),),
+)
+def _m3_tui_exact(m: _M3, route: str, tr: str) -> None:
+    from rush.tui import _memory_expand_selected
+
+    state, project, actions = _m3_tui_state(m)
+    _memory_expand_selected(state, project, actions)
+    assert state.memory_expanded is not None, state.memory_message
+    assert [r["id"] for r in state.memory_expanded["relationships"]] == ["m1"]
+
+
+@_m3_cell(
+    "access-policy-policy_state-ok-owner-omitted-two_owners", pairs=(("tui", "tui"),)
+)
+def _m3_tui_two(m: _M3, route: str, tr: str) -> None:
+    from rush.tui import _memory_expand_selected
+
+    state, project, actions = _m3_tui_state(m)
+    _memory_expand_selected(state, project, actions)
+    assert state.memory_expanded is None or "m2" not in _dump(state.memory_expanded)
+
+
+def _m3_bridge(m: _M3) -> Any:
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+    from rush.memory.handoff import prepare_handoff
+
+    session, capability, _delta = prepare_handoff(
+        m.store,
+        root=m.root,
+        audience="codex_cli",
+        granted_ids=["c1"],
+        session_allowlist=["allowed"],
+    )
+    return build_memory_bridge_handler(
+        root=m.root, session_id=session.session_id, capability=capability
+    )
+
+
+@_m3_cell("capability_ids-selected", mode="legacy", pairs=(("bridge", "mcp_bridge"),))
+def _m3_bridge_selected(m: _M3, route: str, tr: str) -> None:
+    handler = _m3_bridge(m)
+    snapshot = _digest_dir(m.root)
+    for operation in ("link", "consolidate"):
+        denied = handler(operation, m.request(operation))
+        assert denied["code"] in {"E_PERMISSION", "E_INPUT"}, denied
+    selected = handler("related", {"id": "c1", "version": 1})
+    assert selected["code"] == "OK", selected
+    assert _digest_dir(m.root) == snapshot
+
+
+@_m3_cell("capability_ids-unselected", mode="legacy", pairs=(("bridge", "mcp_bridge"),))
+def _m3_bridge_unselected(m: _M3, route: str, tr: str) -> None:
+    handler = _m3_bridge(m)
+    snapshot = _digest_dir(m.root)
+    out = handler("related", {"id": "m1", "version": 1})
+    assert out["code"] == "E_PERMISSION", out  # 72-T01 D22: the seed must be selected
+    assert _digest_dir(m.root) == snapshot
+
+
+@_m3_cell(
+    "capability_ids-unselected-neighbor-producer-72-T06",
+    mode="legacy",
+    pairs=(("bridge", "mcp_bridge"),),
+)
+def _m3_bridge_neighbor_producer(m: _M3, route: str, tr: str) -> None:
+    # 72-T01 D22 already filters unselected neighbors at the bridge: the neighbor of a
+    # selected seed that the session never selected is not returned.
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+    from rush.memory.handoff import prepare_handoff
+
+    session, capability, _delta = prepare_handoff(
+        m.store,
+        root=m.root,
+        audience="codex_cli",
+        granted_ids=["c1"],
+        session_allowlist=["allowed"],
+    )
+    handler = build_memory_bridge_handler(
+        root=m.root, session_id=session.session_id, capability=capability
+    )
+    out = handler("related", {"id": "c1", "version": 1})
+    assert out["code"] == "OK", out
+    assert out["data"]["items"] == [], out
+
+
+@_m3_cell("store-absent", mode="policy_nostore", pairs=(("bridge", "mcp_bridge"),))
+def _m3_bridge_store_absent(m: _M3, route: str, tr: str) -> None:
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+    tree = _tree(m.root)
+    handler = build_memory_bridge_handler(
+        root=m.root, session_id="s" * 32, capability="cap"
+    )
+    out = handler("related", {"id": "c1", "version": 1})
+    assert out["code"] == "E_PERMISSION", out
+    assert not m.db.exists() and _tree(m.root) == tree
+
+
+# -- Group C: derived-summary readers --------------------------------------------------
+
+
+def _m3_selecting_readers(m: _M3) -> list[tuple[str, str, Any, bool]]:
+    """(transport, route, call(allow) -> serialisable, delivers the valid summary)."""
+    from rush.memory.retrieval import expand_artifact, recall_page
+
+    def tool(operation: MemoryOperation, **kw: Any) -> Any:
+        def run(allow: Any = None) -> Any:
+            return MemoryTool().run(
+                m.root,
+                operation=operation,
+                owner_scope=ALICE.as_dict(),
+                session_allowlist=allow,
+                **kw,
+            )
+
+        return run
+
+    readers = [
+        (
+            "internal",
+            "ask",
+            tool(
+                "ask", subject="episodic", query="timeout", request={"view": "compact"}
+            ),
+            True,
+        ),
+        (
+            "internal",
+            "recall",
+            tool(
+                "recall",
+                subject="episodic",
+                query="timeout",
+                request={"view": "compact"},
+            ),
+            True,
+        ),
+        (
+            "internal",
+            "list",
+            tool(
+                "list", subject="episodic", query="timeout", request={"view": "compact"}
+            ),
+            True,
+        ),
+        (
+            "internal",
+            "expand",
+            tool("expand", request={"id": m.s1, "version": 1}),
+            True,
+        ),
+        (
+            "internal",
+            "related",
+            tool("related", request={"id": m.s1, "version": 1}),
+            False,
+        ),
+    ]
+
+    def with_access(operation: str, call: Any) -> Any:
+        def run(allow: Any = None) -> Any:
+            access = m.access(operation)
+            if access is None:  # a denied grant resolves to no access at all
+                return {"code": "E_PERMISSION", "reason": "no_access"}
+            return call(access)
+
+        return run
+
+    readers.append(
+        (
+            "inproc",
+            "retrieval_helper",
+            with_access(
+                "ask",
+                lambda a: recall_page(
+                    m.store, subject="episodic", query="timeout", access=a
+                ),
+            ),
+            True,
+        )
+    )
+    readers.append(
+        (
+            "inproc",
+            "expand_helper",
+            with_access(
+                "expand",
+                lambda a: expand_artifact(
+                    m.store, artifact_id=_nn(m.s1), version=1, access=a
+                ),
+            ),
+            True,
+        )
+    )
+    return readers
+
+
+def _m3_g2_readers(m: _M3) -> list[tuple[str, str, Any, bool]]:
+    env = _G2Env(
+        root=m.root,
+        data_root=m.data_root,
+        store=m.store,
+        auth=m.auth,
+        tmp_path=m.tmp_path,
+        monkeypatch=m.mp,
+    )
+    out: list[tuple[str, str, Any, bool]] = []
+    for route in _G2_ROUTES:
+        if route.key not in {
+            "prepare",
+            "resume",
+            "plan_checks",
+            "last_success_diagnose",
+            "ask",
+            "recall",
+            "list",
+            "intent",
+            "recipe",
+            "handoff",
+        }:
+            continue
+        if route.cell in {
+            "intent-action-create",
+            "recipe-action-record",
+            "handoff-action-prepare",
+        }:
+            continue
+        out.append(
+            (
+                route.transport,
+                route.cell,
+                lambda allow=None, r=route: (
+                    r.call(
+                        env,
+                        _G2Cell(row="m3", owner=ALICE, allow=allow, source="source-a"),
+                    ).body
+                ),
+                False,
+            )
+        )
+    return out
+
+
+_M3_C_CELLS = (
+    "row_state-summary_valid",
+    "row_state-summary_member_changed",
+    "row_state-summary_member_denied",
+    "row_state-summary_member_deleted",
+    "access-policy-policy_state-ok-grant-revoked-row_state-summary_valid",
+    "access-policy-policy_state-missing_marker-row_state-summary_valid",
+    "access-policy-policy_state-invalid-row_state-summary_valid",
+    "access-legacy_allowlist-policy_state-ok-source-ungranted-row_state-summary_valid",
+)
+
+
+def _m3_summary_cell(cell: str) -> Any:
+    def check(m: _M3, route: str, tr: str) -> None:
+        if "source-ungranted" in cell and (tr, route) in {
+            ("inproc", "retrieval_helper"),
+            ("inproc", "expand_helper"),
+        }:
+            return  # these helpers take no allowlist: nothing to ungrant
+        reader = {
+            (t, r): (call, delivers)
+            for t, r, call, delivers in (_m3_selecting_readers(m) + _m3_g2_readers(m))
+        }[(tr, route)]
+        call, delivers = reader
+        allow: Any = None
+        if cell == "row_state-summary_member_changed":
+            _t03_edit_m1(m.store)
+        elif cell == "row_state-summary_member_denied":
+            _grant(
+                m.auth,
+                m.root,
+                ALICE,
+                m.data_root,
+                sources=("consolidation",),
+                ops=("ask", "list", "expand", "history", "write", "bootstrap"),
+            )
+        elif cell == "row_state-summary_member_deleted":
+            deleted = MemoryTool().run(
+                m.root,
+                operation="delete",
+                permissions=_g2_perm(),
+                owner_scope=ALICE.as_dict(),
+                request={
+                    "artifact_ids": ["m1"],
+                    "expected_revisions": {"m1": 1},
+                    "scope": "episodic",
+                    "apply": True,
+                    "owner_scope": ALICE.as_dict(),
+                },
+            )
+            assert _code_of(deleted) == "OK", _rd(deleted)
+        elif "grant-revoked" in cell:
+            _fix1_revoke(m.auth, _nn(m.g1), m.data_root)
+        elif "missing_marker" in cell:
+            m.auth.policy_path(data_root=m.data_root).unlink()
+        elif cell.endswith("-summary_valid") and "policy_state-invalid" in cell:
+            m.auth.policy_path(data_root=m.data_root).write_bytes(b"{")
+        elif "source-ungranted" in cell:
+            allow = ["source-x"]
+        result = call(allow)
+        text = _dump(
+            _rd(result) if hasattr(result, "get") and "raw" in result else result
+        )
+        if cell == "row_state-summary_valid":
+            if delivers:
+                assert _nn(m.s1) in text, (tr, route, text[:400])
+            return
+        if route in {"expand", "expand_helper"}:
+            # An exact-id read echoes the requested id in its refusal: the refusal
+            # itself is the assertion.
+            assert _code_of(result) in {"E_NOT_VISIBLE", "E_PERMISSION"}, (
+                tr,
+                route,
+                cell,
+                text[:300],
+            )
+        else:
+            assert _nn(m.s1) not in text, (tr, route, cell)
+        denied_grant = (
+            "grant-revoked" in cell
+            or "policy_state-missing_marker" in cell
+            or "policy_state-invalid" in cell
+        )
+        if denied_grant:
+            assert _code_of(result) == "E_PERMISSION", (tr, route, _dump(_rd(result)))
+
+    return check
+
+
+def _m3_summary_pairs(factory: Any) -> tuple[tuple[str, str], ...]:
+    # Resolved lazily at registration time against a throwaway object shape: the
+    # reader keys are static, so build them from a stub carrying only `s1`.
+    class _Stub:
+        s1 = "s"
+        root = Path(".")
+        data_root = Path(".")
+        store = None
+        auth = None
+        tmp_path = Path(".")
+        mp = None
+
+        def access(self, *a: Any, **k: Any) -> Any:
+            return None
+
+    stub = _Stub()
+    return tuple((t, r) for t, r, _c, _d in factory(stub))  # type: ignore[arg-type]
+
+
+_M3_C_PAIRS = _m3_summary_pairs(_m3_selecting_readers) + _m3_summary_pairs(
+    _m3_g2_readers
+)
+for _cname in _M3_C_CELLS:
+    _m3_cell(_cname, mode="policy_summary", pairs=_M3_C_PAIRS)(_m3_summary_cell(_cname))
+
+
+# -- Group D: writers -------------------------------------------------------------------
+
+
+def _m3_s1_current(m: _M3) -> bool:
+    from rush.memory.consolidation import summary_is_current
+
+    summary = m.store.get_current(_nn(m.s1))
+    assert summary is not None
+    return summary_is_current(m.store, summary.content, access=m.access("ask"))
+
+
+def _m3_all_modes_hidden(m: _M3) -> None:
+    from rush.memory.retrieval import evaluate_artifact_visibility
+
+    row = m.store.get_current_row(_nn(m.s1))
+    for mode in ("ordinary", "inspect", "historical"):
+        decision = evaluate_artifact_visibility(
+            m.store, row, access=m.access("related", historical=True), mode=mode
+        )
+        assert decision.visible is False, mode
+
+
+def _m3_writer(operation: MemoryOperation, request: dict[str, Any], **kw: Any) -> Any:
+    def run(m: _M3) -> Any:
+        return MemoryTool().run(
+            m.root,
+            operation=operation,
+            permissions=_g2_perm(),
+            owner_scope=ALICE.as_dict(),
+            request={**request, "owner_scope": ALICE.as_dict()}
+            if operation in {"edit", "archive", "delete"}
+            else request,
+            **kw,
+        )
+
+    return run
+
+
+@_m3_cell(
+    "member_mutation-edit-apply-apply",
+    mode="policy_summary",
+    pairs=(("internal", "edit"),),
+)
+def _m3_d_edit(m: _M3, route: str, tr: str) -> None:
+    assert _m3_s1_current(m)
+    out = _m3_writer(
+        "edit",
+        {
+            "id": "m1",
+            "expected_version": 1,
+            "scope": "episodic",
+            "content": {**_t03_episode(), "outcome": "changed"},
+            "apply": True,
+        },
+    )(m)
+    assert _code_of(out) == "OK", _rd(out)
+    assert not _m3_s1_current(m)
+
+
+@_m3_cell(
+    "member_mutation-archive-apply-apply",
+    mode="policy_summary",
+    pairs=(("internal", "archive"),),
+)
+def _m3_d_archive(m: _M3, route: str, tr: str) -> None:
+    out = _m3_writer(
+        "archive",
+        {"id": "m1", "expected_version": 1, "scope": "episodic", "apply": True},
+    )(m)
+    assert _code_of(out) == "OK", _rd(out)
+    assert not _m3_s1_current(m)
+
+
+@_m3_cell(
+    "member_mutation-archive-apply-restore",
+    mode="policy_summary",
+    pairs=(("internal", "archive"),),
+)
+def _m3_d_restore(m: _M3, route: str, tr: str) -> None:
+    archived = _m3_writer(
+        "archive",
+        {"id": "m1", "expected_version": 1, "scope": "episodic", "apply": True},
+    )(m)
+    assert _code_of(archived) == "OK", _rd(archived)
+    version = _version(m.db, "m1")
+    restored = _m3_writer(
+        "archive",
+        {
+            "id": "m1",
+            "expected_version": version,
+            "scope": "episodic",
+            "apply": True,
+            "archived": False,
+        },
+    )(m)
+    assert _code_of(restored) == "OK", _rd(restored)
+    row = m.store.get_current_row("m1")
+    assert _m3_s1_current(m) == (row is not None and row["artifact_version"] == 1)
+
+
+@_m3_cell(
+    "member_mutation-delete-apply-apply",
+    mode="policy_summary",
+    pairs=(("internal", "delete"),),
+)
+def _m3_d_delete(m: _M3, route: str, tr: str) -> None:
+    out = _m3_writer(
+        "delete",
+        {
+            "artifact_ids": ["m1"],
+            "expected_revisions": {"m1": 1},
+            "scope": "episodic",
+            "apply": True,
+        },
+    )(m)
+    assert _code_of(out) == "OK", _rd(out)
+    _m3_all_modes_hidden(m)
+
+
+@_m3_cell(
+    "member_mutation-maintain-task-expiry_sweep",
+    mode="policy_summary",
+    pairs=(("internal", "maintain"),),
+    aged=True,
+)
+def _m3_d_expiry(m: _M3, route: str, tr: str) -> None:
+    out = MemoryTool().run(
+        m.root,
+        operation="maintain",
+        task="expiry_sweep",
+        permissions=_g2_perm(),
+        owner_scope=ALICE.as_dict(),
+        request={"apply": True},
+    )
+    assert _code_of(out) in {"OK", None}, _rd(out)
+    assert not _m3_s1_current(m)
+
+
+@_m3_cell(
+    "member_mutation-maintain-task-staleness_sweep",
+    mode="policy_summary",
+    pairs=(("internal", "maintain"),),
+    anchored=True,
+)
+def _m3_d_staleness(m: _M3, route: str, tr: str) -> None:
+    _m3_apply_state(m, "source_stale", "m1")
+    out = MemoryTool().run(
+        m.root,
+        operation="maintain",
+        task="staleness_sweep",
+        permissions=_g2_perm(),
+        owner_scope=ALICE.as_dict(),
+        request={"apply": True},
+    )
+    assert _code_of(out) in {"OK", None}, _rd(out)
+    assert not _m3_s1_current(m)
+
+
+@_m3_cell(
+    "member_mutation-update_content-legacy",
+    mode="policy_summary",
+    pairs=(("inproc", "update_content"),),
+)
+def _m3_d_update_content(m: _M3, route: str, tr: str) -> None:
+    assert _m3_s1_current(m)
+    _t03_edit_m1(m.store)
+    assert not _m3_s1_current(m)
+
+
+@_m3_cell(
+    "member_mutation-promote-user_stated-producer-72-T04",
+    mode="policy_summary",
+    pairs=(("internal", "promote"),),
+)
+def _m3_d_promote_producer(m: _M3, route: str, tr: str) -> None:
+    # Promoting an existing member (`request.source_id`) is the 72-T04 producer: today
+    # `promote` writes a new row and never reads the key, so no member changes and the
+    # summary stays current. 72-T04 flips this to a member mutation.
+    out = MemoryTool().run(
+        m.root,
+        operation="promote",
+        subject="episodic",
+        user_stated=True,
+        content=_t03_episode(who="promoted"),
+        source="source-a",
+        permissions=_g2_perm(),
+        owner_scope=ALICE.as_dict(),
+        request={"apply": True, "source_id": "m1", "expected_version": 1},
+    )
+    assert "artifact" in _rd(out), _rd(out)  # a promote result carries no `code`
+    assert _version(m.db, "m1") == 1
+    assert _m3_s1_current(m)
+
+
+_M3_D_NOEFFECT = (
+    "write-apply-apply",
+    "promote-apply-apply",
+    "verify_attempt",
+    "intent-action-create",
+    "recipe-action-record",
+    "handoff-action-prepare",
+    "receive-ack-no_ack",
+)
+
+
+def _m3_noeffect(cell: str) -> Any:
+    def check(m: _M3, route: str, tr: str) -> None:
+        env = _G2Env(
+            root=m.root,
+            data_root=m.data_root,
+            store=m.store,
+            auth=m.auth,
+            tmp_path=m.tmp_path,
+            monkeypatch=m.mp,
+        )
+        route_cell = "receive" if cell == "receive-ack-no_ack" else cell
+        target = next(r for r in _G2_ROUTES if r.cell == route_cell)
+        if target.setup is not None:
+            target.setup(env)
+        assert _m3_s1_current(m)
+        target.call(
+            env,
+            _G2Cell(
+                row="m3",
+                owner=ALICE,
+                allow=None,
+                source="source-a",
+                ack="no_ack" if route_cell == "receive" else None,
+            ),
+        )
+        assert _m3_s1_current(m), cell
+
+    return check
+
+
+for _wcell in _M3_D_NOEFFECT:
+    _m3_cell("no_member_effect", mode="policy_summary", pairs=(("inproc", _wcell),))(
+        _m3_noeffect(_wcell)
+    )
+
+
+@_m3_cell("schema_version-2-producer-72-T06", transports=_M3_PUBLIC)
+def _m3_schema_version_producer(m: _M3, route: str, tr: str) -> None:
+    # `schema_version: 2` is the 72-T06 producer: the strict request refuses it today.
+    before = m.effects()
+    req = {**m.request(route), "schema_version": 2}
+    _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
+
+
+# -- parametrised matrix --------------------------------------------------------------
+
+
+def _m3_params() -> list[Any]:
+    params = []
+    for cell, mode, combos, fn, build in _M3_CELLS:
+        for tr, route in combos:
+            params.append(
+                pytest.param(fn, mode, build, tr, route, id=f"{tr}.{route}-{cell}")
+            )
+    return params
+
+
+@pytest.mark.parametrize(("fn", "mode", "build", "tr", "route"), _m3_params())
+def test_t03_route_mode_matrix(
+    fn: Any,
+    mode: str,
+    build: dict[str, Any],
+    tr: str,
+    route: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fn(_M3(tmp_path, monkeypatch, mode, **build), route, tr)

@@ -652,11 +652,16 @@ class MemoryAccess:
         )
 
     def _re_resolve(self) -> tuple[MemoryAccess | None, str]:
+        # 72-T01 pin: re-resolve the operations this access claims. A
+        # `required_operations` set that no longer matches its recorded order (a
+        # forged access) is resolved as claimed, so a grant lacking one denies it.
+        required = self.required_operations_order
+        if self.required_operations and set(required) != self.required_operations:
+            required = tuple(sorted(self.required_operations))
         return MemoryAccess._resolve_set(
             self.project_root,
             operation=self.operation,
-            required=self.required_operations_order
-            or required_operation_set(self.operation),
+            required=required or required_operation_set(self.operation),
             owner_scope=self.owner_scope,
             requested_sources=self.requested_sources,
             session_binding=self.session_binding,
@@ -951,6 +956,21 @@ def route_access(
         data_root=data_root,
     )
     return access if access is not None else RouteDenial("E_PERMISSION", why)
+
+
+def is_write_access(access: MemoryAccess) -> bool:
+    """72-T03 D3: a policy access is write-capable only when `write` is one of the D2
+    operations it was resolved for (a preview resolved as `{list}` never is, whatever
+    the grant also allows); a legacy access only when its operation maps to `write`
+    and the D1 predicate is `legacy` mode right now."""
+    if access.kind == "policy":
+        return "write" in access.required_operations
+    return (
+        access.kind == "legacy_allowlist"
+        and _GRANT_FOR_OPERATION.get(access.operation, access.operation) == "write"
+        and memory_policy_mode(access.project_root, data_root=access.data_root)
+        == "legacy"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1352,8 +1372,33 @@ def _decide(
         store, row, memo or SourceValidationMemo()
     )
     informational = tuple(r for r in freshness_reasons if r in _INFORMATIONAL_REASONS)
+    derived_reasons: tuple[str, ...] = ()
+    content = _parsed_content(row)
+    if (
+        isinstance(content, dict)
+        and content.get("kind") == "consolidated_episode_summary"
+    ):
+        # 72-T03 derived-summary adapter. Deferred import: consolidation imports this
+        # module. Members that are summaries are refused before they are decided, so
+        # this never recurses.
+        from rush.memory.consolidation import summary_invalid_reason
+
+        invalid = summary_invalid_reason(
+            store, content, access=access, now=moment, memo=memo
+        )
+        if invalid == "derived_member_not_visible":
+            # C01/C02: a summary never discloses support the reader cannot see, in
+            # any mode (ordinary, inspect or historical).
+            return _NOT_VISIBLE
+        derived_reasons = (invalid,) if invalid is not None else ()
     reasons = tuple(
-        sorted({*blocking, *(r for r in freshness_reasons if r not in informational)})
+        sorted(
+            {
+                *blocking,
+                *(r for r in freshness_reasons if r not in informational),
+                *derived_reasons,
+            }
+        )
     )
     return VisibilityDecision(
         visible=True,
@@ -1823,8 +1868,8 @@ def _item_relations(
     memo: SourceValidationMemo | None = None,
 ) -> list[dict[str, Any]]:
     """MC03: the candidate's authorized depth-1 relations through
-    `related_artifacts()`, which revalidates every neighbor's source and current
-    version. 72-T01: a neighbor the shared decision does not deliver as current
+    `related_artifacts()` under the same `access`. 72-T03: every neighbor goes through
+    the shared decision before the node cap, so a neighbor not delivered as current
     (archived, expired, tampered, another owner, stale) is dropped, never disclosed."""
     # Deferred import: `rush.memory.relations` imports this module's budgets.
     from rush.memory.relations import related_artifacts
@@ -1833,22 +1878,12 @@ def _item_relations(
         store,
         artifact_id=artifact_id,
         version=version,
-        session_allowlist=list(access.sources),
+        session_allowlist=None,
+        access=access,
+        now=now,
+        memo=memo,
     )
-    if related["code"] != "OK":
-        return []
-    kept = []
-    for item in related["items"]:
-        decision = evaluate_artifact_visibility(
-            store,
-            store.get_current_row(item["id"]),
-            access=access,
-            now=now,
-            memo=memo,
-        )
-        if decision.usable_as_current:
-            kept.append(item)
-    return kept
+    return related["items"] if related["code"] == "OK" else []
 
 
 # D34: `(subject, owner kind, owner id, symbol_ref)`, and a page's visible peers per

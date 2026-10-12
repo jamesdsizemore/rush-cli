@@ -332,6 +332,12 @@
       "task": "72-T01"
     },
     {
+      "module": "memory/relations.py",
+      "function": "related_artifacts",
+      "route": "related",
+      "task": "72-T03"
+    },
+    {
       "module": "memory/retrieval.py",
       "function": "memory_policy_mode",
       "route": "mode_predicate",

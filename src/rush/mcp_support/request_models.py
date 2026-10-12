@@ -30,12 +30,14 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    PlainValidator,
     StrictBool,
     StrictInt,
     StrictStr,
     Tag,
     TypeAdapter,
     ValidationError,
+    WithJsonSchema,
     create_model,
     model_validator,
 )
@@ -57,6 +59,25 @@ _STRICT = ConfigDict(extra="forbid", strict=True)
 
 SchemaVersion = Annotated[StrictInt, Field(ge=1, le=1)]
 NonEmptyStr = Annotated[StrictStr, Field(min_length=1)]
+
+
+def _literal_text(value: Any) -> str:
+    """A non-empty `str` kept verbatim, lone surrogates included: a JSON `\\ud800`
+    escape decodes to one, and pydantic's `str` check would refuse it before the tool
+    treats the value as literal text (72-T03 consolidate `symptom`)."""
+    if not isinstance(value, str):
+        # pydantic reports only ValueError as a validation error; TypeError escapes.
+        raise ValueError("Input should be a valid string")  # noqa: TRY004
+    if not value:
+        raise ValueError("String should have at least 1 character")
+    return value
+
+
+LiteralText = Annotated[
+    Any,
+    PlainValidator(_literal_text),
+    WithJsonSchema({"minLength": 1, "type": "string"}),
+]
 NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
 StrList = list[StrictStr]
 AnyDict = dict[str, Any]
@@ -439,7 +460,7 @@ _REQUEST_MODELS: dict[str, Any] = {
         },
     ),
     "consolidate": _model(
-        "MemoryConsolidateRequest", {"symptom": (NonEmptyStr, _REQUIRED)}
+        "MemoryConsolidateRequest", {"symptom": (LiteralText, _REQUIRED)}
     ),
     "verify_attempt": _model(
         "MemoryVerifyAttemptRequest",
@@ -562,6 +583,13 @@ def _request_field(operation: str) -> dict[str, Any]:
     return {"request": (_REQUEST_MODELS[operation], _REQUIRED)}
 
 
+# 72-T03 R3: link, related and consolidate take a top-level owner selector.
+_OWNER_SELECTOR: dict[str, dict[str, Any]] = {
+    op: {"owner_scope": (MemoryOwnerScope | None, _OPTIONAL)}
+    for op in ("link", "related", "consolidate")
+}
+
+
 # Model tag -> (operation, fields). `list:compact` is `list` with a compact `request`
 # (query optional, `include_archived` not consumed); plain `list` is the `_query` path.
 MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
@@ -596,11 +624,18 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
         },
     ),
     **{
-        op: (op, {**_request_field(op), "session_allowlist": _ALLOWLIST_OPTIONAL})
+        op: (
+            op,
+            {
+                **_request_field(op),
+                "session_allowlist": _ALLOWLIST_OPTIONAL,
+                **_OWNER_SELECTOR.get(op, {}),
+            },
+        )
         for op in ("expand", "related", "consolidate", "prepare", "resume")
     },
     **{
-        op: (op, _request_field(op))
+        op: (op, {**_request_field(op), **_OWNER_SELECTOR.get(op, {})})
         for op in (
             "link",
             "verify_attempt",

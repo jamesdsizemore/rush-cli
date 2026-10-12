@@ -3795,6 +3795,27 @@ def _memory_input_request(input_file: Path) -> dict[str, Any]:
     return data
 
 
+_MEMORY_OWNER_OPERATIONS = frozenset({"link", "related", "consolidate"})
+_MEMORY_OWNER_KINDS = ("project", "user", "agent", "session")
+
+
+def _memory_owner_selector(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> dict[str, str] | None:
+    """72-T03 R3: parse `--owner KIND:ID` before the tool runs (exit 2 when malformed)."""
+    if value is None:
+        return None
+    kind, sep, ident = value.partition(":")
+    if not sep or kind not in _MEMORY_OWNER_KINDS or not ident.strip():
+        raise click.BadParameter(
+            f"expected KIND:ID with KIND one of {', '.join(_MEMORY_OWNER_KINDS)} "
+            f"and a non-blank ID, got {value!r}.",
+            ctx=ctx,
+            param=param,
+        )
+    return {"kind": kind, "id": ident}
+
+
 def _build_memory_operation_command(operation: str):
     """MC14: build one `rush memory <leaf>` Click command for `operation`."""
 
@@ -3812,8 +3833,16 @@ def _build_memory_operation_command(operation: str):
         result_view: str | None,
         limit: int | None,
         max_bytes: int | None,
+        owner: dict[str, str] | None = None,
     ) -> None:
         request = _memory_input_request(input_file)
+        extra: dict[str, Any] = {
+            "operation": operation,
+            "request": request,
+            "session_allowlist": list(session_allowlist) or None,
+        }
+        if owner is not None:
+            extra["owner_scope"] = owner
         _run_tool(
             "memory",
             _memory_logical_root(),
@@ -3827,11 +3856,7 @@ def _build_memory_operation_command(operation: str):
                 allow_artifact_write=allow_artifact_write,
                 allow_browser=allow_browser,
             ),
-            extra_kwargs={
-                "operation": operation,
-                "request": request,
-                "session_allowlist": list(session_allowlist) or None,
-            },
+            extra_kwargs=extra,
             view=ViewOptions(result_view, limit, max_bytes),
         )
 
@@ -3852,6 +3877,20 @@ def _build_memory_operation_command(operation: str):
             "resume); ignored otherwise."
         ),
     )(_cmd)
+    if operation in _MEMORY_OWNER_OPERATIONS:
+        # 72-T03 R3: the owner this route resolves its grant for, forwarded as
+        # `owner_scope` (a project with two granted owners needs it).
+        _cmd = click.option(
+            "--owner",
+            "owner",
+            default=None,
+            callback=_memory_owner_selector,
+            metavar="KIND:ID",
+            help=(
+                "Owner scope this operation acts for: KIND is project, user, agent "
+                "or session."
+            ),
+        )(_cmd)
     _cmd = click.option(
         "--input",
         "input_file",

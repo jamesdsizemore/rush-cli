@@ -34,7 +34,7 @@ from ..memory.maintenance import (
     run_maintenance_cycle,
 )
 from ..memory.recipes import record_recipe, record_recipe_outcome, resolve_recipe
-from ..memory.relations import add_relation, related_artifacts
+from ..memory.relations import add_relation, related_artifacts, relation_input_error
 from ..memory.retrieval import (
     DEFAULT_ENCODING,
     DEFAULT_MAX_BYTES,
@@ -1687,7 +1687,9 @@ class MemoryTool(ToolFn):
     ) -> ToolResult:
         """MC03 §6.3 `link` operation: adds one versioned evidence edge. Requires
         `cache_write`, same gate as `write`/`promote`/`maintain`. 72-T01: D2 `{write}`
-        is resolved, and the policy lock held, before the store is constructed."""
+        is resolved, and the policy lock held, before the store is constructed.
+        72-T03: `policy` mode links under that resolved `write` access; `legacy` mode
+        runs the same-owner path (`access=None`)."""
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
             return self._envelope_result(
@@ -1714,18 +1716,19 @@ class MemoryTool(ToolFn):
         target_version = request.get("target_version")
         kind = request.get("kind")
         origin_ref = request.get("origin_ref")
-        if (
-            not isinstance(source_id, str)
-            or not source_id
-            or not isinstance(target_id, str)
-            or not target_id
-            or not isinstance(source_version, int)
-            or isinstance(source_version, bool)
-            or not isinstance(target_version, int)
-            or isinstance(target_version, bool)
-            or not isinstance(kind, str)
-            or (origin_ref is not None and not isinstance(origin_ref, str))
-        ):
+        invalid = relation_input_error(
+            source_id=source_id,
+            source_version=source_version,
+            target_id=target_id,
+            target_version=target_version,
+            kind=kind,
+            origin_ref=origin_ref,
+            known_kind=False,
+        )
+        if invalid is not None:
+            code = invalid.pop("code")
+            return self._envelope_result(started, "link", code, invalid)
+        if not source_id or not target_id:
             return self._envelope_result(
                 started,
                 "link",
@@ -1743,19 +1746,55 @@ class MemoryTool(ToolFn):
             )
         resolved = self._read_access(root, "link", None, owner, apply=True)
         if isinstance(resolved, RouteDenial):
-            return self._denied(started, "link", resolved)
+            return self._mutation_denied(started, "link", resolved)
+        invalid = relation_input_error(
+            source_id=source_id,
+            source_version=source_version,
+            target_id=target_id,
+            target_version=target_version,
+            kind=kind,
+            origin_ref=origin_ref,
+        )
+        if invalid is not None:
+            code = invalid.pop("code")
+            return self._envelope_result(started, "link", code, invalid)
         with _policy_mutation(resolved) as refused:
             if refused is not None:
                 return self._denied(started, "link", refused)
+            if not (root / ".rush" / "memory.db").exists():
+                # R21: no store, so no endpoint; nothing is created.
+                return self._envelope_result(
+                    started,
+                    "link",
+                    "E_NOT_VISIBLE",
+                    {"message": "relation endpoint is not visible"},
+                )
             store = TypedArtifactStore(root)
+            access: MemoryAccess | None = resolved
+            if resolved.kind == "legacy_allowlist":
+                # D3 as amended (AM1): no declared owner -> the same-owner
+                # `access=None` form; a declared owner narrows to that owner.
+                access = None
+                if owner is not None:
+                    access = _legacy_link_access(
+                        store, resolved, owner, (source_id, target_id)
+                    )
+                    if access is None:
+                        return self._envelope_result(
+                            started,
+                            "link",
+                            "E_NOT_VISIBLE",
+                            {"message": "relation endpoint is not visible"},
+                        )
             result = add_relation(
                 store,
                 source_id=source_id,
-                source_version=source_version,
+                source_version=cast(int, source_version),
                 target_id=target_id,
-                target_version=target_version,
-                kind=kind,
+                target_version=cast(int, target_version),
+                kind=cast(str, kind),
                 origin_ref=origin_ref,
+                access=access,
             )
         code = result.pop("code")
         return self._envelope_result(started, "link", code, result)
@@ -1772,7 +1811,9 @@ class MemoryTool(ToolFn):
     ) -> ToolResult:
         """MC03 §6.3 `related` operation: bounded, authorized traversal from one seed.
         72-T01: D1 `ask` access first; reads a read-only view, so a missing store
-        creates nothing."""
+        creates nothing. 72-T03: the traversal runs under that access, which is resolved
+        again after it: a now-denied access returns the missing-root body, a changed
+        policy returns `E_RESTART` with no items."""
         if request is None:
             return self._envelope_result(
                 started,
@@ -1802,6 +1843,18 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "memory related requires id and version."},
             )
+        try:
+            artifact_id.encode("utf-8")
+        except UnicodeEncodeError:
+            return self._envelope_result(
+                started,
+                "related",
+                "E_INPUT",
+                {
+                    "field": "id",
+                    "message": "memory related id must be valid UTF-8 text.",
+                },
+            )
         depth = request.get("depth", 1)
         max_nodes = request.get("max_nodes", 32)
         max_tokens = request.get("max_tokens", DEFAULT_MAX_TOKENS)
@@ -1824,6 +1877,19 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "invalid field type in request"},
             )
+        if session_allowlist is not None and (
+            not isinstance(session_allowlist, list | tuple)
+            or not all(isinstance(item, str) for item in session_allowlist)
+        ):
+            return self._envelope_result(
+                started,
+                "related",
+                "E_INPUT",
+                {
+                    "field": "session_allowlist",
+                    "message": "session_allowlist must be a list of strings.",
+                },
+            )
         try:
             owner = self._parse_owner_scope(owner_scope, root)
         except ValueError as exc:
@@ -1841,7 +1907,6 @@ class MemoryTool(ToolFn):
             if isinstance(authority, dict):
                 return cast(ToolResult, authority)
             resolved = authority
-        allowlist = list(resolved.sources)
         store = self._readonly_store
         own_view = store is None
         if store is None:
@@ -1871,7 +1936,8 @@ class MemoryTool(ToolFn):
                 store,
                 artifact_id=artifact_id,
                 version=version,
-                session_allowlist=allowlist,
+                session_allowlist=None,
+                access=resolved,
                 selected_ids=bridge[1] if bridge is not None else None,
                 depth=depth,
                 max_nodes=max_nodes,
@@ -1879,6 +1945,20 @@ class MemoryTool(ToolFn):
                 max_bytes=max_bytes,
                 encoding=encoding,
             )
+            # D36/R18: the route's access is rechecked before emission; a denial
+            # or a changed grant replaces the traversal (no items).
+            failure = recheck_failure(resolved)
+            if failure is not None:
+                code, reason = failure
+                result = {
+                    "code": code,
+                    "reason": reason,
+                    "message": (
+                        "memory policy changed during related traversal; retry"
+                        if code == "E_RESTART"
+                        else f"memory related denied: {reason}."
+                    ),
+                }
         finally:
             if own_view:
                 store.close()
@@ -1899,7 +1979,10 @@ class MemoryTool(ToolFn):
     ) -> ToolResult:
         """MC03 §6.3 `consolidate` operation: derives a duplicate-episode summary. Requires
         `cache_write`, same gate as `write`/`promote`/`maintain`/`link`. 72-T01: D2
-        `{write}` and the policy lock precede the store."""
+        `{write}` and the policy lock precede the store. 72-T03: `policy` mode
+        consolidates that owner's members under the resolved `write` access (a
+        `session_allowlist` only narrows the sources); `legacy` mode runs the
+        allowlist path."""
         allowed, missing = check_permissions(_WRITE_PERMISSION, granted)
         if not allowed:
             return self._envelope_result(
@@ -1931,6 +2014,19 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "memory consolidate requires symptom."},
             )
+        if session_allowlist is not None and (
+            not isinstance(session_allowlist, list | tuple)
+            or not all(isinstance(item, str) for item in session_allowlist)
+        ):
+            return self._envelope_result(
+                started,
+                "consolidate",
+                "E_INPUT",
+                {
+                    "field": "session_allowlist",
+                    "message": "session_allowlist must be a list of strings.",
+                },
+            )
         try:
             owner = self._parse_owner_scope(owner_scope, root)
         except ValueError as exc:
@@ -1940,23 +2036,60 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        resolved = self._read_access(
-            root, "consolidate", session_allowlist, owner, apply=True
-        )
+        requested = session_allowlist
+        if session_allowlist and memory_policy_mode(root) != "legacy":
+            # The summary is written under source "consolidation"; the grant must
+            # approve it beside the narrowed sources (72-T03 B17).
+            requested = sorted({*session_allowlist, "consolidation"})
+        resolved = self._read_access(root, "consolidate", requested, owner, apply=True)
         if isinstance(resolved, RouteDenial):
-            return self._denied(started, "consolidate", resolved)
-        if not resolved.sources:
-            result = consolidate_episodes(
-                cast(TypedArtifactStore, None), symptom=symptom, session_allowlist=[]
+            return self._mutation_denied(started, "consolidate", resolved)
+        access = resolved
+        if resolved.kind == "legacy_allowlist":
+            # D3: legacy consolidation is restricted to the legacy owner.
+            legacy_owner = legacy_owner_scope(root)
+            if owner is not None and owner != legacy_owner:
+                return self._envelope_result(
+                    started,
+                    "consolidate",
+                    "E_NOT_VISIBLE",
+                    {"message": "memory consolidate owner_scope is not visible"},
+                )
+            if not resolved.sources:
+                return self._envelope_result(
+                    started,
+                    "consolidate",
+                    "E_PERMISSION",
+                    {
+                        "message": "memory consolidate requires a non-empty "
+                        "session_allowlist (fail-closed, no default cross-session "
+                        "access)."
+                    },
+                )
+            access = MemoryAccess.legacy(
+                root,
+                resolved.sources,
+                owner_scope=legacy_owner,
+                operation="write",
+                data_root=resolved.data_root,
             )
-            code = result.pop("code")
-            return self._envelope_result(started, "consolidate", code, result)
         with _policy_mutation(resolved) as refused:
             if refused is not None:
                 return self._denied(started, "consolidate", refused)
+            if not (root / ".rush" / "memory.db").exists():
+                # R21: no store, so no episode; nothing is created.
+                return self._envelope_result(
+                    started,
+                    "consolidate",
+                    "E_INPUT",
+                    {"message": f"no episodes found for symptom {symptom!r}"},
+                )
             store = TypedArtifactStore(root)
             result = consolidate_episodes(
-                store, symptom=symptom, session_allowlist=list(resolved.sources)
+                store,
+                symptom=symptom,
+                session_allowlist=session_allowlist,
+                access=access,
             )
         code = result.pop("code")
         return self._envelope_result(started, "consolidate", code, result)
@@ -2170,6 +2303,26 @@ class MemoryTool(ToolFn):
         if artifact_id is not None and artifact_id not in selected:
             return self._denied(started, operation, _NOT_SELECTED)
         return authority
+
+    def _mutation_denied(
+        self, started: float, operation: str, denial: RouteDenial
+    ) -> ToolResult:
+        """72-T03 R2: a `link`/`consolidate` policy resolve that needs an owner
+        (more than one granted owner) is an input error on `owner_scope`; any other
+        denial is `_denied`."""
+        if denial.reason == "owner_required":
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {
+                    "field": "owner_scope",
+                    "reason": denial.reason,
+                    "message": f"memory {operation} requires owner_scope: more than "
+                    "one owner is granted for this project.",
+                },
+            )
+        return self._denied(started, operation, denial)
 
     def _denied(
         self, started: float, operation: str, denial: RouteDenial
@@ -4228,6 +4381,39 @@ class MemoryTool(ToolFn):
             raw=raw,
             metadata={"operation": operation},
         )
+
+
+def _legacy_link_access(
+    store: TypedArtifactStore,
+    resolved: MemoryAccess,
+    owner: OwnerScope,
+    endpoint_ids: tuple[str, str],
+) -> MemoryAccess | None:
+    """72-T03 D3 (AM1): legacy `link` with a declared owner decides the endpoints
+    under the legacy allowlist of their own sources, read under the policy lock,
+    narrowed to that owner. `None` when neither endpoint exists."""
+    conn = store._connect()
+    try:
+        sources = sorted(
+            {
+                row[0]
+                for row in conn.execute(
+                    "SELECT source FROM memory_artifacts WHERE id IN (?, ?)",
+                    endpoint_ids,
+                ).fetchall()
+            }
+        )
+    finally:
+        conn.close()
+    if not sources:
+        return None
+    return MemoryAccess.legacy(
+        store.project_root,
+        sources,
+        owner_scope=owner,
+        operation="write",
+        data_root=resolved.data_root,
+    )
 
 
 # --- 72-T01 D1 mutation guard ------------------------------------------------

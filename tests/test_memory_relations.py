@@ -80,7 +80,7 @@ def test_supersedes_cycle_rejected_atomically(tmp_path: Path) -> None:
         target_version=1,
         kind="caused_by",
     )
-    assert missing_endpoint["code"] == "E_INPUT"
+    assert missing_endpoint["code"] == "E_NOT_VISIBLE"
     assert _relation_count(store) == 1
 
 

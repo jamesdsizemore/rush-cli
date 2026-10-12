@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from rush.memory.consolidation import consolidate_episodes, summary_is_current
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.retrieval import MemoryAccess
+from rush.memory.store import MemoryArtifact, TrustTier, TypedArtifactStore
 
 
 def _episode(
@@ -18,7 +19,7 @@ def _episode(
     condition: dict[str, Any],
     attempt: str,
     outcome: str,
-    trust_tier: str = "DERIVED",
+    trust_tier: TrustTier = "DERIVED",
     source: str = "allowed",
 ) -> MemoryArtifact:
     return store.write(
@@ -28,6 +29,7 @@ def _episode(
             subject="episodic",
             trust_tier=trust_tier,
             content={
+                "kind": "observation",
                 "symptom": symptom,
                 "condition": condition,
                 "attempt": attempt,
@@ -80,7 +82,8 @@ def test_duplicate_summary_preserves_originals_and_exception(tmp_path: Path) -> 
         assert store.get_version_content(artifact_id, 1) == original_bytes[artifact_id]
         assert store.get_current(artifact_id) is not None
 
-    assert summary_is_current(store, summary) is True
+    legacy = MemoryAccess.legacy(tmp_path, ["allowed"])
+    assert summary_is_current(store, summary, access=legacy) is True
     store.update_content(
         "f1",
         {
@@ -91,7 +94,7 @@ def test_duplicate_summary_preserves_originals_and_exception(tmp_path: Path) -> 
         },
         expected_version=1,
     )
-    assert summary_is_current(store, summary) is False
+    assert summary_is_current(store, summary, access=legacy) is False
 
 
 def test_repetition_cannot_promote_trust(tmp_path: Path) -> None:
