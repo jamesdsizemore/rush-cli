@@ -12,6 +12,7 @@ import base64
 import contextlib
 import dataclasses
 import datetime
+import functools
 import gc
 import hashlib
 import hmac
@@ -19,6 +20,7 @@ import importlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import stat
@@ -29,6 +31,7 @@ import textwrap
 import threading
 import time
 import types
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar, Final, cast
@@ -67,18 +70,6 @@ def _nn[T](value: T | None) -> T:
     return value
 
 
-def _cur(store: TypedArtifactStore, artifact_id: str) -> MemoryArtifact:
-    artifact = store.get_current(artifact_id)
-    assert artifact is not None
-    return artifact
-
-
-def _cur_row(store: TypedArtifactStore, artifact_id: str) -> sqlite3.Row:
-    row = store.get_current_row(artifact_id)
-    assert row is not None
-    return row
-
-
 def _sha_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -89,6 +80,18 @@ def _sha_file(path: Path) -> str:
 
 def _payload_sha(content: dict[str, Any]) -> str:
     return _sha_text(json.dumps(content))
+
+
+def _cur(store: TypedArtifactStore, artifact_id: str) -> MemoryArtifact:
+    artifact = store.get_current(artifact_id)
+    assert artifact is not None, artifact_id
+    return artifact
+
+
+def _cur_row(store: TypedArtifactStore, artifact_id: str) -> sqlite3.Row:
+    row = store.get_current_row(artifact_id)
+    assert row is not None, artifact_id
+    return row
 
 
 def _git(root: Path, *args: str) -> None:
@@ -13216,12 +13219,12 @@ def _pr6_sites(tree: Any) -> list[tuple[str, Any, int | None]]:
         ):
             reasons = {
                 getattr(getattr(stmt, "value", None), "args", [None])[0]
-                for stmt in node.body
+                for stmt in cast(ast.If, node).body
                 if isinstance(stmt, ast.Return)
             }
             texts = {getattr(r, "value", None) for r in reasons}
             if texts & {"operation_not_granted", "binding_stale"}:
-                operands("stage_operand", node.test)
+                operands("stage_operand", cast(ast.If, node).test)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             for kw in node.keywords:
@@ -22091,6 +22094,21 @@ def _g2_tool_routes() -> list[_G2Route]:
 
 
 _G2_ROUTES: list[_G2Route] = _g2_tool_routes()
+# 73-T02/BOOTSTRAP-CONSENT: `bind_store(overlay=True)` cells (D41 (b)), through the CLI.
+_G2_BIND_ROWS = (
+    "access-overlay-policy_state-ok-grant_ops-exact-apply-preview",
+    "access-overlay-policy_state-ok-grant_ops-exact-apply-apply",
+    "access-overlay-policy_state-ok-grant_ops-missing_one-apply-apply",
+    "access-overlay-policy_state-ok-store-absent-apply-preview",
+    "access-overlay-policy_state-ok-cache_write-off-apply-apply",
+    "access-policy-policy_state-ok-grant_ops-exact-apply-preview",
+    "access-policy-policy_state-ok-grant_ops-exact-apply-apply",
+    "access-policy-policy_state-ok-store-absent-apply-preview",
+    "access-legacy_allowlist-policy_state-missing_no_marker-apply-preview",
+    "access-legacy_allowlist-policy_state-missing_no_marker-apply-apply",
+    "access-policy-policy_state-missing_marker-apply-preview",
+    "access-policy-policy_state-invalid-apply-apply",
+)
 
 
 def _g2_seed(root: Path, store: TypedArtifactStore) -> None:
@@ -22197,6 +22215,10 @@ def _g2_cells() -> list[Any]:
     for route in _G2_ROUTES:
         for row in _g2_rows(route):
             cells.append(pytest.param(route, row, id=f"{route.ident}-{row}"))
+    for row in _G2_BIND_ROWS:
+        cells.append(
+            pytest.param("bind_store_overlay", row, id=f"cli.bind_store-overlay-{row}")
+        )
     return cells
 
 
@@ -23314,8 +23336,16 @@ def _g2_run_unsupported_row(
 
 @pytest.mark.parametrize(("route", "row"), _g2_cells())
 def test_t01_fix_policy_mode_matrix(
-    route: _G2Route, row: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    route: _G2Route | str,
+    row: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    if isinstance(route, str):
+        # 73-T02/BOOTSTRAP-CONSENT flips the `bind_store(overlay=True)` producer cells.
+        assert route == "bind_store_overlay"
+        _g2_bind_overlay_cell(row, tmp_path)
+        return
     if route.rows_only is not None:
         env = _G2Env(
             root=tmp_path,
@@ -23552,6 +23582,38 @@ def test_t01_existing_apply_and_historical_are_real_cells(
         for transport in _M_TRANSPORTS:
             assert f"{transport}.{family}-apply-apply" in t04_ids
     assert not [i for i in t04_ids if "-apply-" in i and "producer" in i]
+
+    # 73-T02/BOOTSTRAP-CONSENT (R22): the consent approve cells (grant, revoke,
+    # bind-store, overlay bind-store and connect --approve-memory-binding) are real
+    # cells as well: each ends in an authorization, a permission refusal or a
+    # committed effect. A missing command or option is a usage error and fails the
+    # cell's own assertions, so it can never satisfy one.
+    approve_cells = _consent_approve_cells()
+    assert {
+        ident.split(".", 1)[1].split("-", 1)[0] for ident, *_rest in approve_cells
+    } == {
+        "grant_approve",
+        "revoke_approve",
+        "bind_approve",
+        "bind_overlay_apply",
+        "connect_bind_approve",
+    }
+    for index, (ident, runner, dims, rest) in enumerate(approve_cells):
+        home = tmp_path / f"consent-home-{index}"
+        home.mkdir()
+        for name, value in (
+            ("HOME", home),
+            ("USERPROFILE", home),
+            ("XDG_CONFIG_HOME", home / ".config"),
+            ("XDG_DATA_HOME", home / ".local" / "share"),
+            ("XDG_CACHE_HOME", home / ".cache"),
+            ("APPDATA", home / "AppData" / "Roaming"),
+            ("LOCALAPPDATA", home / "AppData" / "Local"),
+        ):
+            monkeypatch.setenv(name, str(value))
+        workdir = tmp_path / f"consent-{index}"
+        workdir.mkdir()
+        runner(workdir, dims, *rest)
 
     # 73-T09/CODEC's matrix is part of the same guarantee: its import/apply cells
     # invoke the real public capsule route and canonical import transaction, and its
@@ -24221,7 +24283,7 @@ def test_t01_read_contained_source_inputs(case: str, tmp_path: Path) -> None:
             encoding="utf-8"
         )
     (root / "bom.py").write_bytes(b"\xef\xbb\xbfx = 1\n")
-    assert read_contained_source(root, "bom.py") == "﻿x = 1\n"
+    assert read_contained_source(root, "bom.py") == "\ufeffx = 1\n"
     target: str
     if case == "absolute":
         target = str(outside)
@@ -24426,6 +24488,481 @@ def test_t05_g6_related_incoming_edge_records_source_version(tmp_path: Path) -> 
     )
     assert related["items"] == [
         {"id": "linked", "version": 1, "kind": "fixed_by", "direction": "incoming"}
+    ]
+
+
+# =============================================================================
+# 73-T02/BOOTSTRAP-CONSENT: every policy denial names the command that fixes it
+# =============================================================================
+#
+# `next_action` is `memory_next_action(...)` of the denied call's own inputs
+# (project root, the D2 operation set, the request owner, the request sources) and the
+# summary ends with ` Next: <command, or the text when there is none>`. Symbols and
+# routes an earlier task adds are imported inside the test bodies.
+
+NX_RESOLVE_REASONS = (
+    "policy_missing",
+    "no_grant",
+    "operation_not_granted",
+    "source_not_granted",
+    "owner_not_granted",
+    "owner_required",
+    "project_not_registered",
+    "revoked",
+    "policy_invalid",
+)
+NX_CODES = frozenset({"E_PERMISSION", "E_OWNER", "E_SCOPE"})
+NX_ROW_FOR_REASON = {
+    "policy_missing": "access-policy-policy_state-missing_marker",
+    "operation_not_granted": "access-policy-policy_state-ok-grant_ops-missing_one",
+    "revoked": "access-policy-policy_state-ok-grant-revoked",
+    "policy_invalid": "access-policy-policy_state-invalid",
+    "owner_required": "access-policy-policy_state-ok-owner-omitted",
+    "source_not_granted": "access-legacy_allowlist-policy_state-ok-source-ungranted",
+    "owner_not_granted": "access-policy-policy_state-ok-grant_ops-exact",
+    "no_grant": "access-legacy_allowlist-policy_state-missing_no_marker",
+    "project_not_registered": "access-policy-policy_state-ok-grant_ops-exact",
+}
+NX_SOURCE_ROUTES = frozenset({"write", "promote"})
+# H4: the denied call's inputs are the request's own. `receive` sends no
+# `owner_scope`, so its guidance is built for owner `None` (no `--owner` unless the
+# caller has exactly one same-project grant owner, H3).
+NX_OWNERLESS_ROUTES = frozenset({"receive"})
+
+
+def _nx_required(route: _G2Route) -> list[str]:
+    """The D2 operation set of one matrix route: its primary operation plus the
+    secondary operations its fixture drops (`list-mode-historical` also needs `history`,
+    `handoff` also needs `expand`)."""
+    return sorted({route.op, *(route.missing_ops or ())})
+
+
+def _nx_sources(route: _G2Route, allow: list[str] | None, src: str) -> list[str]:
+    """The sources the route's request carries (H4): the write/promote `source`, the
+    session allowlist of an allowlist route, and none for a route whose request names
+    no source (`intent`, `recipe`, `receive` narrow or bind internally)."""
+    if route.key in NX_SOURCE_ROUTES:
+        return [src]
+    if route.takes_allowlist:
+        return list(allow or ())
+    return []
+
+
+def _nx_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: _G2Route, reason: str
+) -> Any:
+    """`(env, owner, allow, src)` for one route and the reason its call must be denied
+    with (the fixtures of plan §5.4 'Reason fixtures')."""
+    env = _g2_env(tmp_path, monkeypatch, route, NX_ROW_FOR_REASON[reason])
+    owner: OwnerScope | None = ALICE
+    allow: list[str] | None = None
+    src = "source-a"
+    if reason == "no_grant":
+        # D1 row 7: a marked project, a policy that grants only another project.
+        (env.root / ".rush").mkdir(exist_ok=True)
+        (env.root / ".rush" / "memory-policy.required").write_bytes(b"")
+        other = _registered(tmp_path / "other-project", env.data_root)
+        _grant(env.auth, other, ALICE, env.data_root, ops=FULL_OPS_HISTORY)
+    elif reason == "project_not_registered":
+        # D1 row 3a: a copy carries `.rush/project.json`, so it is a `policy` project
+        # that the registry does not know (resolve stage 6).
+        copy = tmp_path / "copied-project"
+        shutil.copytree(env.root, copy)
+        env.root = copy.resolve()
+    elif reason == "owner_not_granted":
+        owner = BOB
+    elif reason == "owner_required":
+        owner = None
+    elif reason == "source_not_granted":
+        allow = ["source-x"]
+        src = "source-x"
+    if route.key == "consolidate" and allow is None:
+        # `_consolidate` fail-closes on a missing allowlist before any policy check;
+        # give it the granted source so the call reaches the policy decision.
+        allow = ["source-a"]
+    return env, owner, allow, src
+
+
+def _nx_call(
+    route: _G2Route,
+    env: _G2Env,
+    row: str,
+    owner: OwnerScope | None,
+    allow: list[str] | None,
+    src: str,
+) -> Any:
+    """The route's outcome body for one (row, owner, allowlist, source) call."""
+    cell = _G2Cell(row=row, owner=owner, allow=allow, source=src)
+    return route.call(env, cell).body
+
+
+def _nx_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    route: _G2Route,
+    reason: str,
+    *,
+    expect_denial: bool = False,
+) -> bool:
+    """Run one route into one reason; when it is the denial, `next_action` and the
+    summary suffix are exact and nothing was written; otherwise there is none.
+    Returns whether the route was denied for `reason`."""
+    from rush.memory import authorization as auth
+
+    env, owner, allow, src = _nx_env(tmp_path, monkeypatch, route, reason)
+    before = _effects(env.root, env.data_root)
+    result = _nx_call(route, env, NX_ROW_FOR_REASON[reason], owner, allow, src)
+    raw = _rd(result)
+    code, got = _code_of(result), _reason_of(result)
+    data = cast(
+        "dict[str, Any]",
+        raw.get("data") if isinstance(raw.get("data"), dict) else {},
+    )
+    denied = got == reason and (
+        code in NX_CODES or (code == "E_INPUT" and data.get("field") == "owner_scope")
+    )
+    label = (route.cell, reason, code, got)
+    if not denied:
+        assert not expect_denial, (label, _dump(raw))
+        assert "next_action" not in raw, label
+        return False
+    expected = auth.memory_next_action(
+        reason=reason,
+        project_root=env.root,
+        operations=_nx_required(route),
+        owner_scope=None if route.key in NX_OWNERLESS_ROUTES else owner,
+        requested_sources=_nx_sources(route, allow, src),
+    )
+    assert set(expected) == {"text", "command"}
+    assert raw["next_action"] == expected, label
+    suffix = (
+        expected["command"] if expected["command"] is not None else expected["text"]
+    )
+    assert result["summary"].endswith(f" Next: {suffix}"), (label, result["summary"])
+    assert (expected["command"] is None) == (
+        reason not in GRANT_COMMAND_REASONS | {"project_not_registered"}
+    ), label
+    assert _effects(env.root, env.data_root) == before, label
+    return True
+
+
+GRANT_COMMAND_REASONS = frozenset(
+    {
+        "policy_missing",
+        "no_grant",
+        "operation_not_granted",
+        "source_not_granted",
+        "owner_not_granted",
+    }
+)
+_NX_GUARANTEED = {
+    "ask",
+    "recall",
+    "list",
+    "expand",
+    "write",
+    "edit",
+    "archive",
+    "delete",
+    "consolidate",
+}
+
+
+def _nx_cells() -> list[Any]:
+    cells = []
+    for route in _G2_ROUTES:
+        for reason in NX_RESOLVE_REASONS:
+            cells.append(
+                pytest.param(
+                    route, reason, id=f"{route.transport}.{route.cell}-reason-{reason}"
+                )
+            )
+    return cells
+
+
+@pytest.mark.parametrize(("route", "reason"), _nx_cells())
+def test_policy_denial_next_action_every_path(
+    route: _G2Route, reason: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A route that has the input a reason concerns must be denied by it: reads and
+    # writes take an owner and (for allowlist routes, write and promote) a source.
+    has_source = route.takes_allowlist or route.key in NX_SOURCE_ROUTES
+    must_deny = route.key in _NX_GUARANTEED and (
+        reason != "source_not_granted" or has_source
+    )
+    _nx_check(tmp_path, monkeypatch, route, reason, expect_denial=must_deny)
+
+
+def _nx_denied_fixture(tmp_path: Path) -> tuple[Any, Path, Any]:
+    """A registered project with one ALICE grant {ask, expand, list, write, bootstrap,
+    history} on `source-a`, so a request for `source-x` or owner BOB is denied."""
+    auth, _data_root, root, store, grant = _policy_project(
+        tmp_path, ops=FULL_OPS_HISTORY
+    )
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    return auth, root, grant
+
+
+def test_policy_denial_next_action_transports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One read and one write operation through the `rush memory` CLI leaves, the full
+    MCP `rush_memory` tool and the restricted receiver bridge."""
+    from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+    auth, root, grant = _nx_denied_fixture(tmp_path)
+
+    def expect(
+        raw: dict[str, Any], summary: str, reason: str, ops: list[str], **kw: Any
+    ) -> None:
+        assert raw["code"] == "E_PERMISSION", raw
+        assert raw["data"]["reason"] == reason, raw
+        expected = auth.memory_next_action(
+            reason=reason, project_root=root, operations=ops, **kw
+        )
+        assert raw["next_action"] == expected, raw
+        suffix = (
+            expected["command"] if expected["command"] is not None else expected["text"]
+        )
+        assert summary.endswith(f" Next: {suffix}")
+
+    # An authorized request carries no guidance.
+    allowed = _mcp_memory(
+        path=str(root),
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        owner_scope=ALICE.as_dict(),
+        session_allowlist=["source-a"],
+        request={"view": "compact"},
+    )
+    assert allowed["raw"]["code"] == "OK" and "next_action" not in allowed["raw"]
+    assert "Next:" not in allowed["summary"]
+
+    # MCP full transport: read (ask) and write.
+    payload = _mcp_memory(
+        path=str(root),
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        owner_scope=ALICE.as_dict(),
+        session_allowlist=["source-x"],
+        request={"view": "compact"},
+    )
+    expect(
+        payload["raw"],
+        payload["summary"],
+        "source_not_granted",
+        ["ask"],
+        owner_scope=ALICE,
+        requested_sources=["source-x"],
+    )
+    payload = _mcp_memory(
+        path=str(root),
+        operation="write",
+        subject=SUBJECT,
+        content={"text": "needle w"},
+        source="source-x",
+        owner_scope=ALICE.as_dict(),
+        allow_cache_write=True,
+    )
+    expect(
+        payload["raw"],
+        payload["summary"],
+        "source_not_granted",
+        ["write"],
+        owner_scope=ALICE,
+        requested_sources=["source-x"],
+    )
+
+    # CLI leaves: `memory expand` (read) and `memory write` (write) from the project.
+    monkeypatch.chdir(root)
+    request_file = tmp_path / "expand.json"
+    request_file.write_text(json.dumps({"id": "a1", "version": 1}), encoding="utf-8")
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    outcome = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "expand",
+            "--input",
+            str(request_file),
+            "--session",
+            "source-x",
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+    body = json.loads(outcome.stdout)
+    expect(
+        body["raw"],
+        body["summary"],
+        "source_not_granted",
+        ["expand"],
+        owner_scope=None,
+        requested_sources=["source-x"],
+    )
+    outcome = CliRunner().invoke(
+        cli,
+        [
+            "memory",
+            "write",
+            SUBJECT,
+            "source-x",
+            "--content",
+            '{"text": "w"}',
+            "--allow-cache-write",
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+    body = json.loads(outcome.stdout)
+    expect(
+        body["raw"],
+        body["summary"],
+        "source_not_granted",
+        ["write"],
+        owner_scope=None,
+        requested_sources=["source-x"],
+    )
+
+    # Restricted bridge: a prepared session whose sender grant was revoked afterwards.
+    prepared = _prepare_handoff(root)
+    sid, capability = _session_of(prepared)
+    auth.revoke_memory_scope(
+        grant_id=grant["grant_id"],
+        expected_policy_revision=_revision(auth, default_data_root()),
+        consent=True,
+        data_root=default_data_root(),
+    )
+    out = build_memory_bridge_handler(root=root, session_id=sid, capability=capability)(
+        "expand", {"id": "a1", "version": 1}
+    )
+    assert out["code"] == "E_PERMISSION" and out["data"]["reason"] == "revoked", out
+    expected = auth.memory_next_action(
+        reason="revoked",
+        project_root=root,
+        operations=["expand"],
+        owner_scope=None,
+        requested_sources=["source-a"],
+    )
+    assert out["next_action"] == expected
+    assert expected["command"] is None
+
+
+def test_policy_denial_next_action_non_policy_results_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A7.6: only policy-resolve denials carry guidance; other `E_PERMISSION` results
+    and an existing `raw.next_action` stay exactly as they were."""
+    auth, root, _grant_row = _nx_denied_fixture(tmp_path)
+    tool = MemoryTool()
+    # Missing cache_write is a permission refusal, not a policy denial.
+    skipped = tool.run(
+        root,
+        operation="write",
+        subject=SUBJECT,
+        content={"text": "w"},
+        source="source-a",
+        owner_scope=ALICE.as_dict(),
+        request={"apply": True},
+        permissions=ExecutionPermissions(),
+    )
+    assert "next_action" not in _rd(skipped)
+    assert "Next:" not in skipped["summary"]
+
+    # A lock failure is `lock_unavailable`, not a resolve reason.
+    def unlocked(**_kwargs: Any) -> Any:
+        raise OSError("lock denied")
+
+    with monkeypatch.context() as locked:
+        locked.setattr(auth, "hold_policy_lock", unlocked)
+        result = tool.run(
+            root,
+            operation="write",
+            subject=SUBJECT,
+            content={"text": "w"},
+            source="source-a",
+            owner_scope=ALICE.as_dict(),
+            request={"apply": True},
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+    assert _code_of(result) == "E_PERMISSION"
+    assert _reason_of(result) == "lock_unavailable"
+    assert "next_action" not in _rd(result)
+    assert "Next:" not in result["summary"]
+    # The legacy allowlist form (no policy) never gets guidance.
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    legacy = tool.run(
+        legacy_root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=["s"],
+    )
+    assert "next_action" not in _rd(legacy)
+    assert "Next:" not in legacy["summary"]
+    # A pre-72 handoff session keeps its own "re-prepare" guidance (inside `data`):
+    # `sender_unbound` is not a policy-resolve reason, so nothing is added or replaced.
+    prepared = _prepare_handoff(root)
+    sid, capability = _session_of(prepared)
+    with contextlib.closing(sqlite3.connect(TypedArtifactStore(root).db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_handoff_sessions SET sender_grant_id = NULL "
+            "WHERE session_id = ?",
+            (sid,),
+        )
+        conn.commit()
+    receive = _receive(root, sid, capability)
+    assert _code_of(receive) == "E_PERMISSION"
+    assert _reason_of(receive) == "sender_unbound"
+    assert _rd(receive)["data"]["next_action"] == "re-prepare handoff"
+    assert "next_action" not in _rd(receive)
+    assert "Next:" not in receive["summary"]
+
+
+def test_preference_resolve_personal_layer_denied_next_action(tmp_path: Path) -> None:
+    """72-T05 supplies the denied personal layer; this task owns the command: an OK
+    preference resolve whose personal layer is denied carries `--overlay --operation
+    list --operation overlay_read` guidance (UPSTREAM 72-T05)."""
+    import shlex
+
+    from rush.memory import authorization as auth
+
+    _auth_mod, root, _grant_row = _nx_denied_fixture(tmp_path)
+    result = MemoryTool().run(
+        root,
+        operation=cast(MemoryOperation, "preference"),
+        request={"action": "resolve", "key": "ui.panel_layout"},
+        session_allowlist=["source-a"],
+        owner_scope=ALICE.as_dict(),
+    )
+    layers = _rd(result)["data"]["layers"]
+    assert layers["personal"]["state"] == "denied"
+    reason = layers["personal"]["reason"]
+    overlay = auth.user_overlay_owner_scope(data_root=default_data_root())
+    expected = auth.memory_next_action(
+        reason=reason,
+        project_root=root,
+        operations=("list", "overlay_read"),
+        owner_scope=overlay,
+    )
+    assert layers["personal"]["next_action"] == expected
+    argv = (
+        shlex.split(cast("str", expected["command"]))
+        if os.name != "nt"
+        else cast("str", expected["command"]).split()
+    )
+    for token in ("--overlay", "--operation", "list", "overlay_read"):
+        assert token in argv, argv
+    assert argv.index("--overlay") < argv.index("--operation")
+    assert [argv[i + 1] for i, t in enumerate(argv) if t == "--operation"] == [
+        "list",
+        "overlay_read",
     ]
 
 
@@ -26638,6 +27175,2103 @@ def test_t03_link_holds_policy_lock_through_commit(
 
 T03_FAMILY_SOURCES = ("intent:*", "consolidation")
 CAROL = OwnerScope("user", "carol")
+
+
+def _codes_project(tmp_path: Path) -> tuple[Any, Path]:
+    """One project with ALICE and BOB grants {ask, bootstrap, expand, list, write,
+    history} on `source-a`: carol holds nothing, no owner is ambiguous, and
+    `source-x` is outside both grants."""
+    auth, data_root, root, store, _grant_row = _policy_project(
+        tmp_path, ops=FULL_OPS_HISTORY
+    )
+    _grant(auth, root, BOB, data_root, ops=FULL_OPS_HISTORY)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    return auth, root
+
+
+def _codes_maintain(
+    root: Path, owner: OwnerScope | None, allow: list[str] | None
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="maintain",
+        task="staleness_sweep",
+        owner_scope=_g2_owner(owner),
+        request={"apply": False},
+        permissions=_g2_perm(),
+    )
+
+
+def _codes_ask_v1(root: Path, owner: OwnerScope | None, allow: list[str] | None) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="ask",
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=allow,
+        owner_scope=_g2_owner(owner),
+        request={"view": "compact"},
+    )
+
+
+def _codes_list_v2(
+    root: Path, owner: OwnerScope | None, allow: list[str] | None
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="list",
+        session_allowlist=allow,
+        owner_scope=_g2_owner(owner),
+        request={"schema_version": 2},
+    )
+
+
+def _codes_preference_record(
+    root: Path, owner: OwnerScope | None, allow: list[str] | None
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation=cast(MemoryOperation, "preference"),
+        session_allowlist=allow,
+        owner_scope=_g2_owner(owner),
+        request={
+            "action": "record",
+            "key": "ui.panel_layout",
+            "value": "verbose",
+            "scope": "project",
+            "authority": "explicit",
+        },
+        permissions=_g2_perm(),
+    )
+
+
+# (operation, action) of each caller, for `required_operation_set`.
+_CODES_CALLERS: dict[str, tuple[Any, str, str | None]] = {
+    "v1_maintain": (_codes_maintain, "maintain", None),
+    "v1_ask": (_codes_ask_v1, "ask", None),
+    "v2_list": (_codes_list_v2, "list", None),
+    "preference_record": (_codes_preference_record, "preference", "record"),
+}
+# Plan §2.1 item 3 for the v2 and preference routes and v1 maintain; the v1 compact
+# resolve failures keep `E_PERMISSION` (decisions.md 72-T01 missing[1]/missing[17]).
+_CODES_CELLS = [
+    ("v1_maintain", "owner_not_granted", "E_OWNER"),
+    ("v1_ask", "owner_not_granted", "E_PERMISSION"),
+    ("v1_ask", "source_not_granted", "E_PERMISSION"),
+    ("v1_ask", "owner_required", "E_PERMISSION"),
+    ("v2_list", "owner_not_granted", "E_OWNER"),
+    ("v2_list", "source_not_granted", "E_SCOPE"),
+    ("v2_list", "owner_required", "E_INPUT"),
+    ("preference_record", "owner_not_granted", "E_OWNER"),
+    ("preference_record", "source_not_granted", "E_SCOPE"),
+    ("preference_record", "owner_required", "E_INPUT"),
+]
+
+
+@pytest.mark.parametrize(
+    ("caller", "reason", "code"),
+    [pytest.param(*c, id=f"{c[0]}-{c[1]}-{c[2]}") for c in _CODES_CELLS],
+)
+def test_next_action_codes(caller: str, reason: str, code: str, tmp_path: Path) -> None:
+    from rush.memory.retrieval import required_operation_set
+
+    auth, root = _codes_project(tmp_path)
+    call, operation, action = _CODES_CALLERS[caller]
+    owner: OwnerScope | None = ALICE
+    allow: list[str] | None = None
+    sources: list[str] = []
+    if reason == "owner_not_granted":
+        owner = CAROL
+    elif reason == "owner_required":
+        owner = None
+    elif reason == "source_not_granted":
+        allow = ["source-x"]
+        sources = ["source-x"]
+    before = _effects(root, default_data_root())
+    result = call(root, owner, allow)
+    raw = _rd(result)
+    data = cast(
+        "dict[str, Any]",
+        raw.get("data") if isinstance(raw.get("data"), dict) else {},
+    )
+    assert _code_of(result) == code, _dump(raw)
+    assert _reason_of(result) == reason, _dump(raw)
+    if code == "E_INPUT":
+        assert data.get("field") == "owner_scope", _dump(raw)
+    expected = auth.memory_next_action(
+        reason=reason,
+        project_root=root,
+        operations=required_operation_set(operation, action=action),
+        owner_scope=owner,
+        requested_sources=sources,
+    )
+    assert raw["next_action"] == expected, _dump(raw)
+    assert (expected["command"] is None) == (
+        reason in ("owner_required", "revoked", "policy_invalid")
+    )
+    assert result["summary"].endswith(
+        " Next: " + (expected["command"] or expected["text"])
+    )
+    assert _effects(root, default_data_root()) == before
+
+
+def _nx_preview_ok(command: str, argv: list[str], policy_before: bytes | None) -> None:
+    """A printed command runs as a preview: exit 0, `OK`, policy bytes unchanged."""
+    _consent = importlib.import_module("tests.test_memory_authorization")
+    _c_argv_of, _c_cli = _consent._c_argv_of, _consent._c_cli
+
+    printed = _c_argv_of(command, argv)
+    exit_code, payload, output = _c_cli(*printed[1:], "--json")
+    assert exit_code == 0 and payload is not None, output
+    assert payload["raw"]["code"] == "OK", payload
+    data = payload["raw"]["data"]
+    assert data["approve_command"] is not None
+    policy = _policy_file_bytes()
+    assert policy == policy_before
+
+
+def _policy_file_bytes() -> bytes | None:
+    from rush.memory import authorization as auth
+
+    path = auth.policy_path(data_root=default_data_root())
+    return path.read_bytes() if path.exists() else None
+
+
+def _grant_argv(
+    root: Path,
+    ops: list[str],
+    *,
+    owner: list[str],
+    sources: list[str] | None,
+    revision: int,
+) -> list[str]:
+    argv = ["rush", "memory", "grant", "--project", str(root), *owner]
+    for op in sorted(ops):
+        argv += ["--operation", op]
+    if sources:
+        for source in sorted(sources):
+            argv += ["--source", source]
+    else:
+        argv += ["--all-current-sources"]
+    return [*argv, "--expected-policy-revision", str(revision)]
+
+
+def _command_of(argv: list[str]) -> str:
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
+def _owner_ops_cell(case: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    if case == "owner_bob":
+        # Only ALICE holds a grant; the requested owner user:bob has none.
+        _a, _d, root, _store, _g = _policy_project(tmp_path, ops=FULL_OPS_HISTORY)
+        rev = _revision(auth, data_root)
+        policy = _policy_file_bytes()
+        result = _codes_ask_v1(root, BOB, None)
+        assert _reason_of(result) == "owner_not_granted", _dump(_rd(result))
+        argv = _grant_argv(
+            root, ["ask"], owner=["--owner", "user:bob"], sources=None, revision=rev
+        )
+        command = _rd(result)["next_action"]["command"]
+        assert command == _command_of(argv)
+        assert "alice" not in command
+        _nx_preview_ok(command, argv, policy)
+        return
+    if case == "overlay_preference_read":
+        _auth, root = _codes_project(tmp_path)
+        rev = _revision(auth, data_root)
+        policy = _policy_file_bytes()
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=root,
+            operations=("list", "overlay_read"),
+            owner_scope=overlay,
+        )
+        argv = _grant_argv(
+            root,
+            ["list", "overlay_read"],
+            owner=["--overlay"],
+            sources=None,
+            revision=rev,
+        )
+        assert nxt["command"] == _command_of(argv)
+        assert "--overlay --operation list --operation overlay_read" in nxt["command"]
+        _nx_preview_ok(nxt["command"], argv, policy)
+        return
+    if case == "promote_maintain_on_ask_list_grant":
+        data_root = default_data_root()
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        _row(store, "a1", ALICE, "mk-a1", source="source-a")
+        _grant(auth, root, ALICE, data_root, ops=("ask", "list"))
+        rev = _revision(auth, data_root)
+        policy = _policy_file_bytes()
+        tool = MemoryTool()
+        promote = tool.run(
+            root,
+            operation="promote",
+            subject=SUBJECT,
+            content={"text": "needle p"},
+            source="source-a",
+            user_stated=True,
+            owner_scope=ALICE.as_dict(),
+            request={"apply": True},
+            permissions=_g2_perm(),
+        )
+        maintain = tool.run(
+            root,
+            operation="maintain",
+            task="staleness_sweep",
+            owner_scope=ALICE.as_dict(),
+            request={"apply": True},
+            permissions=_g2_perm(),
+        )
+        argv = _grant_argv(
+            root,
+            ["ask", "list", "write"],
+            owner=["--owner", "user:alice"],
+            sources=["source-a"],
+            revision=rev,
+        )
+        for result in (promote, maintain):
+            assert _reason_of(result) == "operation_not_granted", _dump(_rd(result))
+            command = _rd(result)["next_action"]["command"]
+            assert command == _command_of(argv)
+            _nx_preview_ok(command, argv, policy)
+        # The promote command with --approve --allow-cache-write grants the write.
+        _consent = importlib.import_module("tests.test_memory_authorization")
+        _c_argv_of, _c_cli = _consent._c_argv_of, _consent._c_cli
+
+        printed = _c_argv_of(_command_of(argv), argv)
+        exit_code, payload, output = _c_cli(
+            *printed[1:], "--approve", "--allow-cache-write", "--json"
+        )
+        assert exit_code == 0 and payload["raw"]["code"] == "OK", output
+        assert {"ask", "list", "write"} <= set(
+            payload["raw"]["data"]["allowed_operations"]
+        )
+        return
+    if case == "implicit_owner_alice_only":
+        data_root = default_data_root()
+        root = _registered(tmp_path / "project", data_root)
+        _grant(
+            auth,
+            root,
+            ALICE,
+            data_root,
+            sources=("source-a", "source-b"),
+            ops=("ask", "list"),
+        )
+        rev = _revision(auth, data_root)
+        policy = _policy_file_bytes()
+        result = MemoryTool().run(
+            root,
+            operation="write",
+            subject=SUBJECT,
+            content={"text": "w"},
+            source="source-a",
+            request={"apply": True},
+            permissions=_g2_perm(),
+        )
+        assert _reason_of(result) == "operation_not_granted", _dump(_rd(result))
+        argv = _grant_argv(
+            root,
+            ["ask", "list", "write"],
+            owner=["--owner", "user:alice"],
+            sources=["source-a", "source-b"],
+            revision=rev,
+        )
+        command = _rd(result)["next_action"]["command"]
+        assert command == _command_of(argv)
+        _nx_preview_ok(command, argv, policy)
+        return
+    raise AssertionError(case)
+
+
+def _refused_cell(owner_id: str, tmp_path: Path, *, must_name: str) -> None:
+    from rush.memory import authorization as auth
+
+    root = _registered(tmp_path / "project", default_data_root())
+    nxt = auth.memory_next_action(
+        reason="owner_not_granted",
+        project_root=root,
+        operations=("ask",),
+        owner_scope=OwnerScope("user", owner_id),
+    )
+    assert nxt["command"] is None, nxt
+    assert repr(must_name) in cast("str", nxt["text"]), nxt
+    with pytest.raises(ValueError) as info:
+        auth.memory_grant_command(
+            project_root=root,
+            operations=["ask"],
+            owner_scope=OwnerScope("user", owner_id),
+        )
+    assert info.value.args[0] == must_name
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "owner_bob",
+        "overlay_preference_read",
+        "promote_maintain_on_ask_list_grant",
+        "implicit_owner_alice_only",
+        "every_os_newline",
+        "every_os_escape",
+        "every_os_bidi",
+        "every_os_lone_surrogate",
+        "every_os_route_invalid_request",
+        pytest.param("posix_shlex_semicolon_dollar", marks=pytest.mark.posix_only),
+        pytest.param("posix_shlex_space", marks=pytest.mark.posix_only),
+        pytest.param(
+            "windows_semicolon", id="windows_semicolon", marks=pytest.mark.windows_only
+        ),
+        pytest.param(
+            "windows_dollar", id="windows_dollar", marks=pytest.mark.windows_only
+        ),
+        pytest.param(
+            "windows_ampersand", id="windows_ampersand", marks=pytest.mark.windows_only
+        ),
+        pytest.param(
+            "windows_list2cmdline_space",
+            id="windows_list2cmdline_space",
+            marks=pytest.mark.windows_only,
+        ),
+    ],
+)
+def test_next_action_preserves_owner_and_grant_operations(
+    case: str, tmp_path: Path
+) -> None:
+    from rush.memory import authorization as auth
+
+    if case in {
+        "owner_bob",
+        "overlay_preference_read",
+        "promote_maintain_on_ask_list_grant",
+        "implicit_owner_alice_only",
+    }:
+        _owner_ops_cell(case, tmp_path)
+        return
+    if case == "every_os_newline":
+        _refused_cell("x\ncalc", tmp_path, must_name="user:x\ncalc")
+        return
+    if case == "every_os_escape":
+        _refused_cell("x\x1b[2Kcalc", tmp_path, must_name="user:x\x1b[2Kcalc")
+        return
+    if case == "every_os_bidi":
+        _refused_cell("x\u202ecalc", tmp_path, must_name="user:x\u202ecalc")
+        return
+    if case == "every_os_lone_surrogate":
+        root = _registered(tmp_path / "project", default_data_root())
+        owner = object.__new__(OwnerScope)
+        object.__setattr__(owner, "kind", "user")
+        object.__setattr__(owner, "id", "x\ud800calc")
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=root,
+            operations=("ask",),
+            owner_scope=owner,
+        )
+        assert nxt["command"] is None
+        assert repr("user:x\ud800calc") in cast("str", nxt["text"])
+        return
+    if case == "every_os_route_invalid_request":
+        # A route request with that owner resolves `invalid_request` (not a grant-command
+        # reason): the next action carries no command and never reaches the Cs rule.
+        _auth, root = _codes_project(tmp_path)
+        result = MemoryTool().run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            owner_scope={"kind": "user", "id": "x\ud800calc"},
+            request={"view": "compact"},
+        )
+        assert _reason_of(result) == "invalid_request", _dump(_rd(result))
+        assert _rd(result)["next_action"]["command"] is None
+        return
+    if case in ("posix_shlex_semicolon_dollar", "posix_shlex_space"):
+        data_root = default_data_root()
+        root = _registered(tmp_path / "my proj$x", data_root)
+        owner_id = "x; rm -rf ~" if case == "posix_shlex_semicolon_dollar" else "x y"
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=root,
+            operations=("ask",),
+            owner_scope=OwnerScope("user", owner_id),
+        )
+        argv = _grant_argv(
+            root,
+            ["ask"],
+            owner=["--owner", f"user:{owner_id}"],
+            sources=None,
+            revision=_revision(auth, data_root),
+        )
+        assert nxt["command"] is not None
+        assert shlex.split(nxt["command"]) == argv
+        return
+    data_root = default_data_root()
+    spaced = _registered(tmp_path / "my proj", data_root)
+    if case == "windows_semicolon":
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=spaced,
+            operations=("ask",),
+            owner_scope=OwnerScope("user", "x; rm -rf ~"),
+        )
+        assert nxt["command"] is None and repr("user:x; rm -rf ~") in cast(
+            "str", nxt["text"]
+        )
+    elif case == "windows_dollar":
+        dollar = _registered(tmp_path / "my$proj", data_root)
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=dollar,
+            operations=("ask",),
+            owner_scope=OwnerScope("user", "x"),
+        )
+        assert nxt["command"] is None and repr(str(dollar)) in cast("str", nxt["text"])
+    elif case == "windows_ampersand":
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=spaced,
+            operations=("ask",),
+            owner_scope=OwnerScope("user", "x&calc"),
+        )
+        assert nxt["command"] is None and repr("user:x&calc") in cast(
+            "str", nxt["text"]
+        )
+    else:
+        assert case == "windows_list2cmdline_space"
+        nxt = auth.memory_next_action(
+            reason="owner_not_granted",
+            project_root=spaced,
+            operations=("ask",),
+            owner_scope=OwnerScope("user", "x y"),
+        )
+        argv = _grant_argv(
+            spaced,
+            ["ask"],
+            owner=["--owner", "user:x y"],
+            sources=None,
+            revision=_revision(auth, data_root),
+        )
+        assert nxt["command"] == subprocess.list2cmdline(argv)
+
+
+# =============================================================================
+# G2: test_consent_route_mode_matrix (73-T02/BOOTSTRAP-CONSENT)
+# =============================================================================
+#
+# Ids are `<transport>.<route>-<dimension>-<value>...` with the canonical route keys
+# and dimension tokens of decisions.md (72-T01 critic conflicts[16]). Base fixture F0:
+# a registered project R, a grant G0 on R (owner `legacy_owner_scope(R)`, sources
+# `["s"]`, operations `["list"]`, revision 1) and a bound store with one active `s`
+# row. "refuse" cells: the consent CLI has no such option, so `--<dimension> <value>`
+# is a Click usage error (exit 2, `No such option`) with zero bytes changed.
+
+K_REFUSED = {
+    "mode": "ordinary",
+    "representation": "utf8",
+    "retrieval": "lexical",
+    "ack": "ack",
+    "capability_ids": "selected",
+}
+K_ROW_STATES = ("active", "archived", "expired", "rejected", "pending", "tampered")
+OVERLAY_PREFERENCE_ROUTES = frozenset(
+    {"write", "edit", "promote", "link", "consolidate", "maintain"}
+)
+
+
+@dataclasses.dataclass
+class _KEnv:
+    root: Path
+    data_root: Path
+    grant: dict[str, Any] | None
+    db: Path | None
+
+
+def _k_cli() -> Any:
+    return importlib.import_module("tests.test_memory_authorization")
+
+
+def _k_env(
+    tmp_path: Path,
+    *,
+    policy_state: str = "ok",
+    store: str = "present",
+    name: str = "project",
+) -> _KEnv:
+    """F0 with the given policy state (`ok`, `missing_no_marker`, `missing_marker`,
+    `invalid`) and store state (`present`, `absent`, `old_schema`)."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / name, data_root)
+    db: Path | None = None
+    if store != "absent":
+        built = TypedArtifactStore(root)
+        _row(built, "k1", legacy_owner_scope(root), "mk-k1", source="s")
+        db = built.db_path
+        if store == "old_schema":
+            _drop_payload_columns(db)
+    grant: dict[str, Any] | None = None
+    if policy_state != "missing_no_marker":
+        grant = auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=legacy_owner_scope(root),
+            approved_sources=["s"],
+            allowed_operations=["list"],
+            expected_policy_revision=0,
+            consent=True,
+            data_root=data_root,
+        )
+    if policy_state == "missing_marker":
+        auth.policy_path(data_root=data_root).unlink()
+    elif policy_state == "invalid":
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+    return _KEnv(root, data_root, grant, db)
+
+
+def _k_row_state(env: _KEnv, state: str) -> None:
+    """Add row `rs` in the given state to the store (SQL, below the writer)."""
+    assert env.db is not None
+    store = TypedArtifactStore(env.root)
+    owner = legacy_owner_scope(env.root)
+    _row(store, "rs", owner, "mk-rs", source="rs-source")
+    if state == "archived":
+        store.archive(
+            "rs", expected_version=1, scope=SUBJECT, owner_scope=owner, apply=True
+        )
+    elif state == "tampered":
+        _tamper(env.db, "rs")
+        gc.collect()  # `_tamper` leaves its connection to the collector
+    else:
+        column = {
+            "expired": "expired_at = 1.0, expired_by = 'sweep'",
+            "rejected": "orphaned_at = 1.0",
+            "pending": "stale = 1",
+        }.get(state)
+        if column is not None:
+            with contextlib.closing(sqlite3.connect(env.db)) as conn:
+                conn.execute(f"UPDATE memory_artifacts SET {column} WHERE id = 'rs'")
+                conn.commit()
+
+
+def _k_state(env: _KEnv) -> list[tuple[str, ...]]:
+    return _k_cli()._c_state(env.root)
+
+
+def _k_preview_args(env: _KEnv, *extra: str, revision: int | None = None) -> list[str]:
+    rev = _revision_of() if revision is None else revision
+    return [
+        "memory",
+        "grant",
+        "--project",
+        str(env.root),
+        *extra,
+        "--expected-policy-revision",
+        str(rev),
+    ]
+
+
+def _revision_of() -> int:
+    from rush.memory import authorization as auth
+
+    return int(
+        auth.load_policy_readonly(data_root=default_data_root())["policy_revision"]
+    )
+
+
+def _k_refuse(args: list[str], dimension: str, env: _KEnv) -> None:
+    consent = _k_cli()
+    before = _k_state(env)
+    option = "--" + dimension.replace("_", "-")
+    consent._c_exit2([*args, option, K_REFUSED[dimension]], "No such option")
+    assert _k_state(env) == before
+
+
+def _k_grant_preview(tmp_path: Path, dims: dict[str, str]) -> None:
+    consent = _k_cli()
+    policy_state = dims.get("policy_state", "ok")
+    store = dims.get("store", "present")
+    env = _k_env(tmp_path, policy_state=policy_state, store=store)
+    if "row_state" in dims:
+        _k_row_state(env, dims["row_state"])
+    if "refuse" in dims:
+        _k_refuse(_k_preview_args(env, "--source", "s"), dims["refuse"], env)
+        return
+    extra = ["--source", "s"]
+    if dims.get("access") == "overlay":
+        extra = ["--overlay", *extra]
+    if dims.get("grant_ops") == "exact":
+        extra += ["--operation", "list"]
+    elif dims.get("grant_ops") == "missing_one":
+        extra += ["--operation", "list", "--operation", "write"]
+    args = _k_preview_args(env, *extra)
+    before = _k_state(env)
+    marker = env.root / ".rush" / "memory-policy.required"
+    marker_bytes = marker.read_bytes() if marker.exists() else None
+    if policy_state == "invalid":
+        payload = consent._c_run(args, code="E_POLICY_INVALID")
+        assert _k_state(env) == before
+        return
+    if store == "old_schema":
+        payload = consent._c_run(args, code="E_MIGRATION")
+        assert payload["raw"]["next_action"]["command"] is None
+        assert _k_state(env) == before
+        return
+    payload = consent._c_run(args, code="OK")
+    after = _k_state(env)
+    data = payload["raw"]["data"]
+    expected_state = {"ok": "ok"}.get(policy_state, "missing")
+    assert data["policy_state"] == expected_state
+    assert data["policy_revision"] == (1 if policy_state == "ok" else 0)
+    if dims.get("access") == "overlay":
+        assert data["overlay"] is True and "overlay_read" in data["operations"]
+    if store == "absent":
+        assert data["store_binding"] is None and data["other_sources"] == []
+    else:
+        counts = consent._c_expected_inventory(env.root)
+        assert data["catalog"] == counts["catalog"]
+        assert data["other_sources"] == counts["other_sources"]
+        if "row_state" in dims:
+            sources = {o["source"]: o["rows"] for o in data["other_sources"]}
+            if dims["row_state"] == "archived":
+                assert "rs-source" not in sources
+            else:
+                assert sources.get("rs-source") == 1, dims
+    if marker_bytes is not None:
+        assert marker.read_bytes() == marker_bytes
+    assert after == before
+    if "cache_write" in dims:
+        flag = ["--allow-cache-write"] if dims["cache_write"] == "on" else []
+        again = consent._c_run([*args, *flag], code="OK")
+        assert again["raw"] == payload["raw"]
+
+
+def _k_grant_approve(tmp_path: Path, dims: dict[str, str]) -> None:
+    consent = _k_cli()
+    policy_state = dims.get("policy_state", "ok")
+    store = dims.get("store", "present")
+    env = _k_env(tmp_path, policy_state=policy_state, store=store)
+    if "row_state" in dims:
+        _k_row_state(env, dims["row_state"])
+    if "refuse" in dims:
+        _k_refuse(
+            _k_preview_args(env, "--source", "s", "--approve", "--allow-cache-write"),
+            dims["refuse"],
+            env,
+        )
+        return
+    extra = ["--source", "s2"]
+    revision = _revision_of()
+    if dims.get("access") == "overlay":
+        extra = ["--overlay", "--source", "s"]
+    if dims.get("grant_ops") == "exact":
+        extra = ["--source", "s", "--operation", "list"]
+        revision = 0  # stale: the identical active grant comes back before any CAS
+    elif dims.get("grant_ops") == "missing_one":
+        extra = ["--source", "s", "--operation", "list", "--operation", "write"]
+        revision = 0
+    approve = ["--approve"] + (
+        ["--allow-cache-write"] if dims.get("cache_write", "on") == "on" else []
+    )
+    args = _k_preview_args(env, *extra, *approve, revision=revision)
+    db_before = env.db.read_bytes() if env.db is not None and env.db.exists() else None
+    before = _k_state(env)
+    if dims.get("cache_write") == "off":
+        consent._c_skipped(args, "grant")
+        assert _k_state(env) == before
+        return
+    if policy_state == "invalid":
+        consent._c_run(args, code="E_POLICY_INVALID")
+        assert _k_state(env) == before
+        return
+    if dims.get("grant_ops") == "missing_one":
+        consent._c_run(args, code="E_VERSION")
+        assert _k_state(env) == before
+        return
+    payload = consent._c_run(args, code="OK")
+    data = payload["raw"]["data"]
+    if dims.get("grant_ops") == "exact":
+        assert env.grant is not None and data["grant_id"] == env.grant["grant_id"]
+        assert _k_state(env) == before
+    elif dims.get("access") == "overlay":
+        assert "overlay_read" in data["allowed_operations"]
+    elif policy_state == "ok":
+        assert data["policy_revision"] == 2
+        assert env.grant is not None
+        assert (
+            consent._c_policy()["grants"][env.grant["grant_id"]]["superseded_by"]
+            == data["grant_id"]
+        )
+    else:
+        assert data["policy_revision"] == 1
+    if env.db is not None and env.db.exists():
+        assert env.db.read_bytes() == db_before
+
+
+def _k_revoke(tmp_path: Path, dims: dict[str, str], *, approve: bool) -> None:
+    consent = _k_cli()
+    from rush.memory import authorization as auth
+
+    policy_state = dims.get("policy_state", "ok")
+    env = _k_env(
+        tmp_path, policy_state=policy_state, store=dims.get("store", "present")
+    )
+    if "row_state" in dims:
+        _k_row_state(env, dims["row_state"])
+    grant_id = env.grant["grant_id"] if env.grant else str(uuid.uuid4())
+    if dims.get("access") == "overlay":
+        overlay = auth.user_overlay_owner_scope(data_root=env.data_root)
+        grant_id = _grant(
+            auth,
+            env.root,
+            overlay,
+            env.data_root,
+            sources=(OVERLAY_SOURCE,),
+            ops=("overlay_read", "list"),
+        )["grant_id"]
+    revision = _revision_of()
+    args = [
+        "memory",
+        "revoke",
+        "--grant-id",
+        grant_id,
+        "--expected-policy-revision",
+        str(revision),
+    ]
+    flags = ["--approve", "--allow-cache-write"] if approve else []
+    if "refuse" in dims:
+        _k_refuse([*args, *flags], dims["refuse"], env)
+        return
+    before = _k_state(env)
+    if approve and dims.get("cache_write") == "off":
+        consent._c_skipped([*args, "--approve"], "revoke")
+        assert _k_state(env) == before
+        return
+    if policy_state == "invalid":
+        consent._c_run([*args, *flags], code="E_POLICY_INVALID")
+        assert _k_state(env) == before
+        return
+    if env.grant is None or policy_state == "missing_marker":
+        consent._c_run([*args, *flags], code="E_GRANT_NOT_FOUND")
+        assert _k_state(env) == before
+        return
+    if approve:
+        if dims.get("principal") == "other":
+            with consent._c_forged_principal(grant_id):
+                forged = _k_state(env)
+                consent._c_run([*args, *flags], code="E_PRINCIPAL")
+                assert _k_state(env) == forged
+            return
+        if dims.get("revision") == "stale":
+            stale = [*args[:-1], str(revision + 1)]
+            consent._c_run([*stale, *flags], code="E_VERSION")
+            assert _k_state(env) == before
+            return
+        payload = consent._c_run([*args, *flags], code="OK")
+        assert payload["raw"]["data"]["revoked"] is True
+        if dims.get("revoked") == "already":
+            sealed = consent._c_policy_bytes()
+            again = consent._c_run([*args[:-1], "0", *flags], code="OK")
+            assert again["raw"]["data"] == payload["raw"]["data"]
+            assert consent._c_policy_bytes() == sealed
+        return
+    first = consent._c_run(args, code="OK")
+    assert first["raw"]["data"]["grant"]["grant_id"] == grant_id
+    assert consent._c_policy_bytes() is not None
+    assert _k_state(env) == before
+    # The preview names the grant only: the store, the write permission and the
+    # grant's operations never change its output.
+    for flag in ([], ["--allow-cache-write"]):
+        assert consent._c_run([*args, *flag], code="OK")["raw"] == first["raw"]
+    if env.db is not None and "store" in dims:
+        env.db.unlink()
+        assert consent._c_run(args, code="OK")["raw"] == first["raw"]
+
+
+def _k_bind_preview(tmp_path: Path, dims: dict[str, str]) -> None:
+    consent = _k_cli()
+    env = _k_env(
+        tmp_path,
+        policy_state=dims.get("policy_state", "ok"),
+        store=dims.get("store", "present"),
+    )
+    if "row_state" in dims:
+        _k_row_state(env, dims["row_state"])
+    args = ["memory", "bind-store", "--project", str(env.root)]
+    if "refuse" in dims:
+        _k_refuse(args, dims["refuse"], env)
+        return
+    before = _k_state(env)
+    if dims.get("store") == "old_schema":
+        consent._c_run(args, code="E_MIGRATION")
+        assert _k_state(env) == before
+        return
+    payload = consent._c_run(args, code="OK")
+    after = _k_state(env)
+    data = payload["raw"]["data"]
+    if dims.get("store") == "absent":
+        assert data["store"] == "absent" and data["approve_command"] is None
+    else:
+        assert data["store"] == "present"
+        assert re.fullmatch(r"[0-9a-f]{64}", data["binding_digest"])
+        if dims.get("row_state") == "tampered":
+            assert data["unbound_rows"] >= 1
+        if dims.get("row_state") == "archived":
+            assert data["rows"] == 2  # archived rows are inside the digest
+    assert after == before
+    if "cache_write" in dims:
+        flag = ["--allow-cache-write"] if dims["cache_write"] == "on" else []
+        assert consent._c_run([*args, *flag], code="OK")["raw"] == payload["raw"]
+
+
+def _k_bind_approve(tmp_path: Path, dims: dict[str, str]) -> None:
+    consent = _k_cli()
+    from rush.memory import authorization as auth
+
+    policy_state = dims.get("policy_state", "missing_no_marker")
+    env = _k_env(
+        tmp_path, policy_state=policy_state, store=dims.get("store", "present")
+    )
+    args = ["memory", "bind-store", "--project", str(env.root)]
+    if dims.get("project") == "overlay_root":
+        args = ["memory", "bind-store", "--project", str(env.data_root / "user")]
+        (env.data_root / "user").mkdir(parents=True, exist_ok=True)
+    digest = "0" * 64
+    if env.db is not None and dims.get("digest") != "mismatch":
+        digest = TypedArtifactStore.bind_store(env.root, approve=False)[
+            "binding_digest"
+        ]
+    approve = ["--approve", "--expected-digest", digest]
+    before = _k_state(env)
+    if dims.get("cache_write") == "off":
+        consent._c_skipped([*args, *approve], "bind_store")
+        assert _k_state(env) == before
+        return
+    flags = [*approve, "--allow-cache-write"]
+    if dims.get("project") == "overlay_root":
+        payload = consent._c_run([*args, *flags], code="E_PERMISSION")
+        assert payload["raw"]["data"]["reason"] == "overlay_storage_root"
+        assert _k_state(env) == before
+        return
+    if dims.get("grant_ops") == "missing_one":
+        # G0 grants {list}; the bind approve needs {write} on the default owner.
+        payload = consent._c_run([*args, *flags], code="E_PERMISSION")
+        assert payload["raw"]["data"]["reason"] == "operation_not_granted"
+        expected = auth.memory_next_action(
+            reason="operation_not_granted",
+            project_root=env.root,
+            operations=("write",),
+            owner_scope=legacy_owner_scope(env.root),
+        )
+        assert payload["raw"]["next_action"] == expected
+        assert _k_state(env) == before
+        return
+    if policy_state == "missing_marker":
+        payload = consent._c_run([*args, *flags], code="E_PERMISSION")
+        assert payload["raw"]["data"]["reason"] == "policy_missing"
+        assert payload["raw"]["next_action"]["command"] is not None
+        assert _k_state(env) == before
+        return
+    if policy_state == "invalid":
+        payload = consent._c_run([*args, *flags], code="E_PERMISSION")
+        assert payload["raw"]["data"]["reason"] == "policy_invalid"
+        assert payload["raw"]["next_action"]["command"] is None
+        assert _k_state(env) == before
+        return
+    if dims.get("store") == "absent" or dims.get("digest") == "mismatch":
+        payload = consent._c_run([*args, *flags], code="E_VERSION")
+        assert payload["raw"]["data"]["reason"] == "store_changed"
+        assert _k_state(env) == before
+        return
+    if dims.get("access") == "policy":
+        # A write grant on the legacy owner lets the approve through.
+        auth.grant_memory_scope(
+            project_root=env.root,
+            owner_scope=legacy_owner_scope(env.root),
+            approved_sources=["s"],
+            allowed_operations=["list", "write"],
+            expected_policy_revision=_revision_of(),
+            consent=True,
+            data_root=env.data_root,
+        )
+    payload = consent._c_run([*args, *flags], code="OK")
+    assert payload["raw"]["data"]["store_binding"] == "bound"
+    assert consent._c_binding(env.root) == "bound"
+
+
+def _k_bind_overlay(tmp_path: Path, dims: dict[str, str], *, approve: bool) -> None:
+    consent = _k_cli()
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import required_operation_set
+
+    policy_state = dims.get("policy_state", "ok")
+    data_root = default_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    root = _registered(tmp_path / "project", data_root)
+    if policy_state != "missing_no_marker":
+        ops = dims.get("overlay_ops")
+        if ops == "none":
+            _grant(auth, root, ALICE, data_root, ops=("ask", "list"))
+        else:
+            _grant(
+                auth,
+                root,
+                overlay,
+                data_root,
+                sources=(OVERLAY_SOURCE,),
+                ops=("overlay_read", "list", "expand", "write"),
+            )
+    overlay_db = consent._c_unbound_stated(
+        data_root / "user", "p1", OVERLAY_SOURCE, owner=overlay
+    )
+    args = ["memory", "bind-store", "--project", str(root), "--overlay"]
+    digest = TypedArtifactStore.bind_store(data_root / "user", approve=False)[
+        "binding_digest"
+    ]
+    flags = ["--approve", "--expected-digest", digest, "--allow-cache-write"]
+    before = consent._c_state(root, data_root / "user")
+    if approve and dims.get("cache_write") == "off":
+        consent._c_skipped([*args, *flags[:3]], "bind_store")
+        assert consent._c_state(root, data_root / "user") == before
+        return
+    call = [*args, *flags] if approve else args
+    if policy_state == "missing_no_marker" or dims.get("overlay_ops") == "none":
+        reason, code = (
+            ("policy_missing", "E_PERMISSION")
+            if policy_state == "missing_no_marker"
+            else ("owner_not_granted", "E_OWNER")
+        )
+        payload = consent._c_run(call, code=code)
+        assert payload["raw"]["data"]["reason"] == reason
+        expected = auth.memory_next_action(
+            reason=reason,
+            project_root=root,
+            operations=required_operation_set(
+                "write" if approve else "list", apply=approve, overlay=True
+            ),
+            owner_scope=overlay,
+        )
+        assert payload["raw"]["next_action"] == expected
+        assert "--overlay" in str(expected["command"])
+        assert consent._c_state(root, data_root / "user") == before
+        return
+    payload = consent._c_run(call, code="OK")
+    if approve:
+        assert consent._c_binding(data_root / "user") == "bound"
+    else:
+        assert payload["raw"]["data"]["store_binding"] == "unbound"
+        assert consent._c_state(root, data_root / "user") == before
+    assert overlay_db.exists()
+
+
+def _k_connect(tmp_path: Path, dims: dict[str, str], *, approve: bool) -> None:
+    """connect_bind_preview / connect_bind_approve through the CLI."""
+    conn = importlib.import_module("tests.test_agent_connection")
+    from rush.memory import authorization as auth
+
+    consent = _k_cli()
+    data_root = default_data_root()
+    fake = conn._fake_rush(tmp_path)
+    root = conn._project(tmp_path, "project")
+    other = conn._project(tmp_path, "other-project")
+    case = dims.get("case", "ok")
+    policy_state = dims.get("policy_state", "ok")
+    grant = conn._grant(root) if policy_state != "missing_no_marker" else None
+    gid = grant["grant_id"] if grant else str(uuid.uuid4())
+    revision = int(conn._policy()["policy_revision"])
+    if "refuse" in dims:
+        before = conn._state(root)
+        args = conn._connect_args(
+            root, fake, *conn._binding_flags(gid, revision, approve=approve)
+        )
+        consent._c_exit2(
+            [*args, "--" + dims["refuse"].replace("_", "-"), K_REFUSED[dims["refuse"]]],
+            "No such option",
+        )
+        assert conn._state(root) == before
+        return
+    if policy_state == "missing_marker":
+        auth.policy_path(data_root=data_root).unlink()
+    elif policy_state == "invalid":
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+    reason: tuple[str, str] | None = None
+    if policy_state in ("missing_marker", "missing_no_marker"):
+        reason = ("E_PERMISSION", "policy_missing")
+    elif policy_state == "invalid":
+        reason = ("E_PERMISSION", "policy_invalid")
+    elif case == "stale":
+        current = revision
+        revision += 5
+        reason = ("E_VERSION", f"expected revision {revision}, found {current}")
+    elif case == "revoked":
+        auth.revoke_memory_scope(
+            grant_id=gid,
+            expected_policy_revision=revision,
+            consent=True,
+            data_root=data_root,
+        )
+        revision = int(conn._policy()["policy_revision"])
+        reason = ("E_PERMISSION", "revoked")
+    elif case == "other_project":
+        gid = conn._grant(other)["grant_id"]
+        revision = int(conn._policy()["policy_revision"])
+        reason = ("E_PERMISSION", "binding_scope_mismatch")
+    elif case == "expired":
+        soon = conn._grant(
+            root, owner=conn._owner("user", "soon"), expires_at=time.time() + 3600
+        )
+        gid = soon["grant_id"]
+        revision = int(conn._policy()["policy_revision"])
+        reason = ("E_PERMISSION", "expired")
+    flags = conn._binding_flags(gid, revision, approve=approve)
+    args = conn._connect_args(root, fake, *flags)
+    if reason is not None:
+        with pytest.MonkeyPatch.context() as patched:
+            if case == "expired":
+                patched.setattr(auth, "_now", lambda: time.time() + 7200)
+            with conn._forbid_connect(patched):
+                conn._assert_refused(args, reason[0], reason[1], root, other)
+        return
+    if dims.get("cache_write") == "off":
+        args = [a for a in args if a != "--allow-cache-write"]
+        payload = conn._connect(args)
+        assert payload["status"] == "skipped", payload
+        assert payload["raw"]["memory_binding"]["state"] == "preview", payload
+        assert conn._policy()["bindings"] == {}
+        return
+    payload = conn._connect(args, status="ok")
+    binding = payload["raw"]["memory_binding"]
+    if not approve:
+        assert binding["state"] == "preview"
+        assert conn._policy()["bindings"] == {}
+        return
+    assert set(binding) == conn.BINDING_VIEW_KEYS
+    assert conn._policy()["policy_revision"] == revision + 1
+
+
+def _k_disconnect(tmp_path: Path, dims: dict[str, str], *, transport: str) -> None:
+    conn = importlib.import_module("tests.test_agent_connection")
+    from rush.mcp import rush_agent_connection
+    from rush.memory import authorization as auth
+
+    root = conn._project(tmp_path, "project")
+    policy_state = dims.get("policy_state", "ok")
+    grant: dict[str, Any] = {}
+    if policy_state != "missing_no_marker":
+        grant = conn._grant(root)
+        auth.register_memory_binding(
+            grant_id=grant["grant_id"],
+            session_id="s1",
+            host_id="codex",
+            expected_policy_revision=int(conn._policy()["policy_revision"]),
+            consent=True,
+            data_root=default_data_root(),
+        )
+    if policy_state == "missing_marker":
+        auth.policy_path(data_root=default_data_root()).unlink()
+    elif policy_state == "invalid":
+        auth.policy_path(data_root=default_data_root()).write_bytes(b"{")
+    sealed = conn._policy_bytes()
+    project = None if dims.get("project") == "none" else root
+    if transport == "cli":
+        argv = ["agent", "disconnect", "codex", "--json"]
+        if project is not None:
+            argv[3:3] = ["--project", str(project)]
+        exit_code, payload, output = conn._cli(*argv)
+        assert exit_code == 0 and payload is not None, output
+        listing = payload["raw"]["memory"]
+    else:
+        request: dict[str, Any] = {
+            "schema_version": 1,
+            "operation": "disconnect",
+            "agent_id": "codex",
+            "allow_cache_write": True,
+            "allow_artifact_write": True,
+        }
+        if project is not None:
+            request["project_root"] = str(project)
+        listing = cast("dict[str, Any]", rush_agent_connection(request)["raw"])["data"][
+            "memory"
+        ]
+    if policy_state != "ok":
+        assert listing == {"grants": [], "bindings": []}
+    else:
+        loaded = conn._policy()
+        expected_bindings = [
+            b for b in loaded["bindings"].values() if b["host_id"] == "codex"
+        ]
+        assert listing["bindings"] == sorted(
+            expected_bindings, key=lambda b: b["binding_id"]
+        )
+        expected_grants = (
+            [] if project is None else [loaded["grants"][grant["grant_id"]]]
+        )
+        assert listing["grants"] == expected_grants
+    assert conn._policy_bytes() == sealed
+
+
+def _k_mcp_connect(tmp_path: Path, dims: dict[str, str]) -> None:
+    conn = importlib.import_module("tests.test_agent_connection")
+
+    conn.test_mcp_connect_cannot_bind(tmp_path)
+
+
+def _k_item7(tmp_path: Path, dims: dict[str, str], route: _G2Route) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        _k_item7_with(tmp_path, monkeypatch, dims, route)
+
+
+def _k_item7_with(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dims: dict[str, str],
+    route: _G2Route,
+) -> None:
+    from rush.memory import authorization as auth
+
+    if dims.get("access") == "legacy_allowlist":
+        variant = "legacy"
+    elif dims.get("access") == "overlay":
+        variant = "overlay"
+    elif dims.get("store") == "absent":
+        variant = "store_absent"
+    elif dims.get("store") == "old_schema":
+        variant = "store_old_schema"
+    else:
+        variant = "exact"
+    if variant == "legacy":
+        legacy_row = "access-legacy_allowlist-policy_state-missing_no_marker"
+        env = _g2_env(tmp_path, monkeypatch, route, legacy_row)
+        allow = ["source-a"] if route.takes_allowlist else None
+        if route.key == "consolidate" and allow is None:
+            allow = ["source-a"]
+        result = _nx_call(route, env, legacy_row, ALICE, allow, "source-a")
+        assert "next_action" not in _rd(result)
+        assert "Next:" not in str(result["summary"])
+        assert _reason_of(result) not in NX_RESOLVE_REASONS
+        return
+    if variant == "exact":
+        exact_row = "access-policy-policy_state-ok-grant_ops-exact"
+        env = _g2_env(tmp_path, monkeypatch, route, exact_row)
+        result = _nx_call(route, env, exact_row, ALICE, None, "source-a")
+        assert _code_of(result) in route.ok_codes, _dump(_rd(result))
+        assert "next_action" not in _rd(result)
+        assert "Next:" not in str(result["summary"])
+        return
+    if variant in ("store_absent", "store_old_schema"):
+        missing_row = "access-policy-policy_state-ok-grant_ops-missing_one"
+        env = _g2_env(tmp_path, monkeypatch, route, missing_row)
+        assert env.store is not None
+        if variant == "store_absent":
+            assert env.store.db_path.exists()
+            env.store.db_path.unlink()
+            for suffix in ("-wal", "-shm"):
+                Path(f"{env.store.db_path}{suffix}").unlink(missing_ok=True)
+        else:
+            _drop_payload_columns(env.store.db_path)
+        before = _effects(env.root, env.data_root)
+        result = _nx_call(route, env, missing_row, ALICE, None, "source-a")
+        raw = _rd(result)
+        assert _reason_of(result) == "operation_not_granted", _dump(raw)
+        expected = auth.memory_next_action(
+            reason="operation_not_granted",
+            project_root=env.root,
+            operations=_nx_required(route),
+            owner_scope=ALICE,
+            requested_sources=_nx_sources(route, None, "source-a"),
+        )
+        assert raw["next_action"] == expected
+        assert _effects(env.root, env.data_root) == before
+        return
+    assert variant == "overlay"
+    exact_row = "access-policy-policy_state-ok-grant_ops-exact"
+    env = _g2_env(tmp_path, monkeypatch, route, exact_row)
+    overlay = auth.user_overlay_owner_scope(data_root=env.data_root)
+    before = _effects(env.root, env.data_root)
+    result = _nx_call(route, env, exact_row, overlay, None, "source-a")
+    raw = _rd(result)
+    if route.key in OVERLAY_PREFERENCE_ROUTES and (
+        _reason_of(result) == "overlay_requires_preference_route"
+    ):
+        # 72-T05: personal content goes through the preference route; refused before
+        # any policy resolve, so it is not a policy denial and carries no guidance.
+        assert _code_of(result) == "E_OWNER"
+        assert "next_action" not in raw
+        assert _effects(env.root, env.data_root) == before
+        return
+    assert _reason_of(result) == "owner_not_granted", _dump(raw)
+    expected = auth.memory_next_action(
+        reason="owner_not_granted",
+        project_root=env.root,
+        operations=_nx_required(route),
+        owner_scope=overlay,
+        requested_sources=_nx_sources(route, None, "source-a"),
+    )
+    assert raw["next_action"] == expected
+    assert "--overlay" in str(expected["command"])
+    assert _effects(env.root, env.data_root) == before
+
+
+def _k_strict_model(
+    tmp_path: Path, dims: dict[str, str], route_name: str, field: str, value: str
+) -> None:
+    """A dimension the route's strict request model rejects: `E_INPUT` naming the
+    field, no `next_action`, and nothing written."""
+    _auth, _data_root, root, _store, _grant_row = _policy_project(tmp_path)
+    before = _effects(root, default_data_root())
+    tool = MemoryTool()
+    if route_name == "ask":
+        request: dict[str, Any] = {"view": "compact", field: value}
+        result = tool.run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=["source-a"],
+            owner_scope=ALICE.as_dict(),
+            request=request,
+        )
+    else:
+        result = tool.run(
+            root,
+            operation="expand",
+            session_allowlist=["source-a"],
+            owner_scope=ALICE.as_dict(),
+            request={"id": "a1", "version": 1, field: value},
+        )
+    raw = _rd(result)
+    assert _code_of(result) == "E_INPUT", _dump(raw)
+    assert "next_action" not in raw
+    assert "Next:" not in str(result["summary"])
+    assert _effects(root, default_data_root()) == before
+
+
+K_OTHER_ROWS = (
+    "record_turn",
+    "record_fix_attribution",
+    "record_event",
+    "write_cache_fill",
+    "save_checkpoint",
+    "write_observation",
+    "write_if_new",
+    "migrate_session_memory",
+    "list_checkpoints",
+    "overview",
+)
+
+
+def _k_has_key(value: Any, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_k_has_key(v, key) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_k_has_key(v, key) for v in value)
+    return False
+
+
+def _k_other_row(tmp_path: Path, dims: dict[str, str], writer: str) -> None:
+    """Every other §2.3 row keeps its own Denial return and never carries
+    `next_action` anywhere in what it returns."""
+    from rush.memory import authorization as auth
+    from rush.memory import experience, migration
+
+    state = dims["policy_state"]
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    (root / "module.py").write_text(KNOWN_SRC, encoding="utf-8")
+    (root / ".rush" / "session_memory.json").write_text(
+        json.dumps({"records": []}), encoding="utf-8"
+    )
+    store = TypedArtifactStore(root)
+    owner = legacy_owner_scope(root)
+    _row(store, "a1", owner, "mk-a1", source="source-a")
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=["source-a"],
+        allowed_operations=["ask", "list"],
+        expected_policy_revision=0,
+        consent=True,
+        data_root=data_root,
+    )
+    if state == "missing_marker":
+        auth.policy_path(data_root=data_root).unlink()
+    elif state == "invalid":
+        auth.policy_path(data_root=data_root).write_bytes(b"{")
+    before = _effects(root, data_root)
+    result: Any
+    if writer == "record_turn":
+        from rush.session_memory import SessionMemoryManager
+
+        result = SessionMemoryManager(  # type: ignore[func-returns-value]  # asserting the writer returns None is the test's intent
+            root / ".rush" / "session_memory.json"
+        ).record_turn("tool", 1, 0, "summary")
+        assert result is None
+    elif writer == "record_fix_attribution":
+        from rush import session_memory
+
+        result = session_memory.record_fix_attribution(root, {"hash": "abc1234"}, "f1")
+        assert result is session_memory.ATTRIBUTION_DENIED
+    elif writer == "record_event":
+        from rush.tools.flight_recorder import FlightRecorder
+
+        result = FlightRecorder(root).record_event("s1", "evt", {"a": 1})  # type: ignore[func-returns-value]  # asserting the writer returns None is the test's intent
+        assert result is None
+    elif writer == "write_cache_fill":
+        from rush.token_economy.memory_cache_gate import write_cache_fill
+
+        result = write_cache_fill(
+            root,
+            "module.py",
+            "Known",
+            {"source_content_hash": _sha_file(root / "module.py"), "text": "p"},
+        )
+        assert result is None
+    elif writer == "save_checkpoint":
+        from rush.memory.checkpoint_journal import CheckpointJournal
+
+        result = CheckpointJournal(root).save_checkpoint("cp1", {}, [])
+        assert result is None
+    elif writer == "write_observation":
+        with pytest.raises(experience.MemoryWriteDenied) as info:
+            experience.write_observation(
+                evidence_kind="source_graph",
+                operation_id="op-1",
+                source="invocation:op-1",
+                content={"k": "v"},
+                project_root=root,
+            )
+        result = str(info.value)
+    elif writer == "write_if_new":
+        result = migration.write_if_new(
+            store,
+            family="experience",
+            subject="episodic",
+            content={"k": "v"},
+            source="migration:session_memory",
+            origin_kind="k",
+            origin_id="i",
+        )
+        assert result is None
+    elif writer == "migrate_session_memory":
+        result = migration.migrate_session_memory(root)
+        assert result == 0
+    elif writer == "list_checkpoints":
+        from rush.memory.checkpoint_journal import CheckpointJournal
+
+        result = CheckpointJournal(root).list_checkpoints()
+        assert result in ([], None)
+    else:
+        assert writer == "overview"
+        from rush.tools.memory import memory_overview
+
+        result = memory_overview(root)
+        assert _code_of(result) in ("E_PERMISSION", "OK")
+    assert not _k_has_key(result, "next_action"), (writer, state, result)
+    if writer != "overview":
+        assert _effects(root, data_root) == before, (writer, state)
+
+
+# --- cell table ------------------------------------------------------------------
+
+
+def _k_cells() -> list[Any]:
+    cells: list[Any] = []
+
+    def add(
+        transport: str, row: str, dims: dict[str, str], runner: Any, *rest: Any
+    ) -> None:
+        tokens = [f"{k}-{v}" for k, v in dims.items() if k != "variant"]
+        if "variant" in dims:
+            tokens.append(dims["variant"])
+        ident = f"{transport}.{row}" + "".join(f"-{t}" for t in tokens)
+        cells.append(pytest.param(runner, dims, rest, id=ident))
+
+    def refuse(transport: str, row: str, runner: Any, *rest: Any) -> None:
+        for dimension in K_REFUSED:
+            add(transport, row, {"refuse": dimension}, runner, *rest)
+
+    states = (
+        ("policy", {"policy_state": "ok"}),
+        ("legacy_allowlist", {"policy_state": "missing_no_marker"}),
+        ("policy", {"policy_state": "missing_marker"}),
+        ("policy", {"policy_state": "invalid"}),
+    )
+    # grant_preview
+    for access, extra in states:
+        add("cli", "grant_preview", {"access": access, **extra}, _k_grant_preview)
+    add(
+        "cli",
+        "grant_preview",
+        {"access": "overlay", "policy_state": "ok"},
+        _k_grant_preview,
+    )
+    for store in ("present", "absent", "old_schema"):
+        add("cli", "grant_preview", {"store": store}, _k_grant_preview)
+    add("cli", "grant_preview", {"apply": "preview"}, _k_grant_preview)
+    for cache in ("on", "off"):
+        add("cli", "grant_preview", {"cache_write": cache}, _k_grant_preview)
+    for ops in ("exact", "missing_one"):
+        add("cli", "grant_preview", {"grant_ops": ops}, _k_grant_preview)
+    for state in K_ROW_STATES:
+        add("cli", "grant_preview", {"row_state": state}, _k_grant_preview)
+    refuse("cli", "grant_preview", _k_grant_preview)
+    # grant_approve
+    add(
+        "cli",
+        "grant_approve",
+        {"access": "policy", "policy_state": "ok"},
+        _k_grant_approve,
+    )
+    add(
+        "cli",
+        "grant_approve",
+        {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+        _k_grant_approve,
+    )
+    add(
+        "cli",
+        "grant_approve",
+        {"access": "overlay", "policy_state": "ok"},
+        _k_grant_approve,
+    )
+    add("cli", "grant_approve", {"policy_state": "missing_marker"}, _k_grant_approve)
+    add("cli", "grant_approve", {"policy_state": "invalid"}, _k_grant_approve)
+    for store in ("present", "absent", "old_schema"):
+        add("cli", "grant_approve", {"store": store}, _k_grant_approve)
+    add("cli", "grant_approve", {"cache_write": "off"}, _k_grant_approve)
+    add("cli", "grant_approve", {"cache_write": "on"}, _k_grant_approve)
+    for ops in ("exact", "missing_one"):
+        add("cli", "grant_approve", {"grant_ops": ops}, _k_grant_approve)
+    for state in K_ROW_STATES:
+        add("cli", "grant_approve", {"row_state": state}, _k_grant_approve)
+    add("cli", "grant_approve", {"apply": "apply"}, _k_grant_approve)
+    refuse("cli", "grant_approve", _k_grant_approve)
+    # revoke_preview / revoke_approve
+    for row, approve in (("revoke_preview", False), ("revoke_approve", True)):
+        runner = functools.partial(_k_revoke, approve=approve)
+        add("cli", row, {"access": "policy", "policy_state": "ok"}, runner)
+        add(
+            "cli",
+            row,
+            {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+            runner,
+        )
+        add("cli", row, {"policy_state": "missing_marker"}, runner)
+        add("cli", row, {"policy_state": "invalid"}, runner)
+        refuse("cli", row, runner)
+    add(
+        "cli",
+        "revoke_preview",
+        {"access": "overlay", "policy_state": "ok"},
+        functools.partial(_k_revoke, approve=False),
+    )
+    for store in ("present", "absent", "old_schema"):
+        add(
+            "cli",
+            "revoke_preview",
+            {"store": store},
+            functools.partial(_k_revoke, approve=False),
+        )
+    for cache in ("on", "off"):
+        add(
+            "cli",
+            "revoke_preview",
+            {"cache_write": cache},
+            functools.partial(_k_revoke, approve=False),
+        )
+    for ops in ("exact", "missing_one"):
+        add(
+            "cli",
+            "revoke_preview",
+            {"grant_ops": ops},
+            functools.partial(_k_revoke, approve=False),
+        )
+    for state in K_ROW_STATES:
+        add(
+            "cli",
+            "revoke_preview",
+            {"row_state": state},
+            functools.partial(_k_revoke, approve=False),
+        )
+    approve_runner = functools.partial(_k_revoke, approve=True)
+    add("cli", "revoke_approve", {"revision": "current"}, approve_runner)
+    add("cli", "revoke_approve", {"revision": "stale"}, approve_runner)
+    add("cli", "revoke_approve", {"revoked": "already"}, approve_runner)
+    add("cli", "revoke_approve", {"principal": "other"}, approve_runner)
+    add("cli", "revoke_approve", {"cache_write": "off"}, approve_runner)
+    # bind_preview
+    for access, extra in states:
+        add("cli", "bind_preview", {"access": access, **extra}, _k_bind_preview)
+    for store in ("present", "absent", "old_schema"):
+        add("cli", "bind_preview", {"store": store}, _k_bind_preview)
+    for cache in ("on", "off"):
+        add("cli", "bind_preview", {"cache_write": cache}, _k_bind_preview)
+    for state in ("tampered", "archived"):
+        add("cli", "bind_preview", {"row_state": state}, _k_bind_preview)
+    refuse("cli", "bind_preview", _k_bind_preview)
+    # bind_approve
+    add(
+        "cli",
+        "bind_approve",
+        {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+        _k_bind_approve,
+    )
+    add(
+        "cli",
+        "bind_approve",
+        {"access": "policy", "policy_state": "ok"},
+        _k_bind_approve,
+    )
+    add(
+        "cli",
+        "bind_approve",
+        {"grant_ops": "missing_one", "policy_state": "ok"},
+        _k_bind_approve,
+    )
+    add("cli", "bind_approve", {"policy_state": "missing_marker"}, _k_bind_approve)
+    add("cli", "bind_approve", {"policy_state": "invalid"}, _k_bind_approve)
+    add("cli", "bind_approve", {"digest": "mismatch"}, _k_bind_approve)
+    add("cli", "bind_approve", {"store": "absent"}, _k_bind_approve)
+    add("cli", "bind_approve", {"cache_write": "off"}, _k_bind_approve)
+    add("cli", "bind_approve", {"project": "overlay_root"}, _k_bind_approve)
+    # bind_overlay_*
+    for approve in (False, True):
+        row = "bind_overlay_apply" if approve else "bind_overlay_preview"
+        runner = functools.partial(_k_bind_overlay, approve=approve)
+        add("cli", row, {"access": "overlay", "policy_state": "ok"}, runner)
+        add("cli", row, {"access": "policy", "overlay_ops": "none"}, runner)
+        add(
+            "cli",
+            row,
+            {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+            runner,
+        )
+    add(
+        "cli",
+        "bind_overlay_apply",
+        {"cache_write": "off"},
+        functools.partial(_k_bind_overlay, approve=True),
+    )
+    # connect_bind_*
+    for approve in (False, True):
+        row = "connect_bind_approve" if approve else "connect_bind_preview"
+        runner = functools.partial(_k_connect, approve=approve)
+        add("cli", row, {"case": "ok"}, runner)
+        for case in ("stale", "revoked", "expired", "other_project"):
+            add("cli", row, {"case": case}, runner)
+        for state in ("missing_no_marker", "missing_marker", "invalid"):
+            add("cli", row, {"policy_state": state}, runner)
+        if not approve:
+            add("cli", row, {"cache_write": "off"}, runner)
+        refuse("cli", row, runner)
+    # disconnect / mcp_connect
+    for transport in ("cli", "mcp"):
+        runner = functools.partial(_k_disconnect, transport=transport)
+        row = f"disconnect_{transport}"
+        add(transport, row, {"policy_state": "ok"}, runner)
+        add(transport, row, {"policy_state": "missing_no_marker"}, runner)
+        add(transport, row, {"policy_state": "invalid"}, runner)
+        add(transport, row, {"project": "none"}, runner)
+    add("mcp", "mcp_connect", {"access": "policy"}, _k_mcp_connect)
+    # item-7 rows: every MemoryTool route of the T01 matrix
+    for route in _G2_ROUTES:
+        for dims in (
+            {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+            {"access": "policy", "policy_state": "ok", "grant_ops": "exact"},
+            {"access": "policy", "grant_ops": "missing_one", "store": "absent"},
+            {"access": "policy", "grant_ops": "missing_one", "store": "old_schema"},
+            {"access": "overlay", "policy_state": "ok"},
+        ):
+            if route.key == "receive" and (
+                dims.get("store") or dims["access"] == "overlay"
+            ):
+                # `receive` takes no owner and its session lookup precedes a
+                # missing or old store: those dimensions are not its own.
+                continue
+            add(route.transport, route.cell, dims, _k_item7, route)
+    # a dimension a route's strict model rejects is one E_INPUT cell without guidance
+    for route_name, field, value in (
+        ("ask", "representation", "utf8"),
+        ("ask", "ack", "ack"),
+        ("expand", "retrieval", "lexical"),
+        ("expand", "capability_ids", "selected"),
+    ):
+        add(
+            "inproc",
+            route_name,
+            {field: value},
+            _k_strict_model,
+            route_name,
+            field,
+            value,
+        )
+    # other §2.3 rows: one cell per policy state, no next_action anywhere
+    for row in K_OTHER_ROWS:
+        for state in ("missing_marker", "invalid", "ok"):
+            add("inproc", row, {"policy_state": state}, _k_other_row, row)
+    return cells
+
+
+@pytest.mark.parametrize(("runner", "dims", "rest"), _k_cells())
+def test_consent_route_mode_matrix(
+    runner: Any, dims: dict[str, str], rest: tuple[Any, ...], tmp_path: Path
+) -> None:
+    runner(tmp_path, dims, *rest)
+
+
+# =============================================================================
+# Guidance and response caps (decisions.md 72-T02 conflicts[11])
+# =============================================================================
+#
+# `next_action` and the ` Next: ...` summary suffix enter the frame fit together, before
+# the emitted size is measured: both are present when they fit both caps and both are
+# absent otherwise; nothing is appended after fitting and a command is never cut.
+
+
+def _mcp_frame(**arguments: Any) -> tuple[str, dict[str, Any]]:
+    """The exact encoded MCP frame of one `rush_memory` call, and its decoding."""
+    import asyncio
+
+    from rush.mcp import build_server
+
+    server = build_server()
+
+    async def _call() -> Any:
+        return await server.call_tool("rush_memory", arguments)
+
+    result = asyncio.run(_call())
+    text = result.content[0].text
+    return text, json.loads(text)
+
+
+def _frame_size(text: str) -> tuple[int, int]:
+    return (
+        len(text.encode("utf-8")),
+        len(tiktoken.get_encoding("cl100k_base").encode(text)),
+    )
+
+
+def _caps_call(
+    route: str, root: Path, caps: dict[str, int]
+) -> tuple[str, dict[str, Any]]:
+    if route == "expand":
+        return _mcp_frame(
+            path=str(root),
+            operation="expand",
+            owner_scope=ALICE.as_dict(),
+            session_allowlist=["source-a"],
+            request={"id": "a1", "version": 1, **caps},
+        )
+    if route == "history":
+        return _mcp_frame(
+            path=str(root),
+            operation="history",
+            owner_scope=ALICE.as_dict(),
+            session_allowlist=["source-a"],
+            request={"schema_version": 2, "artifact_id": "a1", **caps},
+        )
+    if route == "explain":
+        return _mcp_frame(
+            path=str(root),
+            operation="explain",
+            owner_scope=ALICE.as_dict(),
+            session_allowlist=["source-a"],
+            request={"schema_version": 2, "query": "needle", **caps},
+        )
+    if route == "list_v2":
+        return _mcp_frame(
+            path=str(root),
+            operation="list",
+            owner_scope=ALICE.as_dict(),
+            session_allowlist=["source-a"],
+            request={"schema_version": 2, **caps},
+        )
+    return _mcp_frame(
+        path=str(root),
+        operation=route,
+        subject=SUBJECT,
+        query="needle",
+        owner_scope=ALICE.as_dict(),
+        session_allowlist=["source-a"],
+        request={"view": "compact", **caps},
+    )
+
+
+_CAPS_ROUTES = {
+    "ask": "ask",
+    "recall": "ask",
+    "list": "list",
+    "expand": "expand",
+    "history": "history",
+    "explain": "ask",
+    "list_v2": "list",
+}
+
+
+@pytest.mark.parametrize("cap", ["default", "minimum", "oversized_union"])
+@pytest.mark.parametrize("route", sorted(_CAPS_ROUTES))
+def test_consent_guidance_fits_response_caps(
+    route: str, cap: str, tmp_path: Path
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import (
+        DEFAULT_MAX_BYTES,
+        DEFAULT_MAX_TOKENS,
+        required_operation_set,
+    )
+
+    need = _CAPS_ROUTES[route]
+    lacking = tuple(o for o in FULL_OPS_HISTORY if o != need)
+    _auth, data_root, root, store, _grant_row = _policy_project(tmp_path, ops=lacking)
+    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    operation = {"list_v2": "list"}.get(route, route)
+    operations = list(required_operation_set(operation))
+
+    def expected_next(sources: list[str]) -> dict[str, Any]:
+        return auth.memory_next_action(
+            reason="operation_not_granted",
+            project_root=root,
+            operations=operations,
+            owner_scope=ALICE,
+            requested_sources=["source-a"],
+        )
+
+    # The admitted minimum caps are what the route itself reports below its floor.
+    _text, probe = _caps_call(route, root, {"max_bytes": 1})
+    assert probe["raw"]["code"] == "E_INPUT", _dump(probe)
+    required = probe["raw"]["data"]["required"]
+    assert set(required) == {"max_bytes", "max_tokens"}, required
+
+    if cap == "oversized_union":
+        sources = tuple([f"src-{i:03d}-" + "x" * 40 for i in range(400)] + ["source-a"])
+        _grant(auth, root, ALICE, data_root, sources=sources, ops=lacking)
+        caps: dict[str, int] = {}
+    elif cap == "minimum":
+        caps = dict(required)
+    else:
+        caps = {}
+    text, payload = _caps_call(route, root, caps)
+    raw = payload["raw"]
+    assert raw["code"] == "E_PERMISSION", _dump(raw)
+    assert _reason_of(payload) == "operation_not_granted", _dump(raw)
+    frame_bytes, frame_tokens = _frame_size(text)
+    max_bytes = caps.get("max_bytes", DEFAULT_MAX_BYTES)
+    max_tokens = caps.get("max_tokens", DEFAULT_MAX_TOKENS)
+    assert frame_bytes <= max_bytes, (frame_bytes, max_bytes)
+    assert frame_tokens <= max_tokens, (frame_tokens, max_tokens)
+    has_action = "next_action" in raw
+    has_suffix = " Next: " in payload["summary"]
+    assert has_action == has_suffix, "guidance and its summary suffix go together"
+    if cap == "default":
+        assert has_action, "ordinary fixture guidance is present at default caps"
+    elif cap == "minimum":
+        assert not has_action, "guidance is omitted when it cannot fit the minimum caps"
+        assert raw["data"]["reason"] == "operation_not_granted"
+    if has_action:
+        action = raw["next_action"]
+        command = action["command"]
+        assert command is not None
+        if os.name != "nt":
+            argv = shlex.split(command)
+            assert argv[:3] == ["rush", "memory", "grant"]
+            assert argv[-2] == "--expected-policy-revision"
+            if cap == "oversized_union":
+                listed = [argv[i + 1] for i, t in enumerate(argv) if t == "--source"]
+                assert listed == sorted(sources), (
+                    "an oversized union is never truncated"
+                )
+        suffix = command if command is not None else action["text"]
+        assert payload["summary"].endswith(f" Next: {suffix}")
+        if cap == "default":
+            assert action == expected_next(["source-a"])
+
+
+# =============================================================================
+# G8: one row per access form for each consent predicate
+# =============================================================================
+
+
+def _g8_h3_owner_element(access: str, tmp_path: Path) -> None:
+    """H3: the owner element of `memory_grant_command`: overlay → `--overlay`; a
+    requested owner → `--owner KIND:ID`; none requested → the single non-overlay owner
+    holding an active grant of this principal on this project and worktree; several or
+    none → no owner element."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _registered(tmp_path / "project", data_root)
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    owner_part: list[str]
+    if access == "overlay":
+        owner_part = ["--overlay"]
+        command = auth.memory_grant_command(
+            project_root=root, operations=["list"], owner_scope=overlay
+        )
+    elif access == "policy_requested_owner":
+        _grant(auth, root, ALICE, data_root)
+        owner_part = ["--owner", "user:bob"]
+        command = auth.memory_grant_command(
+            project_root=root, operations=["list"], owner_scope=BOB
+        )
+    elif access == "legacy_requested_owner":
+        owner_part = ["--owner", f"project:{root}"]
+        command = auth.memory_grant_command(
+            project_root=root,
+            operations=["list"],
+            owner_scope=legacy_owner_scope(root),
+        )
+    elif access == "policy_inferred_single_owner":
+        _grant(auth, root, ALICE, data_root)
+        # An overlay grant of the same principal is never the inferred owner.
+        _grant(
+            auth,
+            root,
+            overlay,
+            data_root,
+            sources=(OVERLAY_SOURCE,),
+            ops=("overlay_read", "list"),
+        )
+        owner_part = ["--owner", "user:alice"]
+        command = auth.memory_grant_command(project_root=root, operations=["list"])
+    elif access == "policy_two_owners":
+        _grant(auth, root, ALICE, data_root)
+        _grant(auth, root, BOB, data_root)
+        owner_part = []
+        command = auth.memory_grant_command(project_root=root, operations=["list"])
+    else:
+        assert access == "legacy_no_policy"
+        owner_part = []
+        command = auth.memory_grant_command(project_root=root, operations=["list"])
+    argv = shlex.split(command) if os.name != "nt" else None
+    expected_prefix = ["rush", "memory", "grant", "--project", str(root), *owner_part]
+    if argv is not None:
+        assert argv[: len(expected_prefix)] == expected_prefix, argv
+        tail = argv[len(expected_prefix) :]
+        assert "--owner" not in tail and "--overlay" not in tail
+    else:
+        assert " ".join(expected_prefix[:3]) in command
+
+
+def _g8_h4_attach(access: str, tmp_path: Path) -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        _g8_h4_attach_with(access, tmp_path, monkeypatch)
+
+
+def _g8_h4_attach_with(
+    access: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H4: `policy` and `overlay` denials and the D1 `unavailable` reasons attach
+    guidance; the `legacy_allowlist` form never does."""
+    from rush.memory import authorization as auth
+
+    ask = next(r for r in _G2_ROUTES if r.cell == "ask-mode-ordinary-retrieval-lexical")
+    if access == "policy":
+        assert _nx_check(
+            tmp_path, monkeypatch, ask, "operation_not_granted", expect_denial=True
+        )
+    elif access.startswith("unavailable_"):
+        reason = access.removeprefix("unavailable_")
+        assert _nx_check(tmp_path, monkeypatch, ask, reason, expect_denial=True)
+    elif access == "overlay":
+        exact_row = "access-policy-policy_state-ok-grant_ops-exact"
+        env = _g2_env(tmp_path, monkeypatch, ask, exact_row)
+        overlay = auth.user_overlay_owner_scope(data_root=env.data_root)
+        result = _nx_call(ask, env, exact_row, overlay, None, "source-a")
+        raw = _rd(result)
+        assert _reason_of(result) == "owner_not_granted", _dump(raw)
+        assert "--overlay" in str(raw["next_action"]["command"])
+    else:
+        assert access == "legacy_allowlist"
+        legacy_row = "access-legacy_allowlist-policy_state-missing_no_marker"
+        env = _g2_env(tmp_path, monkeypatch, ask, legacy_row)
+        for allow in (None, ["source-a"], ["unknown-source"]):
+            result = _nx_call(ask, env, legacy_row, ALICE, allow, "source-a")
+            assert "next_action" not in _rd(result), allow
+            assert "Next:" not in str(result["summary"])
+
+
+def _g8_h7_bind_access(access: str, tmp_path: Path) -> None:
+    """H7: bind-store approve access by form: legacy → none; policy → D2 {write} on the
+    default owner; unavailable → the D1 reason with guidance; overlay → the overlay
+    owner's {write}."""
+    if access == "legacy_allowlist":
+        _k_bind_approve(
+            tmp_path,
+            {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
+        )
+    elif access == "policy":
+        _k_bind_approve(tmp_path, {"access": "policy", "policy_state": "ok"})
+    elif access == "unavailable_policy_missing":
+        _k_bind_approve(tmp_path, {"policy_state": "missing_marker"})
+    elif access == "unavailable_policy_invalid":
+        _k_bind_approve(tmp_path, {"policy_state": "invalid"})
+    else:
+        assert access == "overlay"
+        _k_bind_overlay(
+            tmp_path, {"access": "overlay", "policy_state": "ok"}, approve=True
+        )
+
+
+G8_ROWS = [
+    *(
+        pytest.param(_g8_h3_owner_element, form, id=f"h3-{form}")
+        for form in (
+            "overlay",
+            "policy_requested_owner",
+            "legacy_requested_owner",
+            "policy_inferred_single_owner",
+            "policy_two_owners",
+            "legacy_no_policy",
+        )
+    ),
+    *(
+        pytest.param(_g8_h4_attach, form, id=f"h4-{form}")
+        for form in (
+            "policy",
+            "legacy_allowlist",
+            "overlay",
+            "unavailable_policy_missing",
+            "unavailable_policy_invalid",
+            "unavailable_no_grant",
+        )
+    ),
+    *(
+        pytest.param(_g8_h7_bind_access, form, id=f"h7-{form}")
+        for form in (
+            "legacy_allowlist",
+            "policy",
+            "unavailable_policy_missing",
+            "unavailable_policy_invalid",
+            "overlay",
+        )
+    ),
+]
+
+
+@pytest.mark.parametrize(("check", "form"), G8_ROWS)
+def test_consent_g8_access_form_predicates(
+    check: Any, form: str, tmp_path: Path
+) -> None:
+    check(form, tmp_path)
+
+
+# =============================================================================
+# T01 matrix extensions owned by 73-T02/BOOTSTRAP-CONSENT
+# =============================================================================
+#
+# `bind_store(overlay=True)` is produced here (D41 (b)); the T01 producer cells flip to
+# the outcomes below and `test_t01_existing_apply_and_historical_are_real_cells` gains
+# the consent approve cells.
+
+
+def _bind_overlay_denial(row: str) -> tuple[str, str] | None:
+    """The item 7 denial of one bind-store overlay row, or None when it is allowed."""
+    if "grant_ops-missing_one" in row:
+        return ("E_PERMISSION", "operation_not_granted")
+    if row.startswith("access-legacy_allowlist") or "missing_marker" in row:
+        return ("E_PERMISSION", "policy_missing")
+    if "policy_state-invalid" in row:
+        return ("E_PERMISSION", "policy_invalid")
+    if row.startswith("access-policy-policy_state-ok"):
+        return ("E_OWNER", "owner_not_granted")
+    return None
+
+
+def _g2_bind_overlay_cell(row: str, tmp_path: Path) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import required_operation_set
+
+    consent = _k_cli()
+    data_root = default_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    root = _registered(tmp_path / "project", data_root)
+    apply = row.endswith("apply-apply")
+    if row.startswith("access-overlay"):
+        ops: tuple[str, ...] = ("overlay_read", "list", "expand", "write")
+        if "grant_ops-missing_one" in row:
+            ops = ("overlay_read", "list", "expand")
+        _grant(auth, root, overlay, data_root, sources=(OVERLAY_SOURCE,), ops=ops)
+    elif row.startswith("access-policy"):
+        _grant(auth, root, ALICE, data_root, ops=FULL_OPS_HISTORY)
+        if "missing_marker" in row:
+            auth.policy_path(data_root=data_root).unlink()
+        elif "policy_state-invalid" in row:
+            auth.policy_path(data_root=data_root).write_bytes(b"{")
+    overlay_root = data_root / "user"
+    overlay_root.mkdir(parents=True, exist_ok=True)
+    if "store-absent" in row:
+        digest = "0" * 64
+    else:
+        consent._c_unbound_stated(overlay_root, "p1", OVERLAY_SOURCE, owner=overlay)
+        digest = TypedArtifactStore.bind_store(overlay_root, approve=False)[
+            "binding_digest"
+        ]
+    args = ["memory", "bind-store", "--project", str(root), "--overlay"]
+    if apply:
+        args += ["--approve", "--expected-digest", digest]
+    before = consent._c_state(root, overlay_root)
+    if "cache_write-off" in row:
+        consent._c_skipped(args, "bind_store")
+        assert consent._c_state(root, overlay_root) == before
+        return
+    if apply:
+        args.append("--allow-cache-write")
+    operations = required_operation_set(
+        "write" if apply else "list", apply=apply, overlay=True
+    )
+    expected = _bind_overlay_denial(row)
+    if expected is not None:
+        code, reason = expected
+        payload = consent._c_run(args, code=code)
+        assert payload["raw"]["data"]["reason"] == reason, payload["raw"]
+        nxt = auth.memory_next_action(
+            reason=reason,
+            project_root=root,
+            operations=operations,
+            owner_scope=overlay,
+        )
+        assert payload["raw"]["next_action"] == nxt
+        if reason != "policy_invalid":
+            assert "--overlay" in str(nxt["command"])
+        assert consent._c_state(root, overlay_root) == before
+        return
+    if "store-absent" in row:
+        payload = consent._c_run(args, code="OK")
+        assert payload["raw"]["data"]["store"] == "absent"
+        assert consent._c_state(root, overlay_root) == before
+        return
+    payload = consent._c_run(args, code="OK")
+    if apply:
+        assert consent._c_binding(overlay_root) == "bound"
+    else:
+        assert payload["raw"]["data"]["store_binding"] == "unbound"
+        assert consent._c_state(root, overlay_root) == before
+
+
+def _consent_approve_cells() -> list[tuple[str, Any, dict[str, str], tuple[Any, ...]]]:
+    approve_rows = {
+        "grant_approve",
+        "revoke_approve",
+        "bind_approve",
+        "bind_overlay_apply",
+        "connect_bind_approve",
+    }
+    out = []
+    for param in _k_cells():
+        row = param.id.split(".", 1)[1].split("-", 1)[0]
+        if row in approve_rows and "-refuse-" not in param.id:
+            runner, dims, rest = param.values
+            out.append((param.id, runner, dims, rest))
+    return out
+
+
 T03_ENCODING = "cl100k_base"
 
 

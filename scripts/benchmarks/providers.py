@@ -13,7 +13,7 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .contracts import (
     Outcome,
@@ -379,6 +379,7 @@ def run_provider_probe(
 
     # 2. Handle provider route evaluation
     route_id = scenario.input.get("route_id") or scenario.scenario_id
+    route: RouteDescriptor | None
     if custom_route:
         route = custom_route
     else:
@@ -510,9 +511,10 @@ def run_provider_probe(
                     stdout_clean.encode()
                 ).hexdigest(),
                 "stderr_len": len(stderr_clean),
-                "stderr_category": _cli_error_category(stderr_clean)
-                if proc.returncode
-                else None,
+                "stderr_category": cast(
+                    "str",
+                    _cli_error_category(stderr_clean) if proc.returncode else None,
+                ),
             },
             evidence=evidence,
             redactions=all_redactions,

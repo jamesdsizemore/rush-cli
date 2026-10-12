@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.memory.checkpoint_journal import CheckpointJournal
@@ -56,7 +56,7 @@ def run_coordination_probe(
             started_at=start_time,
             duration_ms=duration_ms,
             metrics={
-                "agent_1_acquired": acq_1,
+                "agent_1_acquired": cast("Any", acq_1),
                 "agent_2_blocked": not acq_2,
                 "lock_released": rel_1,
             },

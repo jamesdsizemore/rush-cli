@@ -53,6 +53,7 @@ from ..memory.retrieval import (
     _count_tokens,
     _fit_optional,
     _measure_page,
+    _source_input_denial,
     evaluate_artifact_visibility,
     expand_admission,
     expand_artifact,
@@ -62,6 +63,7 @@ from ..memory.retrieval import (
     recall_admission,
     recall_page,
     recheck_failure,
+    required_operation_set,
     route_access,
     v2_reference,
 )
@@ -1137,6 +1139,8 @@ class MemoryTool(ToolFn):
         try:
             with collect_committed_writes() as committed:
                 result = dispatch_table[operation]()
+            if operation == "preference":
+                _personal_layer_guidance(result, root)
         except (MemoryAccessChanged, MemoryWriteDenied) as exc:
             # D1 race rule: the access changed before the commit; nothing committed.
             return self._denied(started, operation, RouteDenial(exc.code, exc.reason))
@@ -2481,9 +2485,7 @@ class MemoryTool(ToolFn):
             return self._denied(
                 started,
                 "list",
-                RouteDenial(
-                    *(recheck_failure(access) or ("E_RESTART", "access_changed"))
-                ),
+                _recheck_denial(access) or RouteDenial("E_RESTART", "access_changed"),
             )
         # 72-T01 F3: the same additive `freshness` key as the queried list.
         return self._result(
@@ -4111,12 +4113,14 @@ class MemoryTool(ToolFn):
         apply: bool = False,
         historical: bool = False,
         task_id: str | None = None,
+        request_sources: list[str] | None = None,
     ) -> MemoryAccess | RouteDenial:
         """72-T01 D1/D2 access for one route (`retrieval.route_access`): `legacy`
         mode builds the explicit-allowlist form (a source-less one keeps each route's
         fail-closed output), `policy` mode resolves the grant (the allowlist only
-        narrows it), `unavailable` mode denies."""
-        return route_access(
+        narrows it), `unavailable` mode denies. `request_sources` names the
+        request's own sources when the route narrows to an internal label."""
+        resolved = route_access(
             root,
             operation,
             action=action,
@@ -4125,6 +4129,27 @@ class MemoryTool(ToolFn):
             session_allowlist=session_allowlist,
             owner_scope=owner,
             task_id=task_id,
+        )
+        sources = list(session_allowlist or ())
+        if not isinstance(resolved, RouteDenial) or _source_input_denial(sources):
+            return resolved
+        # A D1 `unavailable` reason or a denied policy resolve: keep the denied
+        # call's inputs for its `next_action` (73-T02 H4).
+        try:
+            operations = required_operation_set(
+                operation, action=action, apply=apply, historical=historical
+            )
+        except ValueError:
+            operations = ()
+        return _PolicyDenial(
+            resolved.code,
+            resolved.reason,
+            project_root=root,
+            operations=operations,
+            owner_scope=owner,
+            requested_sources=tuple(
+                sources if request_sources is None else request_sources
+            ),
         )
 
     def _read_gate(
@@ -4202,10 +4227,21 @@ class MemoryTool(ToolFn):
     def _denied(
         self, started: float, operation: str, denial: RouteDenial
     ) -> ToolResult:
-        """A D1 denial: the denial code with its exact reason, before any effect."""
-        return self._envelope_result(
+        """A D1 denial: the denial code with its exact reason, before any effect. A
+        policy denial also names the command that fixes it (73-T02 item 7)."""
+        result = self._envelope_result(
             started, operation, denial.code, _denial_data(operation, denial)
         )
+        if isinstance(denial, _PolicyDenial):
+            _attach_policy_next_action(
+                result,
+                reason=denial.reason,
+                project_root=denial.project_root,
+                operations=denial.operations,
+                owner_scope=denial.owner_scope,
+                requested_sources=denial.requested_sources,
+            )
+        return result
 
     def _revoked(
         self, started: float, operation: str, access: MemoryAccess
@@ -4827,34 +4863,35 @@ class MemoryTool(ToolFn):
             )
         else:
             # Policy mode: the grant's approved sources, narrowed to the requested
-            # ones it grants (D9); a request naming none of them is `E_SCOPE`.
+            # ones it grants (D9); a request naming none of them is `E_SCOPE`
+            # (73-T02: `owner_not_granted` is `E_OWNER`, every policy denial names
+            # the command that fixes it).
             narrowed: list[str] | None = None
-            resolved = route_access(
-                root,
-                "maintain",
-                apply=apply,
-                owner_scope=owner,
-                data_root=None,
-                task_id=_TASK_ID.get(),
+            resolved = self._read_access(
+                root, "maintain", None, owner, apply=apply, task_id=_TASK_ID.get()
             )
             if not isinstance(resolved, RouteDenial) and requested:
                 narrowed = [s for s in requested if source_granted(s, resolved.sources)]
                 if not narrowed:
-                    resolved = RouteDenial("E_PERMISSION", "source_not_granted")
+                    resolved = _PolicyDenial(
+                        "E_PERMISSION",
+                        "source_not_granted",
+                        project_root=root,
+                        operations=required_operation_set("maintain", apply=apply),
+                        owner_scope=owner,
+                        requested_sources=tuple(requested),
+                    )
                 else:
-                    resolved = route_access(
+                    resolved = self._read_access(
                         root,
                         "maintain",
+                        narrowed,
+                        owner,
                         apply=apply,
-                        owner_scope=owner,
-                        session_allowlist=narrowed,
-                        data_root=None,
                         task_id=_TASK_ID.get(),
                     )
             if isinstance(resolved, RouteDenial):
-                if resolved.reason == "source_not_granted":
-                    resolved = RouteDenial("E_SCOPE", resolved.reason)
-                return self._denied(started, "maintain", resolved)
+                return self._denied(started, "maintain", _granular_code(resolved))
             access = resolved
         maintained_owner = access.owner_scope or legacy_owner
         if not apply:
@@ -5129,6 +5166,7 @@ class MemoryTool(ToolFn):
             owner,
             action=action,
             task_id=_TASK_ID.get(),
+            request_sources=[],
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "intent", resolved)
@@ -5330,6 +5368,7 @@ class MemoryTool(ToolFn):
             owner,
             action=action,
             task_id=_TASK_ID.get(),
+            request_sources=[],
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "recipe", resolved)
@@ -6487,6 +6526,119 @@ def _overlay_owner_named(owner_scope: Any, request: Any) -> OwnerScope | None:
     return None
 
 
+# --- 73-T02 policy-denial guidance -------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class _PolicyDenial(RouteDenial):
+    """A `RouteDenial` whose reason came from a policy decision (a denied resolve or
+    a D1 `unavailable` reason), with the denied call's own inputs."""
+
+    project_root: Path = Path()
+    operations: tuple[str, ...] = ()
+    owner_scope: OwnerScope | None = None
+    requested_sources: tuple[str, ...] = ()
+
+
+def _recheck_denial(access: MemoryAccess) -> RouteDenial | None:
+    """`recheck_failure` as a denial: a policy access the fresh resolve denies is a
+    policy denial with the re-resolve's inputs."""
+    failure = recheck_failure(access)
+    if failure is None:
+        return None
+    if access.kind != "policy" or failure[0] != "E_PERMISSION":
+        return RouteDenial(*failure)
+    return _PolicyDenial(
+        *failure,
+        project_root=access.project_root,
+        operations=tuple(access.required_operations_order),
+        owner_scope=access.owner_scope,
+        requested_sources=tuple(access.requested_sources),
+    )
+
+
+_NEXT_ACTION_CODES = frozenset({"E_PERMISSION", "E_OWNER", "E_SCOPE"})
+_GRANULAR_CODES = {"owner_not_granted": "E_OWNER", "source_not_granted": "E_SCOPE"}
+
+
+def _granular_code(denial: RouteDenial) -> RouteDenial:
+    """Plan section 2.1 item 3 codes for a policy denial of v1 `maintain` (which always
+    names its owner): `owner_not_granted` -> `E_OWNER`, `source_not_granted` ->
+    `E_SCOPE`. The v1 compact read paths keep `E_PERMISSION`."""
+    code = _GRANULAR_CODES.get(denial.reason)
+    if code is None or not isinstance(denial, _PolicyDenial):
+        return denial
+    return dataclasses.replace(denial, code=code)
+
+
+def _attach_policy_next_action(
+    result: ToolResult,
+    *,
+    reason: str,
+    project_root: Path,
+    operations: Any,
+    owner_scope: OwnerScope | None,
+    requested_sources: Any,
+) -> None:
+    """D19: a policy denial's `raw.next_action` (`memory_next_action` of the denied
+    call's inputs) and the ` Next: <command or text>` summary suffix. An existing
+    `next_action` is never replaced."""
+    from ..memory.authorization import memory_next_action
+
+    raw = result.get("raw")
+    if not isinstance(raw, dict) or "next_action" in raw:
+        return
+    data = raw.get("data")
+    code = raw.get("code")
+    if code not in _NEXT_ACTION_CODES and not (
+        code == "E_INPUT"
+        and isinstance(data, dict)
+        and data.get("field") == "owner_scope"
+    ):
+        return
+    action = memory_next_action(
+        reason=reason,
+        project_root=project_root,
+        operations=list(operations),
+        owner_scope=owner_scope,
+        requested_sources=list(requested_sources),
+    )
+    raw["next_action"] = action
+    result["summary"] = (
+        f"{result['summary']} Next: {action['command'] or action['text']}"
+    )
+
+
+def _personal_layer_guidance(result: Any, root: Path) -> None:
+    """decisions.md:24: an OK preference resolve whose personal layer is denied
+    names the overlay grant that fixes it (`list` + `overlay_read`)."""
+    from ..memory.authorization import memory_next_action, user_overlay_owner_scope
+
+    raw = result.get("raw") if isinstance(result, dict) else None
+    if not isinstance(raw, dict) or raw.get("code") != "OK":
+        return
+    data = raw.get("data")
+    layers = data.get("layers") if isinstance(data, dict) else None
+    personal = layers.get("personal") if isinstance(layers, dict) else None
+    if not isinstance(personal, dict) or personal.get("state") != "denied":
+        return
+    reason = str(personal.get("reason"))
+    try:
+        overlay = user_overlay_owner_scope()
+    except Exception:  # noqa: BLE001 - no overlay owner: text-only guidance
+        personal["next_action"] = {
+            "text": f"memory access denied ({reason})",
+            "command": None,
+        }
+        return
+    personal["next_action"] = memory_next_action(
+        reason=reason,
+        project_root=root,
+        operations=("list", "overlay_read"),
+        owner_scope=overlay,
+    )
+
+
 # --- 72-T01 D1 mutation guard ------------------------------------------------
 
 
@@ -6516,8 +6668,7 @@ def _policy_mutation(access: MemoryAccess) -> Iterator[RouteDenial | None]:
             reason = getattr(exc, "reason", None) or "lock_unavailable"
             yield RouteDenial("E_PERMISSION", str(reason))
             return
-        failure = recheck_failure(access)
-        yield RouteDenial(*failure) if failure is not None else None
+        yield _recheck_denial(access)
 
 
 def _hidden_targets(

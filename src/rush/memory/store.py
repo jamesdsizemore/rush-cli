@@ -2352,6 +2352,100 @@ def hold_store_lock(project_root: Path) -> Iterator[None]:
         yield
 
 
+def _bind_overlay_store(
+    project_root: Path,
+    *,
+    approve: bool,
+    expected_binding_digest: Any,
+    access: MemoryAccess | None,
+) -> dict[str, Any]:
+    """73-T02 D41 (b): preview or approve the personal overlay store's binding.
+
+    Only a policy access resolved for the overlay owner with the overlay storage
+    root and the required operations ({overlay_read, list} to preview, write to
+    approve) reaches the store; the store is opened, inventoried and MAC-bound at
+    that storage root, while D1 row 1a is decided on `project_root`. Every refusal,
+    including a stale digest, leaves the key, DB, binding and row MACs unchanged."""
+    from rush.memory.authorization import hold_policy_lock, user_overlay_owner_scope
+    from rush.memory.retrieval import memory_policy_decision
+
+    root = Path(project_root).resolve()
+    data_root = access.data_root if access is not None else None
+    mode, reason = memory_policy_decision(root, data_root=data_root)
+    if mode == "unavailable":
+        return {"code": "E_PERMISSION", "reason": reason}
+    owner = user_overlay_owner_scope(data_root=data_root)
+    storage = Path(owner.id)
+    required = {"write"} if approve else {"overlay_read", "list"}
+    if (
+        access is None
+        or access.kind != "policy"
+        or access.owner_scope != owner
+        # ponytail: `storage_root` is 72-T05's MemoryAccess field; read by name so
+        # this branch type-checks before T05 lands, and refuses until it does.
+        or getattr(access, "storage_root", None) != storage
+        or not required <= access.required_operations
+    ):
+        return {"code": "E_PERMISSION", "reason": "policy_grant_required"}
+    db = storage / ".rush" / "memory.db"
+    if not approve:
+        try:
+            inventory = read_sqlite_readonly(
+                db, lambda conn: _binding_inventory(conn, storage)
+            )
+        except MemoryStoreUnreadableError as exc:
+            return {"code": exc.code, "reason": "memory_store_unreadable"}
+        if inventory is None:
+            return {"code": "E_NOT_FOUND", "reason": "store_absent"}
+        return {"code": "OK", **inventory, "git_tracked": _git_tracked(storage)}
+    if not isinstance(expected_binding_digest, str):
+        return {
+            "code": "E_INPUT",
+            "field": "expected_binding_digest",
+            "message": "expected_binding_digest must be the preview's digest",
+        }
+    try:
+        with hold_policy_lock(data_root=data_root):
+            if not db.exists():
+                return {"code": "E_NOT_FOUND", "reason": "store_absent"}
+            with closing(sqlite3.connect(str(db), timeout=10.0)) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                inventory = _binding_inventory(conn, storage)
+                if inventory["binding_digest"] != expected_binding_digest:
+                    conn.rollback()
+                    return {"code": "E_VERSION", "reason": "store_changed"}
+                # The key is read or published only once the digest re-matched.
+                key = ensure_store_key()
+                if key is None:
+                    conn.rollback()
+                    return {"code": "E_UNAVAILABLE", "reason": "store_key_unavailable"}
+                conn.execute(_BINDING_TABLE_SQL)
+                columns = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(memory_artifacts)")
+                }
+                if "row_mac" not in columns:
+                    conn.execute("ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT")
+                store_id = _write_binding_row(conn, storage, key)
+                cur = conn.execute("SELECT * FROM memory_artifacts")
+                names = [d[0] for d in cur.description]
+                rows = [dict(zip(names, r, strict=True)) for r in cur.fetchall()]
+                for row in rows:
+                    conn.execute(
+                        "UPDATE memory_artifacts SET row_mac = ? WHERE id = ?",
+                        (row_mac(key, store_id, row), row["id"]),
+                    )
+                conn.commit()
+    except OSError:
+        return {"code": "E_PERMISSION", "reason": "lock_unavailable"}
+    return {
+        "code": "OK",
+        "store_binding": "bound",
+        "store_id": store_id,
+        "bound_rows": len(rows),
+    }
+
+
 class TypedArtifactStore:
     """WAL-mode SQLite store for `MemoryArtifact` rows across every memory subject."""
 
@@ -2790,12 +2884,12 @@ class TypedArtifactStore:
         every row, after `expected_binding_digest` re-matches under the policy
         lock and `BEGIN IMMEDIATE`."""
         if overlay:
-            return {
-                "code": "E_INPUT",
-                "field": "overlay",
-                "producer": "73-T02/BOOTSTRAP-CONSENT",
-                "message": "overlay store binding is not available yet",
-            }
+            return _bind_overlay_store(
+                project_root,
+                approve=approve,
+                expected_binding_digest=expected_binding_digest,
+                access=access,
+            )
         root = Path(project_root).resolve()
         db = root / ".rush" / "memory.db"
         if not approve:
@@ -3924,6 +4018,26 @@ class TypedArtifactStore:
             conn.execute("SELECT 1 FROM memory_cursor_key WHERE id = 1").fetchone()
             is not None
         )
+
+    def consent_inventory(self) -> list[dict[str, Any]]:
+        """73-T02 H8: non-archived rows grouped by owner and source, in owner/source
+        order, for the consent preview. Read-only; on a read-only view it runs over
+        the view's connection."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT owner_scope_kind, owner_scope_id, source, COUNT(*) "
+                "FROM memory_artifacts WHERE archived_at IS NULL "
+                "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+            ).fetchall()
+        return [
+            {
+                "owner_scope_kind": kind,
+                "owner_scope_id": owner_id,
+                "source": source,
+                "rows": int(count),
+            }
+            for kind, owner_id, source, count in rows
+        ]
 
     def close(self) -> None:
         """Close an `open_readonly_view()` connection; a no-op on a writable store."""

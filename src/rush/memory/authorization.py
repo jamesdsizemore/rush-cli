@@ -1558,6 +1558,220 @@ def register_memory_binding(
         return _binding_view(binding_id, record, revision)
 
 
+# --- consent guidance (73-T02/BOOTSTRAP-CONSENT) -------------------------------
+
+_GRANT_COMMAND_REASONS = frozenset(
+    {
+        "policy_missing",
+        "no_grant",
+        "operation_not_granted",
+        "source_not_granted",
+        "owner_not_granted",
+    }
+)
+_WINDOWS_UNSAFE = frozenset('"%^&|<>()!$;`')
+
+
+def _command_argv_refused(element: str) -> bool:
+    """An argv element no printed command may carry: a Cc/Cf/Cs character on every
+    OS, or a `cmd.exe` metacharacter on Windows."""
+    return any(unicodedata.category(c) in ("Cc", "Cf", "Cs") for c in element) or (
+        os.name == "nt" and any(c in _WINDOWS_UNSAFE for c in element)
+    )
+
+
+def _render_command(argv: list[str]) -> str:
+    """`argv` as one copy-pasteable command line (`shlex.join` on POSIX,
+    `subprocess.list2cmdline` on Windows). The first refused element raises
+    `ValueError(element)`."""
+    import shlex
+    import subprocess
+
+    for element in argv:
+        if _command_argv_refused(element):
+            raise ValueError(element)
+    return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+
+
+def _command_identity(project_root: Any, data_root: Path | None) -> dict[str, Any]:
+    """CODEC's read-only `project_identity` (canonical_root, project_id,
+    worktree_id) of `project_root`."""
+    return project_identity(project_root, data_root=data_root)
+
+
+def memory_grant_command(
+    *,
+    project_root: Path,
+    operations: Sequence[str],
+    owner_scope: OwnerScope | None = None,
+    requested_sources: Sequence[str] = (),
+    data_root: Path | None = None,
+) -> str:
+    """The `rush memory grant` preview command that grants `operations` (plus the
+    operations and sources of the same-scope grant it supersedes) on
+    `project_root`. Read-only. A bad input raises `ValueError(<input name>)`; an
+    argv element that cannot be printed safely raises `ValueError(<element>)`."""
+    from rush.memory.store import OwnerScope, legacy_owner_scope
+
+    if not isinstance(project_root, (str, os.PathLike)):
+        raise ValueError("project_root")  # noqa: TRY004 - the pinned contract
+    if (
+        isinstance(operations, (str, bytes))
+        or not isinstance(operations, Sequence)
+        or not all(isinstance(o, str) and o in GRANT_OPERATIONS for o in operations)
+    ):
+        raise ValueError("operations")
+    if owner_scope is not None and not (
+        isinstance(owner_scope, OwnerScope)
+        and isinstance(owner_scope.kind, str)
+        and owner_scope.kind in _OWNER_KINDS
+        and isinstance(owner_scope.id, str)
+    ):
+        raise ValueError("owner_scope")
+    if (
+        isinstance(requested_sources, (str, bytes))
+        or not isinstance(requested_sources, Sequence)
+        or not all(isinstance(s, str) for s in requested_sources)
+    ):
+        raise ValueError("requested_sources")
+    ident = _command_identity(project_root, data_root)
+    root_text = ident["canonical_root"]
+    if root_text is None:
+        root_text = os.fspath(project_root)
+    root_text = str(root_text)
+    loaded = load_policy_readonly(data_root=data_root)
+    try:
+        principal: str | None = _current_os_principal()
+    except Exception:  # noqa: BLE001 - no principal: no grant is this user's
+        principal = None
+    overlay = user_overlay_owner_scope(data_root=data_root)
+    overlay_key = (overlay.kind, overlay.id)
+
+    def same_scope(grant: dict[str, Any]) -> bool:
+        return (
+            ident["project_id"] is not None
+            and grant["principal"] == principal
+            and grant["project_id"] == ident["project_id"]
+            and grant["project_root"] == root_text
+            and grant["worktree_id"] == ident["worktree_id"]
+            and not grant["revoked"]
+        )
+
+    scoped = [g for g in loaded["grants"].values() if same_scope(g)]
+    owner_part: list[str] = []
+    if owner_scope is not None and (owner_scope.kind, owner_scope.id) == overlay_key:
+        owner_part = ["--overlay"]
+        command_owner: tuple[str, str] = overlay_key
+    elif owner_scope is not None:
+        owner_part = ["--owner", f"{owner_scope.kind}:{owner_scope.id}"]
+        command_owner = (owner_scope.kind, owner_scope.id)
+    else:
+        # Resolve stage 12: the single non-overlay owner of an active grant.
+        now = _now()
+        owners = {
+            _owner_of(g)
+            for g in scoped
+            if (g["expires_at"] is None or now < g["expires_at"])
+            and _owner_of(g) != overlay_key
+            and not (
+                g["owner_scope"]["kind"] == "user"
+                and "overlay_read" in g["allowed_operations"]
+            )
+        }
+        if len(owners) == 1:
+            command_owner = next(iter(owners))
+            owner_part = ["--owner", f"{command_owner[0]}:{command_owner[1]}"]
+        else:
+            legacy = legacy_owner_scope(Path(root_text))
+            command_owner = (str(legacy.kind), legacy.id)
+    # The grant `grant_memory_scope` supersedes (expired included).
+    superseded = next((g for g in scoped if _owner_of(g) == command_owner), None)
+    ops = sorted(
+        set(operations)
+        | set(superseded["allowed_operations"] if superseded is not None else ())
+    )
+    sources = sorted(
+        set(requested_sources)
+        | set(superseded["approved_sources"] if superseded is not None else ())
+    )
+    argv = ["rush", "memory", "grant", "--project", root_text, *owner_part]
+    for op in ops:
+        argv += ["--operation", op]
+    if sources:
+        for source in sources:
+            argv += ["--source", source]
+    else:
+        argv.append("--all-current-sources")
+    argv += ["--expected-policy-revision", str(loaded["policy_revision"])]
+    return _render_command(argv)
+
+
+def memory_next_action(
+    *,
+    reason: str,
+    project_root: Path,
+    operations: Sequence[str],
+    owner_scope: OwnerScope | None = None,
+    requested_sources: Sequence[str] = (),
+    data_root: Path | None = None,
+) -> dict[str, str | None]:
+    """`{"text", "command"}` naming what fixes one policy denial (D19). A grant
+    reason prints the `rush memory grant` preview, an unregistered project prints
+    `rush project add`, every other reason has no command. Never raises."""
+    try:
+        if reason in _GRANT_COMMAND_REASONS:
+            if load_policy_readonly(data_root=data_root)["state"] == "unavailable":
+                return {
+                    "text": f"memory access denied ({reason}); policy data root "
+                    "unavailable",
+                    "command": None,
+                }
+            command = memory_grant_command(
+                project_root=project_root,
+                operations=operations,
+                owner_scope=owner_scope,
+                requested_sources=requested_sources,
+                data_root=data_root,
+            )
+            return {
+                "text": f"memory access denied ({reason}); preview a grant with the "
+                "command, then rerun it with --approve --allow-cache-write",
+                "command": command,
+            }
+        if reason == "project_not_registered":
+            if not isinstance(project_root, (str, os.PathLike)):
+                raise ValueError("project_root")
+            root_text = _command_identity(project_root, data_root)["canonical_root"]
+            root_text = str(
+                root_text if root_text is not None else os.fspath(project_root)
+            )
+            command = _render_command(
+                [
+                    "rush",
+                    "project",
+                    "add",
+                    root_text,
+                    "--allow-cache-write",
+                    "--allow-artifact-write",
+                ]
+            )
+            return {
+                "text": f"{root_text} is not a registered Rush project; register it "
+                "first",
+                "command": command,
+            }
+        return {"text": f"memory access denied ({reason})", "command": None}
+    except ValueError as exc:
+        refused = exc.args[0] if exc.args else str(exc)
+        return {
+            "text": f"memory access denied ({reason}); no command printed: "
+            f"{refused!r} cannot be passed safely",
+            "command": None,
+        }
+    except Exception:  # noqa: BLE001 - guidance never raises
+        return {"text": f"memory access denied ({reason})", "command": None}
+
+
 # --- resolve -----------------------------------------------------------------
 
 

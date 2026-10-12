@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import random
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,7 @@ def write_result(output_root: Path, result: ProbeResult) -> Path:
 
 
 def write_handoff(
-    decisions: list[dict[str, Any] | DecisionRecord], output_path: Path
+    decisions: Sequence[dict[str, Any] | DecisionRecord], output_path: Path
 ) -> Path:
     """Validates decision records and writes final-handoff.md linking all gates."""
     output_path = output_path.resolve()

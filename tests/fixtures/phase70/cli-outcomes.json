@@ -4338,6 +4338,66 @@
     "blocker": null
   },
   {
+    "id": "memory.bind-store",
+    "argv": [
+      "memory",
+      "bind-store",
+      "--json"
+    ],
+    "canonical": "rush memory bind-store",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok",
+        "raw.operation": "bind_store",
+        "raw.data.store": "absent"
+      },
+      "human_contains": [
+        "memory ok"
+      ],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "bind-store",
+        "--approve",
+        "--expected-digest",
+        "0000000000000000000000000000000000000000000000000000000000000000"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "bind-store",
+        "--approve"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "--approve requires --expected-digest"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_bind_store_cmd",
+    "blocker": null
+  },
+  {
     "id": "memory.capsule.bridge",
     "argv": [
       "memory",
@@ -4974,6 +5034,80 @@
       "allowed_paths": []
     },
     "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.grant",
+    "argv": [
+      "memory",
+      "grant",
+      "--source",
+      "phase70-source",
+      "--expected-policy-revision",
+      "0",
+      "--approve",
+      "--allow-cache-write",
+      "--json"
+    ],
+    "canonical": "rush memory grant",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "seed": [
+        "project"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "ok",
+        "raw.operation": "grant",
+        "raw.code": "OK"
+      },
+      "human_contains": [],
+      "exit": 0
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "grant",
+        "--source",
+        "phase70-source",
+        "--expected-policy-revision",
+        "0",
+        "--approve"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "grant",
+        "--expected-policy-revision",
+        "0"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "--source or --all-current-sources is required"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": [
+        "<cwd>/.rush/memory-policy.required",
+        "<cwd>/.rush/.gitignore",
+        "<data-root>/user/.rush/memory_authorization.json"
+      ]
+    },
+    "producer": "rush.cli:memory_grant_cmd",
     "blocker": null
   },
   {
@@ -5765,6 +5899,73 @@
       "allowed_paths": []
     },
     "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.revoke",
+    "argv": [
+      "memory",
+      "revoke",
+      "--grant-id",
+      "00000000-0000-4000-8000-000000000000",
+      "--expected-policy-revision",
+      "0",
+      "--json"
+    ],
+    "canonical": "rush memory revoke",
+    "family": "mutation",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "error",
+        "raw.operation": "revoke",
+        "raw.code": "E_GRANT_NOT_FOUND"
+      },
+      "human_contains": [
+        "memory error"
+      ],
+      "exit": 2
+    },
+    "empty": {
+      "not_applicable": "mutation route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "revoke",
+        "--grant-id",
+        "00000000-0000-4000-8000-000000000000",
+        "--expected-policy-revision",
+        "0",
+        "--approve"
+      ],
+      "json_paths": {
+        "tool": "memory",
+        "status": "skipped"
+      },
+      "human_contains": [
+        "memory skipped"
+      ],
+      "exit": 0
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "revoke",
+        "--expected-policy-revision",
+        "0"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Missing option '--grant-id'"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_revoke_cmd",
     "blocker": null
   },
   {

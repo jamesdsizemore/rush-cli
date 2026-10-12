@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 204
+total_operations = 207
 
 [[operations]]
 id = "admin.agent_connect"
@@ -53,6 +53,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory archive --help"
+
+[[operations]]
+id = "admin.memory_bind_store"
+kind = "admin"
+canonical_impl = "rush.memory.store:TypedArtifactStore"
+cli_command = "memory bind-store"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory bind-store --help"
 
 [[operations]]
 id = "admin.memory_capsule_bridge"
@@ -173,6 +183,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "read-only"
 safe_probe = "rush memory explain --help"
+
+[[operations]]
+id = "admin.memory_grant"
+kind = "admin"
+canonical_impl = "rush.memory.authorization:grant_memory_scope"
+cli_command = "memory grant"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory grant --help"
 
 [[operations]]
 id = "admin.memory_handoff"
@@ -313,6 +333,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "read-only"
 safe_probe = "rush memory resume --help"
+
+[[operations]]
+id = "admin.memory_revoke"
+kind = "admin"
+canonical_impl = "rush.memory.authorization:revoke_memory_scope"
+cli_command = "memory revoke"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory revoke --help"
 
 [[operations]]
 id = "admin.memory_verify_attempt"

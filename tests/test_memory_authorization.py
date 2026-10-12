@@ -7,20 +7,24 @@ existing code only.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
 import os
 import re
+import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import textwrap
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -2117,7 +2121,7 @@ def test_resolve_bad_project_root_is_project_missing(tmp_path: Path) -> None:
     root, _record = _project(tmp_path, "project", d)
     _grant(auth, root, legacy_owner_scope(root), d)
     for bad in (Path(str(root) + "\x00x"), str(root) + "\ud800"):
-        result = _resolve(auth, bad, d)
+        result = _resolve(auth, bad, d)  # type: ignore[arg-type]  # a str project_root is the deliberately wrong type
         _assert_denied(result, "project_missing")
         assert result["policy_revision"] == 1
 
@@ -2319,6 +2323,7 @@ def test_t01_pr6_authorization_guards(
     if case in {"revoke_grant_id_input", "binding_grant_id_input"}:
         grant = _grant(auth, root, owner, d)
         sha = _sha(policy)
+        bad: Any
         for bad in ("", 5, None):
             if case == "revoke_grant_id_input":
                 _expect(
@@ -2705,6 +2710,7 @@ def test_requested_sources_reject_family_patterns(tmp_path: Path) -> None:
     root, _record = _project(tmp_path, "project", d)
     _grant(auth, root, legacy_owner_scope(root), d, sources=("intent:*", "source-a"))
     _assert_granted(_resolve(auth, root, d, requested_sources=["intent:i1"]))
+    bad: Any
     for bad in (
         ["intent:*"],
         ["*"],
@@ -3457,3 +3463,2762 @@ def test_capsule_mapping_owner_change_requires_new_approval(tmp_path: Path) -> N
     )
     # the superseded mapping stays refused
     _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)
+
+
+# --- 73-T02/BOOTSTRAP-CONSENT: grant, revoke and bind-store CLI -----------------------
+#
+# Every command below runs through the public Click CLI against the per-test HOME's
+# default data root (conftest `_isolated_home`); symbols an earlier task adds are
+# imported inside the test body.
+
+CONSENT_DEFAULT_OPS = ["ask", "bootstrap", "expand", "history", "list", "write"]
+OVERLAY_SOURCE = "personal-preferences"
+_EXIT_FOR_STATUS = {"ok": 0, "skipped": 0, "warn": 1, "fail": 1, "error": 2}
+SKIPPED_NO_CACHE_WRITE = {"permission": "cache_write", "flag": "--allow-cache-write"}
+
+
+def _c_data_root() -> Path:
+    from rush.setup.provision import default_data_root
+
+    return default_data_root()
+
+
+def _c_project(tmp_path: Path, name: str = "project") -> Path:
+    root = tmp_path / name
+    root.mkdir(parents=True, exist_ok=True)
+    register_project(root, data_root=_c_data_root())
+    return root.resolve()
+
+
+def _c_project_id(root: Path) -> str:
+    return str(register_project(root, data_root=_c_data_root()).project_id)
+
+
+def _c_write_rows(root: Path, rows: list[tuple[str, str, Any]]) -> Any:
+    """Write DERIVED rows `(id, source, owner or None)` through the store."""
+    from rush.memory.store import MemoryArtifact, TypedArtifactStore
+
+    store = TypedArtifactStore(root)
+    for artifact_id, source, owner in rows:
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"text": f"needle {artifact_id}"},
+                source=source,
+                created_at=time.time(),
+                owner_scope=owner,
+            )
+        )
+    return store
+
+
+def _c_unbound_stated(
+    store_root: Path, row_id: str, source: str, owner: Any = None, **extra: Any
+) -> Path:
+    """A store at `store_root` whose binding row was deleted by SQL and whose row
+    `row_id` is STATED (a promotion the writer cannot do directly)."""
+    from rush.memory.store import compute_content_signature
+
+    store = _c_write_rows(store_root, [(row_id, source, owner)])
+    db = Path(store.db_path)
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        content = json.loads(
+            conn.execute(
+                "SELECT content FROM memory_artifacts WHERE id = ?", (row_id,)
+            ).fetchone()[0]
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET trust_tier = 'STATED', signature = ? "
+            "WHERE id = ?",
+            (compute_content_signature(content), row_id),
+        )
+        conn.execute("DELETE FROM memory_store_binding")
+        conn.commit()
+    return db
+
+
+def _c_binding(store_root: Path) -> str:
+    from rush.memory.store import store_binding
+
+    with contextlib.closing(
+        sqlite3.connect(store_root / ".rush" / "memory.db")
+    ) as conn:
+        return str(store_binding(conn, store_root))
+
+
+def _c_groups(store_root: Path) -> list[tuple[Any, Any, str, int]]:
+    db = store_root / ".rush" / "memory.db"
+    if not db.exists():
+        return []
+    with contextlib.closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
+        return [
+            (r[0], r[1], r[2], int(r[3]))
+            for r in conn.execute(
+                "SELECT owner_scope_kind, owner_scope_id, source, COUNT(*) "
+                "FROM memory_artifacts WHERE archived_at IS NULL "
+                "GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+            )
+        ]
+
+
+def _c_owner_dict(kind: Any, ident: Any) -> dict[str, Any] | None:
+    return None if kind is None and ident is None else {"kind": kind, "id": ident}
+
+
+def _c_expected_inventory(root: Path) -> dict[str, Any]:
+    """A2.3 / A2.4 computed from the stored rows, independently of the CLI."""
+    import rush.memory.authorization as auth
+
+    groups = _c_groups(root)
+    catalog_items = auth.writer_source_catalog(root)
+    catalog = [
+        {
+            "source": item,
+            "rows": sum(n for _k, _i, s, n in groups if auth.source_granted(s, [item])),
+        }
+        for item in catalog_items
+    ]
+    others = [
+        {"owner_scope": _c_owner_dict(k, i), "source": s, "rows": n}
+        for k, i, s, n in groups
+        if not any(auth.source_granted(s, [item]) for item in catalog_items)
+    ]
+    owners: list[dict[str, Any]] = []
+    seen: dict[tuple[Any, Any], int] = {}
+    for k, i, _s, n in groups:
+        if (k, i) not in seen:
+            seen[(k, i)] = len(owners)
+            owners.append({"owner_scope": _c_owner_dict(k, i), "rows": 0})
+        owners[seen[(k, i)]]["rows"] += n
+    return {"catalog": catalog, "other_sources": others, "owners": owners}
+
+
+def _c_render(argv: list[str]) -> str:
+    if os.name == "nt":
+        return subprocess.list2cmdline(argv)
+    return shlex.join(argv)
+
+
+def _c_argv_of(command: str, argv: list[str]) -> list[str]:
+    """The argv a printed command stands for; each OS's rendering invariant holds."""
+    if os.name == "nt":
+        assert subprocess.list2cmdline(argv) == command
+        return list(argv)
+    parsed = shlex.split(command)
+    assert parsed == argv
+    return parsed
+
+
+def _c_grant_argv(
+    root: Path,
+    ops: list[str],
+    sources: list[str],
+    *,
+    owner: list[str] | None = None,
+    expires: float | None = None,
+    revision: int,
+) -> list[str]:
+    argv = ["rush", "memory", "grant", "--project", str(root), *(owner or [])]
+    for op in sorted(ops):
+        argv += ["--operation", op]
+    for source in sorted(sources):
+        argv += ["--source", source]
+    if expires is not None:
+        argv += ["--expires-at", repr(expires)]
+    return [
+        *argv,
+        "--expected-policy-revision",
+        str(revision),
+        "--approve",
+        "--allow-cache-write",
+    ]
+
+
+def _c_cli(*args: str) -> tuple[int, Any, str]:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    result = CliRunner().invoke(cli, list(args), catch_exceptions=False)
+    try:
+        payload = json.loads(result.stdout)
+    except ValueError:
+        payload = None
+    return result.exit_code, payload, result.output
+
+
+def _c_run(args: list[str], *, code: str) -> dict[str, Any]:
+    """Run one consent command with `--json`; pin tool, envelope, code, status and
+    the exit code the status maps to."""
+    from rush.tools.memory import _CODE_STATUS
+
+    exit_code, payload, output = _c_cli(*args, "--json")
+    assert payload is not None, output
+    assert payload["tool"] == "memory", payload
+    raw = payload["raw"]
+    assert raw["schema_version"] == 1, raw
+    assert raw["code"] == code, (code, raw)
+    status = _CODE_STATUS.get(code, "error")
+    assert payload["status"] == status, payload
+    assert exit_code == _EXIT_FOR_STATUS[status], (exit_code, payload)
+    return payload
+
+
+def _c_skipped(args: list[str], operation: str) -> dict[str, Any]:
+    exit_code, payload, output = _c_cli(*args, "--json")
+    assert payload is not None, output
+    assert exit_code == 0, output
+    assert payload["tool"] == "memory"
+    assert payload["status"] == "skipped", payload
+    assert payload["raw"] == {
+        "schema_version": 1,
+        "operation": operation,
+        "skipped": SKIPPED_NO_CACHE_WRITE,
+    }, payload["raw"]
+    return payload
+
+
+def _c_usage(args: list[str], message: str) -> None:
+    exit_code, payload, output = _c_cli(*args)
+    assert exit_code == 2, (args, output)
+    assert payload is None
+    assert message in output, (message, output)
+
+
+def _c_state(*bases: Path) -> list[tuple[str, ...]]:
+    """Zero-write evidence: every entry under HOME (the per-test data root included)
+    and under each given base."""
+    return _snapshot(Path(os.environ["HOME"]), *bases)
+
+
+def _c_policy_bytes() -> bytes | None:
+    import rush.memory.authorization as auth
+
+    path = auth.policy_path(data_root=_c_data_root())
+    return path.read_bytes() if path.exists() else None
+
+
+@contextlib.contextmanager
+def _c_forged_principal(grant_id: str, principal: str = "uid:99999") -> Iterator[None]:
+    """The stored grant belongs to another OS principal (the policy file itself stays
+    valid and owned by the current one); the original bytes come back on exit."""
+    import rush.memory.authorization as auth
+
+    path = auth.policy_path(data_root=_c_data_root())
+    original = path.read_bytes()
+    payload = json.loads(original.decode("utf-8"))
+    payload["data"]["grants"][grant_id]["principal"] = principal
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        yield
+    finally:
+        path.write_bytes(original)
+
+
+def _c_policy() -> dict[str, Any]:
+    import rush.memory.authorization as auth
+
+    return auth.load_policy_readonly(data_root=_c_data_root())
+
+
+def _c_forbid_effects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """G3: a preview or a refusal never constructs a writable store, a telemetry or
+    preference store, never takes the policy lock and never opens a CAS write."""
+    import rush.memory.authorization as auth
+    from rush.memory.preference_store import PreferenceStore
+    from rush.memory.store import TypedArtifactStore
+    from rush.token_economy.telemetry import TelemetryStore
+
+    def forbid(name: str) -> Any:
+        def refuse(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError(f"{name} constructed before admission")
+
+        return refuse
+
+    monkeypatch.setattr(TypedArtifactStore, "__init__", forbid("TypedArtifactStore"))
+    monkeypatch.setattr(PreferenceStore, "__init__", forbid("PreferenceStore"))
+    monkeypatch.setattr(TelemetryStore, "__init__", forbid("TelemetryStore"))
+    monkeypatch.setattr(auth, "hold_policy_lock", forbid("hold_policy_lock"))
+    monkeypatch.setattr(auth, "CASMapTransaction", forbid("CASMapTransaction"))
+
+
+@contextlib.contextmanager
+def _c_no_effects(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """`_c_forbid_effects` for the extent of one `with` block only."""
+    with monkeypatch.context() as scoped:
+        _c_forbid_effects(scoped)
+        yield
+
+
+def _c_old_schema(store_root: Path) -> Path:
+    db = Path(_c_write_rows(store_root, [("old-1", "src-old", None)]).db_path)
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        for table in ("memory_artifacts", "memory_artifact_versions"):
+            for column in ("payload_hash", "payload_hash_origin"):
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        conn.commit()
+    return db
+
+
+def _c_readonly_state(
+    monkeypatch: pytest.MonkeyPatch, state: str, only: Path | None = None
+) -> None:
+    """Make `open_readonly_view` report `state` (for `only`, else for every root)."""
+    from rush.memory.store import TypedArtifactStore
+
+    real = TypedArtifactStore.open_readonly_view
+
+    def fake(cls: Any, project_root: Path) -> Any:
+        if only is None or Path(project_root).resolve() == only.resolve():
+            return None, state
+        return real(project_root)
+
+    monkeypatch.setattr(TypedArtifactStore, "open_readonly_view", classmethod(fake))
+
+
+PREVIEW_KEYS = {
+    "project_root",
+    "project_id",
+    "owner_scope",
+    "overlay",
+    "operations",
+    "sources",
+    "all_current_sources",
+    "expires_at",
+    "expected_policy_revision",
+    "policy_revision",
+    "policy_state",
+    "catalog",
+    "other_sources",
+    "owners",
+    "store_binding",
+    "stated_rows",
+    "approve_command",
+    "approve_command_refused",
+}
+
+
+def _c_preview_scenario_rich(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A2.1-A2.4, A2.9, A2.11, A2.13: a bound store with every kind of group."""
+    from rush.memory.store import OwnerScope, legacy_owner_scope
+
+    root = _c_project(tmp_path)
+    alice = OwnerScope("user", "alice")
+    store = _c_write_rows(
+        root,
+        [
+            ("k1", "src-a", None),
+            ("k2", "src-a", None),
+            ("k3", "checkpoint_journal:save_checkpoint", None),
+            ("k4", "intent:abc", None),
+            ("k5", "src-b", alice),
+            ("k6", "src-gone", alice),
+        ],
+    )
+    store.archive(
+        "k6",
+        expected_version=1,
+        scope="domain_knowledge",
+        owner_scope=alice,
+        apply=True,
+    )
+    pid = _c_project_id(root)
+    expected = _c_expected_inventory(root)
+    assert {c["source"] for c in expected["catalog"]} >= {
+        "checkpoint_journal:save_checkpoint",
+        "intent:*",
+        str(root),
+    }
+    assert sum(c["rows"] for c in expected["catalog"]) == 2
+    assert [o["source"] for o in expected["other_sources"]] == ["src-a", "src-b"]
+    before = _c_state(root)
+    _c_forbid_effects(monkeypatch)
+
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "src-a",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )
+    after = _c_state(root)
+    data = payload["raw"]["data"]
+    assert set(data) == PREVIEW_KEYS
+    assert data["project_root"] == str(root)
+    assert data["project_id"] == pid
+    assert data["owner_scope"] == legacy_owner_scope(root).as_dict()
+    assert data["overlay"] is False
+    assert data["operations"] == CONSENT_DEFAULT_OPS
+    assert data["sources"] == ["src-a"]
+    assert data["all_current_sources"] is False
+    assert data["expires_at"] is None
+    assert data["expected_policy_revision"] == 0
+    assert data["policy_revision"] == 0
+    assert data["policy_state"] == "missing"
+    assert data["catalog"] == expected["catalog"]
+    assert data["other_sources"] == expected["other_sources"]
+    assert data["owners"] == expected["owners"]
+    assert data["store_binding"] == "bound"
+    assert data["stated_rows"] == 0
+    argv = _c_grant_argv(root, CONSENT_DEFAULT_OPS, ["src-a"], revision=0)
+    assert data["approve_command"] == _c_render(argv)
+    _c_argv_of(data["approve_command"], argv)
+    assert data["approve_command_refused"] is None
+    assert "next_action" not in payload["raw"]
+    assert after == before
+    assert _c_policy_bytes() is None
+    assert not (root / ".rush" / "memory-policy.required").exists()
+
+
+def _c_preview_scenario_nothing_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2.1, A2.5: neither the data root, the project's `.rush` nor a lock appears."""
+    root = tmp_path / "unregistered"
+    root.mkdir()
+    root = root.resolve()
+    data_root = _c_data_root()
+    assert not data_root.exists() and not (root / ".rush").exists()
+    _c_forbid_effects(monkeypatch)
+
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--owner",
+            "user:alice",
+            "--source",
+            "src-a",
+            "--operation",
+            "ask",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )
+    data = payload["raw"]["data"]
+    assert set(data) == PREVIEW_KEYS
+    assert data["project_id"] is None
+    assert data["owner_scope"] == {"kind": "user", "id": "alice"}
+    assert data["operations"] == ["ask"]
+    assert data["policy_state"] == "missing"
+    assert data["store_binding"] is None
+    assert data["stated_rows"] == 0
+    assert data["other_sources"] == []
+    assert data["owners"] == []
+    assert all(c["rows"] == 0 for c in data["catalog"])
+    assert [c["source"] for c in data["catalog"]] == _catalog_of(root)
+    argv = _c_grant_argv(
+        root, ["ask"], ["src-a"], owner=["--owner", "user:alice"], revision=0
+    )
+    assert data["approve_command"] == _c_render(argv)
+    assert not data_root.exists()
+    assert not (root / ".rush").exists()
+    assert list(root.iterdir()) == []
+
+
+def _catalog_of(root: Path) -> list[str]:
+    import rush.memory.authorization as auth
+
+    return auth.writer_source_catalog(root)
+
+
+def _c_preview_scenario_absent_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _c_project(tmp_path)
+    before = _c_state(root)
+    _c_forbid_effects(monkeypatch)
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "src-a",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )
+    data = payload["raw"]["data"]
+    assert data["store_binding"] is None
+    assert data["stated_rows"] == 0
+    assert data["other_sources"] == []
+    assert data["owners"] == []
+    assert data["catalog"] == [{"source": s, "rows": 0} for s in _catalog_of(root)]
+    assert not (root / ".rush" / "memory.db").exists()
+    assert _c_state(root) == before
+
+
+def _c_preview_scenario_old_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2.6: migration_required is `E_MIGRATION` with the upgrade next action."""
+    from rush.memory.store import readonly_view_reason
+
+    root = _c_project(tmp_path)
+    db = _c_old_schema(root)
+    before = (hashlib.sha256(db.read_bytes()).hexdigest(), _c_state(root))
+    reason = readonly_view_reason("migration_required")
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "src-old",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="E_MIGRATION",
+    )
+    assert payload["raw"]["data"] == {
+        "reason": "store_migration_required",
+        "message": reason,
+    }
+    assert payload["raw"]["next_action"] == {"text": reason, "command": None}
+    assert (hashlib.sha256(db.read_bytes()).hexdigest(), _c_state(root)) == before
+
+
+def _c_preview_scenario_unreadable_store(
+    state: str, code: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.store import readonly_view_reason
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("r1", "src-a", None)])
+    before = _c_state(root)
+    _c_readonly_state(monkeypatch, state)
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "src-a",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code=code,
+    )
+    assert payload["raw"]["data"] == {
+        "reason": f"store_{state}",
+        "message": readonly_view_reason(state),
+    }
+    assert _c_state(root) == before
+
+
+def _c_preview_scenario_overlay_store_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2.6 for the overlay store: reason `overlay_store_<state>`."""
+    from rush.memory.store import readonly_view_reason
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("r1", "src-a", None)])
+    overlay_root = _c_data_root() / "user"
+    db = _c_old_schema(overlay_root)
+    before = _c_state(root)
+    payload = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--overlay",
+            "--source",
+            OVERLAY_SOURCE,
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="E_MIGRATION",
+    )
+    assert payload["raw"]["data"] == {
+        "reason": "overlay_store_migration_required",
+        "message": readonly_view_reason("migration_required"),
+    }
+    assert db.exists() and _c_state(root) == before
+    for state, code in (("corrupt", "E_STORE_CORRUPT"), ("busy", "E_STORE_BUSY")):
+        _c_readonly_state(monkeypatch, state, only=overlay_root)
+        payload = _c_run(
+            [
+                "memory",
+                "grant",
+                "--project",
+                str(root),
+                "--overlay",
+                "--source",
+                OVERLAY_SOURCE,
+                "--expected-policy-revision",
+                "0",
+            ],
+            code=code,
+        )
+        assert payload["raw"]["data"] == {
+            "reason": f"overlay_store_{state}",
+            "message": readonly_view_reason(state),
+        }
+        assert _c_state(root) == before
+
+
+def _c_preview_scenario_policy_states(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2.7: invalid and unavailable policy are `E_POLICY_INVALID`, zero writes."""
+    import rush.memory.authorization as auth
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("r1", "src-a", None)])
+    args = [
+        "memory",
+        "grant",
+        "--project",
+        str(root),
+        "--source",
+        "src-a",
+        "--expected-policy-revision",
+        "0",
+    ]
+    policy = auth.policy_path(data_root=_c_data_root())
+    policy.parent.mkdir(parents=True, exist_ok=True)
+    policy.write_bytes(b"{")
+    loaded = _c_policy()
+    assert loaded["state"] == "invalid"
+    before = _c_state(root)
+    payload = _c_run(args, code="E_POLICY_INVALID")
+    assert payload["raw"]["data"]["reason"] == loaded["reason"]
+    assert _c_state(root) == before
+
+    policy.unlink()
+    data_root = _c_data_root()
+    shutil.rmtree(data_root)
+    data_root.write_text("a file where the data root belongs", encoding="utf-8")
+    loaded = _c_policy()
+    assert loaded["state"] in ("invalid", "unavailable")
+    before = _c_state(root)
+    payload = _c_run(args, code="E_POLICY_INVALID")
+    assert payload["raw"]["data"]["reason"] == loaded["reason"]
+    assert _c_state(root) == before
+    assert data_root.is_file()
+
+
+_VALIDATOR_CASES = [
+    pytest.param(["--source", ""], "approved_sources", id="source-empty"),
+    pytest.param(["--source", " padded "], "approved_sources", id="source-padded"),
+    pytest.param(
+        ["--source", "dup", "--source", "dup"], "approved_sources", id="source-dup"
+    ),
+    pytest.param(["--source", "*"], "approved_sources", id="source-star"),
+    pytest.param(["--source", "bogus:*"], "approved_sources", id="source-bad-family"),
+    pytest.param(
+        ["--source", "a\ud800"], "approved_sources", id="source-lone-surrogate"
+    ),
+    pytest.param(
+        ["--source", "src", "--operation", "ask", "--operation", "ask"],
+        "allowed_operations",
+        id="operation-duplicate",
+    ),
+    pytest.param(
+        ["--source", "src", "--expires-at", "1"], "expires_at", id="expires-past"
+    ),
+    pytest.param(
+        ["--source", "src", "--expires-at", "nan"], "expires_at", id="expires-nan"
+    ),
+    pytest.param(
+        ["--source", "src", "--expires-at", "inf"], "expires_at", id="expires-inf"
+    ),
+    pytest.param(
+        ["--source", "src", "--expires-at", "1e400"], "expires_at", id="expires-huge"
+    ),
+    pytest.param(
+        ["--source", "src", "--owner", "user:alice", "--operation", "overlay_read"],
+        "overlay_read_requires_overlay_owner",
+        id="overlay_read-on-project-owner",
+    ),
+    pytest.param(
+        ["--source", "src", "--owner", "user:x\ud800y"],
+        "owner_scope",
+        id="owner-lone-surrogate",
+    ),
+    pytest.param(
+        [
+            "--source",
+            "",
+            "--operation",
+            "ask",
+            "--operation",
+            "ask",
+            "--expires-at",
+            "1",
+        ],
+        "approved_sources",
+        id="order-sources-first",
+    ),
+    pytest.param(
+        ["--source", "src", "--operation", "ask", "--operation", "ask"]
+        + ["--expires-at", "1"],
+        "allowed_operations",
+        id="order-operations-before-expiry",
+    ),
+    pytest.param(
+        ["--source", "src", "--owner", "user:alice", "--operation", "overlay_read"]
+        + ["--expires-at", "1"],
+        "expires_at",
+        id="order-expiry-before-overlay-owner",
+    ),
+]
+
+
+def _c_preview_scenario_validators(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A2.8: the writer's pure validators run in the writer's order; the preview
+    fails with the writer's code and reason, before the inventory is read."""
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("r1", "src-a", None)])
+    before = _c_state(root)
+    _c_forbid_effects(monkeypatch)
+    for param in _VALIDATOR_CASES:
+        extra, reason = cast("tuple[list[str], str]", param.values)
+        payload = _c_run(
+            ["memory", "grant", "--project", str(root), *extra]
+            + ["--expected-policy-revision", "0"],
+            code="E_INPUT",
+        )
+        assert payload["raw"]["data"] == {
+            "reason": reason,
+            "message": f"E_INPUT: {reason}",
+        }, param.id
+        assert _c_state(root) == before, param.id
+
+
+def _c_preview_scenario_corrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _c_preview_scenario_unreadable_store(
+        "corrupt", "E_STORE_CORRUPT", tmp_path, monkeypatch
+    )
+
+
+def _c_preview_scenario_busy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _c_preview_scenario_unreadable_store("busy", "E_STORE_BUSY", tmp_path, monkeypatch)
+
+
+_PREVIEW_SCENARIOS = {
+    "corrupt": _c_preview_scenario_corrupt,
+    "busy": _c_preview_scenario_busy,
+    "rich": _c_preview_scenario_rich,
+    "nothing_exists": _c_preview_scenario_nothing_exists,
+    "absent_store": _c_preview_scenario_absent_store,
+    "old_schema": _c_preview_scenario_old_schema,
+    "overlay_store_states": _c_preview_scenario_overlay_store_states,
+    "policy_states": _c_preview_scenario_policy_states,
+    "validators": _c_preview_scenario_validators,
+}
+
+
+@pytest.mark.parametrize("scenario", sorted(_PREVIEW_SCENARIOS))
+def test_consent_grant_preview_no_write(
+    scenario: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _PREVIEW_SCENARIOS[scenario](tmp_path, monkeypatch)
+
+
+def _c_grant_args(root: Path, revision: int, *extra: str) -> list[str]:
+    return [
+        "memory",
+        "grant",
+        "--project",
+        str(root),
+        *extra,
+        "--expected-policy-revision",
+        str(revision),
+        "--approve",
+        "--allow-cache-write",
+    ]
+
+
+def test_consent_grant_apply_cas_and_stale_revision(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+    from rush.memory.store import legacy_owner_scope
+
+    root = _c_project(tmp_path)
+    first_args = _c_grant_args(
+        root,
+        0,
+        "--source",
+        "s1",
+        "--operation",
+        "ask",
+        "--operation",
+        "list",
+        "--expires-at",
+        "1893456000.5",
+    )
+    payload = _c_run(first_args, code="OK")
+    data = payload["raw"]["data"]
+    assert set(data) == GRANT_RESULT_KEYS
+    grant_id = data["grant_id"]
+    view = _c_policy()["grants"][grant_id]
+    assert view["expires_at"] == 1893456000.5  # PR9: stored unchanged
+    assert data == {
+        "grant_id": grant_id,
+        "policy_revision": 1,
+        "project_id": _c_project_id(root),
+        "worktree_id": view["worktree_id"],
+        "owner_scope": legacy_owner_scope(root).as_dict(),
+        "approved_sources": ["s1"],
+        "allowed_operations": ["ask", "list"],
+    }
+    assert (root / ".rush" / "memory-policy.required").exists()
+    after_first = _c_policy_bytes()
+
+    # A3.3: a stale N on a changed grant is E_VERSION and writes nothing.
+    before = _c_state(root)
+    payload = _c_run(
+        _c_grant_args(root, 0, "--source", "s2", "--operation", "ask"),
+        code="E_VERSION",
+    )
+    assert payload["raw"]["data"]["reason"] == "expected revision 0, found 1"
+    assert _c_policy_bytes() == after_first
+    assert _c_state(root) == before
+
+    # A3.4: a stale N repeating the identical active grant returns it, no write.
+    payload = _c_run(first_args, code="OK")
+    assert payload["raw"]["data"] == data
+    assert _c_policy_bytes() == after_first
+    assert _c_state(root) == before
+
+    # The current N on a changed grant supersedes the active one.
+    payload = _c_run(
+        _c_grant_args(root, 1, "--source", "s2", "--operation", "ask"), code="OK"
+    )
+    second = payload["raw"]["data"]
+    assert second["policy_revision"] == 2
+    assert second["grant_id"] != grant_id
+    assert second["approved_sources"] == ["s2"]
+    loaded = _c_policy()
+    assert loaded["grants"][grant_id]["revoked"] is True
+    assert loaded["grants"][grant_id]["superseded_by"] == second["grant_id"]
+    assert loaded["policy_revision"] == 2
+
+    # A3.5: any other MemoryPolicyError is its own code and reason; an unregistered
+    # root also carries the registration next action (both permissions, PR10).
+    unregistered = tmp_path / "unregistered"
+    unregistered.mkdir()
+    unregistered = unregistered.resolve()
+    before = _c_state(unregistered)
+    payload = _c_run(
+        _c_grant_args(unregistered, 2, "--source", "s1"),
+        code="E_PROJECT_NOT_REGISTERED",
+    )
+    assert payload["raw"]["data"]["reason"] == "project_not_registered"
+    expected_next = auth.memory_next_action(
+        reason="project_not_registered",
+        project_root=unregistered,
+        operations=CONSENT_DEFAULT_OPS,
+    )
+    assert payload["raw"]["next_action"] == expected_next
+    assert expected_next["command"] == _c_render(
+        [
+            "rush",
+            "project",
+            "add",
+            str(unregistered),
+            "--allow-cache-write",
+            "--allow-artifact-write",
+        ]
+    )
+    assert _c_state(unregistered) == before
+
+    policy = auth.policy_path(data_root=_c_data_root())
+    policy.write_bytes(b"{")
+    invalid = _c_policy()
+    assert invalid["state"] == "invalid"
+    payload = _c_run(_c_grant_args(root, 2, "--source", "s1"), code="E_POLICY_INVALID")
+    assert payload["raw"]["data"]["reason"] == invalid["reason"]
+    assert policy.read_bytes() == b"{"
+
+
+def _c_bound_grant(
+    tmp_path: Path, bindings: tuple[tuple[str, str], ...] = ()
+) -> tuple[Path, str]:
+    import rush.memory.authorization as auth
+    from rush.memory.store import legacy_owner_scope
+
+    root = _c_project(tmp_path)
+    data_root = _c_data_root()
+    granted = _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("s1",),
+        ops=("ask", "list"),
+        expected=int(_c_policy()["policy_revision"]),
+    )
+    for session_id, host_id in bindings:
+        _bind(
+            auth,
+            granted["grant_id"],
+            data_root,
+            expected=int(_c_policy()["policy_revision"]),
+            session_id=session_id,
+            host_id=host_id,
+        )
+    return root, granted["grant_id"]
+
+
+def test_consent_revoke_preview_and_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.memory.authorization as auth
+
+    # A4.2: no policy at all is "grant not found"; an empty ID is the writer's own
+    # input error and is decided before the policy is read.
+    root = _c_project(tmp_path)
+    ghost = str(uuid.uuid4())
+    before = _c_state(root)
+    payload = _c_run(
+        ["memory", "revoke", "--grant-id", ghost, "--expected-policy-revision", "0"],
+        code="E_GRANT_NOT_FOUND",
+    )
+    assert payload["raw"]["data"]["reason"] == ghost
+    payload = _c_run(
+        ["memory", "revoke", "--grant-id", "", "--expected-policy-revision", "0"],
+        code="E_INPUT",
+    )
+    assert payload["raw"]["data"]["reason"] == "grant_id"
+    assert _c_state(root) == before
+
+    root, grant_id = _c_bound_grant(
+        tmp_path / "bound", (("session-b", "host-b"), ("session-a", "host-a"))
+    )
+    loaded = _c_policy()
+    current = int(loaded["policy_revision"])
+    bindings = sorted(
+        (b for b in loaded["bindings"].values() if b["grant_id"] == grant_id),
+        key=lambda b: b["binding_id"],
+    )
+    assert len(bindings) == 2
+
+    # A4.1: the preview shows the grant, its bindings and the current revision; no
+    # writable store, telemetry or preference store, lock or CAS write is reached (G3).
+    before = _c_state(root)
+    sealed = _c_policy_bytes()
+    with _c_no_effects(monkeypatch):
+        payload = _c_run(
+            [
+                "memory",
+                "revoke",
+                "--grant-id",
+                grant_id,
+                "--expected-policy-revision",
+                "0",
+            ],
+            code="OK",
+        )
+    argv = [
+        "rush",
+        "memory",
+        "revoke",
+        "--grant-id",
+        grant_id,
+        "--expected-policy-revision",
+        str(current),
+        "--approve",
+        "--allow-cache-write",
+    ]
+    assert payload["raw"]["data"] == {
+        "grant": loaded["grants"][grant_id],
+        "bindings": bindings,
+        "policy_revision": current,
+        "expected_policy_revision": 0,
+        "approve_command": _c_render(argv),
+    }
+    _c_argv_of(payload["raw"]["data"]["approve_command"], argv)
+    assert _c_policy_bytes() == sealed
+    assert _c_state(root) == before
+
+    # A4.2: a grant of another OS principal is neither previewable nor revocable.
+    with _c_forged_principal(grant_id):
+        forged = _c_policy_bytes()
+        payload = _c_run(
+            [
+                "memory",
+                "revoke",
+                "--grant-id",
+                grant_id,
+                "--expected-policy-revision",
+                str(current),
+            ],
+            code="E_PRINCIPAL",
+        )
+        assert payload["raw"]["data"]["reason"] == "principal_mismatch"
+        _c_run(
+            [
+                "memory",
+                "revoke",
+                "--grant-id",
+                grant_id,
+                "--expected-policy-revision",
+                str(current),
+                "--approve",
+                "--allow-cache-write",
+            ],
+            code="E_PRINCIPAL",
+        )
+        assert _c_policy_bytes() == forged
+    assert _c_policy_bytes() == sealed
+
+    # A4.4: a stale N on an active grant is E_VERSION with the bytes unchanged.
+    payload = _c_run(
+        [
+            "memory",
+            "revoke",
+            "--grant-id",
+            grant_id,
+            "--expected-policy-revision",
+            str(current + 1),
+            "--approve",
+            "--allow-cache-write",
+        ],
+        code="E_VERSION",
+    )
+    assert payload["raw"]["data"]["reason"] == (
+        f"expected revision {current + 1}, found {current}"
+    )
+    assert _c_policy_bytes() == sealed
+
+    # The current N revokes the grant and every binding on it.
+    payload = _c_run(
+        [
+            "memory",
+            "revoke",
+            "--grant-id",
+            grant_id,
+            "--expected-policy-revision",
+            str(current),
+            "--approve",
+            "--allow-cache-write",
+        ],
+        code="OK",
+    )
+    result = {
+        "grant_id": grant_id,
+        "policy_revision": current + 1,
+        "revoked": True,
+        "revoked_bindings": [b["binding_id"] for b in bindings],
+    }
+    assert payload["raw"]["data"] == result
+    after = _c_policy()
+    assert after["grants"][grant_id]["revoked"] is True
+    assert all(b["revoked"] for b in after["bindings"].values())
+    revoked_bytes = _c_policy_bytes()
+
+    # Already revoked: the idempotent result comes before any revision check.
+    payload = _c_run(
+        [
+            "memory",
+            "revoke",
+            "--grant-id",
+            grant_id,
+            "--expected-policy-revision",
+            "0",
+            "--approve",
+            "--allow-cache-write",
+        ],
+        code="OK",
+    )
+    assert payload["raw"]["data"] == result
+    assert _c_policy_bytes() == revoked_bytes
+
+    # An invalid policy file is E_POLICY_INVALID for the preview as well.
+    auth.policy_path(data_root=_c_data_root()).write_bytes(b"{")
+    invalid = _c_policy()
+    payload = _c_run(
+        ["memory", "revoke", "--grant-id", grant_id, "--expected-policy-revision", "0"],
+        code="E_POLICY_INVALID",
+    )
+    assert payload["raw"]["data"]["reason"] == invalid["reason"]
+
+
+def test_consent_defaults_operations_and_legacy_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.store import legacy_owner_scope
+
+    root = _c_project(tmp_path)
+    revision = 0
+
+    def approve(*extra: str, project: Path | None = root) -> dict[str, Any]:
+        nonlocal revision
+        args = ["memory", "grant"]
+        if project is not None:
+            args += ["--project", str(project)]
+        args += [*extra, "--expected-policy-revision", str(revision)]
+        args += ["--approve", "--allow-cache-write"]
+        data = _c_run(args, code="OK")["raw"]["data"]
+        revision = data["policy_revision"]
+        return data
+
+    # A1.2 / A1.5: no owner and no operation → the legacy project owner, six ops.
+    preview = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "s-default",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )["raw"]["data"]
+    assert preview["owner_scope"] == legacy_owner_scope(root).as_dict()
+    assert preview["operations"] == CONSENT_DEFAULT_OPS
+    default = approve("--source", "s-default")
+    assert default["owner_scope"] == legacy_owner_scope(root).as_dict()
+    assert default["allowed_operations"] == CONSENT_DEFAULT_OPS
+    assert "overlay_read" not in default["allowed_operations"]
+
+    # A1.1: --owner splits on the first colon.
+    alice = approve("--source", "s-alice", "--owner", "user:alice")
+    assert alice["owner_scope"] == {"kind": "user", "id": "alice"}
+    drive = approve("--source", "s-drive", "--owner", "project:C:\\x")
+    assert drive["owner_scope"] == {"kind": "project", "id": "C:\\x"}
+
+    # A1.5: an explicit --operation list is used exactly (sorted by the writer).
+    explicit = approve(
+        "--source",
+        "s-explicit",
+        "--owner",
+        "agent:codex",
+        "--operation",
+        "write",
+        "--operation",
+        "ask",
+    )
+    assert explicit["allowed_operations"] == ["ask", "write"]
+    owners = {
+        (g["owner_scope"]["kind"], g["owner_scope"]["id"])
+        for g in _c_policy()["grants"].values()
+        if not g["revoked"]
+    }
+    assert owners == {
+        ("project", str(root)),
+        ("user", "alice"),
+        ("project", "C:\\x"),
+        ("agent", "codex"),
+    }
+
+    # --project defaults to the current directory.
+    other = _c_project(tmp_path, "other")
+    monkeypatch.chdir(other)
+    previewed = _c_run(
+        ["memory", "grant", "--source", "s", "--expected-policy-revision", "0"],
+        code="OK",
+    )["raw"]["data"]
+    assert previewed["project_root"] == str(other)
+    granted = approve("--source", "s", project=None)
+    assert granted["project_id"] == _c_project_id(other)
+    assert granted["owner_scope"] == legacy_owner_scope(other).as_dict()
+
+
+def test_overlay_default_grant_authorizes_overlay_read(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    data_root = _c_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    seven = sorted([*CONSENT_DEFAULT_OPS, "overlay_read"])
+    root = _c_project(tmp_path, "overlay-project")
+    preview = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--overlay",
+            "--source",
+            OVERLAY_SOURCE,
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )["raw"]["data"]
+    assert set(preview) == PREVIEW_KEYS | {
+        "overlay_store_binding",
+        "overlay_stated_rows",
+    }
+    assert preview["overlay"] is True
+    assert preview["owner_scope"] == overlay.as_dict()
+    assert preview["operations"] == seven
+    assert preview["overlay_store_binding"] is None
+    assert preview["overlay_stated_rows"] == 0
+    argv = _c_grant_argv(root, seven, [OVERLAY_SOURCE], owner=["--overlay"], revision=0)
+    assert preview["approve_command"] == _c_render(argv)
+
+    granted = _c_run(
+        _c_grant_args(root, 0, "--overlay", "--source", OVERLAY_SOURCE), code="OK"
+    )["raw"]["data"]
+    assert granted["owner_scope"] == overlay.as_dict()
+    assert granted["allowed_operations"] == seven
+    resolved = _resolve(
+        auth,
+        root,
+        data_root,
+        operation="overlay_read",
+        owner_scope=overlay,
+        requested_sources=[OVERLAY_SOURCE],
+    )
+    _assert_granted(resolved)
+    assert resolved["grant_id"] == granted["grant_id"]
+
+    # The project-owner default holds no overlay_read and cannot reach the overlay.
+    plain = _c_project(tmp_path, "plain-project")
+    default = _c_run(_c_grant_args(plain, 1, "--source", "src"), code="OK")["raw"][
+        "data"
+    ]
+    assert "overlay_read" not in default["allowed_operations"]
+    denied = _resolve(
+        auth,
+        plain,
+        data_root,
+        operation="overlay_read",
+        owner_scope=overlay,
+        requested_sources=[OVERLAY_SOURCE],
+    )
+    assert denied["access"] == "denied"
+    assert denied["reason"] == "owner_not_granted"
+
+
+def test_consent_overlay_and_all_current_sources(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+    from rush.memory.store import OwnerScope, legacy_owner_scope
+
+    # A1.4: usage errors are exit 2 with the exact message and write nothing.
+    root = _c_project(tmp_path)
+    before = _c_state(root)
+    base = ["memory", "grant", "--project", str(root)]
+    revision = ["--expected-policy-revision", "0"]
+    for extra, message in (
+        (
+            ["--owner", "user:alice", "--overlay", "--source", "s"],
+            "--owner and --overlay are mutually exclusive",
+        ),
+        (
+            ["--source", "s", "--all-current-sources"],
+            "--source and --all-current-sources are mutually exclusive",
+        ),
+        ([], "--source or --all-current-sources is required"),
+        (
+            ["--all-current-sources", "--approve", "--allow-cache-write"],
+            "--all-current-sources is preview-only",
+        ),
+        (
+            ["--all-current-sources", "--approve"],
+            "--all-current-sources is preview-only",
+        ),
+        (["--source", "s", "--owner", "nocolon"], "Invalid value for '--owner'"),
+        (["--source", "s", "--owner", "bogus:x"], "Invalid value for '--owner'"),
+        (["--source", "s", "--owner", "user:"], "Invalid value for '--owner'"),
+        (["--source", "s", "--owner", "user:   "], "Invalid value for '--owner'"),
+        (["--source", "s", "--owner", ":x"], "Invalid value for '--owner'"),
+    ):
+        _c_usage([*base, *extra, *revision], message)
+    assert _c_state(root) == before
+
+    # A2.12: --all-current-sources lists the catalog plus the resolved owner's
+    # uncovered inventory sources, family items as `<name>:*`.
+    alice = OwnerScope("user", "alice")
+    overlay = auth.user_overlay_owner_scope(data_root=_c_data_root())
+    store = _c_write_rows(
+        root,
+        [
+            ("k1", "src-a", None),
+            ("k2", "src-a", None),
+            ("k3", "intent:abc", None),
+            ("k4", "src-null", None),
+            ("k5", "src-b", alice),
+            ("k6", "ov-src", overlay),
+        ],
+    )
+    db = Path(store.db_path)
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET owner_scope_kind = NULL, "
+            "owner_scope_id = NULL WHERE id = 'k4'"
+        )
+        conn.commit()
+    catalog = auth.writer_source_catalog(root)
+    expected = sorted({*catalog, "src-a", "src-null"})
+    payload = _c_run([*base, "--all-current-sources", *revision], code="OK")
+    data = payload["raw"]["data"]
+    assert data["all_current_sources"] is True
+    assert sorted(data["sources"]) == expected
+    assert len(set(data["sources"])) == len(data["sources"])
+    assert "intent:*" in data["sources"] and "intent:abc" not in data["sources"]
+    assert "src-b" not in data["sources"] and "ov-src" not in data["sources"]
+    argv = _c_grant_argv(root, CONSENT_DEFAULT_OPS, expected, revision=0)
+    assert data["approve_command"] == _c_render(argv)
+    _c_argv_of(data["approve_command"], argv)
+    assert data["approve_command_refused"] is None
+    assert _c_policy_bytes() is None
+
+    # --overlay adds only the project-store groups owned by the overlay owner.
+    payload = _c_run(
+        [*base, "--overlay", "--all-current-sources", *revision], code="OK"
+    )
+    overlay_data = payload["raw"]["data"]
+    assert sorted(overlay_data["sources"]) == sorted({*catalog, "ov-src"})
+    assert overlay_data["owner_scope"] == overlay.as_dict()
+    assert overlay_data["overlay"] is True
+
+    # A3.6: a source added after the preview is absent when the command is run.
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO memory_artifacts (id, family, subject, trust_tier, content, "
+            "source, created_at, owner_scope_kind, owner_scope_id) VALUES "
+            "('k7', 'memory', 'domain_knowledge', 'DERIVED', '{\"t\": 1}', "
+            "'src-new', 1.0, 'project', ?)",
+            (str(root),),
+        )
+        conn.commit()
+    printed = _c_argv_of(data["approve_command"], argv)
+    exit_code, applied, output = _c_cli(*printed[1:], "--json")
+    assert exit_code == 0, output
+    assert applied["raw"]["code"] == "OK", applied
+    granted = applied["raw"]["data"]
+    assert granted["owner_scope"] == legacy_owner_scope(root).as_dict()
+    assert granted["approved_sources"] == expected
+    assert "src-new" not in granted["approved_sources"]
+
+    # --overlay approve with explicit sources: the overlay owner holds overlay_read.
+    overlay_grant = _c_run(
+        _c_grant_args(root, 1, "--overlay", "--source", OVERLAY_SOURCE), code="OK"
+    )["raw"]["data"]
+    assert overlay_grant["owner_scope"] == overlay.as_dict()
+    assert "overlay_read" in overlay_grant["allowed_operations"]
+
+
+def test_consent_approve_needs_cache_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.memory.authorization as auth
+    from rush.memory.store import TypedArtifactStore
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("r1", "src-a", None)])
+    before = _c_state(root)
+
+    def refuse(name: str) -> Any:
+        def inner(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError(f"{name} ran before the permission check")
+
+        return inner
+
+    # The permission check is decided before any read: nothing below may run.
+    for name in ("load_policy_readonly", "grant_memory_scope", "revoke_memory_scope"):
+        monkeypatch.setattr(auth, name, refuse(name))
+    monkeypatch.setattr(
+        TypedArtifactStore,
+        "open_readonly_view",
+        classmethod(lambda cls, _root: refuse("open_readonly_view")()),
+    )
+    monkeypatch.setattr(
+        TypedArtifactStore, "bind_store", staticmethod(refuse("bind_store"))
+    )
+    digest = "0" * 64
+    for extra in ([], ["--allow-artifact-write"], ["--allow-build", "--allow-slow"]):
+        payload = _c_skipped(
+            [
+                "memory",
+                "grant",
+                "--project",
+                str(root),
+                "--source",
+                "src-a",
+                "--expected-policy-revision",
+                "0",
+                "--approve",
+                *extra,
+            ],
+            "grant",
+        )
+        assert (
+            payload["summary"] == "memory grant --approve requires --allow-cache-write."
+        )
+        payload = _c_skipped(
+            [
+                "memory",
+                "revoke",
+                "--grant-id",
+                str(uuid.uuid4()),
+                "--expected-policy-revision",
+                "0",
+                "--approve",
+                *extra,
+            ],
+            "revoke",
+        )
+        assert (
+            payload["summary"]
+            == "memory revoke --approve requires --allow-cache-write."
+        )
+        payload = _c_skipped(
+            [
+                "memory",
+                "bind-store",
+                "--project",
+                str(root),
+                "--approve",
+                "--expected-digest",
+                digest,
+                *extra,
+            ],
+            "bind_store",
+        )
+        assert "--approve requires --allow-cache-write" in payload["summary"]
+    assert _c_state(root) == before
+
+
+def test_no_mcp_dashboard_tui_grant_route() -> None:
+    """A8.1: the only callers of the four consent writers are in `cli.py`; no MCP
+    tool, request-model tag or memory operation names a grant, revoke or binding."""
+    import ast
+    import asyncio
+
+    from rush.mcp import mcp_server
+    from rush.mcp_support.request_models import memory_model_tags
+    from rush.tools.memory import VALID_OPERATIONS
+
+    names = {
+        "grant_memory_scope",
+        "revoke_memory_scope",
+        "register_memory_binding",
+        "bind_store",
+    }
+    src = Path(__file__).resolve().parents[1] / "src" / "rush"
+    callers: dict[str, set[str]] = {}
+    for path in sorted(src.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else None
+            )
+            if name in names:
+                callers.setdefault(path.relative_to(src).as_posix(), set()).add(name)
+    assert set(callers) <= {"cli.py"}, callers
+
+    forbidden = ("grant", "revoke", "bind_store", "bind-store", "memory_binding")
+    tools = asyncio.run(mcp_server.list_tools())
+    for tool in tools:
+        lowered = tool.name.lower()
+        assert not any(word in lowered for word in forbidden), tool.name
+    connection = next(t for t in tools if t.name == "rush_agent_connection")
+    assert "memory_binding" not in json.dumps(connection.inputSchema)
+    for tag in memory_model_tags() | set(VALID_OPERATIONS):
+        assert not any(word in str(tag) for word in forbidden), tag
+    assert "bootstrap" not in VALID_OPERATIONS
+
+    # The three consent writers are governed as CLI-only admin operations.
+    from rush.governance.public_operations import build_operations_inventory
+
+    by_id = {op.id: op for op in build_operations_inventory()}
+    for op_id, command in (
+        ("admin.memory_grant", "memory grant"),
+        ("admin.memory_revoke", "memory revoke"),
+        ("admin.memory_bind_store", "memory bind-store"),
+    ):
+        assert op_id in by_id, op_id
+        assert by_id[op_id].kind == "admin", op_id
+        assert by_id[op_id].cli_command == command, op_id
+        assert by_id[op_id].mcp_tool is None, op_id
+
+
+def _c_bind_args(root: Path, *extra: str) -> list[str]:
+    return ["memory", "bind-store", "--project", str(root), *extra]
+
+
+def _c_bind_command(root: Path, digest: str, *, overlay: bool = False) -> list[str]:
+    return [
+        "rush",
+        "memory",
+        "bind-store",
+        "--project",
+        str(root),
+        *(["--overlay"] if overlay else []),
+        "--approve",
+        "--expected-digest",
+        digest,
+        "--allow-cache-write",
+        "--json",
+    ]
+
+
+def _c_sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _c_insert_late_row(db: Path, source: str) -> None:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO memory_artifacts (id, family, subject, trust_tier, content, "
+            "source, created_at) VALUES ('late', 'memory', 'domain_knowledge', "
+            "'DERIVED', '{\"t\": 1}', ?, 1.0)",
+            (source,),
+        )
+        conn.commit()
+
+
+def _c_visibility(root: Path, row_id: str, source: str) -> Any:
+    from rush.memory.retrieval import MemoryAccess, evaluate_artifact_visibility
+    from rush.memory.store import TypedArtifactStore
+
+    view, state = TypedArtifactStore.open_readonly_view(root)
+    assert view is not None, state
+    try:
+        row = view.get_current_row(row_id)
+        return evaluate_artifact_visibility(
+            view, row, access=MemoryAccess.legacy(root, [source])
+        )
+    finally:
+        view.close()
+
+
+def test_consent_bind_store_preview_and_approve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.memory.store import TypedArtifactStore
+
+    digest0 = "0" * 64
+
+    # A9.1: the two usage errors, each with its own message.
+    usage = _c_project(tmp_path, "usage")
+    before = _c_state(usage)
+    _c_usage(_c_bind_args(usage, "--approve"), "--approve requires --expected-digest")
+    _c_usage(
+        _c_bind_args(usage, "--expected-digest", digest0),
+        "--expected-digest requires --approve",
+    )
+    _c_usage(
+        _c_bind_args(usage, "--approve", "--allow-cache-write"),
+        "--approve requires --expected-digest",
+    )
+    assert _c_state(usage) == before
+
+    # A9.2: --approve without --allow-cache-write is skipped, naming cache_write.
+    _c_skipped(
+        _c_bind_args(usage, "--approve", "--expected-digest", digest0), "bind_store"
+    )
+    assert _c_state(usage) == before
+
+    # A9.4: an absent database previews as absent; approve is store_changed and
+    # `bind_store` is never reached.
+    def not_called(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("bind_store called for an absent store")
+
+    with monkeypatch.context() as absent:
+        absent.setattr(TypedArtifactStore, "bind_store", staticmethod(not_called))
+        payload = _c_run(_c_bind_args(usage), code="OK")
+        assert payload["raw"]["data"] == {
+            "project_root": str(usage),
+            "overlay": False,
+            "store": "absent",
+            "approve_command": None,
+        }
+        assert payload["raw"]["operation"] == "bind_store"
+        payload = _c_run(
+            _c_bind_args(
+                usage,
+                "--approve",
+                "--expected-digest",
+                digest0,
+                "--allow-cache-write",
+            ),
+            code="E_VERSION",
+        )
+        assert payload["raw"]["data"]["reason"] == "store_changed"
+    assert _c_state(usage) == before
+    assert not (usage / ".rush" / "memory.db").exists()
+
+    # A9.5: a present store previews as `bind_store(approve=False)` plus the store
+    # marker and the exact approve command; zero bytes change.
+    root = _c_project(tmp_path, "planted")
+    db = _c_unbound_stated(root, "planted", "planted-source")
+    expected = dict(TypedArtifactStore.bind_store(root, approve=False))
+    assert expected.pop("code") == "OK"
+    assert expected["store_binding"] == "unbound" and expected["stated_rows"] == 1
+    before_bytes = _c_sha(db)
+    before = _c_state(root)
+    with _c_no_effects(monkeypatch):
+        payload = _c_run(_c_bind_args(root), code="OK")
+    data = payload["raw"]["data"]
+    assert {k: data[k] for k in expected} == expected
+    assert data["store"] == "present"
+    assert data["approve_command"] == _c_render(
+        _c_bind_command(root, expected["binding_digest"])
+    )
+    assert _c_sha(db) == before_bytes and _c_state(root) == before
+    assert _c_visibility(root, "planted", "planted-source").usable_as_current is False
+
+    # A9.6: a row inserted since the preview → store_changed, zero bytes changed.
+    _c_insert_late_row(db, "planted-source")
+    stale_bytes = _c_sha(db)
+    stale_state = _c_state(root)
+    payload = _c_run(
+        _c_bind_args(
+            root,
+            "--approve",
+            "--expected-digest",
+            expected["binding_digest"],
+            "--allow-cache-write",
+        ),
+        code="E_VERSION",
+    )
+    assert payload["raw"]["data"]["reason"] == "store_changed"
+    assert _c_sha(db) == stale_bytes and _c_state(root) == stale_state
+    assert _c_binding(root) == "unbound"
+
+    # The fresh preview's command binds; the planted STATED row becomes usable.
+    fresh = _c_run(_c_bind_args(root), code="OK")["raw"]["data"]
+    assert fresh["binding_digest"] != expected["binding_digest"]
+    printed = _c_argv_of(
+        fresh["approve_command"], _c_bind_command(root, fresh["binding_digest"])
+    )
+    exit_code, applied, output = _c_cli(*printed[1:])
+    assert exit_code == 0, output
+    assert applied["raw"]["code"] == "OK", applied
+    assert applied["raw"]["data"]["store_binding"] == "bound"
+    assert _c_binding(root) == "bound"
+    assert _c_visibility(root, "planted", "planted-source").usable_as_current is True
+    # A second approval of the same digest is stale: the bound store's digest moved.
+    payload = _c_run(
+        _c_bind_args(
+            root,
+            "--approve",
+            "--expected-digest",
+            fresh["binding_digest"],
+            "--allow-cache-write",
+        ),
+        code="E_VERSION",
+    )
+    assert payload["raw"]["data"]["reason"] == "store_changed"
+
+
+def _c_overlay_fixture(tmp_path: Path) -> tuple[Path, Any, Path]:
+    """Project P holding an overlay-owner grant and an overlay store whose STATED row
+    `p1` lost its binding row."""
+    import rush.memory.authorization as auth
+
+    data_root = _c_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    root = _c_project(tmp_path, "overlay-owner")
+    _grant(
+        auth,
+        root,
+        overlay,
+        data_root,
+        sources=(OVERLAY_SOURCE,),
+        ops=("overlay_read", "list", "expand", "write"),
+        expected=int(_c_policy()["policy_revision"]),
+    )
+    db = _c_unbound_stated(data_root / "user", "p1", OVERLAY_SOURCE, owner=overlay)
+    return root, overlay, db
+
+
+def _c_overlay_expand(root: Path, overlay: Any) -> Any:
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.memory import MemoryTool
+
+    return MemoryTool().run(
+        root,
+        operation="expand",
+        session_allowlist=[OVERLAY_SOURCE],
+        owner_scope=overlay.as_dict(),
+        request={"id": "p1", "version": 1},
+        permissions=ExecutionPermissions(cache_write=True),
+    )
+
+
+def test_consent_bind_store_overlay(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+    from rush.memory.retrieval import required_operation_set
+
+    # D1 row 1a is decided before any policy state: legacy, no policy and a project
+    # with grants all give the same refusal.
+    data_root = _c_data_root()
+    legacy = _c_project(tmp_path, "legacy-first")
+    overlay_root = data_root / "user"
+    overlay_root.mkdir(parents=True, exist_ok=True)
+    (overlay_root / "sub").mkdir(exist_ok=True)
+
+    legacy_preview = _c_run(_c_bind_args(legacy, "--overlay"), code="E_PERMISSION")
+    overlay_ref = auth.user_overlay_owner_scope(data_root=data_root)
+    assert legacy_preview["raw"]["data"]["reason"] == "policy_missing"
+    assert legacy_preview["raw"]["next_action"] == auth.memory_next_action(
+        reason="policy_missing",
+        project_root=legacy,
+        operations=required_operation_set("list", overlay=True),
+        owner_scope=overlay_ref,
+    )
+    assert "--overlay" in legacy_preview["raw"]["next_action"]["command"]
+
+    root, overlay, db = _c_overlay_fixture(tmp_path)
+    assert overlay == overlay_ref
+    before_bytes = _c_sha(db)
+
+    # A9.3: a project equal to, or under, the overlay storage root is refused with
+    # or without --overlay, preview and approve, before any policy lookup.
+    before = _c_state(root, overlay_root)
+    for target in (overlay_root, overlay_root / "sub"):
+        for overlay_flag in ([], ["--overlay"]):
+            for approve in ([], ["--approve", "--expected-digest", "0" * 64]):
+                extra = [*overlay_flag, *approve]
+                if approve:
+                    extra.append("--allow-cache-write")
+                payload = _c_run(_c_bind_args(target, *extra), code="E_PERMISSION")
+                assert payload["raw"]["data"]["reason"] == "overlay_storage_root"
+    assert _c_state(root, overlay_root) == before and _c_sha(db) == before_bytes
+
+    # A9.7: from a project holding the overlay-owner grant the overlay is previewed
+    # as unbound with one STATED row, and the printed command binds it.
+    with_before = _c_expand_state(root, overlay)
+    assert with_before == "E_NOT_VISIBLE"
+    preview = _c_run(_c_bind_args(root, "--overlay"), code="OK")["raw"]["data"]
+    assert preview["overlay"] is True
+    assert preview["store"] == "present"
+    assert preview["store_binding"] == "unbound"
+    assert preview["stated_rows"] == 1
+    assert _c_sha(db) == before_bytes
+    argv = _c_bind_command(root, preview["binding_digest"], overlay=True)
+    assert preview["approve_command"] == _c_render(argv)
+    printed = _c_argv_of(preview["approve_command"], argv)
+    exit_code, applied, output = _c_cli(*printed[1:])
+    assert exit_code == 0, output
+    assert applied["raw"]["code"] == "OK", applied
+    assert _c_binding(overlay_root) == "bound"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        assert conn.execute(
+            "SELECT trust_tier FROM memory_artifacts WHERE id = 'p1'"
+        ).fetchone() == ("STATED",)
+    assert _c_expand_state(root, overlay) == "OK"
+
+    # A project without an overlay-owner grant, and a project with no grant at
+    # all, get the item 7 denial with a --overlay next action and zero writes.
+    plain = _c_project(tmp_path, "project-grant-only")
+    _grant(
+        auth,
+        plain,
+        _alice(),
+        data_root,
+        expected=int(_c_policy()["policy_revision"]),
+    )
+    none = _c_project(tmp_path, "no-grant")
+    for project, code, reason in (
+        (plain, "E_OWNER", "owner_not_granted"),
+        (none, "E_PERMISSION", "no_grant"),
+    ):
+        for approve in ([], ["--approve", "--expected-digest", "0" * 64]):
+            extra = ["--overlay", *approve]
+            if approve:
+                extra.append("--allow-cache-write")
+            operations = required_operation_set(
+                "write" if approve else "list", apply=bool(approve), overlay=True
+            )
+            snapshot = _c_state(project, overlay_root)
+            payload = _c_run(_c_bind_args(project, *extra), code=code)
+            assert payload["raw"]["data"]["reason"] == reason
+            expected_next = auth.memory_next_action(
+                reason=reason,
+                project_root=project,
+                operations=operations,
+                owner_scope=overlay,
+            )
+            assert payload["raw"]["next_action"] == expected_next
+            assert "--overlay" in str(expected_next["command"])
+            assert _c_state(project, overlay_root) == snapshot
+
+
+def _alice() -> Any:
+    from rush.memory.store import OwnerScope
+
+    return OwnerScope("user", "alice")
+
+
+def _c_expand_state(root: Path, overlay: Any) -> str:
+    result = _c_overlay_expand(root, overlay)
+    return str(result["raw"]["code"])
+
+
+def test_consent_preview_lists_writer_catalog(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    root = _c_project(tmp_path)
+    catalog = auth.writer_source_catalog(root)
+    assert any(item.endswith(":*") for item in catalog)
+    # An empty project: every catalog item with zero rows, in catalog order.
+    data = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--all-current-sources",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )["raw"]["data"]
+    assert data["catalog"] == [{"source": item, "rows": 0} for item in catalog]
+    assert catalog == [c["source"] for c in data["catalog"]]
+
+    # Rows under writer sources are counted against the item that grants them.
+    _c_write_rows(
+        root,
+        [
+            ("i1", "intent:one", None),
+            ("i2", "intent:two", None),
+            ("r1", "recipe:one", None),
+            ("c1", "checkpoint_journal:save_checkpoint", None),
+            ("x1", "plain-source", None),
+        ],
+    )
+    expected = _c_expected_inventory(root)
+    by_source = {c["source"]: c["rows"] for c in expected["catalog"]}
+    assert by_source["intent:*"] == 2 and by_source["recipe:*"] == 1
+    assert by_source["checkpoint_journal:save_checkpoint"] == 1
+    data = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--all-current-sources",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )["raw"]["data"]
+    assert data["catalog"] == expected["catalog"]
+    assert data["other_sources"] == expected["other_sources"]
+    argv = _c_grant_argv(
+        root, CONSENT_DEFAULT_OPS, sorted({*catalog, "plain-source"}), revision=0
+    )
+    printed = _c_argv_of(data["approve_command"], argv)
+    sources_in_command = [
+        printed[i + 1] for i, part in enumerate(printed) if part == "--source"
+    ]
+    assert "intent:*" in sources_in_command and "recipe:*" in sources_in_command
+    assert "intent:one" not in sources_in_command
+
+    # An explicit family item is printed as the family item.
+    data = _c_run(
+        [
+            "memory",
+            "grant",
+            "--project",
+            str(root),
+            "--source",
+            "intent:*",
+            "--expected-policy-revision",
+            "0",
+        ],
+        code="OK",
+    )["raw"]["data"]
+    argv = _c_grant_argv(root, CONSENT_DEFAULT_OPS, ["intent:*"], revision=0)
+    assert data["approve_command"] == _c_render(argv)
+    assert data["sources"] == ["intent:*"]
+    assert data["approve_command_refused"] is None
+    granted = _c_run(_c_grant_args(root, 0, "--source", "intent:*"), code="OK")
+    assert granted["raw"]["data"]["approved_sources"] == ["intent:*"]
+
+
+def test_consent_preview_reports_store_binding(tmp_path: Path) -> None:
+    import rush.memory.authorization as auth
+
+    data_root = _c_data_root()
+    overlay = auth.user_overlay_owner_scope(data_root=data_root)
+    text_project = "this project's memory store is unbound; preview binding it"
+    text_overlay = "the personal overlay store is unbound; preview binding it"
+
+    def preview(root: Path, *extra: str) -> dict[str, Any]:
+        return _c_run(
+            [
+                "memory",
+                "grant",
+                "--project",
+                str(root),
+                *extra,
+                "--source",
+                "planted-source",
+                "--expected-policy-revision",
+                "0",
+            ],
+            code="OK",
+        )
+
+    # An unbound project store holding one planted STATED row.
+    unbound = _c_project(tmp_path, "unbound")
+    db = _c_unbound_stated(unbound, "planted", "planted-source")
+    before_bytes, before = _c_sha(db), _c_state(unbound)
+    payload = preview(unbound)
+    assert payload["raw"]["data"]["store_binding"] == "unbound"
+    assert payload["raw"]["data"]["stated_rows"] == 1
+    assert payload["raw"]["next_action"] == {
+        "text": text_project,
+        "command": _c_render(
+            ["rush", "memory", "bind-store", "--project", str(unbound)]
+        ),
+    }
+    assert _c_sha(db) == before_bytes and _c_state(unbound) == before
+
+    # A bound store: the same preview carries no next_action.
+    bound = _c_project(tmp_path, "bound")
+    bound_store = _c_write_rows(bound, [("k1", "planted-source", None)])
+    payload = preview(bound)
+    assert payload["raw"]["data"]["store_binding"] == "bound"
+    assert payload["raw"]["data"]["stated_rows"] == 0
+    assert "next_action" not in payload["raw"]
+    assert bound_store.db_path.exists()
+
+    # --overlay with a bound project store and an unbound overlay store.
+    overlay_db = _c_unbound_stated(
+        data_root / "user", "o1", OVERLAY_SOURCE, owner=overlay
+    )
+    overlay_before = _c_sha(overlay_db)
+    before = _c_state(bound)
+    payload = preview(bound, "--overlay")
+    data = payload["raw"]["data"]
+    assert data["store_binding"] == "bound"
+    assert data["overlay_store_binding"] == "unbound"
+    assert data["overlay_stated_rows"] == 1
+    assert payload["raw"]["next_action"] == {
+        "text": text_overlay,
+        "command": _c_render(
+            ["rush", "memory", "bind-store", "--project", str(bound), "--overlay"]
+        ),
+    }
+    assert _c_sha(overlay_db) == overlay_before and _c_state(bound) == before
+
+    # An unbound project store wins over an unbound overlay store.
+    payload = preview(unbound, "--overlay")
+    assert payload["raw"]["next_action"]["command"] == _c_render(
+        ["rush", "memory", "bind-store", "--project", str(unbound)]
+    )
+
+    # An absent project store does not hide an unbound overlay store (D16/D41).
+    absent = _c_project(tmp_path, "absent")
+    payload = preview(absent, "--overlay")
+    assert payload["raw"]["data"]["store_binding"] is None
+    assert payload["raw"]["data"]["overlay_store_binding"] == "unbound"
+    assert payload["raw"]["next_action"]["command"] == _c_render(
+        ["rush", "memory", "bind-store", "--project", str(absent), "--overlay"]
+    )
+
+    # An absent overlay store reports null and 0 (the store key stays in place).
+    overlay_db.unlink()
+    payload = preview(bound, "--overlay")
+    assert payload["raw"]["data"]["overlay_store_binding"] is None
+    assert payload["raw"]["data"]["overlay_stated_rows"] == 0
+    assert "next_action" not in payload["raw"]
+
+
+# --- G4: trust-boundary inputs of the consent commands --------------------------------
+
+
+def _c_exit2(args: list[str], *needles: str) -> None:
+    exit_code, payload, output = _c_cli(*args)
+    assert exit_code == 2, (args, output)
+    assert payload is None, (args, output)
+    for needle in needles:
+        assert needle in output, (needle, output)
+
+
+def _c_preview_args(root: Path, *extra: str, revision: str = "0") -> list[str]:
+    return [
+        "memory",
+        "grant",
+        "--project",
+        str(root),
+        *extra,
+        "--expected-policy-revision",
+        revision,
+    ]
+
+
+def _c_refused_preview(root: Path, element: str, *extra: str) -> None:
+    """A preview whose approve command carries an unsafe element: the preview itself
+    succeeds, the command is withheld and the refused element is named."""
+    data = _c_run(_c_preview_args(root, *extra), code="OK")["raw"]["data"]
+    assert data["approve_command"] is None, data
+    assert data["approve_command_refused"] == repr(element), data
+
+
+def _c_g4_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    store = _c_write_rows(root, [("k1", "src-a", None)])
+    sources = ["--source", "src-a"]
+    # NUL and a missing path are Click path errors, never a traceback.
+    _c_exit2(_c_preview_args(Path("a\x00b"), *sources), "does not exist")
+    _c_exit2(_c_preview_args(tmp_path / "missing", *sources), "does not exist")
+    _c_exit2(["memory", "bind-store", "--project", "a\x00b"], "does not exist")
+    _c_exit2(
+        ["memory", "bind-store", "--project", str(tmp_path / "missing")],
+        "does not exist",
+    )
+    # A canonical root that is not UTF-8 (POSIX non-UTF-8 argv) is project_missing.
+    real_resolve = Path.resolve
+
+    def fake_resolve(self: Path, strict: bool = False) -> Path:
+        resolved = real_resolve(self, strict=strict)
+        return (
+            Path(str(resolved) + "\udcff")
+            if resolved == real_resolve(root)
+            else resolved
+        )
+
+    with monkeypatch.context() as bad_root:
+        bad_root.setattr(Path, "resolve", fake_resolve)
+        bad_root.setattr(Path, "is_dir", lambda self: True)
+        for extra in ([], ["--approve", "--allow-cache-write"]):
+            payload = _c_run(
+                _c_preview_args(root, *sources, "--owner", "user:alice", *extra),
+                code="E_INPUT",
+            )
+            assert payload["raw"]["data"]["reason"] == "project_missing"
+    # A format character in the root path: the preview names the refused element.
+    odd = _c_project(tmp_path, "pro\u202eject")
+    _c_refused_preview(odd, str(odd), *sources)
+    # A moved root is unregistered: preview succeeds, approve names the recovery;
+    # the store still previews at the path it was moved to.
+    moved = tmp_path / "moved-project"
+    root.rename(moved)
+    moved = moved.resolve()
+    data = _c_run(_c_preview_args(moved, *sources), code="OK")["raw"]["data"]
+    assert data["project_id"] is None
+    payload = _c_run(
+        _c_preview_args(moved, *sources, "--approve", "--allow-cache-write"),
+        code="E_PROJECT_NOT_REGISTERED",
+    )
+    assert payload["raw"]["data"]["reason"] == "project_not_registered"
+    assert payload["raw"]["next_action"]["command"] is not None
+    present = _c_run(["memory", "bind-store", "--project", str(moved)], code="OK")
+    assert present["raw"]["data"]["store"] == "present"
+    assert store.db_path.parent.name == ".rush"
+    # A case-variant root is another path on a case-sensitive file system and the
+    # same directory under a different spelling on a case-insensitive one.
+    variant = moved.parent / moved.name.swapcase()
+    if variant.exists():
+        data = _c_run(_c_preview_args(variant, *sources), code="OK")["raw"]["data"]
+        assert data["project_id"] is None
+    else:
+        _c_exit2(_c_preview_args(variant, *sources), "does not exist")
+
+
+def _c_g4_symlink_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    loop_a, loop_b = tmp_path / "loop-a", tmp_path / "loop-b"
+    loop_a.symlink_to(loop_b)
+    loop_b.symlink_to(loop_a)
+    _c_exit2(_c_preview_args(loop_a, "--source", "s"), "does not exist")
+    _c_exit2(["memory", "bind-store", "--project", str(loop_a)], "does not exist")
+
+
+def _c_g4_owner_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    src = ["--source", "src-a"]
+    # NUL and format characters are accepted by the writer; the command is withheld.
+    _c_refused_preview(root, "user:x\x00y", *src, "--owner", "user:x\x00y")
+    _c_refused_preview(root, "user:x\u202ey", *src, "--owner", "user:x\u202ey")
+    _c_refused_preview(root, "a\x00b", "--source", "a\x00b")
+    _c_refused_preview(root, "a\u200bb", "--source", "a\u200bb")
+    # A lone surrogate is E_INPUT for preview and approve alike.
+    for approve in ([], ["--approve", "--allow-cache-write"]):
+        payload = _c_run(
+            _c_preview_args(root, *src, "--owner", "user:x\ud800y", *approve),
+            code="E_INPUT",
+        )
+        assert payload["raw"]["data"]["reason"] == "owner_scope"
+        payload = _c_run(
+            _c_preview_args(root, "--source", "a\ud800", *approve), code="E_INPUT"
+        )
+        assert payload["raw"]["data"]["reason"] == "approved_sources"
+    # An approved NUL source is accepted by the writer (and stored).
+    payload = _c_run(
+        _c_grant_args(root, 0, "--source", "a\x00b"),
+        code="OK",
+    )
+    assert payload["raw"]["data"]["approved_sources"] == ["a\x00b"]
+
+
+def _c_g4_operation_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    src = ["--source", "s"]
+    for bad in ("nope", "", "a\x00b", "a\ud800", "a\u202eb", "ASK"):
+        _c_exit2(_c_preview_args(root, *src, "--operation", bad), "--operation")
+    for bad in ("abc", "", "a\x00b", "1\ud800", "1\u202e", "0x10"):
+        _c_exit2(_c_preview_args(root, *src, "--expires-at", bad), "--expires-at")
+    payload = _c_run(
+        _c_preview_args(root, *src, "--expires-at", "2000000000"), code="OK"
+    )
+    assert payload["raw"]["data"]["expires_at"] == 2000000000.0
+    argv = _c_grant_argv(
+        root, CONSENT_DEFAULT_OPS, ["s"], expires=2000000000.0, revision=0
+    )
+    assert payload["raw"]["data"]["approve_command"] == _c_render(argv)
+
+
+def _c_g4_revision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    huge = "1" + "0" * 400
+    src = ["--source", "s"]
+    for bad in (
+        "abc",
+        "true",
+        "-1",
+        "1.5",
+        "nan",
+        "inf",
+        "",
+        "1\x00",
+        "1\ud800",
+        "1\u202e",
+    ):
+        _c_exit2(
+            _c_preview_args(root, *src, revision=bad), "--expected-policy-revision"
+        )
+        _c_exit2(
+            ["memory", "revoke", "--grant-id", "g", "--expected-policy-revision", bad],
+            "--expected-policy-revision",
+        )
+    # 10**400 is a valid non-negative integer: preview reports it, a changed grant
+    # fails the CAS, an identical grant and a revoked retry stay idempotent.
+    payload = _c_run(_c_preview_args(root, *src, revision=huge), code="OK")
+    assert payload["raw"]["data"]["expected_policy_revision"] == 10**400
+    sealed = _c_policy_bytes()
+    _c_run(_c_grant_args(root, 10**400, *src), code="E_VERSION")
+    assert _c_policy_bytes() == sealed
+    granted = _c_run(_c_grant_args(root, 0, *src), code="OK")["raw"]["data"]
+    sealed = _c_policy_bytes()
+    again = _c_run(_c_grant_args(root, 10**400, *src), code="OK")["raw"]["data"]
+    assert again == granted and _c_policy_bytes() == sealed
+    _c_run(_c_grant_args(root, 10**400, "--source", "other-source"), code="E_VERSION")
+    revoke = [
+        "memory",
+        "revoke",
+        "--grant-id",
+        granted["grant_id"],
+        "--expected-policy-revision",
+        huge,
+        "--approve",
+        "--allow-cache-write",
+    ]
+    _c_run(revoke, code="E_VERSION")
+    assert _c_policy_bytes() == sealed
+    _c_run(
+        [*revoke[:5], "1", *revoke[6:]],
+        code="OK",
+    )
+    revoked = _c_policy_bytes()
+    payload = _c_run(revoke, code="OK")
+    assert payload["raw"]["data"]["revoked"] is True
+    assert _c_policy_bytes() == revoked
+
+
+def _c_g4_grant_id_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    for bad in ("a\x00b", "a\ud800", "a\u202eb", "not-a-uuid", " "):
+        for approve in ([], ["--approve", "--allow-cache-write"]):
+            payload = _c_run(
+                [
+                    "memory",
+                    "revoke",
+                    "--grant-id",
+                    bad,
+                    "--expected-policy-revision",
+                    "0",
+                    *approve,
+                ],
+                code="E_GRANT_NOT_FOUND",
+            )
+            assert payload["raw"]["data"]["reason"] == bad
+    db = _c_unbound_stated(root, "planted", "planted-source")
+    sealed = _c_sha(db)
+    for bad in ("abc", "0" * 64, "a\x00b", "a\ud800", "a\u202eb", "0" * 4096):
+        payload = _c_run(
+            _c_bind_args(
+                root, "--approve", "--expected-digest", bad, "--allow-cache-write"
+            ),
+            code="E_VERSION",
+        )
+        assert payload["raw"]["data"]["reason"] == "store_changed"
+        assert _c_sha(db) == sealed
+
+
+def _c_g4_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import rush.memory.authorization as auth
+    from rush.memory.store import OwnerScope
+
+    root = _c_project(tmp_path)
+    good: dict[str, Any] = {"project_root": root, "operations": ["ask"]}
+    command = auth.memory_grant_command(**good)
+    assert isinstance(command, str) and "--operation ask" in command
+    foreign = object.__new__(OwnerScope)
+    object.__setattr__(foreign, "kind", [])
+    object.__setattr__(foreign, "id", "x")
+    odd_id = object.__new__(OwnerScope)
+    object.__setattr__(odd_id, "kind", "user")
+    object.__setattr__(odd_id, "id", "x\ud800y")
+    wrong_types: list[dict[str, Any]] = [
+        {"operations": "ask"},
+        {"operations": [1]},
+        {"operations": [True]},
+        {"operations": ["bogus"]},
+        {"operations": b"ask"},
+        {"operations": None},
+        {"owner_scope": "user:alice"},
+        {"owner_scope": {"kind": "user", "id": "alice"}},
+        {"owner_scope": foreign},
+        {"owner_scope": odd_id},
+        {"requested_sources": "s"},
+        {"requested_sources": [1]},
+        {"requested_sources": [None]},
+    ]
+    wrong_roots: list[dict[str, Any]] = [
+        {"project_root": 5},
+        {"project_root": None},
+        {"project_root": "a\x00b"},
+    ]
+    for override in wrong_types:
+        with pytest.raises(ValueError):
+            auth.memory_grant_command(**{**good, **override})
+    # An unsafe element: ValueError carries it as args[0].
+    for owner_id, element in (
+        ("x\ny", "user:x\ny"),
+        ("x\x00y", "user:x\x00y"),
+        ("x\u202ey", "user:x\u202ey"),
+        ("x\x1b[2Kcalc", "user:x\x1b[2Kcalc"),
+    ):
+        with pytest.raises(ValueError) as info:
+            auth.memory_grant_command(**good, owner_scope=OwnerScope("user", owner_id))
+        assert info.value.args[0] == element
+    with pytest.raises(ValueError) as info:
+        auth.memory_grant_command(**good, requested_sources=["fine", "a\x00b"])
+    assert info.value.args[0] == "a\x00b"
+    # `memory_next_action` never raises: bad input is a null command.
+    for override in wrong_types:
+        nxt = auth.memory_next_action(reason="no_grant", **{**good, **override})
+        assert set(nxt) == {"text", "command"}
+        assert nxt["command"] is None, override
+        assert isinstance(nxt["text"], str) and nxt["text"]
+    unsafe = auth.memory_next_action(
+        reason="owner_not_granted",
+        **good,
+        owner_scope=OwnerScope("user", "x\x00y"),
+    )
+    assert unsafe["command"] is None and repr("user:x\x00y") in cast(
+        "str", unsafe["text"]
+    )
+    unsafe = auth.memory_next_action(
+        reason="owner_not_granted", **good, owner_scope=odd_id
+    )
+    assert unsafe["command"] is None and repr("user:x\ud800y") in cast(
+        "str", unsafe["text"]
+    )
+    for override in wrong_roots:
+        nxt = auth.memory_next_action(reason="no_grant", **{**good, **override})
+        assert nxt["command"] is None, override
+    # A non-path data_root: the policy loads as unavailable → no command.
+    nxt = auth.memory_next_action(reason="no_grant", **good, data_root=5)  # type: ignore[arg-type]  # a non-path data_root is the deliberately wrong type
+    assert nxt["command"] is None
+    nxt = auth.memory_next_action(reason="no_grant", **good, data_root="a\x00b")  # type: ignore[arg-type]  # a str data_root is the deliberately wrong type
+    assert nxt["command"] is None
+
+
+def _c_g4_data_root_loop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    data_root = _c_data_root()
+    shutil.rmtree(data_root)
+    data_root.symlink_to(data_root)  # a self-referential link: ELOOP on every use
+    loaded = _c_policy()
+    assert loaded["state"] == "unavailable"
+    for extra in ([], ["--approve", "--allow-cache-write"]):
+        payload = _c_run(
+            _c_preview_args(root, "--source", "s", *extra), code="E_POLICY_INVALID"
+        )
+        assert payload["raw"]["data"]["reason"] == loaded["reason"]
+    payload = _c_run(
+        ["memory", "revoke", "--grant-id", "g", "--expected-policy-revision", "0"],
+        code="E_POLICY_INVALID",
+    )
+    assert payload["raw"]["data"]["reason"] == loaded["reason"]
+
+
+def _c_g4_data_root_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _c_project(tmp_path)
+    data_root = _c_data_root()
+    shutil.rmtree(data_root)
+    data_root.write_text("not a directory", encoding="utf-8")
+    loaded = _c_policy()
+    assert loaded["state"] in ("invalid", "unavailable")
+    # The previews read the policy: the loader's own reason.
+    payload = _c_run(_c_preview_args(root, "--source", "s"), code="E_POLICY_INVALID")
+    assert payload["raw"]["data"]["reason"] == loaded["reason"]
+    payload = _c_run(
+        ["memory", "revoke", "--grant-id", "g", "--expected-policy-revision", "0"],
+        code="E_POLICY_INVALID",
+    )
+    assert payload["raw"]["data"]["reason"] == loaded["reason"]
+    # The grant writer reaches the project registry first: it cannot be read.
+    payload = _c_run(
+        _c_preview_args(root, "--source", "s", "--approve", "--allow-cache-write"),
+        code="E_PROJECT_NOT_REGISTERED",
+    )
+    assert payload["raw"]["data"]["reason"] == "project_registry_invalid"
+    assert "next_action" not in payload["raw"]
+    assert data_root.read_bytes() == b"not a directory"
+
+
+def _c_g4_inventory_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from rush.memory.store import TypedArtifactStore, readonly_view_reason
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("k1", "src-a", None)])
+    before = _c_state(root)
+
+    def broken(self: Any) -> Any:
+        raise sqlite3.DatabaseError("database disk image is malformed")
+
+    with monkeypatch.context() as failing:
+        failing.setattr(TypedArtifactStore, "consent_inventory", broken, raising=False)
+        payload = _c_run(
+            _c_preview_args(root, "--source", "src-a"), code="E_STORE_CORRUPT"
+        )
+    assert payload["raw"]["data"] == {
+        "reason": "store_corrupt",
+        "message": readonly_view_reason("corrupt"),
+    }
+    assert _c_state(root) == before
+    # A file that is not a database at all: corrupt, never a traceback.
+    garbage = _c_project(tmp_path, "garbage")
+    (garbage / ".rush").mkdir(exist_ok=True)
+    (garbage / ".rush" / "memory.db").write_bytes(b"this is not a sqlite database" * 20)
+    sealed = _c_state(garbage)
+    payload = _c_run(
+        _c_preview_args(garbage, "--source", "src-a"), code="E_STORE_CORRUPT"
+    )
+    assert payload["raw"]["data"]["reason"] == "store_corrupt"
+    assert _c_state(garbage) == sealed
+
+
+_G4_GROUPS = {
+    "project": _c_g4_project,
+    "owner_source": _c_g4_owner_source,
+    "operation_expiry": _c_g4_operation_expiry,
+    "revision": _c_g4_revision,
+    "grant_id_digest": _c_g4_grant_id_digest,
+    "helpers": _c_g4_helpers,
+    "data_root_file": _c_g4_data_root_file,
+    "inventory_error": _c_g4_inventory_error,
+}
+
+
+@pytest.mark.parametrize(
+    "group",
+    [
+        *(pytest.param(name, id=name) for name in sorted(_G4_GROUPS)),
+        pytest.param("symlink_loop", id="symlink_loop", marks=pytest.mark.posix_only),
+        pytest.param(
+            "data_root_loop", id="data_root_loop", marks=pytest.mark.posix_only
+        ),
+    ],
+)
+def test_consent_trust_boundary_inputs(
+    group: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G4: every option row of the consent commands and the two command helpers;
+    wrong type, bool-as-int, 10**400, NaN/inf, NUL, lone surrogate, Cc/Cf, symlink
+    loop, missing path, non-path data_root, unhashable owner kind, moved and
+    case-variant roots. Only declared codes and Click usage errors come back."""
+    runners = {
+        **_G4_GROUPS,
+        "symlink_loop": _c_g4_symlink_loop,
+        "data_root_loop": _c_g4_data_root_loop,
+    }
+    runners[group](tmp_path, monkeypatch)
+
+
+def test_consent_grant_approve_first_effect_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G3: the policy lock, then the CAS check, then the `.gitignore` and the pending
+    D1 marker, then the policy commit; the final marker appears only after the commit."""
+    import rush.memory.authorization as auth
+
+    root = _c_project(tmp_path)
+    rush_dir = root / ".rush"
+    policy = auth.policy_path(data_root=_c_data_root())
+    events: list[tuple[str, tuple[str, ...], bool]] = []
+
+    def mark(label: str) -> None:
+        names = (
+            tuple(sorted(p.name for p in rush_dir.iterdir()))
+            if rush_dir.exists()
+            else ()
+        )
+        events.append((label, names, policy.exists()))
+
+    real_lock, real_check, real_commit = (
+        auth.hold_policy_lock,
+        auth._check_version,
+        auth._commit,
+    )
+
+    @contextlib.contextmanager
+    def lock(**kwargs: Any) -> Iterator[None]:
+        mark("lock")
+        with real_lock(**kwargs):
+            yield
+
+    def check(*args: Any, **kwargs: Any) -> Any:
+        mark("version")
+        return real_check(*args, **kwargs)
+
+    def commit(*args: Any, **kwargs: Any) -> Any:
+        mark("commit")
+        return real_commit(*args, **kwargs)
+
+    with monkeypatch.context() as spied:
+        spied.setattr(auth, "hold_policy_lock", lock)
+        spied.setattr(auth, "_check_version", check)
+        spied.setattr(auth, "_commit", commit)
+        _c_run(_c_grant_args(root, 0, "--source", "s"), code="OK")
+    order = [label for label, _names, _exists in events]
+    assert order.index("lock") < order.index("version") < order.index("commit"), order
+    first = {label: (names, exists) for label, names, exists in reversed(events)}
+    lock_names, lock_policy = first["lock"]
+    assert not lock_policy and not [
+        n
+        for n in lock_names
+        if n.startswith("memory-policy.required") or n == ".gitignore"
+    ], first["lock"]
+    version_names, _ = first["version"]
+    assert not [
+        n
+        for n in version_names
+        if n.startswith("memory-policy.required") or n == ".gitignore"
+    ], first["version"]
+    commit_names, commit_policy = first["commit"]
+    assert ".gitignore" in commit_names and not commit_policy
+    assert [n for n in commit_names if n.startswith("memory-policy.required.pending-")]
+    assert "memory-policy.required" not in commit_names
+    assert (rush_dir / "memory-policy.required").exists()
+    assert not [p for p in rush_dir.iterdir() if ".pending-" in p.name]
+
+
+def test_consent_bind_store_approve_resolves_access_before_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G3: bind-store approve resolves its D2 access (a read) first and takes the
+    policy lock only after it; a denied access never reaches the lock."""
+    import rush.memory.authorization as auth
+    from rush.memory.retrieval import MemoryAccess
+    from rush.memory.store import TypedArtifactStore, legacy_owner_scope
+
+    data_root = _c_data_root()
+    root = _c_project(tmp_path)
+    db = _c_unbound_stated(root, "planted", "planted-source")
+    digest = TypedArtifactStore.bind_store(root, approve=False)["binding_digest"]
+    events: list[str] = []
+    real_resolve = MemoryAccess.resolve_with_reason
+    real_lock = auth.hold_policy_lock
+
+    def resolve(cls: Any, *args: Any, **kwargs: Any) -> Any:
+        events.append("resolve")
+        return real_resolve(*args, **kwargs)
+
+    @contextlib.contextmanager
+    def lock(**kwargs: Any) -> Iterator[None]:
+        events.append("lock")
+        with real_lock(**kwargs):
+            yield
+
+    approve = _c_bind_args(
+        root, "--approve", "--expected-digest", digest, "--allow-cache-write"
+    )
+    _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("planted-source",),
+        ops=("list",),
+        expected=0,
+    )
+    before = _c_sha(db)
+    with monkeypatch.context() as spied:
+        spied.setattr(MemoryAccess, "resolve_with_reason", classmethod(resolve))
+        spied.setattr(auth, "hold_policy_lock", lock)
+        denied = _c_run(approve, code="E_PERMISSION")
+    assert denied["raw"]["data"]["reason"] == "operation_not_granted"
+    assert events == ["resolve"], events
+    assert _c_sha(db) == before
+
+    _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("planted-source",),
+        ops=("list", "write"),
+        expected=int(_c_policy()["policy_revision"]),
+    )
+    events.clear()
+    with monkeypatch.context() as spied:
+        spied.setattr(MemoryAccess, "resolve_with_reason", classmethod(resolve))
+        spied.setattr(auth, "hold_policy_lock", lock)
+        _c_run(approve, code="OK")
+    assert events[:2] == ["resolve", "lock"], events
+    assert _c_binding(root) == "bound"
+
+
+_C_PRIMARY_FAILURE = "primary-inventory-failure-7f3a"
+_C_CLEANUP_FAILURE = "cleanup-close-failure-9c1d"
+
+
+def _c_spy_views(
+    monkeypatch: pytest.MonkeyPatch, *, close_error: str | None
+) -> list[dict[str, Any]]:
+    """Record every read-only view the preview acquires. Each `close()` really closes
+    the view, counts itself, then raises `close_error` (a DatabaseError) when given."""
+    from rush.memory.store import TypedArtifactStore
+
+    real = TypedArtifactStore.open_readonly_view
+    acquired: list[dict[str, Any]] = []
+
+    def spy(cls: Any, project_root: Path) -> Any:
+        view, state = real(project_root)
+        if view is not None:
+            record: dict[str, Any] = {"root": Path(project_root).resolve(), "closed": 0}
+            real_close = view.close
+
+            def close() -> None:
+                record["closed"] += 1
+                real_close()
+                if close_error is not None:
+                    raise sqlite3.DatabaseError(close_error)
+
+            monkeypatch.setattr(view, "close", close)
+            acquired.append(record)
+        return view, state
+
+    monkeypatch.setattr(TypedArtifactStore, "open_readonly_view", classmethod(spy))
+    return acquired
+
+
+@pytest.mark.parametrize(
+    ("failures", "overlay"),
+    [
+        pytest.param("inventory", False, id="inventory-project"),
+        pytest.param("inventory", True, id="inventory-overlay"),
+        pytest.param("close", False, id="close-project"),
+        pytest.param("close", True, id="close-overlay"),
+        pytest.param("both", False, id="both-project"),
+        pytest.param("both", True, id="both-overlay"),
+    ],
+)
+def test_consent_preview_cleanup_preserves_primary_error(
+    failures: str, overlay: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G3 (cleanup masks primary failure): a DatabaseError from the inventory, from
+    closing a view, or from both, is `E_STORE_CORRUPT` / `store_corrupt`, never a
+    traceback; the two failures are both named when both happen; every acquired view
+    is closed and nothing is written."""
+    from rush.memory.store import TypedArtifactStore, readonly_view_reason
+
+    root = _c_project(tmp_path)
+    _c_write_rows(root, [("k1", "src-a", None)])
+    overlay_root = _c_data_root() / "user"
+    extra: list[str] = ["--source", "src-a"]
+    if overlay:
+        _c_write_rows(overlay_root, [("o1", OVERLAY_SOURCE, None)])
+        extra = ["--overlay", "--source", OVERLAY_SOURCE]
+    before = _c_state(root)
+    acquired = _c_spy_views(
+        monkeypatch,
+        close_error=_C_CLEANUP_FAILURE if failures in ("close", "both") else None,
+    )
+
+    def broken(self: Any) -> Any:
+        raise sqlite3.DatabaseError(_C_PRIMARY_FAILURE)
+
+    with monkeypatch.context() as failing:
+        if failures in ("inventory", "both"):
+            failing.setattr(
+                TypedArtifactStore, "consent_inventory", broken, raising=False
+            )
+        payload = _c_run(_c_preview_args(root, *extra), code="E_STORE_CORRUPT")
+
+    data = payload["raw"]["data"]
+    assert data["reason"] == "store_corrupt", data
+    serialized = json.dumps(data)
+    if failures == "inventory":
+        assert data == {
+            "reason": "store_corrupt",
+            "message": readonly_view_reason("corrupt"),
+        }
+    if failures == "both":
+        assert readonly_view_reason("corrupt") in serialized, data
+        assert _C_PRIMARY_FAILURE in serialized, data
+        assert _C_CLEANUP_FAILURE in serialized, data
+    assert acquired, "the preview acquired no read-only view"
+    assert all(record["closed"] >= 1 for record in acquired), acquired
+    if overlay:
+        assert {record["root"] for record in acquired} >= {
+            root.resolve(),
+            overlay_root.resolve(),
+        }, acquired
+    assert _c_state(root) == before
+
+
+def _c_oracle_mutations(
+    root: Path, store: Any, home: Path, data_root: Path
+) -> dict[str, tuple[Any, Any]]:
+    """One `(mutate, restore)` pair per component the zero-write oracle must see."""
+    import rush.memory.authorization as auth
+
+    policy = auth.policy_path(data_root=data_root)
+    db = Path(store.db_path)
+    key = data_root / "user" / ".rush" / "memory_store.key"
+    marker = root / ".rush" / "memory-policy.required"
+    config = home / ".codex" / "config.toml"
+    ledger = home / "agent-ledger.json"
+    index = root / ".git" / "index"
+    link = root / "link"
+    added = root / ".rush" / "extra-dir"
+
+    def rewrite(path: Path) -> tuple[Any, Any]:
+        original = path.read_bytes()
+        return (
+            lambda: path.write_bytes(original + b" changed"),
+            lambda: path.write_bytes(original),
+        )
+
+    def retarget() -> None:
+        link.unlink()
+        link.symlink_to("target-b")
+
+    def restore_link() -> None:
+        link.unlink()
+        link.symlink_to("target-a")
+
+    index_bytes = index.read_bytes()
+    return {
+        "policy": rewrite(policy),
+        "db": rewrite(db),
+        "key": rewrite(key),
+        "marker": rewrite(marker),
+        "directory": (added.mkdir, added.rmdir),
+        "symlink": (retarget, restore_link),
+        "host_config": rewrite(config),
+        "ledger": rewrite(ledger),
+        "git_index": (
+            lambda: _git("update-index", "--chmod=+x", "tracked.txt", cwd=root),
+            lambda: index.write_bytes(index_bytes),
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    "component",
+    [
+        pytest.param("policy", id="policy"),
+        pytest.param("db", id="db"),
+        pytest.param("key", id="key"),
+        pytest.param("marker", id="marker"),
+        pytest.param("directory", id="directory"),
+        pytest.param("symlink", id="symlink", marks=pytest.mark.posix_only),
+        pytest.param("host_config", id="host_config"),
+        pytest.param("ledger", id="ledger"),
+        pytest.param("git_index", id="git_index"),
+    ],
+)
+def test_consent_preservation_oracle_self_check(
+    component: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G3 (preservation oracle drops evidence): mutating any one captured component
+    (policy bytes, DB bytes, key, marker, directory membership, symlink target, host
+    config, ledger, `.git/index` bytes) changes the `_c_state` snapshot, and restoring
+    it brings the snapshot back; then a real consent preview over the same fixture
+    leaves that snapshot identical."""
+    import rush.memory.authorization as auth
+
+    home = Path(os.environ["HOME"])
+    data_root = _c_data_root()
+    root = _c_project(tmp_path)
+    store = _c_write_rows(root, [("k1", "src-a", None)])
+    _grant(
+        auth,
+        root,
+        legacy_owner_scope(root),
+        data_root,
+        sources=("src-a",),
+        ops=("list",),
+        expected=0,
+    )
+    key = data_root / "user" / ".rush" / "memory_store.key"
+    key.parent.mkdir(parents=True, exist_ok=True)
+    key.write_bytes(b"k" * 32)
+    marker = root / ".rush" / "memory-policy.required"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_bytes(b'{"mode": "required"}')
+    (home / ".codex").mkdir(parents=True, exist_ok=True)
+    (home / ".codex" / "config.toml").write_text("model = 'x'\n", encoding="utf-8")
+    (home / "agent-ledger.json").write_text("{}", encoding="utf-8")
+    if component == "symlink":
+        (root / "link").symlink_to("target-a")
+    (root / "tracked.txt").write_text("tracked\n", encoding="utf-8")
+    _git("init", cwd=root)
+    _git("add", "tracked.txt", cwd=root)
+    listed = subprocess.run(
+        ["git", "ls-files"], cwd=root, check=True, capture_output=True, text=True
+    )
+    assert listed.stdout.split() == ["tracked.txt"], listed
+
+    before = _c_state(root)
+    mutate, restore = _c_oracle_mutations(root, store, home, data_root)[component]
+    mutate()
+    assert _c_state(root) != before, component
+    restore()
+    assert _c_state(root) == before, component
+
+    _c_run(
+        _c_preview_args(
+            root, "--source", "src-a", revision=str(_c_policy()["policy_revision"])
+        ),
+        code="OK",
+    )
+    assert _c_state(root) == before

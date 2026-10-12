@@ -3,6 +3,12 @@
   "pairs": [
     {
       "module": "cli.py",
+      "function": "_memory_consent_preview",
+      "route": "memory grant preview",
+      "task": "73-T02/BOOTSTRAP-CONSENT"
+    },
+    {
+      "module": "cli.py",
       "function": "context_persona_cmd",
       "route": "cli_other_readers",
       "task": "72-T01"
@@ -12,6 +18,12 @@
       "function": "flight_recorder_cmd",
       "route": "cli_other_readers",
       "task": "72-T01"
+    },
+    {
+      "module": "cli.py",
+      "function": "memory_bind_store_cmd",
+      "route": "memory bind-store",
+      "task": "73-T02/BOOTSTRAP-CONSENT"
     },
     {
       "module": "continuity/context.py",

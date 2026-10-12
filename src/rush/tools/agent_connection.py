@@ -682,7 +682,8 @@ def _disconnect(
     home: Path | None,
 ) -> dict[str, Any]:
     """Disconnect plus `changed` (the components removed) or `unchanged` with
-    the reason, and `readback` = the host entry re-read after removal."""
+    the reason, `readback` = the host entry re-read after removal, and `memory` =
+    the memory grants and bindings left in place (`_memory_listing`)."""
     result = disconnect_agent(
         agent_id, project_root=project_root, data_root=data_root, home=home
     ).to_dict()
@@ -694,7 +695,57 @@ def _disconnect(
         view["unchanged"] = f"{len(result['conflicts'])} conflict(s); nothing removed"
     else:
         view["unchanged"] = "nothing Rush-owned to remove"
+    view["memory"] = _memory_listing(agent_id, project_root, data_root)
     return {**result, **view}
+
+
+def _memory_listing(
+    agent_id: str, project_root: Path | None, data_root: Path | None
+) -> dict[str, list[dict[str, Any]]]:
+    """73-T02 item 6: read-only listing of this project's and worktree's active
+    grants (by `grant_id`) and the agent's non-revoked bindings (by `binding_id`).
+    Disconnect never revokes a grant or binding, so the user sees what remains.
+    A non-`ok` policy lists nothing; no project or an identity failure lists no
+    grants."""
+    from rush.memory import authorization
+
+    policy = authorization.load_policy_readonly(data_root=data_root)
+    if policy["state"] != "ok":
+        return {"grants": [], "bindings": []}
+    grants: list[dict[str, Any]] = []
+    if project_root is not None:
+        # ponytail: `project_identity` is CODEC's; looked up at call time (no
+        # import-time dependency), and its absence fails like any identity error.
+        identity = getattr(authorization, "project_identity", None)
+        try:
+            if identity is None:
+                raise LookupError("project_identity unavailable")
+            ident = identity(project_root, data_root=data_root)
+        except Exception:  # noqa: BLE001 - A6.4: any identity failure lists no grants
+            ident = None
+        if ident is not None and ident["project_id"] is not None:
+            now = authorization._now()
+            grants = sorted(
+                (
+                    g
+                    for g in policy["grants"].values()
+                    if not g["revoked"]
+                    and (g["expires_at"] is None or now < g["expires_at"])
+                    and g["project_id"] == ident["project_id"]
+                    and ident["worktree_id"] is not None
+                    and g["worktree_id"] == ident["worktree_id"]
+                ),
+                key=lambda g: g["grant_id"],
+            )
+    bindings = sorted(
+        (
+            b
+            for b in policy["bindings"].values()
+            if not b["revoked"] and b["host_id"] == agent_id
+        ),
+        key=lambda b: b["binding_id"],
+    )
+    return {"grants": grants, "bindings": bindings}
 
 
 __all__ = ["AgentConnectionTool"]

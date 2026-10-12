@@ -289,6 +289,28 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory capsule mapping revoke --help",
             "admin",
         ),
+        # 73-T02/BOOTSTRAP-CONSENT: the CLI-only consent writers (no MCP route).
+        "memory grant": (
+            None,
+            "rush.memory.authorization:grant_memory_scope",
+            "stateful-mutation",
+            "rush memory grant --help",
+            "admin",
+        ),
+        "memory revoke": (
+            None,
+            "rush.memory.authorization:revoke_memory_scope",
+            "stateful-mutation",
+            "rush memory revoke --help",
+            "admin",
+        ),
+        "memory bind-store": (
+            None,
+            "rush.memory.store:TypedArtifactStore",
+            "stateful-mutation",
+            "rush memory bind-store --help",
+            "admin",
+        ),
         # MC14 (Phase 63 §9.1): the 13 new memory operations. None of them claim the
         # shared "rush_memory" MCP tool name (already claimed by "memory ask" above --
         # test_operation_ids_and_transport_names_are_unique requires mcp_tool uniqueness),
