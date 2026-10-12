@@ -16,7 +16,7 @@ import uuid
 import weakref
 from collections import OrderedDict
 from collections.abc import Callable
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
@@ -48,6 +48,7 @@ from rush.dashboard.static_assets import (
     load_dashboard_asset,
 )
 from rush.dashboard.theme import MOTION, THEME
+from rush.delivery import compact
 from rush.memory.authorization import source_granted
 from rush.memory.maintenance import MaintenanceTask
 from rush.memory.retrieval import (
@@ -358,6 +359,7 @@ _ARGUMENT_ALLOWLIST: dict[str, frozenset[str]] = {
             "max_tokens",
             "max_bytes",
             "encoding",
+            "representation",
         }
     ),
     "memory_propose": frozenset(
@@ -3072,7 +3074,7 @@ def _dispatch_memory_expand(
             "(fail-closed, no default cross-session access)",
         )
     request: dict[str, Any] = {"id": artifact_id, "version": version}
-    for key in ("offset", "max_tokens", "max_bytes", "encoding"):
+    for key in ("offset", "max_tokens", "max_bytes", "encoding", "representation"):
         if key in arguments:
             request[key] = arguments[key]
     root = Path(resolve_project(project_id)["root"])
@@ -5897,17 +5899,36 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                             retryable=True,
                             redact=self._redact_secrets(),
                         )
-                    try:
-                        status_code, data = _dispatch_scan_action(
-                            ctx,
-                            project_id,
-                            operation,
-                            arguments,
-                            grants,
-                            operation_id=operation_id,
-                            expected=expected,
-                            effect_ids=effect_ids,
+                    redact = self._redact_secrets()
+                    # 72-T02 D35: a memory read is measured on the exact bytes this
+                    # handler sends (`_success_body`, envelope included).
+                    frame_scope: Any = nullcontext()
+                    if operation in ("memory_query", "memory_expand"):
+                        frame_scope = compact.memory_frame(
+                            compact.FrameContext(
+                                "dashboard",
+                                request_id,
+                                emit=lambda value: _success_body(
+                                    request_id,
+                                    project_id,
+                                    record.sequence,
+                                    dict(value),
+                                    redact=redact,
+                                ),
+                            )
                         )
+                    try:
+                        with frame_scope:
+                            status_code, data = _dispatch_scan_action(
+                                ctx,
+                                project_id,
+                                operation,
+                                arguments,
+                                grants,
+                                operation_id=operation_id,
+                                expected=expected,
+                                effect_ids=effect_ids,
+                            )
                     except _ActionDenied as exc:
                         return exc.status, _error_body(
                             request_id,
@@ -5934,7 +5955,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     project_id,
                     record.sequence,
                     data,
-                    redact=self._redact_secrets(),
+                    redact=redact,
                 )
 
             mutating = _classify_mutating(operation, arguments)

@@ -241,7 +241,9 @@ def test_unicode_expansion_reconstructs_exact_original(tmp_path: Path) -> None:
             version=1,
             session_allowlist=["allowed"],
             offset=offset,
-            max_bytes=100,
+            # above the 117-byte content-free base64 admission minimum (72-T02
+            # brief B1), so every page carries content and the text spans pages
+            max_bytes=400,
         )
         assert page["code"] == "OK"
         chunks.append(base64.b64decode(page["content_base64"]))
@@ -338,9 +340,24 @@ def test_cursor_rejects_scope_or_generation_change(tmp_path: Path) -> None:
         limit=10_000,
         max_tokens=1_000_000,
         max_bytes=1_000_000,
-        cursor=cursor[:-1] + ("0" if cursor[-1] != "0" else "1"),
+        cursor=cursor[:-1] + ("A" if cursor[-1] != "A" else "E"),
     )
     assert tampered["code"] == "E_RESTART"
+
+    # D36: "B" is a non-canonical final base64url character for a 20-byte body
+    # (only A, E, I, M, ... decode without spare bits), so it is malformed syntax.
+    non_canonical = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="scanme",
+        session_allowlist=["allowed"],
+        limit=10_000,
+        max_tokens=1_000_000,
+        max_bytes=1_000_000,
+        cursor=cursor[:-1] + "B",
+    )
+    assert non_canonical["code"] == "E_INPUT"
+    assert non_canonical["items"] == []
 
     _write(store, "generation-bump", "scanme extra", "allowed")
     generation_changed = recall_page(

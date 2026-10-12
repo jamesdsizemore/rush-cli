@@ -21,18 +21,22 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Callable
-from contextlib import closing
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 from pydantic import WithJsonSchema
 
 from rush.io.physical_paths import PhysicalRoot
 from rush.safety.redactor import sanitize_value
 from rush.token_economy.ccr_store import CCRStore
+
+if TYPE_CHECKING:
+    from mcp.types import CallToolResult
 
 DEFAULT_LIMIT = 50
 DEFAULT_MAX_BYTES = 32_768
@@ -197,25 +201,111 @@ def cli_size(value: dict[str, Any]) -> int:
     return len(json.dumps(value, indent=2, default=str).encode("utf-8")) + 1
 
 
+TransportName = Literal["mcp_stdio", "cli_json", "dashboard", "in_process"]
+
+
+@dataclass(frozen=True)
+class FrameContext:
+    """72-T02 D35: the transport a memory response leaves through. `emit`
+    returns the exact bytes the transport writes for a result; `context` is
+    the call's InvocationContext (its default scope is part of the frame)."""
+
+    transport: TransportName
+    request_id: int | str | None
+    context: Any = None
+    emit: Callable[[Mapping[str, Any]], bytes] | None = None
+
+
+MEMORY_FRAME: ContextVar[FrameContext | None] = ContextVar(
+    "rush_memory_frame", default=None
+)
+
+
+@contextmanager
+def memory_frame(frame: FrameContext) -> Iterator[None]:
+    """Publish `frame` to `MemoryTool` for the duration of one memory call."""
+    token = MEMORY_FRAME.set(frame)
+    try:
+        yield
+    finally:
+        MEMORY_FRAME.reset(token)
+
+
+def current_request_id() -> int | str | None:
+    """The JSON-RPC id of the MCP request being served, else None."""
+    from mcp.server.lowlevel.server import request_ctx
+
+    try:
+        return request_ctx.get().request_id
+    except LookupError:
+        return None
+
+
+def _call_tool_result(converted: Any) -> CallToolResult:
+    """The CallToolResult `rush.mcp` builds from a converted tool result
+    (mirrors `mcp.py` call_tool)."""
+    from mcp.types import CallToolResult, TextContent
+
+    if isinstance(converted, CallToolResult):
+        return converted
+    if isinstance(converted, tuple):
+        content, structured = converted
+        return CallToolResult(
+            content=list(content), structuredContent=structured, isError=False
+        )
+    if isinstance(converted, dict):
+        return CallToolResult(
+            content=[TextContent(type="text", text=json.dumps(converted, indent=2))],
+            structuredContent=converted,
+            isError=False,
+        )
+    return CallToolResult(content=list(converted), isError=False)
+
+
+def mcp_frame_bytes(result: CallToolResult, request_id: int | str) -> bytes:
+    """The exact stdio line the MCP server writes for `result`."""
+    from mcp.types import JSONRPCResponse
+
+    response = JSONRPCResponse(
+        jsonrpc="2.0",
+        id=request_id,
+        result=result.model_dump(mode="json", by_alias=True, exclude_none=True),
+    )
+    line = response.model_dump_json(by_alias=True, exclude_none=True) + os.linesep
+    return line.encode("utf-8")
+
+
+def frame_bytes(frame: FrameContext, value: Mapping[str, Any]) -> bytes:
+    """The bytes `frame`'s transport emits for the memory result `value`."""
+    if frame.emit is not None:
+        return frame.emit(value)
+    if frame.transport == "in_process":
+        return canonical_json(dict(value))
+    if frame.transport == "cli_json":
+        clean = sanitize_value(dict(value)).value
+        return (json.dumps(clean, indent=2, default=str) + os.linesep).encode("utf-8")
+    raise ValueError(f"transport {frame.transport!r} requires emit")
+
+
 def mcp_size(convert: Callable[[Any], Any]) -> Serializer:
     """R16.6: the real MCP CallToolResult (text content and, for a tool with
-    an output schema, structuredContent) plus the JSON-RPC reserve."""
-    from mcp.types import CallToolResult
+    an output schema, structuredContent). Inside an MCP request it is the
+    exact JSON-RPC frame; without one, the body plus the JSON-RPC reserve."""
 
     def size(value: dict[str, Any]) -> int:
-        converted = convert(value)
-        content, structured = (
-            converted if isinstance(converted, tuple) else (converted, None)
-        )
-        envelope = CallToolResult(content=list(content), structuredContent=structured)
-        body = envelope.model_dump_json(by_alias=True, exclude_none=True)
-        return len(body.encode("utf-8")) + MCP_RESERVE_BYTES
+        result = _call_tool_result(convert(value))
+        rid = current_request_id()
+        if rid is None:
+            body = result.model_dump_json(by_alias=True, exclude_none=True)
+            return len(body.encode("utf-8")) + MCP_RESERVE_BYTES
+        return len(mcp_frame_bytes(result, rid))
 
     return size
 
 
 def retrieval_size(value: dict[str, Any]) -> int:
-    """Retrieval pages leave through either transport; budget the larger."""
+    """Retrieval pages leave through either transport; without an MCP
+    request budget the larger, inside one the exact JSON-RPC frame."""
     from mcp.types import CallToolResult, TextContent
 
     text = json.dumps(value, indent=2, default=str)
@@ -223,6 +313,9 @@ def retrieval_size(value: dict[str, Any]) -> int:
         content=[TextContent(type="text", text=text)],
         structuredContent={"result": value},
     )
+    rid = current_request_id()
+    if rid is not None:
+        return len(mcp_frame_bytes(envelope, rid))
     body = envelope.model_dump_json(by_alias=True, exclude_none=True)
     return max(cli_size(value), len(body.encode("utf-8")) + MCP_RESERVE_BYTES)
 
@@ -651,6 +744,12 @@ def deliver(
     returns `(logical_root, run)` or a ready error result."""
     try:
         limit, max_bytes = validate(options)
+        if tool_name == "memory" and options.compact:
+            raise ViewError(
+                "RESULT_VIEW_INVALID",
+                "memory pages use request.view='compact'; result_view='compact' "
+                "is refused for memory",
+            )
         if options.compact and options.no_cache:
             raise ViewError(
                 "RESULT_VIEW_CACHE_CONFLICT",
@@ -686,19 +785,26 @@ __all__ = [
     "DEFAULT_LIMIT",
     "DEFAULT_MAX_BYTES",
     "MCP_RESERVE_BYTES",
+    "MEMORY_FRAME",
+    "FrameContext",
     "LimitParam",
     "MaxBytesParam",
     "ResultViewParam",
+    "TransportName",
     "ViewError",
     "ViewOptions",
     "canonical_json",
     "ccr_path",
     "cli_size",
+    "current_request_id",
     "decode_cursor",
     "deliver",
     "error_payload",
+    "frame_bytes",
     "is_storage_object",
+    "mcp_frame_bytes",
     "mcp_size",
+    "memory_frame",
     "project_page",
     "purge_compact_results",
     "retrieval_size",

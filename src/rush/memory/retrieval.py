@@ -59,6 +59,7 @@ from rush.memory.store import (
     _inspect_text_for_trojan_chars,
     _row_to_artifact,
     _row_value,
+    _stored_text,
     binding_verifier,
     compute_content_signature,
     legacy_owner_scope,
@@ -678,7 +679,10 @@ class MemoryAccess:
         fresh, _reason = self._re_resolve()
         if fresh is None:
             return "denied"
-        return "ok" if fresh == self else "changed"
+        # 72-T02 R3: the policy revision is provenance only; a revision bump with
+        # every other resolved field unchanged (an unrelated grant) still holds.
+        same = dataclasses.replace(fresh, policy_revision=self.policy_revision)
+        return "ok" if same == self else "changed"
 
     def denial_reason(self) -> str:
         """Why a `denied` recheck denies (the fresh resolve reason)."""
@@ -1091,8 +1095,12 @@ def _lifecycle_reasons(row: sqlite3.Row, now: float) -> list[str]:
 
 
 def _parsed_content(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any] | None:
+    # 72-T02 D32: stored content is decoded first; non-UTF-8 bytes never parse.
+    text = _stored_text(row["content"])
+    if text is None:
+        return None
     try:
-        content = json.loads(row["content"])
+        content = json.loads(text)
     except (TypeError, ValueError, RecursionError):
         return None
     return content if isinstance(content, dict) else None
@@ -1120,10 +1128,8 @@ def _integrity(
     ):
         reasons.append("integrity_trojan_source")
     digest = _row_value(row, "payload_hash")
-    text = row["content"]
-    mismatched = digest is not None and (
-        not isinstance(text, str) or payload_digest(text) != digest
-    )
+    text = _stored_text(row["content"])
+    mismatched = digest is not None and (text is None or payload_digest(text) != digest)
     if mismatched:
         reasons.append("integrity_payload_mismatch")
         label = "mismatch"
@@ -1556,7 +1562,7 @@ def defended_recall(
 
 
 def _record_memory_event(
-    telemetry: TelemetryStore | None,
+    telemetry: TelemetryStore | Callable[[], TelemetryStore] | None,
     kind: str,
     tokens: int,
     *,
@@ -1585,6 +1591,12 @@ def _record_memory_event(
     `_UNSCOPED` default applies, rather than duplicating that sentinel in two places."""
     if telemetry is None or not request_id or not event_id:
         return
+    # 72-T02 R1: a factory is resolved only here, when an event is recorded.
+    recorder = (
+        telemetry()
+        if callable(telemetry) and not isinstance(telemetry, TelemetryStore)
+        else telemetry
+    )
     attribution = {
         key: value
         for key, value in (
@@ -1598,7 +1610,7 @@ def _record_memory_event(
     # 72-T01 §3.9: the event records the access it was read under, so policy-mode
     # telemetry readers can scope totals to an owner and its granted sources.
     owner = access.owner_scope if access is not None else None
-    telemetry.record_memory_event(
+    recorder.record_memory_event(
         kind,
         tokens,
         request_id=request_id,
@@ -1618,7 +1630,8 @@ def _encoder(encoding: str) -> tiktoken.Encoding:
 
 
 def _count_tokens(text: str, encoding: str) -> int:
-    return len(_encoder(encoding).encode(text))
+    # Stored text may spell a special token (`<|endoftext|>`): it is ordinary text here.
+    return len(_encoder(encoding).encode(text, disallowed_special=()))
 
 
 _CURSOR_PREFIX = "m2."
@@ -1632,21 +1645,20 @@ def _cursor_binding(
     project_id: str | None,
     worktree_id: str | None,
     owner: tuple[str, str] | None,
-    policy_revision: int | None,
     grant_id: str | None,
     subject: str,
     query: str,
     sources: Sequence[str],
 ) -> bytes:
     """72-T02: the digest a page token is bound to. Any change to the scope, the query or
-    the ranking makes every earlier token fail closed (`E_RESTART`)."""
+    the ranking makes every earlier token fail closed (`E_RESTART`). R3: the policy
+    revision is not bound (an unrelated grant between pages keeps a cursor valid)."""
     body = {
-        "v": 2,
+        "v": 3,
         "namespace": namespace,
         "project_id": project_id,
         "worktree_id": worktree_id,
         "owner": list(owner) if owner else None,
-        "policy_revision": policy_revision,
         "grant_id": grant_id,
         "subject": subject,
         "query": query,
@@ -1689,19 +1701,9 @@ def _decode_cursor(
 ) -> int | None:
     """The sealed scan offset, or `None` (restart required) for anything malformed,
     non-canonical, foreign or drifted. Never raises."""
-    if not cursor.startswith(_CURSOR_PREFIX):
+    if not _cursor_syntax_ok(cursor):
         return None
-    body = cursor[len(_CURSOR_PREFIX) :]
-    if len(body) != _CURSOR_BODY_CHARS:
-        return None
-    try:
-        raw = base64.urlsafe_b64decode(body + "=")
-    except ValueError:
-        return None
-    if len(raw) != 20 or (
-        base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != body
-    ):
-        return None  # rejects variants that change only the 2 unused bits
+    raw = base64.urlsafe_b64decode(cursor[len(_CURSOR_PREFIX) :] + "=")
     nonce, sealed, tag = raw[:4], raw[4:8], raw[8:]
     gen = generation.to_bytes(8, "big")
     expected = hmac.new(
@@ -1717,6 +1719,91 @@ def _decode_cursor(
     return int.from_bytes(
         bytes(a ^ b for a, b in zip(sealed, stream, strict=True)), "big"
     )
+
+
+def _cursor_syntax_ok(cursor: str) -> bool:
+    """72-T02 D36: the canonical `m2.` token shape (27 ASCII base64url characters of
+    20 bytes, unused bits zero). A token failing this is malformed input (`E_INPUT`),
+    never a restart."""
+    if not cursor.startswith(_CURSOR_PREFIX):
+        return False
+    body = cursor[len(_CURSOR_PREFIX) :]
+    if len(body) != _CURSOR_BODY_CHARS or not body.isascii():
+        return False
+    try:
+        raw = base64.urlsafe_b64decode(body + "=")
+    except ValueError:
+        return False
+    return (
+        len(raw) == 20
+        and base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") == body
+    )
+
+
+FrameBytes = Callable[[str, dict[str, Any]], bytes]
+"""72-T02 D35: `(code, data) -> bytes` -- the exact bytes the caller's transport writes
+for the memory envelope carrying `code` and `data`. Budgets (both caps) apply to them."""
+
+# Keys a refusal carries only when the framed response still fits both caps.
+_OPTIONAL_KEYS = (
+    "required",
+    "message",
+    "state",
+    "alternatives",
+    "field",
+    "reason",
+    "total_bytes",
+)
+
+
+def _frame_tokens(raw: bytes, encoding: str) -> int:
+    return len(_encoder(encoding).encode(raw.decode("utf-8"), disallowed_special=()))
+
+
+def _frame_size(
+    frame_bytes: FrameBytes, code: str, data: dict[str, Any], encoding: str
+) -> tuple[int, int]:
+    raw = frame_bytes(code, data)
+    return len(raw), _frame_tokens(raw, encoding)
+
+
+def _frame_fits(
+    frame_bytes: FrameBytes,
+    code: str,
+    data: dict[str, Any],
+    encoding: str,
+    max_bytes: int,
+    max_tokens: int,
+) -> bool:
+    """Whether the framed response fits both caps. Tiktoken encodings are byte-level
+    (tokens <= bytes), so a frame within `max_tokens` bytes is not tokenized."""
+    raw = frame_bytes(code, data)
+    if len(raw) > max_bytes:
+        return False
+    return len(raw) <= max_tokens or _frame_tokens(raw, encoding) <= max_tokens
+
+
+def _fit_optional(
+    page: dict[str, Any],
+    frame_bytes: FrameBytes | None,
+    encoding: str,
+    max_bytes: int,
+    max_tokens: int,
+) -> dict[str, Any]:
+    """A refusal `page` (with `code`) whose optional keys are dropped, in
+    `_OPTIONAL_KEYS` order, until its framed response fits both caps."""
+    if frame_bytes is None:
+        return page
+    code = page["code"]
+    data = {key: value for key, value in page.items() if key != "code"}
+    for key in _OPTIONAL_KEYS:
+        if _frame_fits(frame_bytes, code, data, encoding, max_bytes, max_tokens):
+            break
+        data.pop(key, None)
+    else:
+        # B16: the last-pruned frame is emitted even when nothing fits; measure it.
+        frame_bytes(code, data)
+    return {"code": code, **data}
 
 
 def _excerpt(content: dict[str, Any]) -> str:
@@ -1786,11 +1873,8 @@ def _candidate_to_item(
     """`None` marks a corrupt candidate (malformed/non-object `content`) to skip — never
     raises, so one bad row can't abort the whole page (MC02.1 "corrupt candidates do not
     starve page"). 72-T01: `freshness` is the shared decision's vocabulary."""
-    try:
-        content = json.loads(row["content"])
-    except (TypeError, ValueError, RecursionError):
-        return None
-    if not isinstance(content, dict):
+    content = _parsed_content(row)
+    if content is None:
         return None
     item: dict[str, Any] = {
         "id": row["id"],
@@ -1982,8 +2066,9 @@ def _page(
     encoding: str = DEFAULT_ENCODING,
     tokens: int = 0,
     bytes_: int = 0,
+    reason: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    page: dict[str, Any] = {
         "code": code,
         "items": items or [],
         "next_cursor": next_cursor,
@@ -1992,6 +2077,71 @@ def _page(
         "bytes": bytes_,
         "encoding": encoding,
     }
+    if reason is not None:
+        page["reason"] = reason
+    return page
+
+
+def _page_data(
+    items: list[dict[str, Any]],
+    next_cursor: str | None,
+    complete: bool,
+    encoding: str,
+    size: tuple[int, int],
+) -> dict[str, Any]:
+    """An OK page's envelope `data` (every `_page` key except `code`)."""
+    return {
+        "items": items,
+        "next_cursor": next_cursor,
+        "complete": complete,
+        "tokens": size[1],
+        "bytes": size[0],
+        "encoding": encoding,
+    }
+
+
+def _recheck_page(failure: tuple[str, str], encoding: str) -> dict[str, Any]:
+    """72-T02 D36: a failed recheck -- `E_PERMISSION` with the resolver's reason, or
+    `E_RESTART` for an authorized access that moved."""
+    code, why = failure
+    return _page(
+        code, encoding=encoding, reason=why if code == "E_PERMISSION" else None
+    )
+
+
+def _records(telemetry: Any, page: dict[str, Any]) -> bool:
+    """72-T02 R1: a route's telemetry factory records only an OK page with at least
+    one item; a caller-built `TelemetryStore` records every OK page (HEAD)."""
+    return isinstance(telemetry, TelemetryStore) or bool(page["items"])
+
+
+def _emit_current(
+    store: TypedArtifactStore,
+    generation: int,
+    items: list[dict[str, Any]],
+    access: MemoryAccess,
+    now: float | None,
+) -> bool:
+    """72-T02 R13/D39: whether a page may still be emitted, decided on one fresh
+    reader (never the request's own, possibly immutable, view) inside one read
+    transaction: the store generation is unchanged and every emitted id is still
+    current at its emitted version and usable under a fresh visibility decision
+    (expiry, source, owner). A reader that cannot open is a restart."""
+    with store.fresh_reader() as conn:
+        if conn is None or store.current_generation(conn) != generation:
+            return False
+        moment = time.time() if now is None else now
+        memo = SourceValidationMemo()
+        for item in items:
+            row = store.get_current_row(item["id"], conn=conn)
+            if row is None or row["artifact_version"] != item["version"]:
+                return False
+            decision = evaluate_artifact_visibility(
+                store, row, access=access, now=moment, memo=memo
+            )
+            if not decision.usable_as_current:
+                return False
+    return True
 
 
 def _denied_page(reason: str, encoding: str) -> dict[str, Any]:
@@ -2005,12 +2155,48 @@ def _within(size: tuple[int, int], max_bytes: int, max_tokens: int) -> bool:
     return size[0] <= max_bytes and size[1] <= max_tokens
 
 
+def _recall_floor(encoding: str) -> list[tuple[str, dict[str, Any]]]:
+    """72-T02 C05: every post-admission compact response's base data, optional keys
+    removed: the empty complete page, the self-measured `E_BUDGET` page and each
+    refusal page (and the envelope-level refusal with empty `data`)."""
+
+    def data(complete: bool, size: tuple[int, int] = (0, 0)) -> dict[str, Any]:
+        return _page_data([], None, complete, encoding, size)
+
+    floor = [
+        ("OK", data(True, _measure_page([], None, True, encoding))),
+        ("E_BUDGET", data(False, _measure_page([], None, False, encoding))),
+    ]
+    for code in (
+        "E_RESTART",
+        "E_PERMISSION",
+        "E_MIGRATION",
+        "E_STORE_CORRUPT",
+        "E_STORE_BUSY",
+    ):
+        floor.extend([(code, data(False)), (code, {})])
+    return floor
+
+
 def _recall_required(
-    max_bytes: int, max_tokens: int, encoding: str
+    max_bytes: int,
+    max_tokens: int,
+    encoding: str,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, int] | None:
     """72-T02 admission: the smallest canonical `E_BUDGET` page's size when a cap is
-    below it (the caller gets `E_INPUT` with these as `required`), else `None`."""
-    min_bytes, min_tokens = _measure_page([], None, False, encoding)
+    below it (the caller gets `E_INPUT` with these as `required`), else `None`. With
+    `frame_bytes` (D35) it is the largest framed response over every post-admission
+    code, bytes and tokens maximised separately."""
+    if frame_bytes is None:
+        min_bytes, min_tokens = _measure_page([], None, False, encoding)
+    else:
+        sizes = [
+            _frame_size(frame_bytes, code, data, encoding)
+            for code, data in _recall_floor(encoding)
+        ]
+        min_bytes = max(size[0] for size in sizes)
+        min_tokens = max(size[1] for size in sizes)
     if max_bytes < min_bytes or max_tokens < min_tokens:
         return {"max_bytes": min_bytes, "max_tokens": min_tokens}
     return None
@@ -2023,19 +2209,23 @@ def recall_admission(
     max_tokens: int,
     encoding: str,
     cursor: Any = None,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any] | None:
     """72-T02 recall admission (contract C05: before any store read or effect): the
-    `E_INPUT` page for `limit < 1`, a non-string cursor, an unknown `encoding` or caps
-    below the smallest `E_BUDGET` page (with `required`), else `None`."""
+    `E_INPUT` page for `limit < 1`, a cursor that is not a canonical `m2.` token
+    (D36), an unknown `encoding` or caps below the smallest admitted response (with
+    `required`), else `None`."""
     if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
         return _page("E_INPUT", encoding=encoding)
-    if cursor is not None and not isinstance(cursor, str):
+    if cursor is not None and (
+        not isinstance(cursor, str) or not _cursor_syntax_ok(cursor)
+    ):
         return _page("E_INPUT", encoding=encoding)
     try:
         _encoder(encoding)
     except (ValueError, TypeError):
         return _page("E_INPUT", encoding=encoding)
-    required = _recall_required(max_bytes, max_tokens, encoding)
+    required = _recall_required(max_bytes, max_tokens, encoding, frame_bytes)
     if required is not None:
         refused = _page("E_INPUT", encoding=encoding)
         refused["required"] = required
@@ -2044,29 +2234,36 @@ def recall_admission(
 
 
 def _budget_page(
-    encoding: str, required: tuple[int, int], max_bytes: int, max_tokens: int
+    encoding: str,
+    required: tuple[int, int],
+    max_bytes: int,
+    max_tokens: int,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any]:
-    """72-T02: an `E_BUDGET` page that itself fits both caps. `required` is included
-    only when it still fits; otherwise the canonical minimum (admitted) page is sent."""
+    """72-T02: an `E_BUDGET` page that itself fits both caps (its framed response
+    with `frame_bytes`). `required` is included only when it still fits; otherwise
+    the canonical minimum (admitted) page is sent."""
     extra: dict[str, Any] = {
         "required": {"max_bytes": required[0], "max_tokens": required[1]}
     }
     size = _measure_page([], None, False, encoding, extra)
-    if not _within(size, max_bytes, max_tokens):
-        extra = {}
-        size = _measure_page([], None, False, encoding)
     page = _page("E_BUDGET", encoding=encoding, tokens=size[1], bytes_=size[0])
     page.update(extra)
+    if frame_bytes is None:
+        fits = _within(size, max_bytes, max_tokens)
+    else:
+        data = {key: value for key, value in page.items() if key != "code"}
+        fits = _frame_fits(
+            frame_bytes, "E_BUDGET", data, encoding, max_bytes, max_tokens
+        )
+    if fits:
+        return page
+    size = _measure_page([], None, False, encoding)
+    page = _page("E_BUDGET", encoding=encoding, tokens=size[1], bytes_=size[0])
+    if frame_bytes is not None:
+        # B16: the keyless minimum is emitted too, so admission measures its frame.
+        frame_bytes("E_BUDGET", {k: v for k, v in page.items() if k != "code"})
     return page
-
-
-def _recheck_code(access: MemoryAccess, denied_code: str) -> str | None:
-    """72-T01 recheck: `None` when `access` still holds, else the route's failure code
-    (`denied_code` when the policy now denies it, `E_RESTART` when it changed)."""
-    status = access.recheck()
-    if status == "ok":
-        return None
-    return denied_code if status == "denied" else "E_RESTART"
 
 
 def recall_page(
@@ -2081,7 +2278,7 @@ def recall_page(
     max_bytes: int = DEFAULT_MAX_BYTES,
     encoding: str = DEFAULT_ENCODING,
     cursor: str | None = None,
-    telemetry: TelemetryStore | None = None,
+    telemetry: TelemetryStore | Callable[[], TelemetryStore] | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
@@ -2092,6 +2289,7 @@ def recall_page(
     opt_in: bool = False,
     cache_write: bool = False,
     now: float | None = None,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any]:
     """MC02 §9.0 bounded recall: pages `store.search_candidates()` (prefiltered by
     subject/source/owner/archive/expiry) into a token/byte-bounded result.
@@ -2120,24 +2318,36 @@ def recall_page(
     is `E_BUDGET` (no items, no cursor, `required` caps that return it). Caps below the
     smallest `E_BUDGET` page, `limit < 1` or an unknown `encoding` are `E_INPUT` before
     any store read. A store with no cursor key (a read-only view) is `E_MIGRATION`.
+
+    72-T02 D35: with `frame_bytes` every fit decision (admission, each trial page,
+    `required`) is made on the exact transport bytes of the response; `tokens`/`bytes`
+    stay the payload measure. R13: before a page is returned the access is rechecked
+    (`E_PERMISSION` with its reason wins) and the generation is re-read on a fresh
+    reader (`E_RESTART` on drift). R3: the cursor does not bind the policy revision.
     """
-    access, why = _route_access(store, access, session_allowlist)
-    if access is None:
-        if why is not None:
-            return _denied_page(why, encoding)
-        return _page("OK", complete=True, encoding=encoding)
+    # R6: admission (a malformed cursor, caps) precedes policy resolution.
     refused = recall_admission(
         limit=limit,
         max_bytes=max_bytes,
         max_tokens=max_tokens,
         encoding=encoding,
         cursor=cursor,
+        frame_bytes=frame_bytes,
     )
     if refused is not None:
         return refused
-    failed = _recheck_code(access, "E_PERMISSION")
-    if failed is not None:
-        return _page(failed, encoding=encoding)
+    access, why = _route_access(store, access, session_allowlist)
+
+    def refusal(page: dict[str, Any]) -> dict[str, Any]:
+        return _fit_optional(page, frame_bytes, encoding, max_bytes, max_tokens)
+
+    if access is None:
+        if why is not None:
+            return refusal(_denied_page(why, encoding))
+        return _page("OK", complete=True, encoding=encoding)
+    failure = recheck_failure(access)
+    if failure is not None:
+        return refusal(_recheck_page(failure, encoding))
     allowed_sources = list(access.sources)
     moment = time.time() if now is None else now
     memo = SourceValidationMemo()
@@ -2159,7 +2369,6 @@ def recall_page(
         project_id=access.project_id,
         worktree_id=access.worktree_id,
         owner=(owner.kind, owner.id) if owner is not None else None,
-        policy_revision=access.policy_revision,
         grant_id=access.grant_id,
         subject=subject,
         query=query,
@@ -2185,6 +2394,43 @@ def recall_page(
         return _candidate_to_item(
             row, store, access, decision, contest=contest, now=moment, memo=memo
         )
+
+    def page_fit(
+        page_items: list[dict[str, Any]], next_cursor: str | None, complete: bool
+    ) -> tuple[int, int] | None:
+        """The page's payload size when its response fits both caps, else `None`."""
+        size = _measure_page(page_items, next_cursor, complete, encoding)
+        if frame_bytes is None:
+            return size if _within(size, max_bytes, max_tokens) else None
+        data = _page_data(page_items, next_cursor, complete, encoding, size)
+        fits = _frame_fits(frame_bytes, "OK", data, encoding, max_bytes, max_tokens)
+        return size if fits else None
+
+    def page_need(
+        page_items: list[dict[str, Any]], next_cursor: str | None, complete: bool
+    ) -> tuple[int, int]:
+        """The caps the page needs: its payload size, or its framed size."""
+        size = _measure_page(page_items, next_cursor, complete, encoding)
+        if frame_bytes is None:
+            return size
+        data = _page_data(page_items, next_cursor, complete, encoding, size)
+        return _frame_size(frame_bytes, "OK", data, encoding)
+
+    def trial(item: dict[str, Any], reserve: str | None) -> int | None:
+        if frame_bytes is None:
+            return _trial_page_bytes(
+                items,
+                base_bytes,
+                item,
+                max_bytes=max_bytes,
+                max_tokens=max_tokens,
+                encoding=encoding,
+                reserve_cursor=reserve,
+            )
+        # ponytail: one full framed serialization per candidate (O(limit x page));
+        # an incremental frame-size model is the upgrade if pages grow large.
+        fitted = page_fit([*items, item], reserve, reserve is None)
+        return base_bytes if fitted is not None else None
 
     items: list[dict[str, Any]] = []
     base_bytes = _page_bytes([], None, True, encoding)
@@ -2228,28 +2474,13 @@ def recall_page(
             start, position, scanned = position, position + 1, scanned + 1
             if item is None:
                 continue  # corrupt or ineligible: consumed
-            fit = _trial_page_bytes(
-                items,
-                base_bytes,
-                item,
-                max_bytes=max_bytes,
-                max_tokens=max_tokens,
-                encoding=encoding,
-                reserve_cursor=token(position),
-            )
+            fit = trial(item, token(position))
             if fit is not None:
                 items.append(item)
                 base_bytes = fit
                 last_fit = position
                 continue
-            final = _trial_page_bytes(
-                items,
-                base_bytes,
-                item,
-                max_bytes=max_bytes,
-                max_tokens=max_tokens,
-                encoding=encoding,
-            )
+            final = trial(item, None)
             if final is not None:
                 pending = (item, start)
                 continue
@@ -2260,13 +2491,15 @@ def recall_page(
             exhausted = True
 
     def emit(page: dict[str, Any]) -> dict[str, Any]:
-        """The snapshot and policy rechecks every page passes before it is returned."""
-        if store.current_generation() != generation:
+        """72-T02 R13: the policy recheck first (a revocation wins over drift), then
+        the store generation on a fresh reader -- never this request's own, possibly
+        immutable, view -- before a page is returned or telemetry recorded."""
+        failure = recheck_failure(access)
+        if failure is not None:
+            return refusal(_recheck_page(failure, encoding))
+        if not _emit_current(store, generation, page["items"], access, now):
             return _page("E_RESTART", encoding=encoding)
-        failed = _recheck_code(access, "E_PERMISSION")
-        if failed is not None:
-            return _page(failed, encoding=encoding)
-        if page["code"] == "OK":
+        if page["code"] == "OK" and _records(telemetry, page):
             _record_memory_event(
                 telemetry,
                 "retrieval",
@@ -2304,41 +2537,39 @@ def recall_page(
     stuck = pending or blocked
     if exhausted:
         final_items = [*items, pending[0]] if pending is not None else items
-        size = _measure_page(final_items, None, True, encoding)
-        if _within(size, max_bytes, max_tokens):
-            return ok(final_items, None, size)
+        fitted = page_fit(final_items, None, True)
+        if fitted is not None:
+            return ok(final_items, None, fitted)
         resume = last_fit  # unreachable in practice: fall back to the accepted trial
     else:
         resume = stuck[1] if stuck is not None else position
     if items:
         next_cursor = token(resume)
-        size = _measure_page(items, next_cursor, False, encoding)
-        if not _within(size, max_bytes, max_tokens) and resume != last_fit:
+        fitted = page_fit(items, next_cursor, False)
+        if fitted is None and resume != last_fit:
             next_cursor = token(last_fit)  # identical to the accepted trial page
-            size = _measure_page(items, next_cursor, False, encoding)
+            fitted = page_fit(items, next_cursor, False)
+        size = fitted or _measure_page(items, next_cursor, False, encoding)
         return ok(items, next_cursor, size)
     if stuck is not None:
-        need = _measure_page([stuck[0]], token(stuck[1] + 1), False, encoding)
-        return emit(_budget_page(encoding, need, max_bytes, max_tokens))
+        need = page_need([stuck[0]], token(stuck[1] + 1), False)
+        return emit(_budget_page(encoding, need, max_bytes, max_tokens, frame_bytes))
     # The scan cap was spent on ineligible rows: an empty continuation page.
     next_cursor = token(resume)
-    size = _measure_page([], next_cursor, False, encoding)
-    if _within(size, max_bytes, max_tokens):
-        return ok([], next_cursor, size)
-    return emit(_budget_page(encoding, size, max_bytes, max_tokens))
+    fitted = page_fit([], next_cursor, False)
+    if fitted is not None:
+        return ok([], next_cursor, fitted)
+    need = page_need([], next_cursor, False)
+    return emit(_budget_page(encoding, need, max_bytes, max_tokens, frame_bytes))
 
 
-def _measure_expand(
-    chunk: bytes | None, next_offset: int | None, complete: bool, encoding: str
-) -> tuple[int, int]:
-    """base64 page size. `chunk=None` (72-T02) measures the content-free minimum."""
+def _measure_expand(page: dict[str, Any], encoding: str) -> tuple[int, int]:
+    """72-T02: byte/token size of a base64 expand response's measured payload --
+    every key except `code`, `tokens` and `bytes` (the same rule as utf8)."""
     payload = {
-        "content_base64": None
-        if chunk is None
-        else base64.b64encode(chunk).decode("ascii"),
-        "next_offset": next_offset,
-        "complete": complete,
-        "encoding": encoding,
+        key: value
+        for key, value in page.items()
+        if key not in ("code", "tokens", "bytes")
     }
     text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
     return len(text.encode("utf-8")), _count_tokens(text, encoding)
@@ -2485,6 +2716,42 @@ def _expand_refusal(
     return page
 
 
+def _expand_floor(
+    artifact_id: str, version: int, offset: int, encoding: str, representation: str
+) -> list[tuple[str, dict[str, Any]]]:
+    """72-T02 C05: every post-admission expand refusal's content-free base data,
+    optional keys removed (and the envelope-level refusal with empty `data`)."""
+    floor: list[tuple[str, dict[str, Any]]] = []
+    for code in (
+        "E_BUDGET",
+        "E_NOT_VISIBLE",
+        "E_PERMISSION",
+        "E_VERSION",
+        "E_OFFSET",
+        "E_RESTART",
+        "E_MIGRATION",
+        "E_STORE_CORRUPT",
+        "E_STORE_BUSY",
+        "E_INPUT",
+    ):
+        echoed: int | None = None
+        if code == "E_VERSION":
+            echoed = 2**63 - 1
+        elif code in ("E_BUDGET", "E_OFFSET", "E_MIGRATION", "E_INPUT"):
+            echoed = version
+        page = _expand_refusal(
+            code,
+            artifact_id=artifact_id,
+            version=echoed,
+            offset=offset,
+            encoding=encoding,
+            representation=representation,
+        )
+        page.pop("code")
+        floor.extend([(code, page), (code, {})])
+    return floor
+
+
 def expand_admission(
     *,
     artifact_id: str,
@@ -2494,11 +2761,14 @@ def expand_admission(
     max_tokens: int,
     encoding: str,
     representation: str,
+    mode: str = "ordinary",
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any] | None:
     """72-T02 expand admission (contract C05: before any store read or effect): the
-    `E_INPUT` page for an unknown representation or `encoding`, `E_OFFSET` for a
-    negative offset, `E_INPUT` with `required` for caps below the smallest envelope,
-    else `None`."""
+    `E_INPUT` page for an unknown representation, mode or `encoding`, `E_OFFSET` for
+    a negative offset, `E_INPUT` with `required` for caps below the smallest envelope
+    (with `frame_bytes`, D35: the largest framed post-admission refusal), else
+    `None`."""
 
     def refuse(
         code: str, *, version_: int | None = None, required: Any = None
@@ -2513,7 +2783,10 @@ def expand_admission(
             required=required,
         )
 
-    if representation not in ("base64", "utf8"):
+    if representation not in ("base64", "utf8") or mode not in (
+        "ordinary",
+        "historical",
+    ):
         return refuse("E_INPUT")
     if offset < 0:
         return refuse("E_OFFSET", version_=version)
@@ -2521,7 +2794,15 @@ def expand_admission(
         _encoder(encoding)
     except (ValueError, TypeError):
         return refuse("E_INPUT")
-    if representation == "utf8":
+    if frame_bytes is not None:
+        sizes = [
+            _frame_size(frame_bytes, code, data, encoding)
+            for code, data in _expand_floor(
+                artifact_id, version, offset, encoding, representation
+            )
+        ]
+        minimum = (max(size[0] for size in sizes), max(size[1] for size in sizes))
+    elif representation == "utf8":
         null_payload = _utf8_payload(
             artifact_id=artifact_id,
             version=version,
@@ -2535,7 +2816,17 @@ def expand_admission(
         )
         minimum = _measure_utf8(null_payload, encoding)
     else:
-        minimum = _measure_expand(None, None, False, encoding)
+        minimum = _measure_expand(
+            _expand_refusal(
+                "E_BUDGET",
+                artifact_id=artifact_id,
+                version=version,
+                offset=offset,
+                encoding=encoding,
+                representation="base64",
+            ),
+            encoding,
+        )
     if not _within(minimum, max_bytes, max_tokens):
         return refuse(
             "E_INPUT",
@@ -2558,7 +2849,7 @@ def expand_artifact(
     max_bytes: int = DEFAULT_MAX_BYTES,
     encoding: str = DEFAULT_ENCODING,
     representation: Literal["base64", "utf8"] = "base64",
-    telemetry: TelemetryStore | None = None,
+    telemetry: TelemetryStore | Callable[[], TelemetryStore] | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
@@ -2568,6 +2859,7 @@ def expand_artifact(
     session_id: str | None = None,
     opt_in: bool = False,
     cache_write: bool = False,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any]:
     """MC02 §9.0 exact expansion: returns a base64-encoded byte slice of one stored artifact
     version, starting at `offset`. Concatenating `content_base64` across pages (following
@@ -2581,9 +2873,16 @@ def expand_artifact(
     clamped: a negative offset, one past the end, or (utf8) one inside a scalar is
     `E_OFFSET`; `offset == total` is an empty, complete page. Caps below the smallest
     `E_BUDGET` envelope are `E_INPUT` with `required`, before any store read; a utf8
-    page that cannot carry one scalar is `E_BUDGET` with `required` caps that do. In
-    utf8 mode a version with no `payload_hash` is `E_MIGRATION` and a digest that
-    disagrees with the stored bytes is `E_NOT_VISIBLE`, in every mode.
+    page that cannot carry one scalar is `E_BUDGET` with `required` caps that do.
+
+    72-T02 D32: the version row is labelled by its binding -- `verified` (no key),
+    `backfilled`, `unbound` (utf8 `payload_hash` is the stored bytes' sha256, computed
+    now) or `mismatch` -- as `integrity`. Ordinary mode never expands a mismatched or
+    non-UTF-8 version (`E_NOT_VISIBLE`); historical mode returns its exact bytes with
+    `integrity_payload_mismatch`/`integrity_content_corrupt`, and a non-UTF-8 version
+    has no utf8 representation (`E_INPUT`, `alternatives: ["base64"]`). D36: a recheck
+    the policy now denies is `E_PERMISSION` with its reason, a moved access
+    `E_RESTART`. D35: with `frame_bytes` every fit is on the exact transport bytes.
 
     72-T01: visibility is decided first, through `evaluate_artifact_visibility` on the
     *current* row: a missing, denied, archived, expired, tampered or not-current artifact
@@ -2597,7 +2896,7 @@ def expand_artifact(
     version (`version_superseded`), reports a version payload mismatch as
     `integrity_payload_mismatch`, and adds `"historical": True` and `"reason_codes"`.
     The access is rechecked at entry and after the slice is measured, before telemetry:
-    denied is `E_NOT_VISIBLE`, changed is `E_RESTART`.
+    denied is `E_PERMISSION` with its reason, changed is `E_RESTART` (72-T02 D36).
 
     MC04: passing `telemetry` plus `request_id`/`event_id` records a real successful
     expansion's token cost as an `"expansion"` event; omitted (the default), nothing persists.
@@ -2624,25 +2923,6 @@ def expand_artifact(
     def denied(code: str = "E_NOT_VISIBLE") -> dict[str, Any]:
         return refuse(code)
 
-    def budget(need: tuple[int, int]) -> dict[str, Any]:
-        """A base64 `E_BUDGET`; `required` only when the content-free page with it
-        still fits both caps."""
-        required = {"max_bytes": need[0], "max_tokens": need[1]}
-        text = json.dumps(
-            {
-                "content_base64": None,
-                "next_offset": None,
-                "complete": False,
-                "encoding": encoding,
-                "required": required,
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        size = (len(text.encode("utf-8")), _count_tokens(text, encoding))
-        fits = _within(size, max_bytes, max_tokens)
-        return refuse("E_BUDGET", version_=version, required=required if fits else None)
-
     admitted = expand_admission(
         artifact_id=artifact_id,
         version=version,
@@ -2651,9 +2931,35 @@ def expand_artifact(
         max_tokens=max_tokens,
         encoding=encoding,
         representation=representation,
+        mode=mode,
+        frame_bytes=frame_bytes,
     )
     if admitted is not None:
         return admitted
+
+    def fit_refusal(page: dict[str, Any]) -> dict[str, Any]:
+        return _fit_optional(page, frame_bytes, encoding, max_bytes, max_tokens)
+
+    def recheck_refusal(failure: tuple[str, str]) -> dict[str, Any]:
+        code, why = failure
+        page = refuse(code)
+        if code == "E_PERMISSION":
+            page["reason"] = why
+        return fit_refusal(page)
+
+    def fits(page: dict[str, Any], size: tuple[int, int]) -> bool:
+        if frame_bytes is None:
+            return _within(size, max_bytes, max_tokens)
+        data = {key: value for key, value in page.items() if key != "code"}
+        return _frame_fits(
+            frame_bytes, page["code"], data, encoding, max_bytes, max_tokens
+        )
+
+    def need_of(page: dict[str, Any], size: tuple[int, int]) -> tuple[int, int]:
+        if frame_bytes is None:
+            return size
+        data = {key: value for key, value in page.items() if key != "code"}
+        return _frame_size(frame_bytes, page["code"], data, encoding)
 
     access, why = _route_access(
         store,
@@ -2666,12 +2972,14 @@ def expand_artifact(
         if why is not None:
             refusal = denied("E_PERMISSION")
             refusal["reason"] = why
-            return refusal
+            return fit_refusal(refusal)
         return denied()
-    failed = _recheck_code(access, "E_NOT_VISIBLE")
-    if failed is not None:
-        return denied(failed)
+    failure = recheck_failure(access)
+    if failure is not None:
+        return recheck_refusal(failure)
     historical = mode == "historical"
+    # R13: the generation the emitted page is checked against.
+    generation = store.current_generation()
     row = store.get_current_row(artifact_id)
     if row is None:
         return denied()
@@ -2702,86 +3010,81 @@ def expand_artifact(
         if not historical:
             return refuse("E_VERSION", version_=current_version)
         reasons.add("version_superseded")
-    payload = store.get_version_payload(artifact_id, version)
-    if payload is None:
+    binding = store.get_version_binding(artifact_id, version)
+    if binding is None:
         return denied()
-    stored_text, stored_digest = payload
+    stored_content, stored_digest, digest_origin = binding
     # D41: only a bound row's current version with its exact stored bytes carries
     # current-row authority; unbound STATED bytes are never delivered, other
     # unbound bytes are labelled.
-    unbound = verifier.version_bytes(row, version, stored_text) == "unbound"
+    unbound = verifier.version_bytes(row, version, stored_content) == "unbound"
     binding_label = {"store_binding": "unbound"} if unbound else {}
-    stored_bytes = stored_text.encode("utf-8")
-    if utf8:
-        if stored_digest is None:
-            return refuse("E_MIGRATION", version_=version)
-        if hashlib.sha256(stored_bytes).hexdigest() != stored_digest:
-            return denied()
-    elif stored_digest is not None and payload_digest(stored_text) != stored_digest:
+    # 72-T02 D32: the version row's own bytes and binding label.
+    stored_text = _stored_text(stored_content)
+    stored_bytes = (
+        bytes(stored_content)
+        if isinstance(stored_content, (bytes, bytearray))
+        else stored_content.encode("utf-8")
+    )
+    mismatch = stored_digest is not None and (
+        stored_text is None or payload_digest(stored_text) != stored_digest
+    )
+    if mismatch:
+        integrity = "mismatch"
+    elif stored_digest is None:
+        integrity = "unbound"
+    elif digest_origin == "backfill":
+        integrity = "backfilled"
+    else:
+        integrity = "verified"
+    if stored_text is None or mismatch:
         if not historical:
             return denied()
-        reasons.add("integrity_payload_mismatch")
+        if mismatch:
+            reasons.add("integrity_payload_mismatch")
+        if stored_text is None:
+            reasons.add("integrity_content_corrupt")
+            if utf8:
+                page = refuse("E_INPUT", version_=version)
+                page["field"] = "representation"
+                page["reason"] = "representation_unavailable"
+                page["alternatives"] = ["base64"]
+                return fit_refusal(page)
+    digest = (
+        stored_digest
+        if integrity in ("verified", "backfilled") and stored_digest is not None
+        else hashlib.sha256(stored_bytes).hexdigest()
+    )
+    extra: dict[str, Any] = {}
+    if historical:
+        extra.update(historical=True, reason_codes=sorted(reasons))
+    if integrity != "verified":
+        extra["integrity"] = integrity
+    extra.update(binding_label)
 
     total = len(stored_bytes)
     if offset > total or (utf8 and not _is_boundary(stored_bytes, offset)):
         page = refuse("E_OFFSET", version_=version)
         if utf8:
             page["total_bytes"] = total
-        return page
+        return fit_refusal(page)
 
-    if utf8 and stored_digest is not None:  # a null digest returned E_MIGRATION above
-        result = _expand_utf8_slice(
-            stored_bytes,
-            artifact_id=artifact_id,
-            version=version,
-            offset=offset,
-            payload_hash=stored_digest,
-            max_bytes=max_bytes,
-            max_tokens=max_tokens,
-            encoding=encoding,
-            extra=(
-                {
-                    **(
-                        {"historical": True, "reason_codes": sorted(reasons)}
-                        if historical
-                        else {}
-                    ),
-                    **binding_label,
-                }
-                or None
-            ),
-        )
-        if result["code"] != "OK":
-            return result
-        size = (result["bytes"], result["tokens"])
-    else:
-        remaining = stored_bytes[offset:]
-        chunk = b""
-        next_offset: int | None = None
-        complete = True
-        size = _measure_expand(b"", None, True, encoding)
-        if not _within(size, max_bytes, max_tokens):
-            return budget(size)
-        chunk_len = len(remaining)
-        while chunk_len > 0:
-            chunk = remaining[:chunk_len]
-            next_offset = offset + chunk_len if offset + chunk_len < total else None
-            complete = next_offset is None
-            trial = _measure_expand(chunk, next_offset, complete, encoding)
-            if _within(trial, max_bytes, max_tokens):
-                size = trial
-                break
-            chunk_len -= max(1, chunk_len // 4)
+    def budget(need: tuple[int, int]) -> dict[str, Any]:
+        """A base64 `E_BUDGET`; `required` only when the content-free page with it
+        still fits both caps."""
+        required = {"max_bytes": need[0], "max_tokens": need[1]}
+        page = refuse("E_BUDGET", version_=version, required=required)
+        if frame_bytes is None:
+            size = _measure_expand(page, encoding)
+            with_required = _within(size, max_bytes, max_tokens)
         else:
-            if remaining:
-                # Shrank the chunk all the way to nothing without ever fitting the
-                # envelope inside both caps: report the one-byte page's size.
-                one = 1 + offset
-                need = _measure_expand(
-                    remaining[:1], one if one < total else None, one >= total, encoding
-                )
-                return budget(need)
-        result = _expand(
+            with_required = fits(page, (0, 0))
+        return page if with_required else refuse("E_BUDGET", version_=version)
+
+    def base64_page(
+        chunk: bytes, next_offset: int | None, complete: bool
+    ) -> tuple[dict[str, Any], tuple[int, int]]:
+        page = _expand(
             "OK",
             artifact_id=artifact_id,
             version=version,
@@ -2790,13 +3093,61 @@ def expand_artifact(
             complete=complete,
             content_base64=base64.b64encode(chunk).decode("ascii"),
             encoding=encoding,
-            tokens=size[1],
-            bytes_=size[0],
         )
+        page.update(extra)
+        size = _measure_expand(page, encoding)
+        page["tokens"], page["bytes"] = size[1], size[0]
+        return page, size
 
-    failed = _recheck_code(access, "E_NOT_VISIBLE")
-    if failed is not None:
-        return denied(failed)
+    if utf8:
+        result = _expand_utf8_slice(
+            stored_bytes,
+            artifact_id=artifact_id,
+            version=version,
+            offset=offset,
+            payload_hash=digest,
+            max_bytes=max_bytes,
+            max_tokens=max_tokens,
+            encoding=encoding,
+            extra=extra or None,
+            frame_bytes=frame_bytes,
+        )
+        if result["code"] != "OK":
+            return result
+        size = (result["bytes"], result["tokens"])
+    else:
+        remaining = stored_bytes[offset:]
+        result, size = base64_page(b"", None, True)
+        if not fits(result, size):
+            return budget(need_of(result, size))
+        chunk_len = len(remaining)
+        while chunk_len > 0:
+            chunk = remaining[:chunk_len]
+            next_offset = offset + chunk_len if offset + chunk_len < total else None
+            trial_page, trial = base64_page(chunk, next_offset, next_offset is None)
+            if fits(trial_page, trial):
+                result, size = trial_page, trial
+                break
+            chunk_len -= max(1, chunk_len // 4)
+        else:
+            if remaining:
+                # Shrank the chunk all the way to nothing without ever fitting the
+                # envelope inside both caps: report the one-byte page's size.
+                one = 1 + offset
+                one_page, one_size = base64_page(
+                    remaining[:1], one if one < total else None, one >= total
+                )
+                return budget(need_of(one_page, one_size))
+
+    failure = recheck_failure(access)
+    if failure is not None:
+        return recheck_refusal(failure)
+    # R13: an ordinary page is emitted only while its row is still current and usable
+    # on a fresh reader; a row archived, expired or tampered during fitting restarts.
+    if not historical and not _emit_current(
+        store, generation, [{"id": artifact_id, "version": version}], access, now
+    ):
+        return fit_refusal(refuse("E_RESTART"))
     _record_memory_event(
         telemetry,
         "expansion",
@@ -2812,11 +3163,6 @@ def expand_artifact(
         cache_write=cache_write,
         access=access,
     )
-    if historical and not utf8:  # utf8 pages already carry (and measured) them
-        result["historical"] = True
-        result["reason_codes"] = sorted(reasons)
-    if not utf8:
-        result.update(binding_label)
     return result
 
 
@@ -2831,10 +3177,18 @@ def _expand_utf8_slice(
     max_tokens: int,
     encoding: str,
     extra: dict[str, Any] | None = None,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any]:
     """72-T02: the largest scalar-aligned utf8 page from `offset` within both caps, or
     an `E_BUDGET` page (itself within the caps) whose `required` returns one scalar.
-    `extra` (the historical keys) is part of every measured OK page and of `required`."""
+    `extra` (the historical/integrity keys) is part of every measured OK page and of
+    `required`. With `frame_bytes` (D35) the caps apply to the framed response."""
+
+    def framed_fits(code: str, page: dict[str, Any]) -> bool:
+        assert frame_bytes is not None
+        data = {key: value for key, value in page.items() if key != "code"}
+        return _frame_fits(frame_bytes, code, data, encoding, max_bytes, max_tokens)
+
     total = len(data)
     sizes: dict[int, tuple[int, int]] = {}
 
@@ -2855,8 +3209,15 @@ def _expand_utf8_slice(
         }
 
     def fits(end: int) -> bool:
-        text = json.dumps(payload_for(end), ensure_ascii=False, separators=(",", ":"))
+        payload = payload_for(end)
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         size_bytes = len(text.encode("utf-8"))
+        if frame_bytes is not None:
+            size = (size_bytes, _count_tokens(text, encoding))
+            if not framed_fits("OK", _utf8_page("OK", payload, size)):
+                return False
+            sizes[end] = size
+            return True
         if size_bytes > max_bytes:
             return False  # over the byte cap: no need to tokenize
         size = (size_bytes, _count_tokens(text, encoding))
@@ -2874,7 +3235,16 @@ def _expand_utf8_slice(
     first = offset + 1
     while first < total and not _is_boundary(data, first):
         first += 1
-    need = _measure_utf8(payload_for(min(first, total)), encoding)
+    one_scalar = payload_for(min(first, total))
+    need = _measure_utf8(one_scalar, encoding)
+    if frame_bytes is not None:
+        one_page = _utf8_page("OK", one_scalar, need)
+        need = _frame_size(
+            frame_bytes,
+            "OK",
+            {key: value for key, value in one_page.items() if key != "code"},
+            encoding,
+        )
     refusal = _utf8_payload(
         artifact_id=artifact_id,
         version=version,
@@ -2891,10 +3261,19 @@ def _expand_utf8_slice(
         "required": {"max_bytes": need[0], "max_tokens": need[1]},
     }
     size = _measure_utf8(with_required, encoding)
-    if _within(size, max_bytes, max_tokens):
-        return _utf8_page("E_BUDGET", with_required, size)
+    budget_page = _utf8_page("E_BUDGET", with_required, size)
+    if (
+        _within(size, max_bytes, max_tokens)
+        if frame_bytes is None
+        else framed_fits("E_BUDGET", budget_page)
+    ):
+        return budget_page
     size = _measure_utf8(refusal, encoding)
-    return _utf8_page("E_BUDGET", refusal, size)
+    budget_page = _utf8_page("E_BUDGET", refusal, size)
+    if frame_bytes is not None:
+        # B16: the keyless minimum is emitted too, so admission measures its frame.
+        frame_bytes("E_BUDGET", {k: v for k, v in budget_page.items() if k != "code"})
+    return budget_page
 
 
 def embedding_text(content: dict[str, Any]) -> str:
@@ -3030,7 +3409,8 @@ def hybrid_candidates(
             fresh = embed_fn(embed_config, [texts[i] for i in missing])
             for artifact_id, vector in zip(missing, fresh, strict=True):
                 vectors[artifact_id] = vector
-                if cache_write:
+                # 72-T02 R2: a read-only view never persists an embedding.
+                if cache_write and getattr(store, "_readonly_conn", None) is None:
                     row = rows_by_id[artifact_id]
                     store.put_embedding(
                         artifact_id=artifact_id,
@@ -3089,7 +3469,7 @@ def hybrid_page(
     embed_fn: Callable[
         [EmbeddingConfig, Sequence[str]], list[list[float]]
     ] = embed_chunks,
-    telemetry: TelemetryStore | None = None,
+    telemetry: TelemetryStore | Callable[[], TelemetryStore] | None = None,
     request_id: str | None = None,
     event_id: str | None = None,
     invocation_id: str | None = None,
@@ -3099,6 +3479,7 @@ def hybrid_page(
     session_id: str | None = None,
     opt_in: bool = False,
     now: float | None = None,
+    frame_bytes: FrameBytes | None = None,
 ) -> dict[str, Any]:
     """MC12 §6.7 hybrid retrieval page: `hybrid_candidates()`'s RRF-fused ranking, applying
     the same compact-item budget rules `recall_page()` uses. No cursor/continuation in this
@@ -3118,18 +3499,24 @@ def hybrid_page(
     success (§9.0 fixed contract).
     """
     access, why = _route_access(store, access, session_allowlist)
+
+    def refusal(page: dict[str, Any]) -> dict[str, Any]:
+        return _fit_optional(page, frame_bytes, encoding, max_bytes, max_tokens)
+
     if access is None:
         if why is not None:
             page = _denied_page(why, encoding)
             page["retrieval"] = "hybrid"
-            return page
+            return refusal(page)
         page = _page("OK", complete=True, encoding=encoding)
         page["retrieval"] = "hybrid"
         page["candidates_truncated"] = False
         return page
-    failed = _recheck_code(access, "E_PERMISSION")
-    if failed is not None:
-        return _page(failed, encoding=encoding)
+    failure = recheck_failure(access)
+    if failure is not None:
+        return refusal(_recheck_page(failure, encoding))
+    # 72-T02 R13: the generation the emitted page is checked against.
+    generation = store.current_generation()
     moment = time.time() if now is None else now
     memo = SourceValidationMemo()
 
@@ -3158,7 +3545,10 @@ def hybrid_page(
             max_tokens=max_tokens,
             max_bytes=max_bytes,
             encoding=encoding,
-            telemetry=telemetry,
+            # A read-only view (a store that needs a write to open) records nothing.
+            telemetry=telemetry
+            if getattr(store, "_readonly_conn", None) is None
+            else None,
             request_id=request_id,
             event_id=event_id,
             invocation_id=real_invocation_id,
@@ -3192,14 +3582,26 @@ def hybrid_page(
         )
         if item is None:
             continue
-        trial_bytes = _trial_page_bytes(
-            items,
-            items_bytes,
-            item,
-            max_bytes=max_bytes,
-            max_tokens=max_tokens,
-            encoding=encoding,
-        )
+        if frame_bytes is None:
+            trial_bytes = _trial_page_bytes(
+                items,
+                items_bytes,
+                item,
+                max_bytes=max_bytes,
+                max_tokens=max_tokens,
+                encoding=encoding,
+            )
+        else:
+            trial_items = [*items, item]
+            trial_size = _measure_page(trial_items, None, True, encoding)
+            data = _page_data(trial_items, None, True, encoding, trial_size)
+            data.update(
+                retrieval="hybrid", candidates_truncated=fused["candidates_truncated"]
+            )
+            framed = _frame_fits(
+                frame_bytes, "OK", data, encoding, max_bytes, max_tokens
+            )
+            trial_bytes = items_bytes if framed else None
         if trial_bytes is None:
             break
         items.append(item)
@@ -3208,11 +3610,13 @@ def hybrid_page(
             break
 
     size_bytes, size_tokens = _measure_page(items, None, True, encoding)
-    failed = _recheck_code(access, "E_PERMISSION")
-    if failed is not None:
-        return _page(failed, encoding=encoding)
+    failure = recheck_failure(access)
+    if failure is not None:
+        return refusal(_recheck_page(failure, encoding))
+    if not _emit_current(store, generation, items, access, now):
+        return _page("E_RESTART", encoding=encoding)
     _record_memory_event(
-        telemetry,
+        telemetry if _records(telemetry, {"items": items}) else None,
         "retrieval",
         size_tokens,
         request_id=request_id,

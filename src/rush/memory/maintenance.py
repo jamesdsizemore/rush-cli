@@ -31,6 +31,7 @@ from rush.memory.store import (
     payload_mismatched,
     promote_stored_artifact,
     readonly_preview_error,
+    sqlite_text,
 )
 from rush.memory.trust import count_corroboration
 from rush.plugins.trust_store import PluginTrustStore
@@ -316,6 +317,7 @@ def run_maintenance_cycle(
 
         store = TypedArtifactStore(root)
         conn = sqlite3.connect(str(store.db_path))
+        conn.text_factory = sqlite_text
         conn.row_factory = sqlite3.Row
         try:
             rows = _select_rows(

@@ -217,10 +217,68 @@ def _take_view_options(
 
 def _mcp_serializer(wrapper: Callable[..., Any]) -> compact.Serializer:
     """R16.6: measure with FastMCP's own result conversion for this tool."""
+    return compact.mcp_size(_convert_result(wrapper))
+
+
+def _convert_result(
+    wrapper: Callable[..., Any], name: str | None = None
+) -> Callable[[Any], Any]:
+    """FastMCP's own result conversion for the tool `wrapper` registers as."""
     from mcp.server.fastmcp.tools.base import Tool
 
-    metadata = Tool.from_function(wrapper).fn_metadata
-    return compact.mcp_size(metadata.convert_result)
+    return Tool.from_function(wrapper, name=name).fn_metadata.convert_result
+
+
+def _memory_frame(
+    convert: Callable[[], Callable[[Any], Any]],
+    payload: Callable[[Mapping[str, Any]], Any],
+) -> compact.FrameContext:
+    """72-T02 D35: the frame a memory response leaves through, built from the tool's
+    FastMCP result conversion (`convert`) of `payload(result)`. Inside an MCP request
+    it is the exact stdio JSON-RPC line; without one (an in-process `call_tool`) it
+    is the canonical JSON of the structured content the caller receives."""
+    rid = compact.current_request_id()
+
+    def converted(value: Mapping[str, Any]) -> Any:
+        return compact._call_tool_result(convert()(payload(value)))
+
+    if rid is None:
+
+        def emit_in_process(value: Mapping[str, Any]) -> bytes:
+            structured = converted(value).structuredContent
+            return compact.canonical_json(dict(structured or {}))
+
+        return compact.FrameContext("in_process", None, emit=emit_in_process)
+
+    def emit(value: Mapping[str, Any]) -> bytes:
+        return compact.mcp_frame_bytes(converted(value), rid)
+
+    return compact.FrameContext("mcp_stdio", rid, emit=emit)
+
+
+def _cached(make: Callable[[], Any]) -> Callable[[], Any]:
+    """`make()` on first use, the same value after."""
+    box: list[Any] = []
+
+    def get() -> Any:
+        if not box:
+            box.append(make())
+        return box[0]
+
+    return get
+
+
+def _call_in_bridge_frame(
+    convert: Callable[[], Callable[[Any], Any]],
+    entry: Callable[..., Any],
+    **kwargs: Any,
+) -> Any:
+    """72-T02 D35: inside an MCP request the bridge's own emitted line (it returns
+    `result["raw"]`) is the frame; a direct handler call keeps payload measurement."""
+    if compact.current_request_id() is None:
+        return entry(**kwargs)
+    with compact.memory_frame(_memory_frame(convert, lambda value: value["raw"])):
+        return entry(**kwargs)
 
 
 def _declared_root(value: Any, anchor: Path, index: Mapping[str, str]) -> Path | None:
@@ -337,7 +395,8 @@ def make_tool_wrapper(
         "project_id" not in real_sig.parameters and "project" not in real_sig.parameters
     )
     cwd_relative = _CWD_RELATIVE_ARGS.get(tool.name, ())
-    serializer: list[compact.Serializer] = []
+    serializer = _cached(lambda: _mcp_serializer(tool_mcp_wrapper))
+    convert = _cached(lambda: _convert_result(tool_mcp_wrapper))
 
     def prepare(call_args: dict[str, Any]) -> compact.Prepared | dict[str, Any]:
         # T8: build_server's server-start snapshot stays fixed regardless of a
@@ -366,22 +425,28 @@ def make_tool_wrapper(
         return context.workspace_root, lambda: exec_instance.execute(context)
 
     def serialize(value: dict[str, Any]) -> int:
-        if not serializer:
-            serializer.append(_mcp_serializer(tool_mcp_wrapper))
-        return serializer[0](value)
+        return serializer()(value)
 
     @functools.wraps(tool.__call__)
     def tool_mcp_wrapper(*args: Any, **kwargs: Any) -> Any:
         call_args = dict(public_sig.bind(*args, **kwargs).arguments)
         options = _take_view_options(call_args, declared_views)
+
         # T16 §3 item 7: one delivery call per request, compact or full.
-        return compact.deliver(
-            tool.name,
-            options,
-            cache_write=bool(call_args.get("allow_cache_write")),
-            prepare=lambda: prepare(call_args),
-            serialize=serialize,
-        )
+        def deliver() -> Any:
+            return compact.deliver(
+                tool.name,
+                options,
+                cache_write=bool(call_args.get("allow_cache_write")),
+                prepare=lambda: prepare(call_args),
+                serialize=serialize,
+            )
+
+        if tool.name != "memory":
+            return deliver()
+        # 72-T02 D35: memory pages are measured on the bytes this wrapper emits.
+        with compact.memory_frame(_memory_frame(convert, dict)):
+            return deliver()
 
     tool_mcp_wrapper.__dict__["__self__"] = tool
     tool_mcp_wrapper.__dict__["__signature__"] = public_sig
@@ -618,6 +683,8 @@ def build_memory_bridge_handler(
     from rush.tools.memory import MemoryOperation, MemoryTool
 
     tool = MemoryTool()
+    convert = _cached(lambda: _convert_result(rush_memory_bridge, "rush_memory"))
+    call = functools.partial(_call_in_bridge_frame, convert)
 
     def rush_memory_bridge(
         operation: str, request: dict[str, Any] | None = None
@@ -663,12 +730,13 @@ def build_memory_bridge_handler(
         if operation == "receive":
             req["session_id"] = session_id
             req["capability"] = capability
-            result = tool(path=root, operation="receive", request=req)
+            result = call(tool, path=root, operation="receive", request=req)
         else:
             req.pop("session_allowlist", None)
             # Internal-only `run` keyword: no execution permission is ever granted here.
-            result = tool.run(
-                root,
+            result = call(
+                tool.run,
+                path=root,
                 operation=validated_operation,
                 request=req,
                 session_allowlist=list(session.session_allowlist),

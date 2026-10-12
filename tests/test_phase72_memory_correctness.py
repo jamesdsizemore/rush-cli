@@ -7,6 +7,7 @@ module-level imports below are existing code only.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import dataclasses
@@ -29,7 +30,7 @@ import time
 import types
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, ClassVar, Final, cast
 
 import pytest
 import tiktoken
@@ -906,12 +907,10 @@ def test_t01_policy_revocation_and_revision_change_close_reads(
     )
     assert held is not None
     _grant(auth, root, BOB, data_root, ops=("ask",))
-    assert held.recheck() == "changed"
-    restarted = recall_page(
-        store, subject=SUBJECT, query="needle", access=held, limit=1
-    )
-    assert restarted["code"] == "E_RESTART"
-    assert restarted["items"] == []
+    assert held.recheck() == "ok"
+    resumed = recall_page(store, subject=SUBJECT, query="needle", access=held, limit=1)
+    assert resumed["code"] == "OK"
+    assert _ids(resumed) == ["row-p0"]
 
     telemetry_before = TelemetryStore(root).get_memory_event_total()
     entered, release = _pause_first_call(monkeypatch, retrieval, "_measure_page")
@@ -2132,12 +2131,30 @@ def test_t01_fix1_memory_tool_legacy_ask_revision_change_restarts(
     assert baseline["status"] == "ok"
     assert len(_fix1_wire_rows(baseline)) == 3
 
-    # A revision change mid-call (a second grant) restarts the read.
+    # A revision change that touches no field of this access (a second owner's
+    # grant) does not restart the read.
     fired = _fix1_fire_after(
         monkeypatch,
         TypedArtifactStore,
         "search_rows",
         lambda: _grant(auth, root, BOB, data_root, ops=("ask",)),
+    )
+    unchanged = ask()
+    assert fired["n"] == 1
+    assert len(_fix1_wire_rows(unchanged)) == 3
+    assert "E_RESTART" not in _dump(unchanged)
+
+    # Revoking this owner's grant and granting it again mid-call (a new grant id)
+    # restarts the read.
+    def revoke_and_regrant() -> None:
+        _fix1_revoke(auth, _grant_a, data_root)
+        _grant(auth, root, ALICE, data_root)
+
+    fired = _fix1_fire_after(
+        monkeypatch,
+        TypedArtifactStore,
+        "search_rows",
+        revoke_and_regrant,
     )
     restarted = ask()
     assert fired["n"] == 1
@@ -3485,7 +3502,7 @@ def test_t02_cursor_binding_rejects_drift_and_forgery(tmp_path: Path) -> None:
         + hmac.new(key, v1_body, hashlib.sha256).hexdigest()
     )
     unused_bit = token[:-1] + T02_B64URL[T02_B64URL.index(token[-1]) ^ 1]
-    forged = {
+    malformed = {
         "empty": "",
         "prefix only": "m2.",
         "garbage": "garbage",
@@ -3493,9 +3510,18 @@ def test_t02_cursor_binding_rejects_drift_and_forgery(tmp_path: Path) -> None:
         "extended": token + "A",
         "unused bit": unused_bit,
         "v1 format": v1_token,
-        "foreign store": first_token(foreign),
     }
-    for label, value in forged.items():
+    for label, value in malformed.items():
+        page = resume(value)
+        assert page["code"] == "E_INPUT", (label, page)
+        assert page["items"] == [], label
+        assert page["next_cursor"] is None, label
+        assert page["complete"] is False, label
+    canonical = {
+        "foreign store": first_token(foreign),
+        "forged tag": "m2." + "A" * 27,
+    }
+    for label, value in canonical.items():
         _t02_restarted(resume(value), label)
     assert resume(token)["code"] == "OK"
 
@@ -3548,10 +3574,26 @@ def test_t02_grant_revision_and_revocation_refuse_continuation(
     moved = _t02_recall(
         store, session_allowlist=None, access=held, limit=1, cursor=token
     )
-    _t02_restarted(moved, "policy revision")
+    assert moved["code"] == "OK", moved
+    assert _ids(moved) == ["g2"], moved
+    assert moved["complete"] is False
 
+    # Revoked and granted again (a new grant id): the old cursor restarts.
+    _fix1_revoke(auth, grant, data_root)
+    replacement = _grant(auth, root, ALICE, data_root, ops=("ask",))
+    assert replacement["grant_id"] != grant["grant_id"]
+    replaced = _t02_recall(
+        store, session_allowlist=None, access=resolved(), limit=1, cursor=token
+    )
+    _t02_restarted(replaced, "revoked and replaced grant")
+
+    held = resolved()
+    token = _t02_recall(store, session_allowlist=None, access=held, limit=1)[
+        "next_cursor"
+    ]
+    assert token is not None
     auth.revoke_memory_scope(
-        grant_id=grant["grant_id"],
+        grant_id=replacement["grant_id"],
         expected_policy_revision=_revision(auth, data_root),
         consent=True,
         data_root=data_root,
@@ -3860,7 +3902,7 @@ def test_t02_utf8_integrity_migration_and_version_refusals(tmp_path: Path) -> No
         assert not page.get("content_utf8")
         assert not page.get("content_base64")
 
-    unbound, _ = _t02_literal_utf8(tmp_path / "unbound")
+    unbound, unbound_data = _t02_literal_utf8(tmp_path / "unbound")
     with contextlib.closing(sqlite3.connect(unbound.db_path)) as conn:
         conn.execute(
             "UPDATE memory_artifact_versions SET payload_hash = NULL "
@@ -3870,8 +3912,10 @@ def test_t02_utf8_integrity_migration_and_version_refusals(tmp_path: Path) -> No
     page = _t02_expand(
         unbound, representation="utf8", max_bytes=T02_BIG, max_tokens=T02_BIG
     )
-    assert page["code"] == "E_MIGRATION", page
-    assert page["content_utf8"] is None
+    assert page["code"] == "OK", page
+    assert page["integrity"] == "unbound", page
+    assert page["payload_hash"] == hashlib.sha256(unbound_data).hexdigest(), page
+    assert page["content_utf8"].encode("utf-8") == unbound_data
 
     moved, _ = _t02_literal_utf8(tmp_path / "moved")
     moved.update_content("u1", {"text": "needle second"}, expected_version=1)
@@ -3978,6 +4022,4760 @@ def test_t02_compact_query_rejects_hybrid_cursor_and_maps_offset_code(
     assert _raw(tiny)["code"] == "E_INPUT"
     assert tiny["status"] == "error"
     assert "required" in _raw(tiny)["data"]
+
+
+# <<<T02-GATE A begin>>>
+# === 72-T02 gate tests: R1-R13 (G5 test author) ================================
+#
+# Everything below is new at the T02 gate. Symbols a later task adds
+# (`compact.FrameContext`, `compact.mcp_frame_bytes`, `TypedArtifactStore.fresh_reader`,
+# ...) are only reached inside test bodies, so each test fails on its own until
+# 72-T02 lands. `store_binding` is the 72-T01 D41 label some pages carry; every key
+# set below tolerates it.
+
+T2_LABEL_KEYS = {"store_binding"}
+T2_FULL_OPS = ("ask", "bootstrap", "expand", "list", "write")
+T2_MISSING_BODY = {"zz-missing"}
+
+
+def _t2_keys(page: dict[str, Any]) -> set[str]:
+    return set(page) - T2_LABEL_KEYS
+
+
+def _t2_tokens_db(root: Path) -> Path:
+    return root / ".rush" / "telemetry" / "tokens.db"
+
+
+def _t2_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ops: tuple[str, ...] = T2_FULL_OPS,
+    rows: tuple[str, ...] = ("g1", "g2", "g3"),
+    sources: tuple[str, ...] = ("source-a",),
+    content: dict[str, Any] | None = None,
+) -> tuple[Any, Path, Path, TypedArtifactStore, dict[str, Any]]:
+    """A registered project, one consented Alice grant and `rows` of Alice's
+    `needle` content, all under `tmp_path` (HOME, XDG and LOCALAPPDATA included)."""
+    _fix1_data_root(monkeypatch, tmp_path)
+    auth, data_root, root, store, grant = _policy_project(
+        tmp_path, ops=ops, sources=sources
+    )
+    value = content if content is not None else {"text": "needle granted words"}
+    for artifact_id in rows:
+        _row(store, artifact_id, ALICE, "", content=value)
+    return auth, data_root, root, store, grant
+
+
+def _t2_compact(
+    root: Path,
+    *,
+    operation: str = "ask",
+    request: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+    owner: OwnerScope | None = ALICE,
+    allowlist: list[str] | None = None,
+    query: str = "needle",
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation=operation,  # type: ignore[arg-type]
+        subject=SUBJECT,
+        query=query,
+        session_allowlist=allowlist,
+        owner_scope=owner.as_dict() if owner is not None else None,
+        permissions=permissions,
+        request={"view": "compact", **(request or {})},
+    )
+
+
+def _t2_expand_call(
+    root: Path,
+    artifact_id: str,
+    *,
+    version: int = 1,
+    request: dict[str, Any] | None = None,
+    permissions: ExecutionPermissions | None = None,
+    owner: OwnerScope | None = ALICE,
+    allowlist: list[str] | None = None,
+) -> Any:
+    return MemoryTool().run(
+        root,
+        operation="expand",
+        session_allowlist=allowlist,
+        owner_scope=owner.as_dict() if owner is not None else None,
+        permissions=permissions,
+        request={"id": artifact_id, "version": version, **(request or {})},
+    )
+
+
+def _t2_first_token(root: Path, **kwargs: Any) -> str:
+    first = _raw(_t2_compact(root, request={"limit": 1}, **kwargs))
+    assert first["code"] == "OK", first
+    token = first["data"]["next_cursor"]
+    assert isinstance(token, str) and T02_TOKEN_RE.match(token), first
+    return token
+
+
+def _t2_snapshot(db: Path) -> dict[str, Any]:
+    """Bytes and schema of a memory.db, read without creating a sidecar."""
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db}?immutable=1", uri=True)
+    ) as conn:
+        tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            )
+        ]
+        columns = {
+            table: [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")')]
+            for table in tables
+        }
+    return {"sha": _sha_file(db), "columns": columns}
+
+
+# --- R1: no telemetry before a decision --------------------------------------
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("expand_not_visible", id="expand_not_visible"),
+        pytest.param("expand_permission", id="expand_permission"),
+        pytest.param("compact_permission", id="compact_permission"),
+        pytest.param("compact_restart", id="compact_restart"),
+        pytest.param("compact_zero_items", id="compact_zero_items"),
+        pytest.param("compact_ok", id="compact_ok"),
+        pytest.param("expand_ok", id="expand_ok"),
+    ],
+)
+def test_t02_denied_expand_creates_no_tokens_db(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    auth, data_root, root, store, grant = _t2_policy(tmp_path, monkeypatch)
+    cache = ExecutionPermissions(cache_write=True)
+    db = _t2_tokens_db(root)
+    assert not db.exists()
+    kind = "retrieval"
+    if case == "expand_not_visible":
+        result = _t2_expand_call(root, "zz-missing", permissions=cache)
+        assert _raw(result)["code"] == "E_NOT_VISIBLE", _raw(result)
+    elif case == "expand_permission":
+        _fix1_revoke(auth, grant, data_root)
+        result = _t2_expand_call(root, "g1", permissions=cache)
+        assert _raw(result)["code"] == "E_PERMISSION", _raw(result)
+        assert _reason_of(result) == "revoked", _raw(result)
+    elif case == "compact_permission":
+        _fix1_revoke(auth, grant, data_root)
+        result = _t2_compact(root, permissions=cache)
+        assert _raw(result)["code"] == "E_PERMISSION", _raw(result)
+        assert _reason_of(result) == "revoked", _raw(result)
+    elif case == "compact_restart":
+        token = _t2_first_token(root)
+        _row(store, "g4", ALICE, "", content={"text": "needle granted words"})
+        result = _t2_compact(
+            root, request={"limit": 1, "cursor": token}, permissions=cache
+        )
+        assert _raw(result)["code"] == "E_RESTART", _raw(result)
+        assert _raw(result)["data"]["items"] == []
+    elif case == "compact_zero_items":
+        result = _t2_compact(root, query="absentword", permissions=cache)
+        data = _raw(result)["data"]
+        assert _raw(result)["code"] == "OK", _raw(result)
+        assert data["items"] == [] and data["complete"] is True
+    elif case == "compact_ok":
+        result = _t2_compact(root, permissions=cache)
+        assert _raw(result)["code"] == "OK", _raw(result)
+        assert len(_raw(result)["data"]["items"]) >= 1
+    else:
+        assert case == "expand_ok"
+        kind = "expansion"
+        result = _t2_expand_call(root, "g1", permissions=cache)
+        assert _raw(result)["code"] == "OK", _raw(result)
+    if case in ("compact_ok", "expand_ok"):
+        assert db.exists(), "an OK read with cache_write recorded nothing"
+        assert _t02_events(root, kind) == 1
+    else:
+        assert not db.exists(), f"{case} created {db}"
+
+
+# --- R2: a hybrid read never migrates -----------------------------------------
+
+
+def _t2_break_schema(db: Path, kind: str, table: str, name: str | None) -> None:
+    """Remove one writable-only schema addition from a current-schema `memory.db`."""
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        if kind == "column":
+            if name in ("owner_scope_kind", "owner_scope_id"):
+                conn.execute("DROP INDEX idx_memory_owner")
+            conn.execute(f'ALTER TABLE "{table}" DROP COLUMN "{name}"')
+        elif kind in ("index", "trigger", "table"):
+            conn.execute(f'DROP {kind.upper()} "{name}"')
+        elif kind == "cursor_key_row":
+            conn.execute("DELETE FROM memory_cursor_key")
+        else:
+            assert kind == "journal_delete", kind
+            conn.execute("PRAGMA journal_mode=DELETE")
+        conn.commit()
+
+
+# Every column a migration adds (store.py `_migrate_*`, HANDOFF_SENDER_COLUMNS,
+# ROW_MAC_COLUMNS, PAYLOAD_HASH_COLUMNS) plus the post-schema index, trigger, table,
+# cursor-key row and WAL mode `writable_open_ddl_free` must prove present.
+T2_WRITABLE_ADDITIONS: tuple[tuple[str, str, str | None], ...] = (
+    *(
+        ("column", "memory_artifacts", name)
+        for name in (
+            "artifact_version",
+            "archived_at",
+            "orphaned_at",
+            "owner_scope_kind",
+            "owner_scope_id",
+            "expires_at",
+            "expired_at",
+            "expired_by",
+            "payload_hash",
+            "payload_hash_origin",
+            "row_mac",
+        )
+    ),
+    ("column", "memory_artifact_versions", "payload_hash"),
+    ("column", "memory_artifact_versions", "payload_hash_origin"),
+    ("column", "memory_changes", "subject"),
+    *(
+        ("column", "memory_handoff_sessions", name)
+        for name in (
+            "revoked_at",
+            "sender_grant_id",
+            "sender_owner_kind",
+            "sender_owner_id",
+            "sender_project_id",
+            "sender_worktree_id",
+            "sender_policy_revision",
+        )
+    ),
+    ("index", "memory_artifacts", "idx_memory_owner"),
+    ("index", "memory_artifacts", "idx_memory_trust"),
+    ("trigger", "memory_artifacts", "memory_artifacts_candidates_ai"),
+    ("table", "memory_store_binding", "memory_store_binding"),
+    ("cursor_key_row", "memory_cursor_key", None),
+    ("journal_delete", "", None),
+)
+
+
+@pytest.mark.parametrize("form", ["legacy_allowlist", "policy"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(("old_schema", "memory_artifacts", None), id="old_schema"),
+        *(
+            pytest.param(
+                case,
+                id=f"missing_{case[0]}_{case[2] or case[1] or 'wal'}"
+                if case[0] != "column"
+                else f"missing_{case[1]}_{case[2]}",
+            )
+            for case in T2_WRITABLE_ADDITIONS
+        ),
+    ],
+)
+def test_t02_hybrid_compact_no_migration_on_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[str, str, str | None],
+    form: str,
+) -> None:
+    kind, table, column = case
+    if form == "policy":
+        _auth, _data_root, root, store, _grant = _t2_policy(tmp_path, monkeypatch)
+    else:
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        for i in range(3):
+            _row(store, f"p{i}", None, f"mk{i}")
+    db = store.db_path
+    if kind == "old_schema":
+        _drop_payload_columns(db)
+    else:
+        _t2_break_schema(db, kind, table, column)
+    before = _t2_snapshot(db)
+    tree = _tree(root)
+
+    result = _t2_compact(
+        root,
+        owner=ALICE if form == "policy" else None,
+        allowlist=None if form == "policy" else ["source-a"],
+        permissions=ExecutionPermissions(cache_write=True, network=True),
+        request={"retrieval": "hybrid"},
+    )
+
+    assert _t2_snapshot(db) == before, "a hybrid read changed memory.db"
+    assert _tree(root) == tree
+    _no_sidecars(db)
+    assert not _t2_tokens_db(root).exists()
+    code = _raw(result)["code"]
+    if kind == "old_schema":
+        assert code == "E_MIGRATION", _raw(result)
+        assert _raw(result)["data"]["message"] == readonly_view_reason(
+            "migration_required"
+        )
+    else:
+        assert code != "E_MIGRATION" or "message" in _raw(result)["data"], _raw(result)
+        embeddings = [t for t in before["columns"] if "embedding" in t]
+        for name in embeddings:
+            with contextlib.closing(
+                sqlite3.connect(f"file:{db}?immutable=1", uri=True)
+            ) as conn:
+                rows = conn.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            assert rows == 0, f"{name} persisted on a read"
+
+
+# --- R3: policy-mode cursor binding -------------------------------------------
+
+
+def _t2_other_project(tmp_path: Path, data_root: Path) -> Path:
+    return _registered(tmp_path / "other", data_root)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("fields", id="fields"),
+        pytest.param("case1", id="case1_revoked_between_pages"),
+        pytest.param("case2", id="case2_legacy_cursor_other_owner_enrolment"),
+        pytest.param("case3", id="case3_legacy_cursor_under_authorized_grant"),
+        pytest.param("case4", id="case4_revoked_and_replaced"),
+        pytest.param("case5_sources", id="case5_narrower_sources"),
+        pytest.param("case5_query", id="case5_changed_query"),
+        pytest.param("case6_between", id="case6_unrelated_project_grant_between_pages"),
+        pytest.param(
+            "case6_straddle", id="case6_unrelated_project_grant_straddles_read"
+        ),
+    ],
+)
+def test_t02_policy_mode_cursor_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory import retrieval
+
+    if case in ("case2", "case3"):
+        root = _pm_project(tmp_path, monkeypatch)
+        data_root = default_data_root()
+        store = TypedArtifactStore(root)
+        for artifact_id in ("g1", "g2", "g3"):
+            _row(
+                store, artifact_id, ALICE, "", content={"text": "needle granted words"}
+            )
+        token = _t2_first_token(root, owner=None, allowlist=["source-a"])
+        _registered(root, data_root)
+        if case == "case2":
+            _grant(auth, root, BOB, data_root, ops=("ask",))
+            moved = _t2_compact(
+                root,
+                request={"limit": 1, "cursor": token},
+                allowlist=["source-a"],
+            )
+            expected = auth.resolve_memory_scope(
+                project_root=root,
+                operation="ask",
+                owner_scope=ALICE,
+                requested_sources=["source-a"],
+                data_root=data_root,
+            )["reason"]
+            assert expected in {"owner_not_granted", "no_grant"}, expected
+            assert _raw(moved)["code"] == "E_PERMISSION", _raw(moved)
+            assert _reason_of(moved) == expected, _raw(moved)
+            assert _raw(moved)["data"].get("items", []) == []
+        else:
+            _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+            moved = _t2_compact(root, request={"limit": 1, "cursor": token})
+            _t02_restarted(_raw(moved)["data"] | {"code": _raw(moved)["code"]}, case)
+        return
+
+    sources = ("source-a", "source-b") if case == "case5_sources" else ("source-a",)
+    auth, data_root, root, store, grant = _t2_policy(
+        tmp_path, monkeypatch, sources=sources
+    )
+
+    if case == "fields":
+        seen: list[dict[str, Any]] = []
+        real = retrieval._cursor_binding
+
+        def spy(**kwargs: Any) -> bytes:
+            seen.append(dict(kwargs))
+            return real(**kwargs)
+
+        monkeypatch.setattr(retrieval, "_cursor_binding", spy)
+        token = _t2_first_token(root)
+        assert seen, "recall_page never bound its cursor"
+        binding = seen[-1]
+        assert binding["owner"] == (ALICE.kind, ALICE.id), binding
+        assert binding["grant_id"] == grant["grant_id"], binding
+        assert binding["project_id"] is not None, binding
+        assert binding["worktree_id"] is not None, binding
+        assert "policy_revision" not in binding, binding
+        assert T02_TOKEN_RE.match(token)
+        return
+
+    if case == "case1":
+        token = _t2_first_token(root)
+        _fix1_revoke(auth, grant, data_root)
+        moved = _t2_compact(root, request={"limit": 1, "cursor": token})
+        assert _raw(moved)["code"] == "E_PERMISSION", _raw(moved)
+        assert _reason_of(moved) == "revoked", _raw(moved)
+        data = _raw(moved)["data"]
+        assert data.get("items", []) == []
+        assert data.get("complete") is not True
+        for artifact_id in ("g1", "g2", "g3"):
+            assert artifact_id not in _dump(moved)
+        return
+
+    if case == "case4":
+        token = _t2_first_token(root)
+        _fix1_revoke(auth, grant, data_root)
+        replacement = _grant(auth, root, ALICE, data_root, ops=FULL_OPS)
+        assert replacement["grant_id"] != grant["grant_id"]
+        moved = _t2_compact(root, request={"limit": 1, "cursor": token})
+        _t02_restarted(_raw(moved)["data"] | {"code": _raw(moved)["code"]}, case)
+        return
+
+    if case == "case5_sources":
+        token = _t2_first_token(root, allowlist=["source-a", "source-b"])
+        moved = _t2_compact(
+            root, request={"limit": 1, "cursor": token}, allowlist=["source-a"]
+        )
+        _t02_restarted(_raw(moved)["data"] | {"code": _raw(moved)["code"]}, case)
+        return
+
+    if case == "case5_query":
+        token = _t2_first_token(root)
+        moved = _t2_compact(
+            root, request={"limit": 1, "cursor": token}, query="needle granted"
+        )
+        _t02_restarted(_raw(moved)["data"] | {"code": _raw(moved)["code"]}, case)
+        return
+
+    other = _t2_other_project(tmp_path, data_root)
+    revision = _revision(auth, data_root)
+    if case == "case6_between":
+        ids: list[str] = []
+        first = _raw(_t2_compact(root, request={"limit": 1}))
+        assert first["code"] == "OK", first
+        ids.extend(_ids(first["data"]))
+        token = first["data"]["next_cursor"]
+        _grant(auth, other, ALICE, data_root, ops=("ask",))
+        assert _revision(auth, data_root) != revision
+        for _ in range(5):
+            page = _raw(_t2_compact(root, request={"limit": 1, "cursor": token}))
+            assert page["code"] == "OK", page
+            ids.extend(_ids(page["data"]))
+            if page["data"]["complete"]:
+                break
+            token = page["data"]["next_cursor"]
+        assert ids == ["g1", "g2", "g3"], ids
+        return
+
+    assert case == "case6_straddle"
+    fired = _fix1_fire_after(
+        monkeypatch,
+        TypedArtifactStore,
+        "search_candidates",
+        lambda: _grant(auth, other, ALICE, data_root, ops=("ask",)),
+    )
+    page = _raw(_t2_compact(root, request={"limit": 10}))
+    assert fired["n"] == 1
+    assert _revision(auth, data_root) != revision
+    assert page["code"] == "OK", page
+    assert sorted(_ids(page["data"])) == ["g1", "g2", "g3"], page
+
+
+# --- R4: compound historical authorization ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("grant_ops", "granted"),
+    [
+        pytest.param(("expand", "history"), True, id="expand_history"),
+        pytest.param(("expand",), False, id="expand_only"),
+        pytest.param(("history",), False, id="history_only"),
+        pytest.param(None, True, id="legacy_allowlist"),
+    ],
+)
+def test_t02_historical_utf8_pages_within_caps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    grant_ops: tuple[str, ...] | None,
+    granted: bool,
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = default_data_root()
+    if grant_ops is None:
+        # the explicit-allowlist form needs no grant: D1 `legacy` mode allows history
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        data = _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    else:
+        root = _registered(tmp_path / "project", data_root)
+        store = TypedArtifactStore(root)
+        data = _t2_literal_row(store, "u1", {"text": T02_TEXT}, ALICE)
+        _grant(auth, root, ALICE, data_root, ops=grant_ops)
+
+    if not granted:
+        resolved, why = MemoryAccess.resolve_with_reason(
+            root,
+            operation="expand",
+            historical=True,
+            owner_scope=ALICE,
+            requested_sources=["source-a"],
+            data_root=data_root,
+        )
+        assert resolved is None
+        assert why == "operation_not_granted"
+        page = _t02_expand(
+            store,
+            session_allowlist=["source-a"],
+            mode="historical",
+            representation="utf8",
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        assert page["code"] == "E_PERMISSION", page
+        assert page["reason"] == "operation_not_granted", page
+        assert page["content_utf8"] is None
+        return
+
+    def expand(**kwargs: Any) -> dict[str, Any]:
+        return _t02_expand(
+            store,
+            session_allowlist=["source-a"],
+            mode="historical",
+            representation="utf8",
+            **kwargs,
+        )
+
+    total = len(data)
+    end = expand(offset=total, max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert end["code"] == "OK", end
+    cap_bytes, cap_tokens = end["bytes"] + 10, end["tokens"] + 10
+    digest = hashlib.sha256(data).hexdigest()
+    joined = b""
+    offset = 0
+    pages = 0
+    for _ in range(total + 2):
+        page = expand(offset=offset, max_bytes=cap_bytes, max_tokens=cap_tokens)
+        assert page["code"] == "OK", page
+        assert page["historical"] is True
+        assert (page["bytes"], page["tokens"]) == _t02_size(page), page
+        assert page["bytes"] <= cap_bytes and page["tokens"] <= cap_tokens, page
+        assert page["payload_hash"] == digest
+        joined += page["content_utf8"].encode("utf-8")
+        pages += 1
+        if page["complete"]:
+            break
+        offset = page["next_offset"]
+    assert pages >= 3
+    assert joined == data
+
+    # D35/R5: through the tool route the page is fitted against the transport
+    # frame, so a cap one byte under the whole-page frame yields a shorter OK page
+    # whose frame (not just its payload) fits the cap.
+    from rush.delivery import compact
+
+    frame = compact.FrameContext("in_process", None)
+    owner = ALICE.as_dict() if grant_ops is not None else None
+
+    def framed(max_bytes: int) -> tuple[Any, int]:
+        with compact.memory_frame(frame):
+            result = MemoryTool().run(
+                root,
+                operation="expand",
+                session_allowlist=["source-a"],
+                owner_scope=owner,
+                request={
+                    "id": "u1",
+                    "version": 1,
+                    "representation": "utf8",
+                    "max_bytes": max_bytes,
+                    "max_tokens": T02_BIG,
+                },
+            )
+        return result, len(compact.frame_bytes(frame, result))
+
+    whole, whole_len = framed(T02_BIG)
+    assert _raw(whole)["code"] == "OK", whole
+    assert _raw(whole)["data"]["complete"] is True, whole
+    cap = whole_len - 1
+    short, short_len = framed(cap)
+    assert _raw(short)["code"] == "OK", short
+    assert _raw(short)["data"]["complete"] is False, short
+    assert short_len <= cap, (short_len, cap)
+    assert 0 < len(_raw(short)["data"]["content_utf8"]) < len(data)
+
+
+def _t2_literal_row(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    value: dict[str, Any],
+    owner: OwnerScope | None,
+    *,
+    source: str = "source-a",
+) -> bytes:
+    """`artifact_id` whose persisted JSON is literal UTF-8 (the pre-MC01 byte form)
+    with a matching payload hash on both the current and the version row."""
+    _row(store, artifact_id, owner, "", source=source, content=value)
+    text = json.dumps(value, ensure_ascii=False)
+    digest = _sha_text(text)
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ? WHERE id = ?",
+            (text, digest, artifact_id),
+        )
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+            "WHERE artifact_id = ? AND artifact_version = 1",
+            (text, digest, artifact_id),
+        )
+        conn.commit()
+    return text.encode("utf-8")
+
+
+# <<<T02-GATE A end>>>
+
+
+# <<<T02-GATE B begin>>>
+# --- R7: D32 integrity by representation ---------------------------------------
+
+T2_BAD_BYTES = b'{"text":"needle \xff"}'
+T2_D32_ROWS = (
+    "verified",
+    "backfilled",
+    "unbound",
+    "mismatch",
+    "blob_valid_utf8",
+    "blob_non_utf8_unbound",
+    "blob_non_utf8_mismatch",
+)
+
+
+def _t2_set_u1(
+    db: Path,
+    *,
+    content: Any,
+    payload_hash: str | None,
+    origin: str | None,
+    current: bool = True,
+    version: bool = True,
+    as_text: bool = False,
+) -> None:
+    """Rewrite `u1`'s current row and/or version-1 row. `bytes` content binds as a
+    BLOB; with `as_text` it is cast to TEXT (so invalid UTF-8 stays `typeof` text)."""
+    expr = "CAST(? AS TEXT)" if as_text else "?"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        if current:
+            conn.execute(
+                f"UPDATE memory_artifacts SET content = {expr}, payload_hash = ?, "
+                "payload_hash_origin = ? WHERE id = 'u1'",
+                (content, payload_hash, origin),
+            )
+        if version:
+            conn.execute(
+                f"UPDATE memory_artifact_versions SET content = {expr}, "
+                "payload_hash = ?, payload_hash_origin = ? "
+                "WHERE artifact_id = 'u1' AND artifact_version = 1",
+                (content, payload_hash, origin),
+            )
+        conn.commit()
+
+
+def _t2_d32_store(root: Path, row: str) -> tuple[TypedArtifactStore, bytes, str]:
+    """`u1` in the D32 state `row`; returns the store, the bytes the version row
+    stores and the sha256 of the original (bound) JSON text."""
+    store, data = _t02_literal_utf8(root)
+    digest = hashlib.sha256(data).hexdigest()
+    db = store.db_path
+    if row == "verified":
+        _t2_set_u1(db, content=data.decode(), payload_hash=digest, origin="write")
+        return store, data, digest
+    if row == "backfilled":
+        _t2_set_u1(db, content=data.decode(), payload_hash=digest, origin="backfill")
+        return store, data, digest
+    if row == "unbound":
+        _t2_set_u1(db, content=data.decode(), payload_hash=None, origin=None)
+        return store, data, digest
+    if row == "mismatch":
+        altered = data.decode().replace("needle", "needlf", 1)
+        _t2_set_u1(
+            db,
+            content=altered,
+            payload_hash=digest,
+            origin="write",
+            current=False,
+        )
+        return store, altered.encode("utf-8"), digest
+    if row == "blob_valid_utf8":
+        _t2_set_u1(db, content=data, payload_hash=digest, origin="write")
+        return store, data, digest
+    if row == "blob_non_utf8_unbound":
+        _t2_set_u1(db, content=T2_BAD_BYTES, payload_hash=None, origin=None)
+        return store, T2_BAD_BYTES, digest
+    assert row == "blob_non_utf8_mismatch"
+    _t2_set_u1(db, content=T2_BAD_BYTES, payload_hash=digest, origin="write")
+    return store, T2_BAD_BYTES, digest
+
+
+def _t2_d32_expect(
+    row: str, mode: str, rep: str, stored: bytes, digest: str
+) -> dict[str, Any]:
+    """The §3.3 table cell for one (row, mode, representation)."""
+    historical = mode == "historical"
+    label = {
+        "verified": None,
+        "backfilled": "backfilled",
+        "unbound": "unbound",
+        "mismatch": "mismatch",
+        "blob_valid_utf8": None,
+        "blob_non_utf8_unbound": "unbound",
+        "blob_non_utf8_mismatch": "mismatch",
+    }[row]
+    reasons: set[str] = set()
+    if row == "mismatch":
+        if not historical:
+            return {"code": "E_NOT_VISIBLE"}
+        reasons = {"integrity_payload_mismatch"}
+    elif row.startswith("blob_non_utf8"):
+        if not historical:
+            return {"code": "E_NOT_VISIBLE"}
+        if rep == "utf8":
+            return {"code": "E_INPUT"}
+        reasons = {"integrity_content_corrupt"}
+        if label == "mismatch":
+            reasons.add("integrity_payload_mismatch")
+    bound = row in ("verified", "backfilled", "blob_valid_utf8")
+    return {
+        "code": "OK",
+        "integrity": label,
+        "bytes": stored,
+        "reasons": reasons,
+        "payload_hash": digest if bound else hashlib.sha256(stored).hexdigest(),
+    }
+
+
+def _t2_content(page: dict[str, Any]) -> bytes:
+    if page.get("content_utf8") is not None:
+        return str(page["content_utf8"]).encode("utf-8")
+    return base64.b64decode(page["content_base64"])
+
+
+@pytest.mark.parametrize("rep", ["base64", "utf8"])
+@pytest.mark.parametrize("mode", ["ordinary", "historical"])
+@pytest.mark.parametrize("row", T2_D32_ROWS)
+def test_t02_integrity_by_representation(
+    tmp_path: Path, row: str, mode: str, rep: str
+) -> None:
+    store, stored, digest = _t2_d32_store(tmp_path, row)
+    want = _t2_d32_expect(row, mode, rep, stored, digest)
+
+    def expand(**kwargs: Any) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "mode": mode,
+            "representation": rep,
+            "max_bytes": T02_BIG,
+            "max_tokens": T02_BIG,
+        }
+        args.update(kwargs)
+        return _t02_expand(store, **args)
+
+    page = expand()
+    assert page["code"] == want["code"], (row, mode, rep, page)
+    if want["code"] == "E_NOT_VISIBLE":
+        missing = expand(artifact_id="zz-missing")
+        assert {k: v for k, v in page.items() if k != "id"} == {
+            k: v for k, v in missing.items() if k != "id"
+        }
+        assert not page.get("content_utf8") and not page.get("content_base64")
+        return
+    if want["code"] == "E_INPUT":
+        assert page["field"] == "representation", page
+        assert page["reason"] == "representation_unavailable", page
+        assert page["alternatives"] == ["base64"], page
+        assert page["content_utf8"] is None
+        return
+
+    assert _t2_content(page) == want["bytes"], page
+    if want["integrity"] is None:
+        assert "integrity" not in page, page
+    else:
+        assert page["integrity"] == want["integrity"], page
+    if rep == "utf8":
+        assert page["payload_hash"] == want["payload_hash"], page
+    if mode == "historical":
+        assert page["historical"] is True
+        assert want["reasons"] <= set(page["reason_codes"]), page
+    else:
+        assert "historical" not in page and "reason_codes" not in page
+    assert (page["bytes"], page["tokens"]) == _t02_size(page), page
+
+    # Exact offsets and budget measurement: small pages from offset 0 rejoin to the
+    # stored bytes, each one measured over every key it carries.
+    total = len(stored)
+    end = expand(offset=total)
+    assert end["code"] == "OK", end
+    cap = end["bytes"] + 24
+    joined = b""
+    offset = 0
+    for _ in range(total + 2):
+        chunk = expand(offset=offset, max_bytes=cap)
+        assert chunk["code"] == "OK", chunk
+        assert (chunk["bytes"], chunk["tokens"]) == _t02_size(chunk), chunk
+        assert chunk["bytes"] <= cap, chunk
+        assert chunk.get("integrity") == page.get("integrity")
+        joined += _t2_content(chunk)
+        if chunk["complete"]:
+            break
+        assert chunk["next_offset"] > offset
+        offset = chunk["next_offset"]
+    else:
+        raise AssertionError("paging never completed")
+    assert joined == stored
+
+
+# --- R7: BLOB, UTF-16 and mixed-type rows ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("bound_utf8", id="bound_utf8"),
+        pytest.param("wrong_digest", id="wrong_digest"),
+        pytest.param("utf16", id="utf16"),
+        pytest.param("invalid_utf8", id="invalid_utf8"),
+        pytest.param("text_current_blob_version", id="text_current_blob_version"),
+        pytest.param("promote_bound_blob", id="promote_bound_blob"),
+        pytest.param("promote_wrong_digest_blob", id="promote_wrong_digest_blob"),
+        pytest.param("maintenance_bound_blob", id="maintenance_bound_blob"),
+    ],
+)
+def test_t02_blob_representations(tmp_path: Path, case: str) -> None:
+    if case.startswith(("promote_", "maintenance_")):
+        _t2_blob_promotion(tmp_path, case)
+        return
+    store, data = _t02_literal_utf8(tmp_path / "blob")
+    digest = hashlib.sha256(data).hexdigest()
+    db = store.db_path
+
+    def expand(rep: str, mode: str = "ordinary") -> dict[str, Any]:
+        return _t02_expand(
+            store,
+            mode=mode,
+            representation=rep,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+
+    def refused(rep: str, mode: str = "ordinary") -> None:
+        page = expand(rep, mode)
+        missing = _t02_expand(
+            store,
+            artifact_id="zz-missing",
+            mode=mode,
+            representation=rep,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        assert page["code"] == "E_NOT_VISIBLE", (case, rep, page)
+        assert {k: v for k, v in page.items() if k != "id"} == {
+            k: v for k, v in missing.items() if k != "id"
+        }
+
+    if case == "bound_utf8":
+        _t2_set_u1(db, content=data, payload_hash=digest, origin="write")
+        assert _t2_typeof(db, "memory_artifacts") == "blob"
+        for rep in ("base64", "utf8"):
+            page = expand(rep)
+            assert page["code"] == "OK", (rep, page)
+            assert "integrity" not in page, page
+            assert _t2_content(page) == data
+            if rep == "utf8":
+                assert page["payload_hash"] == digest
+        listed = _t02_recall(store, limit=10)
+        assert listed["code"] == "OK" and _ids(listed) == ["u1"], listed
+    elif case == "wrong_digest":
+        _t2_set_u1(db, content=data, payload_hash="0" * 64, origin="write")
+        for rep in ("base64", "utf8"):
+            refused(rep)
+        page = expand("base64", "historical")
+        assert page["code"] == "OK", page
+        assert page["integrity"] == "mismatch", page
+        assert "integrity_payload_mismatch" in page["reason_codes"]
+        assert _t2_content(page) == data
+        page = expand("utf8", "historical")
+        assert page["code"] == "OK", page
+        assert page["integrity"] == "mismatch"
+        assert page["payload_hash"] == hashlib.sha256(data).hexdigest()
+        assert _t2_content(page) == data
+    elif case in ("utf16", "invalid_utf8"):
+        raw = data.decode().encode("utf-16") if case == "utf16" else T2_BAD_BYTES
+        bound = digest if case == "utf16" else None
+        _t2_set_u1(
+            db, content=raw, payload_hash=bound, origin="write" if bound else None
+        )
+        for rep in ("base64", "utf8"):
+            refused(rep)
+        page = expand("base64", "historical")
+        assert page["code"] == "OK", page
+        assert _t2_content(page) == raw
+        assert "integrity_content_corrupt" in page["reason_codes"], page
+        assert page["integrity"] == ("mismatch" if bound else "unbound"), page
+        page = expand("utf8", "historical")
+        assert page["code"] == "E_INPUT", page
+        assert page["field"] == "representation"
+        assert page["reason"] == "representation_unavailable"
+        assert page["alternatives"] == ["base64"]
+        listed = _t02_recall(store, limit=10)
+        assert listed["code"] == "OK" and _ids(listed) == [], listed
+    else:
+        assert case == "text_current_blob_version"
+        _t2_set_u1(db, content=data, payload_hash=digest, origin="write", current=False)
+        assert _t2_typeof(db, "memory_artifacts") == "text"
+        assert _t2_typeof(db, "memory_artifact_versions") == "blob"
+        for rep in ("base64", "utf8"):
+            page = expand(rep)
+            assert page["code"] == "OK", (rep, page)
+            assert _t2_content(page) == data
+            assert "integrity" not in page, page
+
+
+def _t2_typeof(db: Path, table: str, artifact_id: str = "u1") -> str:
+    column = "id" if table == "memory_artifacts" else "artifact_id"
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        return str(
+            conn.execute(
+                f"SELECT typeof(content) FROM {table} WHERE {column} = ? LIMIT 1",
+                (artifact_id,),
+            ).fetchone()[0]
+        )
+
+
+def _t2_blob_promotion(tmp_path: Path, case: str) -> None:
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    if case.startswith("promote_"):
+        store.write(
+            MemoryArtifact(
+                id="c1",
+                family="handoff",
+                subject="active_context",
+                trust_tier="DERIVED",
+                content={"text": "needle control"},
+                source="s",
+                created_at=1e9,
+            )
+        )
+        raw = _fix1_raw_content(store.db_path, "c1")
+        digest = _sha_text(raw)
+        stored = digest if case == "promote_bound_blob" else "0" * 64
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET content = ?, payload_hash = ? "
+                "WHERE id = 'c1'",
+                (raw.encode("utf-8"), stored),
+            )
+            conn.execute(
+                "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+                "WHERE artifact_id = 'c1'",
+                (raw.encode("utf-8"), stored),
+            )
+            conn.commit()
+        assert _t2_typeof(store.db_path, "memory_artifacts", "c1") == "blob"
+        _, outcome = store.promote("c1", user_stated=True)
+        assert outcome.promoted is (case == "promote_bound_blob"), outcome
+        return
+
+    results: dict[str, str] = {}
+    for variant in ("text", "blob"):
+        sub = tmp_path / variant
+        sub.mkdir()
+        sub_store = TypedArtifactStore(sub.resolve())
+        _row(sub_store, "m1", None, "mk-m1", source="s1")
+        _row(sub_store, "m2", None, "mk-m2", source="s2")
+        if variant == "blob":
+            raw = _fix1_raw_content(sub_store.db_path, "m1")
+            with contextlib.closing(sqlite3.connect(sub_store.db_path)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET content = ? WHERE id = 'm1'",
+                    (raw.encode("utf-8"),),
+                )
+                conn.execute(
+                    "UPDATE memory_artifact_versions SET content = ? "
+                    "WHERE artifact_id = 'm1'",
+                    (raw.encode("utf-8"),),
+                )
+                conn.commit()
+            assert _t2_typeof(sub_store.db_path, "memory_artifacts", "m1") == "blob"
+        run_maintenance_cycle(
+            "promotion_sweep",
+            project_root=sub,
+            owner_scope=legacy_owner_scope(sub.resolve()),
+            candidate_ids=["m1"],
+        )
+        current = sub_store.get_current("m1")
+        assert current is not None
+        results[variant] = current.trust_tier
+    assert results["text"] != "DERIVED", "control sweep promoted nothing"
+    assert results["blob"] == results["text"], results
+
+
+# --- R7: TEXT rows that are not UTF-8 --------------------------------------------
+
+T2_BAD_HEX = "7b2274657874223a226e6565646c6520ff227d"
+
+
+def _t2_bad_text_row(store: TypedArtifactStore, artifact_id: str) -> None:
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        for table, key in (
+            ("memory_artifacts", "id"),
+            ("memory_artifact_versions", "artifact_id"),
+        ):
+            conn.execute(
+                f"UPDATE {table} SET content = CAST(X'{T2_BAD_HEX}' AS TEXT) "
+                f"WHERE {key} = ?",
+                (artifact_id,),
+            )
+            kind = conn.execute(
+                f"SELECT typeof(content) FROM {table} WHERE {key} = ?", (artifact_id,)
+            ).fetchone()[0]
+            assert kind == "text"
+        conn.commit()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("p1p2p3", id="p1p2p3"),
+        pytest.param("scan_cap_513", id="scan_cap_513"),
+    ],
+)
+def test_t02_invalid_utf8_text_rows(tmp_path: Path, case: str) -> None:
+    from rush.memory.expiry import sweep_expired
+    from rush.memory.maintenance import (
+        preview_maintenance_candidates,
+        run_maintenance_cycle,
+    )
+
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    if case == "scan_cap_513":
+        valid = [f"c{i:04d}" for i in range(513)]
+        for artifact_id in valid:
+            _row(
+                store,
+                artifact_id,
+                None,
+                "",
+                content={"text": f"scanme cap {artifact_id}"},
+            )
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO memory_artifacts (id, family, subject, trust_tier, "
+                "content, source, created_at, artifact_version) "
+                "VALUES ('bad0', 'memory', ?, 'DERIVED', 'scanme not json', "
+                "'source-a', ?, 1)",
+                (SUBJECT, time.time()),
+            )
+            conn.commit()
+        _row(store, "bad1", None, "", content={"text": "scanme corrupt"})
+        with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+            for table, key in (
+                ("memory_artifacts", "id"),
+                ("memory_artifact_versions", "artifact_id"),
+            ):
+                conn.execute(
+                    f"UPDATE {table} SET content = CAST(X'{T2_BAD_HEX}' AS TEXT) "
+                    f"WHERE {key} = 'bad1'"
+                )
+            conn.commit()
+        for limit in (10_000, 100):
+            pages = _t02_follow(
+                store,
+                query="scanme",
+                limit=limit,
+                max_bytes=T02_BIG,
+                max_tokens=T02_BIG,
+            )
+            ids = _t02_page_ids(pages)
+            assert len(ids) == len(set(ids)) == 513, limit
+            assert set(ids) == set(valid), limit
+            assert "bad0" not in ids and "bad1" not in ids
+        return
+
+    for artifact_id in ("p1", "p2", "p3"):
+        _row(store, artifact_id, None, "", content=T02_SAME)
+    _t2_bad_text_row(store, "p2")
+    db = store.db_path
+    _drop_payload_columns(db)
+
+    reopened = TypedArtifactStore(root.resolve())
+    assert _payload_row(db, "p2")[0] is None
+    for artifact_id in ("p1", "p3"):
+        digest, origin = _payload_row(db, artifact_id)
+        assert digest is not None and origin == "backfill", artifact_id
+    view, state = TypedArtifactStore.open_readonly_view(root.resolve())
+    assert state is None and view is not None
+    view.close()
+
+    scoped = reopened.scope_artifacts(
+        SUBJECT, source_allowlist=["source-a"], scan_offset=0, scan_limit=10
+    )
+    found = reopened.search_candidates(
+        SUBJECT,
+        "needle",
+        source_allowlist=["source-a"],
+        scan_offset=0,
+        scan_limit=10,
+    )
+    for rows in (scoped, found):
+        assert sorted(r["id"] for r in rows) == ["p1", "p2", "p3"]
+        by_id = {r["id"]: r["content"] for r in rows}
+        assert isinstance(by_id["p2"], bytes) and by_id["p2"] == bytes.fromhex(
+            T2_BAD_HEX
+        )
+        assert isinstance(by_id["p1"], str) and isinstance(by_id["p3"], str)
+
+    pages = _t02_follow(
+        reopened, limit=1, max_bytes=T02_BIG, max_tokens=T02_BIG, query="needle"
+    )
+    assert _t02_page_ids(pages) == ["p1", "p3"]
+    assert [p["complete"] for p in pages] == [False] * (len(pages) - 1) + [True]
+
+    for rep in ("base64", "utf8"):
+        page = _t02_expand(
+            reopened,
+            artifact_id="p2",
+            representation=rep,
+            max_bytes=T02_BIG,
+            max_tokens=T02_BIG,
+        )
+        assert page["code"] == "E_NOT_VISIBLE", (rep, page)
+    page = _t02_expand(
+        reopened,
+        artifact_id="p2",
+        mode="historical",
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+    )
+    assert page["code"] == "OK", page
+    assert base64.b64decode(page["content_base64"]) == b'{"text":"needle \xff"}'
+    assert "integrity_content_corrupt" in page["reason_codes"], page
+    page = _t02_expand(
+        reopened,
+        artifact_id="p2",
+        mode="historical",
+        representation="utf8",
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+    )
+    assert page["code"] == "E_INPUT", page
+    assert page["field"] == "representation"
+    assert page["reason"] == "representation_unavailable"
+    assert page["alternatives"] == ["base64"]
+
+    owner = legacy_owner_scope(root.resolve())
+    for task in ("promotion_sweep", "staleness_sweep", "skill_admission_check"):
+        preview_maintenance_candidates(task, project_root=root, owner_scope=owner)
+        run_maintenance_cycle(task, project_root=root, owner_scope=owner)
+    preview_maintenance_candidates("expiry_sweep", project_root=root, owner_scope=owner)
+    sweep_expired(root.resolve(), owner_scope=owner)
+
+
+# <<<T02-GATE B end>>>
+
+
+# <<<T02-GATE C begin>>>
+# --- R5, R8, R9: transport frames ---------------------------------------------
+#
+# One adapter per transport. `call(route, request, cache_write=...)` runs one real
+# `rush_memory` request through that transport and returns the bytes the transport
+# emits plus the tool's raw envelope. Every in-process transport and the stdio child
+# run with a fixed `duration_ms`, so a frame size is a function of the page alone.
+
+T2_ENC = tiktoken.get_encoding("cl100k_base")
+DEFAULT_MAX_BYTES_T2 = 8192
+DEFAULT_MAX_TOKENS_T2 = 2048
+T2_ROUTES = ("expand", "ask")
+T2_CHILD = textwrap.dedent(
+    """
+    import os, sys, time
+    log = os.environ.get("T2_FRAME_LOG")
+    if log:
+        from rush.delivery import compact
+        real = getattr(compact, "frame_bytes", None)
+        if real is not None:
+            def spy(frame, value):
+                out = real(frame, value)
+                with open(log, "a", encoding="utf-8") as fh:
+                    fh.write(str(len(out)) + "\\n")
+                return out
+            compact.frame_bytes = spy
+    ms = os.environ.get("T2_DURATION_MS")
+    if ms:
+        import rush.tools.memory as memory_module
+
+        class Clock:
+            def __init__(self, real, ms):
+                self._real, self._ms, self._n = real, int(ms), 0
+            def reset(self):
+                self._n = 0
+            def monotonic(self):
+                self._n += 1
+                return 0.0 if self._n == 1 else (self._ms + 0.5) / 1000.0
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        clock = Clock(time, ms)
+        memory_module.time = clock
+        original = memory_module.MemoryTool.run
+        def run(self, *args, **kwargs):
+            clock.reset()
+            return original(self, *args, **kwargs)
+        memory_module.MemoryTool.run = run
+    from rush.cli import cli
+    sys.argv = ["rush", "mcp", "serve"]
+    cli()
+    """
+)
+
+
+def _t2_frame_tokens(frame: bytes, encoding: str = "cl100k_base") -> int:
+    return len(
+        tiktoken.get_encoding(encoding).encode(
+            frame.decode("utf-8"), disallowed_special=()
+        )
+    )
+
+
+@dataclasses.dataclass
+class _T2Out:
+    frame: bytes
+    raw: dict[str, Any]
+
+    @property
+    def code(self) -> str:
+        return str(self.raw["code"])
+
+    @property
+    def data(self) -> dict[str, Any]:
+        return dict(self.raw["data"])
+
+
+class _T2Clock:
+    """`time` stand-in for `rush.tools.memory`: after `reset()` the first
+    `monotonic()` is 0 and every later one reads `ms` milliseconds."""
+
+    def __init__(self, real: Any, ms: int) -> None:
+        self._real, self._ms, self._n = real, ms, 0
+
+    def reset(self) -> None:
+        self._n = 0
+
+    def monotonic(self) -> float:
+        self._n += 1
+        return 0.0 if self._n == 1 else (self._ms + 0.5) / 1000.0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+
+def _t2_fixed_duration(monkeypatch: pytest.MonkeyPatch, ms: int) -> _T2Clock:
+    import rush.tools.memory as memory_module
+
+    clock = _T2Clock(time, ms)
+    monkeypatch.setattr(memory_module, "time", clock)
+    original = MemoryTool.run
+
+    def run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        clock.reset()
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(MemoryTool, "run", run)
+    return clock
+
+
+def _t2_mcp_arguments(
+    root: Path, route: str, request: dict[str, Any], cache_write: bool
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "path": str(root),
+        "operation": "expand" if route == "expand" else "ask",
+        "session_allowlist": ["source-a"],
+    }
+    if route == "ask":
+        arguments["subject"] = SUBJECT
+        arguments["query"] = "needle"
+        arguments["request"] = {"view": "compact", **request}
+    else:
+        arguments["request"] = dict(request)
+    if cache_write:
+        arguments["allow_cache_write"] = True
+    return arguments
+
+
+class _T2InProc:
+    name = "in_process"
+    routes = T2_ROUTES
+
+    def __init__(self, root: Path) -> None:
+        from rush.mcp import build_server
+
+        self.root = root
+        self.server = build_server()
+
+    def call(
+        self, route: str, request: dict[str, Any], *, cache_write: bool = False
+    ) -> _T2Out:
+        from rush.delivery import compact
+
+        result = asyncio.run(
+            self.server.call_tool(
+                "rush_memory",
+                _t2_mcp_arguments(self.root, route, request, cache_write),
+            )
+        )
+        structured = result.structuredContent
+        assert isinstance(structured, dict) and "raw" in structured, result
+        return _T2Out(compact.canonical_json(structured), structured["raw"])
+
+    def close(self) -> None:
+        return None
+
+
+class _T2Stdio:
+    """A real `python -m rush.cli mcp serve` over stdio. Each response is read
+    while the child's stdin stays open."""
+
+    name = "mcp_stdio"
+    routes = T2_ROUTES
+
+    def __init__(
+        self,
+        root: Path,
+        work: Path,
+        *,
+        duration_ms: int | None = 5,
+        request_id: int | str = 7,
+    ) -> None:
+        import queue
+
+        self.root = root
+        self.request_id = request_id
+        self.log = work / "frames.log"
+        env = _child_env()
+        env["T2_FRAME_LOG"] = str(self.log)
+        if duration_ms is not None:
+            env["T2_DURATION_MS"] = str(duration_ms)
+        self.proc = subprocess.Popen(
+            [sys.executable, "-c", T2_CHILD],
+            cwd=work,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=0,
+        )
+        self.lines: queue.Queue[bytes] = queue.Queue()
+
+        def pump() -> None:
+            assert self.proc.stdout is not None
+            for line in iter(self.proc.stdout.readline, b""):
+                self.lines.put(line)
+            self.lines.put(b"")
+
+        threading.Thread(target=pump, daemon=True).start()
+        init = {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "t02", "version": "1"},
+        }
+        _line, parsed = self.rpc("initialize", init, 0)
+        assert "result" in parsed, parsed
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _send(self, message: dict[str, Any]) -> None:
+        assert self.proc.stdin is not None
+        self.proc.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+        self.proc.stdin.flush()
+
+    def rpc(
+        self, method: str, params: dict[str, Any], request_id: int | str
+    ) -> tuple[bytes, dict[str, Any]]:
+        import queue
+
+        self._send(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        )
+        deadline = time.monotonic() + 90
+        while True:
+            try:
+                line = self.lines.get(timeout=max(0.1, deadline - time.monotonic()))
+            except queue.Empty:
+                raise AssertionError(f"stdio server never answered {method}") from None
+            assert line, "the stdio server closed its stdout"
+            parsed = json.loads(line)
+            if parsed.get("id") == request_id and (
+                "result" in parsed or "error" in parsed
+            ):
+                return line, parsed
+            assert time.monotonic() < deadline, "stdio response timed out"
+
+    def lengths(self) -> list[int]:
+        if not self.log.exists():
+            return []
+        return [int(x) for x in self.log.read_text(encoding="utf-8").split()]
+
+    def tool(
+        self, name: str, arguments: dict[str, Any], request_id: int | str | None = None
+    ) -> tuple[bytes, dict[str, Any]]:
+        rid = self.request_id if request_id is None else request_id
+        return self.rpc("tools/call", {"name": name, "arguments": arguments}, rid)
+
+    def call(
+        self, route: str, request: dict[str, Any], *, cache_write: bool = False
+    ) -> _T2Out:
+        line, parsed = self.tool(
+            "rush_memory", _t2_mcp_arguments(self.root, route, request, cache_write)
+        )
+        structured = parsed["result"].get("structuredContent")
+        assert isinstance(structured, dict) and "raw" in structured, parsed
+        return _T2Out(line, structured["raw"])
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):  # a stuck child is killed below
+            if self.proc.stdin is not None:
+                self.proc.stdin.close()
+            self.proc.wait(timeout=10)
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait(timeout=10)
+
+
+class _T2Cli:
+    name = "cli_json"
+    routes = ("expand",)
+
+    def __init__(self, root: Path, work: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
+        self.work = work
+        self.count = 0
+        monkeypatch.chdir(root)
+
+    def call(
+        self, route: str, request: dict[str, Any], *, cache_write: bool = False
+    ) -> _T2Out:
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        assert route == "expand"
+        self.count += 1
+        path = self.work / f"request-{self.count}.json"
+        path.write_text(json.dumps(request), encoding="utf-8")
+        args = ["memory", "expand", "--input", str(path), "--session", "source-a"]
+        args.append("--json")
+        if cache_write:
+            args.append("--allow-cache-write")
+        result = CliRunner().invoke(cli, args)
+        frame = result.stdout_bytes
+        payload = json.loads(frame)
+        assert isinstance(payload, dict) and "raw" in payload, (result.exit_code, frame)
+        return _T2Out(frame, payload["raw"])
+
+    def close(self) -> None:
+        return None
+
+
+class _T2Dashboard:
+    name = "dashboard"
+    routes = T2_ROUTES
+
+    def __init__(
+        self,
+        root: Path,
+        project_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        request_id: str | None = None,
+    ) -> None:
+        from rush.dashboard import server as server_module
+        from tests.test_dashboard_scan_actions import _start_dashboard
+
+        monkeypatch.setattr(server_module, "ACTION_RATE_LIMIT", 1_000_000)
+        self.root = root
+        self.project_id = project_id
+        self.request_id = request_id or "d" * 32
+        self.server, self.base, self.cookie, self.csrf = _start_dashboard(
+            project_id, root
+        )
+
+    def call(
+        self, route: str, request: dict[str, Any], *, cache_write: bool = False
+    ) -> _T2Out:
+        import uuid
+
+        from tests.test_dashboard_scan_actions import _post
+
+        if route == "expand":
+            operation = "memory_expand"
+            arguments: dict[str, Any] = {
+                "session_allowlist": ["source-a"],
+                **request,
+            }
+        else:
+            operation = "memory_query"
+            arguments = {
+                "mode": "ask",
+                "subject": SUBJECT,
+                "query": "needle",
+                "session_allowlist": ["source-a"],
+                **request,
+            }
+        body = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": operation,
+                "arguments": arguments,
+                "grants": {"cache_write": True} if cache_write else {},
+                "expected": {},
+                "request_id": str(uuid.uuid4()),
+            }
+        ).encode("utf-8")
+        response = _post(
+            f"{self.base}/api/projects/{self.project_id}/actions",
+            headers={
+                "Cookie": self.cookie,
+                "X-Rush-CSRF": self.csrf,
+                "Origin": self.base,
+                "Content-Type": "application/json",
+                "X-Request-Id": self.request_id,
+            },
+            body=body,
+        )
+        frame = response.read()
+        parsed = json.loads(frame)
+        # server.py _TOOL_RESULT_CONFLICT_CODES: an E_VERSION result is a real 409
+        code = parsed["data"]["raw"]["code"]
+        assert response.status == (409 if code == "E_VERSION" else 200), parsed
+        return _T2Out(frame, parsed["data"]["raw"])
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@contextlib.contextmanager
+def _t2_transport(
+    name: str,
+    base: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    duration_ms: int = 5,
+    request_id: int | str | None = None,
+) -> Any:
+    """Open transport `name` over a legacy-mode project holding `u1` (Unicode JSON)
+    and `a1` (ASCII, no `needle`). Yields the adapter, then closes it."""
+    base.mkdir(parents=True, exist_ok=True)
+    project_id = ""
+    if name == "dashboard":
+        from tests.test_dashboard_scan_actions import _isolate_data_roots, _register
+
+        _isolate_data_roots(base, monkeypatch)
+        project_id, root = _register(base)
+    else:
+        _fix1_data_root(monkeypatch, base)
+        root = base / "project"
+        root.mkdir(exist_ok=True)
+    root = root.resolve()
+    store = TypedArtifactStore(root)
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    _t2_literal_row(store, "a1", {"text": "plain ascii only"}, None)
+    _t2_literal_row(store, "l1", {"text": "x" * 600}, None)
+    if name != "mcp_stdio":
+        _t2_fixed_duration(monkeypatch, duration_ms)
+    adapter: Any
+    if name == "in_process":
+        adapter = _T2InProc(root)
+    elif name == "mcp_stdio":
+        adapter = _T2Stdio(
+            root,
+            base,
+            duration_ms=duration_ms,
+            request_id=7 if request_id is None else request_id,
+        )
+    elif name == "cli_json":
+        adapter = _T2Cli(root, base, monkeypatch)
+    else:
+        assert name == "dashboard"
+        adapter = _T2Dashboard(
+            root,
+            project_id,
+            monkeypatch,
+            request_id=request_id if isinstance(request_id, str) else None,
+        )
+    try:
+        yield adapter
+    finally:
+        adapter.close()
+
+
+def _t2_request(route: str, **extra: Any) -> dict[str, Any]:
+    if route == "expand":
+        return {"id": "u1", "version": 1, "representation": "utf8", **extra}
+    return {"limit": 1, **extra}
+
+
+def _t2_first_ok(call: Any, low: int, high: int) -> int:
+    """Smallest cap in `[low, high]` whose response is OK (`call(cap).code`)."""
+    assert call(high).code == "OK", "no OK page even at the largest cap"
+    if call(low).code == "OK":
+        return low
+    while high - low > 1:
+        mid = (low + high) // 2
+        if call(mid).code == "OK":
+            high = mid
+        else:
+            low = mid
+    return high
+
+
+def _t2_check_admission(adapter: Any, route: str) -> None:
+    """B15 for one transport and route."""
+    root: Path = adapter.root
+    db = _t2_tokens_db(root)
+    emoji = _t2_emoji_offset() if route == "expand" else None
+
+    def build(**caps: int) -> dict[str, Any]:
+        extra = dict(caps)
+        if emoji is not None:
+            extra["offset"] = emoji
+        return _t2_request(route, **extra)
+
+    refusal = adapter.call(
+        route, build(max_bytes=1, max_tokens=T02_BIG), cache_write=True
+    )
+    assert refusal.code == "E_INPUT", refusal.raw
+    required = refusal.data["required"]
+    min_bytes, min_tokens = required["max_bytes"], required["max_tokens"]
+    assert min_bytes > 1 and min_tokens > 1
+
+    for caps in (
+        {"max_bytes": min_bytes - 1, "max_tokens": T02_BIG},
+        {"max_bytes": T02_BIG, "max_tokens": min_tokens - 1},
+    ):
+        short = adapter.call(route, build(**caps), cache_write=True)
+        assert short.code == "E_INPUT", (route, caps, short.raw)
+        assert short.data["required"] == required, (route, caps, short.raw)
+    assert not db.exists(), f"{adapter.name} {route}: a refused request made {db}"
+
+    admitted = adapter.call(route, build(max_bytes=min_bytes, max_tokens=min_tokens))
+    assert admitted.code in ("OK", "E_BUDGET"), (route, admitted.raw)
+    assert len(admitted.frame) <= min_bytes, (route, len(admitted.frame), min_bytes)
+    assert _t2_frame_tokens(admitted.frame) <= min_tokens
+
+    # Minimum plus exactly one scalar: the first OK page carries one scalar (the
+    # four-byte emoji for expand) and its frame is the cap, byte for byte and
+    # token for token.
+    def by_bytes(cap: int) -> _T2Out:
+        return adapter.call(route, build(max_bytes=cap, max_tokens=T02_BIG))
+
+    first_bytes = _t2_first_ok(by_bytes, min_bytes, 65_536)
+    exact = by_bytes(first_bytes)
+    assert len(exact.frame) == first_bytes, (route, len(exact.frame), first_bytes)
+    assert by_bytes(first_bytes - 1).code != "OK"
+    if route == "expand":
+        assert exact.data["content_utf8"] == "\U0001f642", exact.raw
+        assert exact.data["complete"] is False
+
+    def by_tokens(cap: int) -> _T2Out:
+        return adapter.call(route, build(max_bytes=T02_BIG, max_tokens=cap))
+
+    first_tokens = _t2_first_ok(by_tokens, min_tokens, 4096)
+    exact = by_tokens(first_tokens)
+    assert _t2_frame_tokens(exact.frame) == first_tokens, (route, first_tokens)
+    assert by_tokens(first_tokens - 1).code != "OK"
+
+
+def _t2_emoji_offset() -> int:
+    return (
+        json.dumps({"text": T02_TEXT}, ensure_ascii=False)
+        .encode("utf-8")
+        .index("\U0001f642".encode("utf-8"))
+    )
+
+
+@pytest.mark.parametrize(
+    "transport",
+    [
+        pytest.param("mcp_stdio", id="mcp_stdio"),
+        pytest.param("cli_json", id="cli_json"),
+        pytest.param("dashboard", id="dashboard"),
+        pytest.param("in_process", id="in_process"),
+    ],
+)
+def test_t02_transport_frame_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str
+) -> None:
+    from rush.delivery import compact
+
+    assert hasattr(compact, "FrameContext"), "no transport frame context"
+    request_ids: dict[str, list[Any]] = {
+        "mcp_stdio": [7, 2_000_000_011, "i" * 64],
+        "dashboard": [None, "i" * 64],
+    }
+    variants = request_ids.get(transport, [None])
+    for index, variant in enumerate(variants):
+        with _t2_transport(
+            transport, tmp_path / f"v{index}", monkeypatch, request_id=variant
+        ) as adapter:
+            for route in adapter.routes:
+                _t2_check_admission(adapter, route)
+
+
+# --- R8: stdio bytes are the measured frame --------------------------------------
+
+
+def test_t02_mcp_frame_bytes_match_stdio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mcp.types import CallToolResult
+
+    from rush.delivery import compact
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    root = tmp_path / "project"
+    root.mkdir()
+    root = root.resolve()
+    store = TypedArtifactStore(root.resolve())
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    emoji = _t2_emoji_offset()
+    newline = os.linesep.encode("ascii")
+
+    def check(line: bytes, parsed: dict[str, Any]) -> None:
+        result = CallToolResult.model_validate(parsed["result"])
+        assert line == compact.mcp_frame_bytes(result, parsed["id"]), line
+        assert line.endswith(newline)
+
+    spy = _T2Stdio(root, tmp_path, duration_ms=5, request_id=3)
+    try:
+        for rid in (3, 2_000_000_011, "i" * 64):
+            for label, request, expect in (
+                ("ok_page", {"limit": 1}, "OK"),
+                (
+                    "unicode_page",
+                    {"id": "u1", "version": 1, "representation": "utf8"},
+                    "OK",
+                ),
+            ):
+                route = "ask" if label == "ok_page" else "expand"
+                arguments = _t2_mcp_arguments(root, route, request, False)
+                before = len(spy.lengths())
+                line, parsed = spy.tool("rush_memory", arguments, rid)
+                check(line, parsed)
+                structured = parsed["result"]["structuredContent"]
+                assert structured["raw"]["code"] == expect, (label, structured)
+                new = spy.lengths()[before:]
+                assert new and len(line) in new, (label, rid, len(line), new)
+
+        # E_BUDGET: the content-free minimum, then a scalar that does not fit.
+        probe = _t2_mcp_arguments(
+            root,
+            "expand",
+            {
+                "id": "u1",
+                "version": 1,
+                "representation": "utf8",
+                "offset": emoji,
+                "max_bytes": 1,
+            },
+            False,
+        )
+        # Same JSON-RPC id and offset as the measured call: the admission
+        # minimum is measured on the request's own frame (brief 3.4, B15).
+        _line, parsed = spy.tool("rush_memory", probe, "i" * 64)
+        required = parsed["result"]["structuredContent"]["raw"]["data"]["required"]
+        budget_args = _t2_mcp_arguments(
+            root,
+            "expand",
+            {
+                "id": "u1",
+                "version": 1,
+                "representation": "utf8",
+                "offset": emoji,
+                "max_bytes": required["max_bytes"],
+                "max_tokens": required["max_tokens"],
+            },
+            False,
+        )
+        before = len(spy.lengths())
+        line, parsed = spy.tool("rush_memory", budget_args, "i" * 64)
+        check(line, parsed)
+        outcome = parsed["result"]["structuredContent"]["raw"]
+        assert outcome["code"] in ("E_BUDGET", "OK"), outcome
+        new = spy.lengths()[before:]
+        assert new and len(line) in new, (len(line), new)
+
+        # A validation envelope: no admission measurement, no telemetry.
+        before = len(spy.lengths())
+        line, parsed = spy.tool(
+            "rush_memory",
+            {
+                "path": str(root),
+                "operation": "expand",
+                "allow_cache_write": True,
+                "request": {"id": "u1", "version": 1, "representation": "hex"},
+            },
+            11,
+        )
+        check(line, parsed)
+        assert parsed["result"]["isError"] is False
+        assert spy.lengths()[before:] == []
+        assert not _t2_tokens_db(root).exists()
+
+        # An isError result: an unregistered tool name.
+        before = len(spy.lengths())
+        line, parsed = spy.tool("rush_no_such_tool", {}, 12)
+        check(line, parsed)
+        assert parsed["result"]["isError"] is True
+        assert spy.lengths()[before:] == []
+    finally:
+        spy.close()
+
+
+# --- R9: caps are exact in the emitted frame ----------------------------------------
+
+
+def _t2_exact_checks(
+    adapter: Any, row: str, checks: set[str], encoding: str = "cl100k_base"
+) -> None:
+    full = adapter.call(
+        "expand",
+        _t2_request(
+            "expand", id=row, max_bytes=T02_BIG, max_tokens=T02_BIG, encoding=encoding
+        ),
+    )
+    assert full.code == "OK" and full.data["complete"] is True, full.raw
+    size_bytes, size_tokens = len(full.frame), _t2_frame_tokens(full.frame, encoding)
+    if "eq" in checks:
+        again = adapter.call(
+            "expand",
+            _t2_request(
+                "expand",
+                id=row,
+                max_bytes=size_bytes,
+                max_tokens=size_tokens,
+                encoding=encoding,
+            ),
+        )
+        assert again.code == "OK", again.raw
+        assert again.data["content_utf8"] == full.data["content_utf8"]
+        assert again.data["complete"] is True
+        assert len(again.frame) == size_bytes
+    # R9 minus-one: the page left with one final scalar cannot shrink, so a cap one
+    # below its frame is the admission boundary: `E_BUDGET` above the admission
+    # minimum, `E_INPUT` naming that minimum below it (never a truncated `OK`).
+    last = int(full.data["total_bytes"]) - 1
+
+    def at_end(**caps: int) -> Any:
+        return adapter.call(
+            "expand",
+            _t2_request("expand", id=row, offset=last, encoding=encoding, **caps),
+        )
+
+    one = at_end(max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert one.code == "OK" and one.data["complete"] is True, one.raw
+    one_bytes, one_tokens = len(one.frame), _t2_frame_tokens(one.frame, encoding)
+    floor = at_end(max_bytes=1, max_tokens=T02_BIG)
+    assert floor.code == "E_INPUT", floor.raw
+    required = floor.data["required"]
+    for check, caps in (
+        ("tok-1", (T02_BIG, one_tokens - 1)),
+        ("byte-1", (one_bytes - 1, T02_BIG)),
+    ):
+        if check not in checks:
+            continue
+        short = at_end(max_bytes=caps[0], max_tokens=caps[1])
+        if caps[0] >= required["max_bytes"] and caps[1] >= required["max_tokens"]:
+            assert short.code == "E_BUDGET", (check, caps, short.raw)
+            assert len(short.frame) <= caps[0], (check, len(short.frame), caps)
+            assert _t2_frame_tokens(short.frame, encoding) <= caps[1], (check, caps)
+        else:
+            assert short.code == "E_INPUT", (check, caps, short.raw)
+            assert short.data["required"] == required, (check, short.raw)
+
+
+@pytest.mark.parametrize(
+    "transport", ["mcp_stdio", "cli_json", "dashboard", "in_process"]
+)
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("tokens_eq", id="tokens_eq"),
+        pytest.param("tokens_minus_1", id="tokens_minus_1"),
+        pytest.param("bytes_minus_1", id="bytes_minus_1"),
+        pytest.param("duration_999999999", id="duration_999999999"),
+        pytest.param("duration_1000000000", id="duration_1000000000"),
+        pytest.param("unicode", id="unicode"),
+        pytest.param("ascii", id="ascii"),
+        pytest.param("error_frame", id="error_frame"),
+        pytest.param("digit_boundaries", id="digit_boundaries"),
+        pytest.param("encoding_o200k_base", id="encoding_o200k_base"),
+        pytest.param("encoding_p50k_base", id="encoding_p50k_base"),
+    ],
+)
+def test_t02_frame_tokens_exact_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str, case: str
+) -> None:
+    duration = {"duration_999999999": 999_999_999, "duration_1000000000": 1_000_000_000}
+    ms = duration.get(case, 5)
+    with _t2_transport(transport, tmp_path, monkeypatch, duration_ms=ms) as adapter:
+        if case == "error_frame":
+            inside = _t2_emoji_offset() + 1
+            for expected, extra in (
+                ("E_NOT_VISIBLE", {"id": "zz-missing"}),
+                ("E_VERSION", {"version": 9}),
+                ("E_OFFSET", {"offset": inside}),
+            ):
+                # Every refusal frame echoes its own request's id and offset, so
+                # the admission minimum is probed on the same request (brief 3.4).
+                refusal = adapter.call(
+                    "expand",
+                    _t2_request("expand", **extra, max_bytes=1, max_tokens=T02_BIG),
+                    cache_write=True,
+                )
+                required = refusal.data["required"]
+                caps = {
+                    "max_bytes": required["max_bytes"],
+                    "max_tokens": required["max_tokens"],
+                }
+                out = adapter.call("expand", _t2_request("expand", **extra, **caps))
+                assert out.code == expected, (expected, out.raw)
+                assert len(out.frame) <= caps["max_bytes"], (expected, len(out.frame))
+                assert _t2_frame_tokens(out.frame) <= caps["max_tokens"], expected
+            return
+        if case == "digit_boundaries":
+            refusal = adapter.call(
+                "expand",
+                _t2_request("expand", id="l1", max_bytes=1, max_tokens=T02_BIG),
+                cache_write=True,
+            )
+            floor = refusal.data["required"]["max_bytes"]
+            # the page carries offset, next_offset, total_bytes, bytes and tokens:
+            # offsets 98..101 move those numbers across the two- and three-digit marks
+            for offset in (0, 98, 99, 100, 101, 350):
+
+                def by_bytes(cap: int, at: int = offset) -> _T2Out:
+                    return adapter.call(
+                        "expand",
+                        _t2_request(
+                            "expand",
+                            id="l1",
+                            offset=at,
+                            max_bytes=cap,
+                            max_tokens=T02_BIG,
+                        ),
+                    )
+
+                first = _t2_first_ok(by_bytes, floor, 65_536)
+                assert len(by_bytes(first).frame) == first, (offset, first)
+                assert by_bytes(first - 1).code != "OK", offset
+            return
+        if case.startswith("encoding_"):
+            _t2_exact_checks(
+                adapter, "u1", {"eq", "tok-1", "byte-1"}, case[len("encoding_") :]
+            )
+            return
+        row = "a1" if case == "ascii" else "u1"
+        checks = {
+            "tokens_eq": {"eq"},
+            "tokens_minus_1": {"tok-1"},
+            "bytes_minus_1": {"byte-1"},
+        }.get(case, {"eq", "tok-1", "byte-1"})
+        _t2_exact_checks(adapter, row, checks)
+
+
+def test_t02_frozen_duration_not_remeasured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.tools.memory as memory_module
+    from rush.delivery import compact
+
+    root = _pm_project(tmp_path, monkeypatch)
+    store = TypedArtifactStore(root)
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+
+    class Advancing:
+        """Every reading is 123 ms after the previous one."""
+
+        def __init__(self) -> None:
+            self.n = 0
+
+        def monotonic(self) -> float:
+            self.n += 1
+            return self.n * 0.123
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(time, name)
+
+    monkeypatch.setattr(memory_module, "time", Advancing())
+    seen: list[Any] = []
+    real = compact.frame_bytes
+
+    def spy(frame: Any, value: Any) -> bytes:
+        seen.append(value.get("duration_ms"))
+        return real(frame, value)
+
+    monkeypatch.setattr(compact, "frame_bytes", spy)
+    frame = compact.FrameContext("in_process", None)
+    for operation, request in (
+        ("expand", {"id": "u1", "version": 1, "representation": "utf8"}),
+        ("ask", {"view": "compact", "limit": 1}),
+    ):
+        seen.clear()
+        with compact.memory_frame(frame):
+            result = MemoryTool().run(
+                root,
+                operation=operation,  # type: ignore[arg-type]
+                subject=SUBJECT,
+                query="needle",
+                session_allowlist=["source-a"],
+                request=request,
+            )
+        assert _raw(result)["code"] == "OK", _raw(result)
+        assert seen, f"{operation}: the page was never fitted against a frame"
+        assert set(seen) == {result["duration_ms"]}, (operation, seen, result)
+
+
+# --- R12: scope and the compact result view --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("ok", id="ok"),
+        pytest.param("budget", id="budget"),
+        pytest.param("cap1", id="cap1"),
+    ],
+)
+def test_t02_executor_scope_inside_admitted_frame(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from rush.delivery import compact
+    from rush.mcp import build_server
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    deep = tmp_path
+    while len(str(deep)) < 220:
+        deep = deep / ("segment-" + "d" * 24)
+    deep.mkdir(parents=True)
+    root = deep.resolve()
+    assert len(str(root)) >= 200
+    store = TypedArtifactStore(root)
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    emoji = _t2_emoji_offset()
+
+    request: dict[str, Any] = {"id": "u1", "version": 1, "representation": "utf8"}
+    if case == "budget":
+        # The admission minimum includes metadata.scope, which only the framed
+        # route carries: probe through build_server().call_tool with the same
+        # id, version, representation and offset as the measured call.
+        probe = asyncio.run(
+            build_server().call_tool(
+                "rush_memory",
+                {
+                    "path": str(root),
+                    "operation": "expand",
+                    "session_allowlist": ["source-a"],
+                    "request": {**request, "offset": emoji, "max_bytes": 1},
+                },
+            )
+        )
+        assert isinstance(probe.structuredContent, dict)
+        need = probe.structuredContent["raw"]["data"]["required"]
+        request.update(
+            offset=emoji,
+            max_bytes=need["max_bytes"],
+            max_tokens=need["max_tokens"],
+        )
+    elif case == "cap1":
+        request.update(max_bytes=1)
+
+    direct = MemoryTool().run(
+        root,
+        operation="expand",
+        session_allowlist=["source-a"],
+        request=dict(request),
+    )
+    assert direct["metadata"] is not None
+    assert "scope" not in direct["metadata"], direct["metadata"]
+
+    returned: list[Any] = []
+    original = MemoryTool.run
+
+    def spy_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        out = original(self, *args, **kwargs)
+        returned.append(out)
+        return out
+
+    monkeypatch.setattr(MemoryTool, "run", spy_run)
+    measured: list[int] = []
+    real = compact.frame_bytes
+
+    def spy_frame(frame: Any, value: Any) -> bytes:
+        out = real(frame, value)
+        measured.append(len(out))
+        return out
+
+    monkeypatch.setattr(compact, "frame_bytes", spy_frame)
+    result = asyncio.run(
+        build_server().call_tool(
+            "rush_memory",
+            {
+                "path": str(root),
+                "operation": "expand",
+                "session_allowlist": ["source-a"],
+                "request": request,
+            },
+        )
+    )
+    structured = result.structuredContent
+    assert isinstance(structured, dict)
+    scope = structured["metadata"]["scope"]
+    assert scope["version"] == 1, scope
+    assert returned, "MemoryTool.run was never reached"
+    assert returned[-1]["metadata"]["scope"] == scope
+    frame = compact.canonical_json(structured)
+    if case == "cap1":
+        assert _raw(returned[-1])["code"] == "E_INPUT"
+        assert "required" in structured["raw"]["data"]
+        assert len(frame) > 1
+        return
+    assert measured and len(frame) in measured, (len(frame), measured)
+    caps = (
+        request.get("max_bytes", DEFAULT_MAX_BYTES_T2),
+        request.get("max_tokens", DEFAULT_MAX_TOKENS_T2),
+    )
+    assert len(frame) <= caps[0], (len(frame), caps)
+    assert _t2_frame_tokens(frame) <= caps[1], (_t2_frame_tokens(frame), caps)
+
+
+@pytest.mark.parametrize(
+    "surface",
+    [pytest.param("mcp", id="mcp"), pytest.param("cli", id="cli")],
+)
+def test_t02_compact_result_view_refused_for_memory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, surface: str
+) -> None:
+    _fix1_data_root(monkeypatch, tmp_path)
+    root = tmp_path / "project"
+    root.mkdir()
+    root = root.resolve()
+    store = TypedArtifactStore(root)
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    # a writable store creates its own `.rush/cache`; a refused view adds no entry
+    cache = root / ".rush" / "cache"
+    cache_before = sorted(p.relative_to(cache) for p in cache.rglob("*"))
+    calls: list[Any] = []
+    original = MemoryTool.run
+
+    def spy_run(self: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append(args)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(MemoryTool, "run", spy_run)
+    request = {"id": "u1", "version": 1, "representation": "utf8"}
+    if surface == "mcp":
+        from rush.mcp import build_server
+
+        result = asyncio.run(
+            build_server().call_tool(
+                "rush_memory",
+                {
+                    "path": str(root),
+                    "operation": "expand",
+                    "session_allowlist": ["source-a"],
+                    "request": request,
+                    "result_view": "compact",
+                    "allow_cache_write": True,
+                },
+            )
+        )
+        payload = result.structuredContent
+    else:
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        monkeypatch.chdir(root)
+        (tmp_path / "in.json").write_text(json.dumps(request), encoding="utf-8")
+        outcome = CliRunner().invoke(
+            cli,
+            [
+                "memory",
+                "expand",
+                "--input",
+                str(tmp_path / "in.json"),
+                "--session",
+                "source-a",
+                "--result-view",
+                "compact",
+                "--allow-cache-write",
+                "--json",
+            ],
+        )
+        assert outcome.exit_code == 2, outcome.output
+        payload = json.loads(outcome.output)
+    assert isinstance(payload, dict)
+    assert payload["metadata"]["error"]["code"] == "RESULT_VIEW_INVALID", payload
+    assert calls == [], "MemoryTool.run ran for a refused compact view"
+    assert sorted(p.relative_to(cache) for p in cache.rglob("*")) == cache_before
+    assert not _t2_tokens_db(root).exists()
+
+
+# <<<T02-GATE C end>>>
+
+
+# <<<T02-GATE D begin>>>
+# --- R6: error precedence ------------------------------------------------------
+
+
+def _t2_forbid_store_reads(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
+    for name in (
+        "search_candidates",
+        "scope_artifacts",
+        "cursor_key",
+        "current_generation",
+        "get_current_row",
+    ):
+        monkeypatch.setattr(TypedArtifactStore, name, _t02_refuse(calls, name))
+
+
+T2_BAD_CURSORS = {
+    "empty": "",
+    "prefix_only": "m2.",
+    "garbage": "garbage",
+    "nul": "m2.\x00",
+    "non_ascii": "m2." + "é" * 27,
+    "zero_width": "m2." + "A" * 26 + "\u200b",
+    "no_prefix": "A" * 30,
+}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("syntax_invalid_before_any_store_read", id="syntax_invalid"),
+        pytest.param("syntax_invalid_beats_revoked", id="syntax_invalid_beats_revoked"),
+        pytest.param("forged_canonical_is_restart", id="forged_canonical_is_restart"),
+        pytest.param("revoked_beats_drift", id="revoked_beats_drift"),
+        pytest.param("drift_is_restart", id="drift_is_restart"),
+        pytest.param("expand_policy_denial", id="expand_policy_denial"),
+        pytest.param("expand_invisible_same_body", id="expand_invisible_same_body"),
+        pytest.param("expand_legacy_without_access", id="expand_legacy_without_access"),
+        pytest.param(
+            "legacy_cursor_after_enrolment", id="legacy_cursor_after_enrolment"
+        ),
+        pytest.param("legacy_syntax_invalid", id="legacy_syntax_invalid"),
+        pytest.param("legacy_forged_canonical", id="legacy_forged_canonical"),
+        pytest.param("legacy_drift", id="legacy_drift"),
+    ],
+)
+def test_t02_cursor_error_precedence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess, recall_page
+
+    if case == "expand_legacy_without_access":
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        _row(store, "g1", None, "mk-g1")
+        for allowlist in (None, [], ["source-z"]):
+            result = _t2_expand_call(root, "g1", owner=None, allowlist=allowlist)
+            missing = _t2_expand_call(
+                root, "zz-missing", owner=None, allowlist=allowlist
+            )
+            assert _raw(result)["code"] == "E_NOT_VISIBLE", (allowlist, _raw(result))
+            assert _raw(missing)["code"] == "E_NOT_VISIBLE"
+            assert {k: v for k, v in _raw(result)["data"].items() if k != "id"} == {
+                k: v for k, v in _raw(missing)["data"].items() if k != "id"
+            }
+        return
+
+    if case.startswith("legacy_") and case != "legacy_cursor_after_enrolment":
+        # G8: the same predicates for the explicit-allowlist access form.
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        for artifact_id in ("g1", "g2", "g3"):
+            _row(store, artifact_id, None, "", content={"text": "needle granted words"})
+
+        def legacy(**request: Any) -> dict[str, Any]:
+            return _raw(
+                _t2_compact(
+                    root,
+                    owner=None,
+                    allowlist=["source-a"],
+                    request={"limit": 1, **request},
+                )
+            )
+
+        if case == "legacy_syntax_invalid":
+            calls: list[str] = []
+            _t2_forbid_store_reads(monkeypatch, calls)
+            for label, value in T2_BAD_CURSORS.items():
+                assert legacy(cursor=value)["code"] == "E_INPUT", label
+            assert calls == [], calls
+            return
+        if case == "legacy_forged_canonical":
+            assert legacy(cursor="m2." + "A" * 27)["code"] == "E_RESTART"
+            return
+        token = legacy()["data"]["next_cursor"]
+        assert T02_TOKEN_RE.match(token)
+        changed = _raw(
+            _t2_compact(
+                root,
+                owner=None,
+                allowlist=["source-a"],
+                query="needle granted",
+                request={"limit": 1, "cursor": token},
+            )
+        )
+        assert changed["code"] == "E_RESTART", changed
+        _row(store, "g4", None, "", content={"text": "needle granted words"})
+        assert legacy(cursor=token)["code"] == "E_RESTART"
+        return
+
+    if case == "legacy_cursor_after_enrolment":
+        root = _pm_project(tmp_path, monkeypatch)
+        data_root = default_data_root()
+        store = TypedArtifactStore(root)
+        for artifact_id in ("g1", "g2", "g3"):
+            _row(
+                store, artifact_id, ALICE, "", content={"text": "needle granted words"}
+            )
+        legacy_access = MemoryAccess.legacy(root, ["source-a"])
+        first = recall_page(
+            store, subject=SUBJECT, query="needle", access=legacy_access, limit=1
+        )
+        assert first["code"] == "OK" and first["next_cursor"], first
+        _registered(root, data_root)
+        _grant(auth, root, ALICE, data_root, ops=("ask",))
+        moved = recall_page(
+            store,
+            subject=SUBJECT,
+            query="needle",
+            access=legacy_access,
+            limit=1,
+            cursor=first["next_cursor"],
+        )
+        assert moved["code"] == "E_PERMISSION", moved
+        assert moved["reason"] == "policy_mode_changed", moved
+        assert moved["items"] == [] and moved["next_cursor"] is None
+        return
+
+    auth, data_root, root, store, grant = _t2_policy(tmp_path, monkeypatch)
+
+    if case == "syntax_invalid_before_any_store_read":
+        calls = []
+        _t2_forbid_store_reads(monkeypatch, calls)
+        token_free = {"limit": 1}
+        for label, value in T2_BAD_CURSORS.items():
+            result = _t2_compact(root, request={**token_free, "cursor": value})
+            assert _raw(result)["code"] == "E_INPUT", (label, _raw(result))
+            assert _raw(result)["data"]["items"] == [], label
+        assert calls == [], calls
+        return
+
+    if case == "syntax_invalid_beats_revoked":
+        _fix1_revoke(auth, grant, data_root)
+        for label, value in T2_BAD_CURSORS.items():
+            result = _t2_compact(root, request={"limit": 1, "cursor": value})
+            assert _raw(result)["code"] == "E_INPUT", (label, _raw(result))
+        return
+
+    if case == "forged_canonical_is_restart":
+        forged = "m2." + "A" * 27
+        assert T02_TOKEN_RE.match(forged)
+        result = _t2_compact(root, request={"limit": 1, "cursor": forged})
+        assert _raw(result)["code"] == "E_RESTART", _raw(result)
+        assert _raw(result)["data"]["items"] == []
+        return
+
+    if case == "revoked_beats_drift":
+        token = _t2_first_token(root)
+        _row(store, "g4", ALICE, "", content={"text": "needle granted words"})
+        _fix1_revoke(auth, grant, data_root)
+        result = _t2_compact(
+            root, request={"limit": 1, "cursor": token}, query="needle granted"
+        )
+        assert _raw(result)["code"] == "E_PERMISSION", _raw(result)
+        assert _reason_of(result) == "revoked"
+        return
+
+    if case == "drift_is_restart":
+        token = _t2_first_token(root)
+        drifted = _t2_compact(
+            root, request={"limit": 1, "cursor": token}, query="needle granted"
+        )
+        assert _raw(drifted)["code"] == "E_RESTART", _raw(drifted)
+        _row(store, "g4", ALICE, "", content={"text": "needle granted words"})
+        written = _t2_compact(root, request={"limit": 1, "cursor": token})
+        assert _raw(written)["code"] == "E_RESTART", _raw(written)
+        return
+
+    if case == "expand_policy_denial":
+        _fix1_revoke(auth, grant, data_root)
+        result = _t2_expand_call(root, "g1")
+        assert _raw(result)["code"] == "E_PERMISSION", _raw(result)
+        assert _reason_of(result) == "revoked"
+        assert "mk-g" not in _dump(result) and "granted words" not in _dump(result)
+        return
+
+    assert case == "expand_invisible_same_body"
+    store.archive("g2", expected_version=1, scope=SUBJECT, apply=True)
+    _row(store, "bob1", BOB, "", content={"text": "needle bob words"})
+    missing = _raw(_t2_expand_call(root, "zz-missing"))
+    assert missing["code"] == "E_NOT_VISIBLE", missing
+    for artifact_id in ("g2", "bob1"):
+        hidden = _raw(_t2_expand_call(root, artifact_id))
+        assert hidden["code"] == "E_NOT_VISIBLE", (artifact_id, hidden)
+        assert {k: v for k, v in hidden["data"].items() if k != "id"} == {
+            k: v for k, v in missing["data"].items() if k != "id"
+        }
+
+
+# --- R13: the page is emitted from a fresh reader ---------------------------------
+
+
+def _t2_open_modes(monkeypatch: pytest.MonkeyPatch) -> list[str | None]:
+    from rush.memory import store as store_module
+
+    modes: list[str | None] = []
+    real = store_module.open_sqlite_readonly
+
+    def spy(db: Path) -> Any:
+        opened = real(db)
+        modes.append(opened.mode)
+        return opened
+
+    monkeypatch.setattr(store_module, "open_sqlite_readonly", spy)
+    return modes
+
+
+def _t2_archive_p2(root: Path) -> None:
+    writer = TypedArtifactStore(root)
+    writer.archive("p2", expected_version=1, scope=SUBJECT, apply=True)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("recall_immutable", id="recall_immutable"),
+        pytest.param("recall_wal", id="recall_wal"),
+        pytest.param("hybrid_immutable", id="hybrid_immutable"),
+        pytest.param("hybrid_wal", id="hybrid_wal"),
+        pytest.param("mcp_ask", id="mcp_ask"),
+        pytest.param("revoke_precedence", id="revoke_precedence"),
+        pytest.param("recall_expiry_before_emit", id="recall_expiry_before_emit"),
+        pytest.param("hybrid_expiry_before_emit", id="hybrid_expiry_before_emit"),
+        pytest.param(
+            "recall_source_change_before_emit", id="recall_source_change_before_emit"
+        ),
+        pytest.param(
+            "hybrid_source_change_before_emit", id="hybrid_source_change_before_emit"
+        ),
+        pytest.param("recall_reader_unavailable", id="recall_reader_unavailable"),
+        pytest.param("recall_reader_state", id="recall_reader_state"),
+    ],
+)
+def test_t02_emit_sees_concurrent_commit_on_immutable_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    import gc
+
+    from rush.memory import store as store_module
+    from rush.memory.retrieval import MemoryAccess, hybrid_page, recall_page
+
+    hybrid = case.startswith("hybrid")
+    wal = case.endswith("_wal")
+
+    if case == "mcp_ask":
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        for artifact_id in ("p1", "p2", "p3"):
+            _row(store, artifact_id, None, "", content=T02_SAME)
+        gc.collect()
+        fired = _fix1_fire_after(
+            monkeypatch,
+            TypedArtifactStore,
+            "search_candidates",
+            lambda: _t2_archive_p2(root),
+        )
+        from rush.mcp import build_server
+
+        result = asyncio.run(
+            build_server().call_tool(
+                "rush_memory",
+                {
+                    "path": str(root),
+                    "operation": "ask",
+                    "subject": SUBJECT,
+                    "query": "needle",
+                    "session_allowlist": ["source-a"],
+                    "request": {"view": "compact", "limit": 10},
+                },
+            )
+        )
+        assert fired["n"] == 1
+        structured = result.structuredContent
+        assert isinstance(structured, dict), result
+        raw = structured["raw"]
+        assert raw["code"] == "E_RESTART", raw
+        assert raw["data"]["items"] == []
+        assert raw["data"]["complete"] is not True
+        return
+
+    access = None
+    allowlist: list[str] | None = ["source-a"]
+    if case == "revoke_precedence":
+        auth_mod, data_root, root, store, grant = _t2_policy(
+            tmp_path, monkeypatch, rows=("p1", "p2", "p3")
+        )
+        allowlist = None
+    else:
+        root = _pm_project(tmp_path, monkeypatch)
+        store = TypedArtifactStore(root)
+        for artifact_id in ("p1", "p2", "p3"):
+            _row(store, artifact_id, None, "", content=T02_SAME)
+    db = store.db_path
+    held: sqlite3.Connection | None = None
+    if wal:
+        held = sqlite3.connect(db)
+        held.execute("SELECT COUNT(*) FROM memory_artifacts").fetchone()
+        assert Path(f"{db}-wal").exists() and Path(f"{db}-shm").exists()
+    else:
+        gc.collect()
+        assert not Path(f"{db}-wal").exists()
+    modes = _t2_open_modes(monkeypatch)
+    try:
+        view, state = TypedArtifactStore.open_readonly_view(root)
+        assert state is None and view is not None
+        assert modes and modes[-1] == ("ro" if wal else "ro&immutable=1"), modes
+        if case == "revoke_precedence":
+            access = MemoryAccess.resolve(
+                root, operation="ask", owner_scope=ALICE, data_root=data_root
+            )
+            assert access is not None
+
+        def effect() -> None:
+            if case.endswith("expiry_before_emit"):
+                with contextlib.closing(sqlite3.connect(db)) as conn:
+                    conn.execute(
+                        "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'p2'",
+                        (time.time() - 3600,),
+                    )
+                    conn.commit()
+            elif case.endswith("source_change_before_emit"):
+                with contextlib.closing(sqlite3.connect(db)) as conn:
+                    conn.execute(
+                        "UPDATE memory_artifacts SET source = 'source-z' "
+                        "WHERE id = 'p2'"
+                    )
+                    conn.commit()
+            elif case == "recall_reader_unavailable":
+                monkeypatch.setattr(
+                    store_module,
+                    "open_sqlite_readonly",
+                    lambda _db: store_module.ReadOnlyOpenResult(available=False),
+                )
+            elif case == "recall_reader_state":
+                monkeypatch.setattr(
+                    store_module,
+                    "open_sqlite_readonly",
+                    lambda _db: store_module.ReadOnlyOpenResult(
+                        available=True, state="read_conflict"
+                    ),
+                )
+            elif case == "revoke_precedence":
+                _t2_archive_p2(root)
+                _fix1_revoke(auth_mod, grant, data_root)
+            else:
+                _t2_archive_p2(root)
+
+        generation = view.current_generation()
+        hook = "scope_artifacts" if hybrid else "search_candidates"
+        original = getattr(view, hook)
+        hook_fired: list[int] = []
+
+        def hooked(*args: Any, **kwargs: Any) -> Any:
+            rows = original(*args, **kwargs)
+            if not hook_fired:
+                hook_fired.append(1)
+                effect()
+            return rows
+
+        monkeypatch.setattr(view, hook, hooked)
+        kwargs: dict[str, Any] = {
+            "subject": SUBJECT,
+            "query": "needle",
+            "limit": 10,
+            "max_bytes": T02_BIG,
+            "max_tokens": T02_BIG,
+        }
+        if access is not None:
+            kwargs["access"] = access
+        else:
+            kwargs["session_allowlist"] = allowlist
+        if hybrid:
+            _calls, embed = _embed_spy()
+            page = hybrid_page(
+                view, embed_config=_embed_config(), embed_fn=embed, **kwargs
+            )
+        else:
+            page = recall_page(view, **kwargs)
+        assert hook_fired == [1]
+        if not wal:
+            assert view.current_generation() == generation, "the view never moves"
+    finally:
+        if held is not None:
+            held.close()
+        if view is not None:
+            view.close()
+    if case == "revoke_precedence":
+        assert page["code"] == "E_PERMISSION", page
+    else:
+        assert page["code"] == "E_RESTART", page
+    assert page["items"] == [], page
+    assert page["complete"] is not True, page
+
+
+# <<<T02-GATE D end>>>
+
+
+# <<<T02-GATE E begin>>>
+# --- G4 + G8: trust-boundary inputs --------------------------------------------------
+
+T2_COMPACT_ROUTES = ("compact", "mcp_compact", "dash_query")
+T2_EXPAND_ROUTES = ("expand", "mcp_expand", "cli_expand", "dash_expand")
+T2_INT_FIELDS = ("limit", "max_bytes", "max_tokens", "offset", "version")
+
+
+def _t2_value(field: str, row: str) -> Any:
+    table: dict[str, Any] = {
+        "wrong_type": "x" if field in T2_INT_FIELDS else 7,
+        "bool": True,
+        "nan": float("nan"),
+        "inf": float("inf"),
+        "huge": 10**400,
+        "negative": -1,
+        "unknown": "no-such-encoding",
+        "empty": "",
+        "prefix": "m2.",
+        "nul": "a\x00b",
+        "surrogate": "a\ud800b",
+        "cc": "a\x07b",
+        "cf": "a\u200bb",
+        "list": ["x"],
+        "dict": {"x": 1},
+    }
+    return table[row]
+
+
+def _t2_trust_cases() -> list[Any]:
+    cases: list[Any] = []
+
+    def add(routes: tuple[str, ...], field: str, rows: list[tuple[str, str]]) -> None:
+        for route in routes:
+            for row, expect in rows:
+                cases.append(
+                    pytest.param(
+                        field,
+                        row,
+                        route,
+                        expect,
+                        id=f"{field}-{row}-{route}",
+                        marks=[pytest.mark.posix_only] if row == "symlink_loop" else [],
+                    )
+                )
+
+    caps = [("wrong_type", "E_INPUT"), ("bool", "E_INPUT"), ("huge", "OK")]
+    add(T2_COMPACT_ROUTES, "limit", [*caps, ("nan", "E_INPUT")])
+    for route_set in (T2_COMPACT_ROUTES, T2_EXPAND_ROUTES):
+        add(route_set, "max_bytes", [*caps, ("nan", "E_INPUT")])
+        add(route_set, "max_tokens", [*caps, ("inf", "E_INPUT")])
+        add(
+            route_set,
+            "encoding",
+            [
+                ("wrong_type", "E_INPUT"),
+                ("list", "E_INPUT"),
+                ("dict", "E_INPUT"),
+                ("nul", "E_INPUT"),
+                ("surrogate", "E_INPUT"),
+                ("unknown", "E_INPUT"),
+            ],
+        )
+    add(
+        T2_COMPACT_ROUTES,
+        "cursor",
+        [
+            ("wrong_type", "E_INPUT"),
+            ("bool", "E_INPUT"),
+            ("nul", "E_INPUT"),
+            ("surrogate", "E_INPUT"),
+            ("cc", "E_INPUT"),
+            ("cf", "E_INPUT"),
+            ("empty", "E_INPUT"),
+            ("prefix", "E_INPUT"),
+        ],
+    )
+    add(
+        T2_COMPACT_ROUTES,
+        "query",
+        [("nul", "E_INPUT"), ("surrogate", "E_INPUT"), ("cc", "OK"), ("cf", "OK")],
+    )
+    add(
+        T2_EXPAND_ROUTES,
+        "offset",
+        [
+            ("wrong_type", "E_INPUT"),
+            ("bool", "E_INPUT"),
+            ("nan", "E_INPUT"),
+            ("negative", "E_OFFSET"),
+            ("huge", "E_OFFSET"),
+        ],
+    )
+    add(
+        T2_EXPAND_ROUTES,
+        "version",
+        [("wrong_type", "E_INPUT"), ("bool", "E_INPUT"), ("huge", "E_VERSION")],
+    )
+    add(
+        T2_EXPAND_ROUTES,
+        "id",
+        [
+            ("wrong_type", "E_INPUT"),
+            ("empty", "E_INPUT"),
+            ("surrogate", "E_INPUT"),
+            ("nul", "E_NOT_VISIBLE"),
+        ],
+    )
+    add(
+        T2_EXPAND_ROUTES,
+        "representation",
+        [
+            ("wrong_type", "E_INPUT"),
+            ("list", "E_INPUT"),
+            ("dict", "E_INPUT"),
+            ("nul", "E_INPUT"),
+            ("surrogate", "E_INPUT"),
+        ],
+    )
+    add(
+        ("compact", "expand", "mcp_compact", "mcp_expand"),
+        "owner_scope",
+        [("unhashable_kind", "E_INPUT"), ("symlink_loop", "E_INPUT")],
+    )
+    add(
+        T2_COMPACT_ROUTES,
+        "retrieval",
+        [("wrong_type", "E_INPUT"), ("list", "E_INPUT"), ("dict", "E_INPUT")],
+    )
+    add(
+        ("compact", "expand"),
+        "project_path",
+        [
+            ("symlink_loop", "E_INPUT"),
+            ("nul", "E_INPUT"),
+            ("surrogate", "E_INPUT"),
+            ("not_a_path", "E_INPUT"),
+            ("missing", "missing"),
+        ],
+    )
+    # A bound row whose JSON nests too deeply to parse is corrupt on every read
+    # route: paged reads omit it, expansion refuses it, nothing escapes.
+    add(
+        ("compact", "mcp_compact"),
+        "stored_content",
+        [("deep_nesting", "OK")],
+    )
+    add(
+        ("expand", "mcp_expand", "cli_expand"),
+        "stored_content",
+        [("deep_nesting", "E_NOT_VISIBLE")],
+    )
+    return cases
+
+
+def _t2_deep_row(store: TypedArtifactStore) -> None:
+    """`d1` is hash-bound on both rows but its JSON nests past the parser's limit."""
+    _row(store, "d1", None, "", source="source-a", content={"text": "needle d1"})
+    text = '{"text":"needle d1","x":' + "[" * 100000 + "]" * 100000 + "}"
+    digest = _sha_text(text)
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ?, "
+            "payload_hash_origin = 'write' WHERE id = 'd1'",
+            (text, digest),
+        )
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ?, payload_hash = ?, "
+            "payload_hash_origin = 'write' WHERE artifact_id = 'd1'",
+            (text, digest),
+        )
+        conn.commit()
+
+
+def _t2_run_surface(
+    route: str,
+    root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: dict[str, Any],
+    top: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Run one request through `route`'s surface; returns `(code, data)`. An escaped
+    exception fails the test."""
+    compact_route = route in T2_COMPACT_ROUTES or route == "compact"
+    if route in ("compact", "expand"):
+        target = top.pop("path", root)
+        kwargs: dict[str, Any] = {
+            "operation": "ask" if compact_route else "expand",
+            "session_allowlist": ["source-a"],
+            **top,
+        }
+        if compact_route:
+            kwargs.update(subject=SUBJECT, query=top.get("query", "needle"))
+            request = {"view": "compact", "limit": 5, **request}
+        result = MemoryTool().run(target, request=request, **kwargs)
+        assert result["status"] in ("ok", "warn", "error", "fail"), result
+        return str(_raw(result)["code"]), dict(_raw(result)["data"])
+    if route.startswith("mcp_"):
+        from rush.mcp import build_server
+
+        arguments: dict[str, Any] = {
+            "path": str(root),
+            "operation": "ask" if compact_route else "expand",
+            "session_allowlist": ["source-a"],
+            **top,
+        }
+        if compact_route:
+            arguments.setdefault("subject", SUBJECT)
+            arguments.setdefault("query", "needle")
+            request = {"view": "compact", "limit": 5, **request}
+        arguments["request"] = request
+        outcome = asyncio.run(build_server().call_tool("rush_memory", arguments))
+        structured = outcome.structuredContent
+        assert isinstance(structured, dict), outcome
+        raw = structured.get("raw")
+        if isinstance(raw, dict):
+            return str(raw["code"]), dict(raw["data"])
+        return str(structured.get("code")), dict(structured)
+    if route == "cli_expand":
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        monkeypatch.chdir(root)
+        path = tmp_path / "request.json"
+        path.write_text(json.dumps(request), encoding="utf-8")
+        outcome_cli = CliRunner().invoke(
+            cli,
+            [
+                "memory",
+                "expand",
+                "--input",
+                str(path),
+                "--session",
+                "source-a",
+                "--json",
+            ],
+        )
+        exc = outcome_cli.exception
+        assert exc is None or isinstance(exc, SystemExit), repr(exc)
+        payload = json.loads(outcome_cli.output)
+        return str(payload["raw"]["code"]), dict(payload["raw"]["data"])
+    assert route in ("dash_query", "dash_expand")
+    import uuid
+
+    from rush.dashboard import server as server_module
+    from tests.test_dashboard_scan_actions import (
+        _isolate_data_roots,
+        _post,
+        _register,
+        _start_dashboard,
+    )
+
+    monkeypatch.setattr(server_module, "ACTION_RATE_LIMIT", 1_000_000)
+    _isolate_data_roots(tmp_path / "dash", monkeypatch)
+    (tmp_path / "dash").mkdir(exist_ok=True)
+    project_id, dash_root = _register(tmp_path / "dash")
+    store = TypedArtifactStore(dash_root.resolve())
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    server, base, cookie, csrf = _start_dashboard(project_id, dash_root)
+    try:
+        if compact_route:
+            operation = "memory_query"
+            arguments = {
+                "mode": "ask",
+                "subject": SUBJECT,
+                "query": top.get("query", "needle"),
+                "session_allowlist": ["source-a"],
+                "limit": 5,
+                **request,
+            }
+        else:
+            operation = "memory_expand"
+            arguments = {"session_allowlist": ["source-a"], **request}
+        body = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": operation,
+                "arguments": arguments,
+                "grants": {},
+                "expected": {},
+                "request_id": str(uuid.uuid4()),
+            }
+        ).encode("utf-8")
+        response = _post(
+            f"{base}/api/projects/{project_id}/actions",
+            headers={
+                "Cookie": cookie,
+                "X-Rush-CSRF": csrf,
+                "Origin": base,
+                "Content-Type": "application/json",
+                # A generated uuid4 request id changes the token count of the
+                # exact frame between a probe and the capped call.
+                "X-Request-Id": "f" * 32,
+            },
+            body=body,
+        )
+        parsed = json.loads(response.read())
+    finally:
+        server.shutdown()
+        server.server_close()
+    data = parsed.get("data")
+    if isinstance(data, dict) and isinstance(data.get("raw"), dict):
+        return str(data["raw"]["code"]), dict(data["raw"]["data"])
+    refusal = parsed.get("error", {}).get("code")
+    if response.status == 400 and refusal == "malformed_request":
+        return "E_INPUT", parsed  # the dashboard's own structured argument refusal
+    return f"HTTP-{response.status}-{refusal}", parsed
+
+
+@pytest.mark.parametrize(("field", "row", "route", "expect"), _t2_trust_cases())
+def test_t02_trust_boundary_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    row: str,
+    route: str,
+    expect: str,
+) -> None:
+    root = _pm_project(tmp_path, monkeypatch)
+    store = TypedArtifactStore(root)
+    _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+    if field == "stored_content":
+        _t2_deep_row(store)
+    tree = _tree(root)
+
+    compact_route = route in T2_COMPACT_ROUTES or route == "compact"
+    request: dict[str, Any] = {} if compact_route else {"id": "u1", "version": 1}
+    top: dict[str, Any] = {}
+    if field == "stored_content" and not compact_route:
+        request["id"] = "d1"
+    if field == "project_path":
+        loop = tmp_path / "loop"
+        if row == "symlink_loop":
+            loop.symlink_to(loop)
+            top["path"] = loop
+        elif row == "nul":
+            top["path"] = Path("a\x00b")
+        elif row == "surrogate":
+            top["path"] = Path("a\ud800b")
+        elif row == "not_a_path":
+            top["path"] = 123
+        else:
+            top["path"] = tmp_path / "does-not-exist"
+    elif field == "owner_scope":
+        if row == "symlink_loop":
+            loop = tmp_path / "owner-loop"
+            loop.symlink_to(loop)
+            top["owner_scope"] = {"kind": "project", "id": str(loop)}
+        else:
+            top["owner_scope"] = {"kind": ["x"], "id": "y"}
+    elif field == "query":
+        top["query"] = _t2_value(field, row)
+    elif field != "stored_content":
+        request[field] = _t2_value(field, row)
+
+    code, data = _t2_run_surface(route, root, tmp_path, monkeypatch, request, top)
+    if expect == "missing":
+        assert not (tmp_path / "does-not-exist").exists(), "a missing path was created"
+        want = "OK" if compact_route else "E_NOT_VISIBLE"
+        assert code == want, (code, data)
+        if compact_route:
+            assert data["items"] == [] and data["complete"] is True
+    else:
+        assert code == expect, (field, row, route, code, data)
+    if field == "project_path" and expect == "E_INPUT":
+        assert data == {"field": "path", "message": "invalid project path"}, data
+    if field == "stored_content" and compact_route:
+        assert [item["id"] for item in data["items"]] == ["u1"], data
+        assert "d1" not in _dump(data["items"])
+    assert _tree(root) == tree
+
+
+def test_t02_trust_boundary_cli_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    root = _pm_project(tmp_path, monkeypatch)
+    monkeypatch.chdir(root)
+    bad = tmp_path / "bad-utf8.json"
+    bad.write_bytes(b'{"id": "u1", "version": 1, "x": "\xff\xfe"}')
+    runner = CliRunner()
+    outcome = runner.invoke(cli, ["memory", "expand", "--input", str(bad)])
+    assert outcome.exit_code == 1, outcome.output
+    assert "Error: --input must be UTF-8 JSON:" in outcome.output, outcome.output
+    assert "Traceback" not in outcome.output
+    assert outcome.exception is None or isinstance(outcome.exception, SystemExit)
+
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + b'{"id": "u1", "version": 1}')
+    outcome = runner.invoke(cli, ["memory", "expand", "--input", str(bom)])
+    assert outcome.exit_code == 1, outcome.output
+    assert "Error: --input must be valid JSON:" in outcome.output, outcome.output
+    assert "Traceback" not in outcome.output
+
+
+@pytest.mark.parametrize("route", ["compact", "expand", "mcp_compact", "mcp_expand"])
+def test_t02_trust_boundary_moved_and_case_variant_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    """G4 root rows on the T02 routes: a registered root renamed on disk is refused
+    `project_not_registered` with zero effects; a case-swapped spelling is not the
+    registered project where the filesystem folds case and as a missing path where it
+    does not. Neither escapes as an exception."""
+    from rush.memory import authorization as auth
+
+    data_root = _fix1_data_root(monkeypatch, tmp_path)
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1")
+    _grant(auth, root, ALICE, data_root, ops=("ask", "expand", "list"))
+    compact_route = route in T2_COMPACT_ROUTES or route == "compact"
+    request: dict[str, Any] = {} if compact_route else {"id": "a1", "version": 1}
+    # The MCP expand model carries no owner_scope field (strict model): the owner
+    # comes from the grant alone there.
+    top = {} if route == "mcp_expand" else {"owner_scope": ALICE.as_dict()}
+
+    code, data = _t2_run_surface(route, root, tmp_path, monkeypatch, request, dict(top))
+    assert code in ("OK", "E_NOT_VISIBLE", "E_PERMISSION"), (route, code, data)
+    if route != "mcp_expand":
+        assert code == "OK", (route, code, data)
+
+    variant = root.parent / root.name.swapcase()
+    folds_case = variant.exists()
+    before_variant = _effects(root, data_root)
+    vcode, vdata = _t2_run_surface(
+        route, variant, tmp_path, monkeypatch, request, dict(top)
+    )
+    if folds_case:
+        # Same physical repository, different spelling: the registered root is
+        # compared by its exact spelling, so the variant is not the registered project.
+        assert vcode == "E_PERMISSION", (route, vcode, vdata)
+        assert vdata.get("reason") == "project_not_registered", vdata
+        assert "mk-a1" not in _dump(vdata)
+    else:
+        assert not variant.exists(), "a case-variant path was created"
+        assert isinstance(vcode, str) and vcode != "", (route, vcode, vdata)
+    after_variant = _effects(root, data_root)
+    sidecars = (".db-wal", ".db-shm")
+
+    def settled(effects: dict[str, Any]) -> dict[str, Any]:
+        # The baseline read may leave its WAL sidecars behind; they are not state.
+        tree = {
+            key: value
+            for key, value in (effects["root"] or {}).items()
+            if not key.endswith(sidecars)
+        }
+        return {**effects, "root": tree}
+
+    assert settled(after_variant) == settled(before_variant)
+
+    moved = (tmp_path / "moved").resolve()
+    root.rename(moved)
+    before = _effects(moved, data_root)
+    mcode, mdata = _t2_run_surface(
+        route, moved, tmp_path, monkeypatch, request, dict(top)
+    )
+    assert mcode == "E_PERMISSION", (route, mcode, mdata)
+    assert mdata.get("reason") == "project_not_registered", mdata
+    assert "mk-a1" not in _dump(mdata)
+    assert _effects(moved, data_root) == before
+
+
+# <<<T02-GATE E end>>>
+
+
+# <<<T02-GATE F begin>>>
+# --- G2: C02/C05 route x mode matrix ----------------------------------------------
+#
+# One cell varies one column from the baseline: a registered project, one Alice grant
+# holding exactly the route's D2 operations over `source-a`, rows `a1` and `a2`
+# (`alpha` content) and `u1` (literal UTF-8). Cell ids follow the plan grammar
+# `<transport>.<route>-<dimension>-<value>-rule-<C02|C05>`; a cell that serves both
+# rules is `-rule-C02C05`.
+
+M_BASE = {
+    "access": "policy",
+    "policy_state": "ok",
+    "mode": "ordinary",
+    "representation": "base64",
+    "retrieval": "lexical",
+    "store": "present",
+    "apply": "preview",
+    "cache_write": "off",
+    "grant_ops": "exact",
+    "row_state": "active",
+    "ack": "no_ack",
+    "capability_ids": "selected",
+    "cursor": "none",
+    "caps": "default",
+}
+M_VALUES: dict[str, tuple[str, ...]] = {
+    "access": ("policy", "legacy_allowlist", "overlay"),
+    "policy_state": ("ok", "missing_no_marker", "missing_marker", "invalid"),
+    "mode": ("ordinary", "inspect", "historical"),
+    "representation": ("base64", "utf8"),
+    "retrieval": ("lexical", "hybrid"),
+    "store": ("present", "absent", "old_schema"),
+    "apply": ("preview", "apply"),
+    "cache_write": ("off", "on"),
+    "grant_ops": ("exact", "missing_one"),
+    "row_state": ("active", "archived", "expired", "rejected", "pending", "tampered"),
+    "ack": ("no_ack", "ack"),
+    "capability_ids": ("selected", "unselected"),
+    "cursor": (
+        "none",
+        "valid",
+        "syntax_invalid",
+        "foreign",
+        "drift_filter",
+        "drift_generation",
+        "drift_grant_replaced",
+        "revision_only",
+    ),
+    "caps": (
+        "default",
+        "min_minus_1_bytes",
+        "min_minus_1_tokens",
+        "min",
+        "min_plus_one_scalar",
+        "one",
+    ),
+}
+M_C02_ONLY = {"cursor"}
+M_C05_ONLY = {"caps"}
+M_SYNTAX_INVALID = ("m2.", "garbage", "m2.\x00", "m2." + "é" * 27)
+M_QUERY = "alpha"
+_M_COMPACT_KEYS = frozenset(
+    {"limit", "cursor", "max_bytes", "max_tokens", "encoding", "retrieval"}
+)
+_M_EXPAND_KEYS = frozenset(
+    {"id", "version", "offset", "max_bytes", "max_tokens", "encoding", "representation"}
+)
+
+
+@dataclasses.dataclass
+class _MRes:
+    code: str
+    data: dict[str, Any]
+    frame: bytes | None = None
+    status: str | None = None
+
+    @property
+    def ids(self) -> list[str]:
+        return [str(i["id"]) for i in self.data.get("items") or []]
+
+    @property
+    def reason(self) -> Any:
+        return self.data.get("reason")
+
+
+@dataclasses.dataclass
+class _MEnv:
+    root: Path
+    data_root: Path
+    tmp: Path
+    auth: Any
+    cols: dict[str, str]
+    kind: str
+    grant: dict[str, Any] | None = None
+    project_id: str = ""
+    store: TypedArtifactStore | None = None
+    stored: bytes = b""
+
+    @property
+    def allow(self) -> list[str] | None:
+        if self.cols["access"] == "legacy_allowlist":
+            return ["source-a"]
+        return None
+
+    @property
+    def owner(self) -> OwnerScope | None:
+        return None if self.cols["access"] == "legacy_allowlist" else ALICE
+
+    @property
+    def perms(self) -> ExecutionPermissions | None:
+        return (
+            ExecutionPermissions(cache_write=True)
+            if self.cols["cache_write"] == "on"
+            else None
+        )
+
+    @property
+    def target(self) -> str:
+        return "a1" if self.kind == "compact" else "u1"
+
+
+def _m_counts(db: Path) -> dict[str, int]:
+    if not db.exists():
+        return {}
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db}?immutable=1", uri=True)
+    ) as conn:
+        names = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' "
+                "AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name"
+            )
+        ]
+        return {
+            n: int(conn.execute(f'SELECT COUNT(*) FROM "{n}"').fetchone()[0])
+            for n in names
+        }
+
+
+def _m_effects(env: _MEnv) -> dict[str, Any]:
+    """Everything under the project root plus every table's row count, read without
+    creating a sidecar."""
+    db = env.root / ".rush" / "memory.db"
+    return {
+        "root": _digest_dir(env.root),
+        "db": _sha_file(db) if db.exists() else None,
+        "counts": _m_counts(db),
+    }
+
+
+def _m_tamper(db: Path, target: str) -> None:
+    """Payload bytes rewritten behind the store's back, digest kept."""
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        row = conn.execute(
+            "SELECT content FROM memory_artifact_versions "
+            "WHERE artifact_id = ? AND artifact_version = 1",
+            (target,),
+        ).fetchone()
+        altered = str(row[0]).replace("needle", "needlf", 1)
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ? "
+            "WHERE artifact_id = ? AND artifact_version = 1",
+            (altered, target),
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ? WHERE id = ?", (altered, target)
+        )
+        conn.commit()
+
+
+def _m_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cols: dict[str, str],
+    kind: str,
+    *,
+    op: str,
+    extra_ops: tuple[str, ...] = (),
+    defer_store: bool = False,
+    defer_policy: bool = False,
+    defer_grant: bool = False,
+) -> _MEnv:
+    """The fixture for one cell. `op` is the route's D2 operation."""
+    from rush.memory import authorization as auth
+    from rush.workflows.projects import register_project
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = default_data_root()
+    unregistered = cols["policy_state"] == "missing_no_marker"
+    root = tmp_path / "project"
+    if unregistered:
+        root.mkdir()
+        root = root.resolve()
+    else:
+        root = _registered(root, data_root)
+    env = _MEnv(
+        root=root, data_root=data_root, tmp=tmp_path, auth=auth, cols=cols, kind=kind
+    )
+    env.project_id = register_project(root, data_root=data_root).project_id
+    if cols["store"] != "absent":
+        store = TypedArtifactStore(root)
+        for artifact_id in ("a1", "a2"):
+            _row(store, artifact_id, ALICE, "", content={"text": "needle alpha common"})
+        env.stored = _t2_literal_row(store, "u1", {"text": T02_TEXT}, ALICE)
+        env.store = store
+        state = cols["row_state"]
+        target = env.target
+        db = store.db_path
+        if state == "archived":
+            store.archive(target, expected_version=1, scope=SUBJECT, apply=True)
+        elif state == "expired":
+            with contextlib.closing(sqlite3.connect(db)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET expires_at = ? WHERE id = ?",
+                    (time.time() - 3600, target),
+                )
+                conn.commit()
+        elif state == "tampered":
+            _m_tamper(db, target)
+        if cols["store"] == "old_schema" and not defer_store:
+            _drop_payload_columns(db)
+    if unregistered:
+        return env
+    ops = (
+        (op, *extra_ops) if cols["grant_ops"] == "exact" or defer_grant else ("write",)
+    )
+    env.grant = _grant(auth, root, ALICE, data_root, ops=ops)
+    if not defer_policy:
+        _m_damage_policy(env)
+    return env
+
+
+def _m_damage_policy(env: _MEnv) -> None:
+    policy = env.auth.policy_path(data_root=env.data_root)
+    if env.cols["policy_state"] == "missing_marker":
+        policy.unlink()
+    elif env.cols["policy_state"] == "invalid":
+        policy.write_bytes(b"{")
+
+
+def _m_caps(res: _MRes) -> tuple[int, int]:
+    """The measure a response is held to: the emitted frame when the driver has
+    one, else the page payload."""
+    if res.frame is not None:
+        return len(res.frame), _t2_frame_tokens(res.frame)
+    return int(res.data["bytes"]), int(res.data["tokens"])
+
+
+class _MDriver:
+    transport = "inproc"
+    route = "ask"
+    kind = "compact"
+    op = "ask"
+    query = M_QUERY
+    subject = SUBJECT
+    hybrid_refusal = "E_PERMISSION"
+    expected_ids: tuple[str, ...] = ("a1", "a2")
+    forces_allowlist = False
+    strict_unknown = "E_INPUT"  # what an unaccepted request key becomes
+    #: operations the fixture grant holds beyond the route's own (D2)
+    extra_ops: ClassVar[tuple[str, ...]] = ()
+
+    @property
+    def ident(self) -> str:
+        return f"{self.transport}.{self.route}"
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        return None
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        return None
+
+
+class _MInproc(_MDriver):
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.kind = "expand" if route == "expand" else "compact"
+        self.op = {"expand": "expand", "list": "list"}.get(route, "ask")
+        if route == "list":
+            self.expected_ids = ("a1", "a2", "u1")
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        if self.kind == "expand":
+            result = MemoryTool().run(
+                env.root,
+                operation="expand",
+                session_allowlist=env.allow,
+                owner_scope=env.owner.as_dict() if env.owner else None,
+                permissions=env.perms,
+                request={"id": env.target, "version": 1, **request},
+            )
+        else:
+            result = MemoryTool().run(
+                env.root,
+                operation=self.route,  # type: ignore[arg-type]
+                subject=self.subject,  # type: ignore[arg-type]
+                query="" if self.route == "list" else self.query,
+                session_allowlist=env.allow,
+                owner_scope=env.owner.as_dict() if env.owner else None,
+                permissions=env.perms,
+                request={"view": "compact", **request},
+            )
+        raw = _raw(result)
+        return _MRes(str(raw["code"]), dict(raw["data"]), None, result["status"])
+
+
+class _MMcp(_MDriver):
+    transport = "mcp"
+
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.kind = "expand" if route == "expand" else "compact"
+        self.op = "expand" if route == "expand" else "ask"
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        _t2_fixed_duration(monkeypatch, 5)
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        from rush.delivery import compact
+        from rush.mcp import build_server
+
+        arguments: dict[str, Any] = {
+            "path": str(env.root),
+            "operation": "expand" if self.kind == "expand" else self.route,
+        }
+        if env.allow:
+            arguments["session_allowlist"] = env.allow
+        if env.owner is not None and self.kind != "expand":
+            arguments["owner_scope"] = env.owner.as_dict()
+        if self.kind == "expand":
+            arguments["request"] = {"id": env.target, "version": 1, **request}
+        else:
+            arguments["subject"] = self.subject
+            arguments["query"] = self.query
+            arguments["request"] = {"view": "compact", **request}
+        if env.cols["cache_write"] == "on":
+            arguments["allow_cache_write"] = True
+        outcome = asyncio.run(build_server().call_tool("rush_memory", arguments))
+        structured = outcome.structuredContent
+        assert isinstance(structured, dict), outcome
+        raw = structured["raw"]
+        return _MRes(
+            str(raw["code"]),
+            dict(raw["data"]),
+            compact.canonical_json(structured),
+            structured.get("status"),
+        )
+
+
+class _MCli(_MDriver):
+    transport = "cli"
+    route = "expand"
+    kind = "expand"
+    op = "expand"
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        _t2_fixed_duration(monkeypatch, 5)
+        monkeypatch.chdir(env.root)
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        path = env.tmp / "cli-request.json"
+        path.write_text(
+            json.dumps({"id": env.target, "version": 1, **request}), encoding="utf-8"
+        )
+        args = ["memory", "expand", "--input", str(path), "--json"]
+        if env.allow:
+            args += ["--session", "source-a"]
+        if env.cols["cache_write"] == "on":
+            args.append("--allow-cache-write")
+        outcome = CliRunner().invoke(cli, args)
+        assert outcome.exception is None or isinstance(outcome.exception, SystemExit)
+        payload = json.loads(outcome.stdout_bytes)
+        raw = payload["raw"]
+        return _MRes(
+            str(raw["code"]), dict(raw["data"]), outcome.stdout_bytes, payload["status"]
+        )
+
+
+class _MDashboard(_MDriver):
+    transport = "dashboard"
+    forces_allowlist = True
+    strict_unknown = "HTTP-400-unsupported_argument"
+    hybrid_refusal = "HTTP-403-grant_denied"
+
+    def __init__(self, route: str) -> None:
+        self.route = "memory_expand" if route == "expand" else "memory_query"
+        self.kind = "expand" if route == "expand" else "compact"
+        self.op = "expand" if route == "expand" else "ask"
+        self.server: Any = None
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rush.dashboard import server as server_module
+        from tests.test_dashboard_scan_actions import _start_dashboard
+
+        monkeypatch.setattr(server_module, "ACTION_RATE_LIMIT", 1_000_000)
+        _t2_fixed_duration(monkeypatch, 5)
+        self.server, self.base, self.cookie, self.csrf = _start_dashboard(
+            env.project_id, env.root
+        )
+
+    def post(self, env: _MEnv, operation: str, arguments: dict[str, Any]) -> Any:
+        import uuid
+
+        from tests.test_dashboard_scan_actions import _post
+
+        body = json.dumps(
+            {
+                "schema_version": 1,
+                "operation": operation,
+                "arguments": arguments,
+                "grants": {"cache_write": True}
+                if env.cols["cache_write"] == "on"
+                else {},
+                "expected": {},
+                "request_id": str(uuid.uuid4()),
+            }
+        ).encode("utf-8")
+        return _post(
+            f"{self.base}/api/projects/{env.project_id}/actions",
+            headers={
+                "Cookie": self.cookie,
+                "X-Rush-CSRF": self.csrf,
+                "Origin": self.base,
+                "Content-Type": "application/json",
+                # A generated uuid4 request id changes the token count of the
+                # exact frame between a probe and the capped call.
+                "X-Request-Id": "f" * 32,
+            },
+            body=body,
+        )
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        if self.kind == "expand":
+            arguments: dict[str, Any] = {
+                "id": env.target,
+                "version": 1,
+                "session_allowlist": ["source-a"],
+                **request,
+            }
+        else:
+            arguments = {
+                "mode": "ask",
+                "subject": self.subject,
+                "query": self.query,
+                "session_allowlist": ["source-a"],
+                **request,
+            }
+        response = self.post(env, self.route, arguments)
+        frame = response.read()
+        parsed = json.loads(frame)
+        data = parsed.get("data")
+        if isinstance(data, dict) and isinstance(data.get("raw"), dict):
+            raw = data["raw"]
+            return _MRes(str(raw["code"]), dict(raw["data"]), frame, data.get("status"))
+        refusal = parsed.get("error", {}).get("code")
+        return _MRes(f"HTTP-{response.status}-{refusal}", parsed, frame)
+
+    def close(self) -> None:
+        if self.server is not None:
+            self.server.shutdown()
+            self.server.server_close()
+
+
+def _m_telemetry(env: _MEnv) -> Any:
+    if env.cols["cache_write"] != "on":
+        return None
+    from rush.token_economy.telemetry import TelemetryStore
+
+    return TelemetryStore(env.root)
+
+
+class _MInternal(_MDriver):
+    """The in-process helpers `recall_page`, `hybrid_page` and `expand_artifact`
+    called directly with the access the route would resolve."""
+
+    transport = "internal"
+    strict_unknown = "E_INPUT"
+
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.kind = "expand" if route == "expand_artifact" else "compact"
+        self.op = "expand" if self.kind == "expand" else "ask"
+        if route == "hybrid_page":
+            self.expected_ids = ("a1", "a2", "u1")
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        from rush.memory.retrieval import (
+            MemoryAccess,
+            expand_artifact,
+            hybrid_page,
+            recall_page,
+        )
+
+        store = env.store
+        assert store is not None
+        access = None
+        allow = env.allow
+        if env.cols["access"] == "policy" and env.cols["policy_state"] == "ok":
+            access = MemoryAccess.resolve(
+                env.root,
+                operation=self.op,
+                historical=env.cols["mode"] == "historical",
+                owner_scope=ALICE,
+                data_root=env.data_root,
+            )
+            if access is not None:
+                allow = None
+        common: dict[str, Any] = {
+            "access": access,
+            "session_allowlist": allow if access is None else None,
+            "telemetry": _m_telemetry(env),
+            "cache_write": env.cols["cache_write"] == "on",
+        }
+        if self.kind == "expand":
+            args = {
+                k: v
+                for k, v in request.items()
+                if k in _M_EXPAND_KEYS - {"id", "version"}
+            }
+            mode = env.cols["mode"] if env.cols["mode"] != "ordinary" else "ordinary"
+            page = expand_artifact(
+                store,
+                artifact_id=env.target,
+                version=1,
+                mode=mode,  # type: ignore[arg-type]
+                request_id="m-expand",
+                event_id="expansion",
+                **common,
+                **args,
+            )
+        elif self.route == "hybrid_page":
+            _calls, embed = _embed_spy()
+            page = hybrid_page(
+                store,
+                subject=SUBJECT,
+                query=self.query,
+                embed_config=_embed_config(),
+                embed_fn=embed,
+                request_id="m-hybrid",
+                event_id="retrieval",
+                **common,
+            )
+        else:
+            args = {
+                k: v for k, v in request.items() if k in _M_COMPACT_KEYS - {"retrieval"}
+            }
+            page = recall_page(
+                store,
+                subject=self.subject,  # type: ignore[arg-type]
+                query=self.query,
+                request_id="m-recall",
+                event_id="retrieval",
+                **common,
+                **args,
+            )
+        data = {k: v for k, v in page.items() if k != "code"}
+        return _MRes(str(page["code"]), data, None, None)
+
+
+class _MBridge(_MDriver):
+    """The restricted `rush_memory` bridge handler bound to one handoff session."""
+
+    transport = "bridge"
+    route = "expand"
+    kind = "expand"
+    op = "expand"
+    forces_allowlist = True
+    #: 72-T01 D21: the sender's grant also covers the `handoff prepare` that binds it
+    extra_ops = ("write",)
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        from rush.mcp_support.tool_registry import build_memory_bridge_handler
+
+        if env.store is None:
+            # nothing to prepare a session on: the receiver holds a session id and
+            # capability the store never issued
+            self.handler = build_memory_bridge_handler(
+                root=env.root, session_id="0" * 32, capability="unprepared"
+            )
+            return
+        granted = ("u1",) if env.cols["capability_ids"] == "selected" else ("a2",)
+        # 72-T01 D21: the session is prepared through the route, which binds the
+        # sender's grant; a session prepared without one is `sender_unbound`.
+        prepared = _prepare_handoff(env.root, ids=granted)
+        assert _code_of(prepared) == "OK", prepared
+        session_id, capability = _session_of(prepared)
+        self.handler = build_memory_bridge_handler(
+            root=env.root, session_id=session_id, capability=capability
+        )
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        out = self.handler("expand", {"id": env.target, "version": 1, **request})
+        return _MRes(str(out["code"]), dict(out["data"]), None, None)
+
+
+class _MStdio(_MDriver):
+    """A real `rush mcp serve` stdio server, one process per cell."""
+
+    transport = "mcp"
+
+    def __init__(self, route: str) -> None:
+        self.route = f"{route}-stdio"
+        self.kind = "expand" if route == "expand" else "compact"
+        self.op = "expand" if route == "expand" else "ask"
+        self.server: Any = None
+
+    def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.server = _T2Stdio(env.root, env.tmp, duration_ms=5, request_id=5)
+
+    def run(self, env: _MEnv, request: dict[str, Any]) -> _MRes:
+        arguments: dict[str, Any] = {
+            "path": str(env.root),
+            "operation": "expand" if self.kind == "expand" else "ask",
+        }
+        if env.allow:
+            arguments["session_allowlist"] = env.allow
+        if env.owner is not None and self.kind != "expand":
+            arguments["owner_scope"] = env.owner.as_dict()
+        if self.kind == "expand":
+            arguments["request"] = {"id": env.target, "version": 1, **request}
+        else:
+            arguments["subject"] = self.subject
+            arguments["query"] = self.query
+            arguments["request"] = {"view": "compact", **request}
+        if env.cols["cache_write"] == "on":
+            arguments["allow_cache_write"] = True
+        line, parsed = self.server.tool("rush_memory", arguments)
+        structured = parsed["result"].get("structuredContent")
+        assert isinstance(structured, dict) and "raw" in structured, parsed
+        raw = structured["raw"]
+        return _MRes(
+            str(raw["code"]), dict(raw["data"]), line, structured.get("status")
+        )
+
+    def close(self) -> None:
+        if self.server is not None:
+            self.server.close()
+
+
+def _m_content(res: _MRes) -> bytes:
+    if res.data.get("content_utf8") is not None:
+        return str(res.data["content_utf8"]).encode("utf-8")
+    return base64.b64decode(res.data["content_base64"])
+
+
+def _m_expect_ok(drv: _MDriver, env: _MEnv, res: _MRes, *, utf8: bool = False) -> None:
+    assert res.code == "OK", (drv.ident, res.code, res.data)
+    if drv.kind == "compact":
+        assert res.ids == list(drv.expected_ids), (drv.ident, res.data)
+        assert res.data["complete"] is True
+    else:
+        assert _m_content(res) == env.stored, (drv.ident, res.data)
+        if utf8:
+            assert res.data["payload_hash"] == hashlib.sha256(env.stored).hexdigest()
+
+
+def _m_refused(drv: _MDriver, env: _MEnv, res: _MRes, code: str, before: Any) -> None:
+    assert res.code == code, (drv.ident, res.code, res.data)
+    assert _m_effects(env) == before, f"{drv.ident}: a refusal changed the project"
+    if drv.kind == "compact":
+        assert res.ids == [] and res.data.get("complete") is not True
+    else:
+        assert not res.data.get("content_base64") and not res.data.get("content_utf8")
+
+
+def _m_minimum(drv: _MDriver, env: _MEnv, extra: dict[str, Any]) -> tuple[int, int]:
+    refusal = drv.run(env, {**extra, "max_bytes": 1, "max_tokens": T02_BIG})
+    assert refusal.code == "E_INPUT", (drv.ident, refusal.code, refusal.data)
+    required = refusal.data["required"]
+    return int(required["max_bytes"]), int(required["max_tokens"])
+
+
+def _m_unknown_key(
+    drv: _MDriver, env: _MEnv, key: str, value: Any, before: Any
+) -> None:
+    """A request key the route does not accept: the strict model's `E_INPUT`, the
+    dashboard's own 400, or (an internal helper without the parameter) the
+    baseline output."""
+    res = drv.run(env, {key: value})
+    if drv.transport == "internal":
+        baseline = drv.run(env, {})
+        _m_expect_ok(drv, env, baseline)
+        assert res == baseline, (drv.ident, key, res, baseline)
+        assert _m_effects(env) == before
+        return
+    assert res.code == drv.strict_unknown, (drv.ident, key, res.code, res.data)
+    assert _m_effects(env) == before
+
+
+def _m_first_page_request(drv: _MDriver) -> dict[str, Any]:
+    return {"limit": 1}
+
+
+def _m_cursor_cell(drv: _MDriver, env: _MEnv, value: str, before: Any) -> None:
+    if drv.kind == "expand":
+        _m_unknown_key(drv, env, "cursor", "m2.", before)
+        return
+    if drv.route == "hybrid_page":
+        _m_expect_ok(drv, env, drv.run(env, {}))
+        return
+    first = drv.run(env, {"limit": 1})
+    assert first.code == "OK" and first.ids == ["a1"], (
+        drv.ident,
+        first.code,
+        first.data,
+    )
+    assert first.data["complete"] is False
+    token = first.data["next_cursor"]
+    assert isinstance(token, str) and T02_TOKEN_RE.match(token)
+
+    def resume(cursor: str, **extra: Any) -> _MRes:
+        return drv.run(env, {"limit": 1, "cursor": cursor, **extra})
+
+    if value == "none":
+        return
+    if value == "valid":
+        page = resume(token)
+        assert page.code == "OK" and page.ids == ["a2"], (drv.ident, page.data)
+        last = len(drv.expected_ids) == 2
+        assert page.data["complete"] is last
+        assert (page.data["next_cursor"] is None) is last
+    elif value == "syntax_invalid":
+        for bad in M_SYNTAX_INVALID:
+            page = resume(bad)
+            assert page.code == "E_INPUT", (drv.ident, bad, page.code, page.data)
+            assert page.ids == []
+    elif value == "foreign":
+        other = tmp_foreign_token(drv, env)
+        page = resume(other)
+        assert page.code == "E_RESTART", (drv.ident, page.code, page.data)
+        assert page.ids == [] and page.data["next_cursor"] is None
+    elif value == "drift_filter":
+        # only the subject changes between the pages
+        saved = drv.subject
+        drv.subject = "architectural_decision"
+        try:
+            page = resume(token)
+        finally:
+            drv.subject = saved
+        assert page.code == "E_RESTART", (drv.ident, page.code, page.data)
+    elif value == "drift_generation":
+        _row(
+            TypedArtifactStore(env.root),
+            "a3",
+            ALICE,
+            "",
+            content={"text": "needle alpha more"},
+        )
+        page = resume(token)
+        assert page.code == "E_RESTART", (drv.ident, page.code, page.data)
+        assert page.ids == []
+    elif value == "drift_grant_replaced":
+        assert env.grant is not None
+        _fix1_revoke(env.auth, env.grant, env.data_root)
+        _grant(env.auth, env.root, ALICE, env.data_root, ops=(drv.op,))
+        page = resume(token)
+        assert page.code == "E_RESTART", (drv.ident, page.code, page.data)
+    else:
+        assert value == "revision_only"
+        other_root = _registered(env.tmp / "other", env.data_root)
+        _grant(env.auth, other_root, ALICE, env.data_root, ops=(drv.op,))
+        page = resume(token)
+        assert page.code == "OK" and page.ids == ["a2"], (
+            drv.ident,
+            page.code,
+            page.data,
+        )
+        assert page.data["complete"] is (len(drv.expected_ids) == 2)
+
+
+def tmp_foreign_token(drv: _MDriver, env: _MEnv) -> str:
+    """A syntactically canonical cursor minted by another store."""
+    other = env.tmp / "foreign-store"
+    other.mkdir(exist_ok=True)
+    store = TypedArtifactStore(other.resolve())
+    for artifact_id in ("a1", "a2"):
+        _row(store, artifact_id, ALICE, "", content={"text": "needle alpha common"})
+    page = _t02_recall(store, query=M_QUERY, limit=1)
+    assert page["next_cursor"], page
+    return str(page["next_cursor"])
+
+
+def _m_caps_cell(drv: _MDriver, env: _MEnv, value: str, before: Any) -> None:
+    if value == "default":
+        _m_expect_ok(drv, env, drv.run(env, {}))
+        return
+    extra: dict[str, Any] = {"limit": 1} if drv.kind == "compact" else {}
+    if drv.kind == "expand":
+        extra["representation"] = "utf8"
+    if value == "one":
+        res = drv.run(env, {**extra, "max_bytes": 1})
+        assert res.code == "E_INPUT", (drv.ident, res.code, res.data)
+        assert _m_effects(env) == before
+        return
+    min_bytes, min_tokens = _m_minimum(drv, env, extra)
+    if value.startswith("min_minus_1"):
+        caps = (
+            {"max_bytes": min_bytes - 1, "max_tokens": T02_BIG}
+            if value.endswith("bytes")
+            else {"max_bytes": T02_BIG, "max_tokens": min_tokens - 1}
+        )
+        res = drv.run(env, {**extra, **caps})
+        assert res.code == "E_INPUT", (drv.ident, res.code, res.data)
+        assert res.data["required"] == {
+            "max_bytes": min_bytes,
+            "max_tokens": min_tokens,
+        }
+        assert _m_effects(env) == before
+        return
+    if value == "min":
+        res = drv.run(env, {**extra, "max_bytes": min_bytes, "max_tokens": min_tokens})
+        assert res.code in ("E_BUDGET", "OK"), (drv.ident, res.code, res.data)
+        used = _m_caps(res)
+        assert used[0] <= min_bytes and used[1] <= min_tokens, (drv.ident, used)
+        return
+    assert value == "min_plus_one_scalar"
+
+    def by_bytes(cap: int) -> _MRes:
+        return drv.run(env, {**extra, "max_bytes": cap, "max_tokens": T02_BIG})
+
+    if drv.kind == "expand":
+        extra["offset"] = _t2_emoji_offset()
+    first = _t2_first_ok_res(by_bytes, min_bytes, 65_536)
+    page = by_bytes(first)
+    assert _m_caps(page)[0] == first, (drv.ident, _m_caps(page), first)
+    if drv.kind == "expand":
+        assert page.data["content_utf8"] == "\U0001f642", page.data
+    else:
+        assert page.ids == ["a1"], page.data
+
+
+def _t2_first_ok_res(call: Any, low: int, high: int) -> int:
+    assert call(high).code == "OK", "no OK page even at the largest cap"
+    if call(low).code == "OK":
+        return low
+    while high - low > 1:
+        mid = (low + high) // 2
+        if call(mid).code == "OK":
+            high = mid
+        else:
+            low = mid
+    return high
+
+
+def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
+    before = _m_effects(env)
+    compact = drv.kind == "compact"
+    if drv.transport == "internal" and col == "store" and val != "present":
+        view, state = TypedArtifactStore.open_readonly_view(env.root)
+        assert view is None, "a view opened over a store that is not usable"
+        assert state == (None if val == "absent" else "migration_required")
+        assert _m_effects(env) == before
+        return
+    if drv.transport == "internal" and drv.kind == "expand" and col == "mode":
+        res = drv.run(env, {})
+        if val == "ordinary":
+            _m_expect_ok(drv, env, res)
+        elif val == "inspect":
+            assert res.code == "E_INPUT", (drv.ident, res.code, res.data)
+        else:
+            assert res.code == "OK", (drv.ident, res.code, res.data)
+            assert (
+                res.data["historical"] is True and res.data["reason_codes"] is not None
+            )
+            assert _m_content(res) == env.stored
+        return
+    if drv.transport == "bridge" and col == "capability_ids":
+        res = drv.run(env, {})
+        if val == "selected":
+            _m_expect_ok(drv, env, res)
+        else:
+            _m_refused(drv, env, res, "E_PERMISSION", before)
+        return
+    if drv.transport == "bridge" and col == "cursor":
+        res = drv.run(env, {"cursor": "m2."} if val != "none" else {})
+        if val == "none":
+            _m_expect_ok(drv, env, res)
+        else:
+            assert res.code == "E_INPUT", (drv.ident, res.code, res.data)
+        return
+    if col == "access":
+        if val == "overlay":
+            _m_overlay(drv, env)
+            return
+        _m_expect_ok(drv, env, drv.run(env, {}))
+    elif col == "policy_state":
+        res = drv.run(env, {})
+        if val == "ok":
+            _m_expect_ok(drv, env, res)
+        elif val == "missing_no_marker":
+            if drv.forces_allowlist:
+                _m_expect_ok(drv, env, res)
+            elif compact:
+                assert res.ids == [], (drv.ident, res.data)
+                assert res.code in ("OK", "E_PERMISSION"), (drv.ident, res.code)
+                assert _m_effects(env) == before
+            else:
+                _m_refused(drv, env, res, "E_NOT_VISIBLE", before)
+        else:
+            _m_refused(drv, env, res, "E_PERMISSION", before)
+            want = "policy_missing" if val == "missing_marker" else "policy_invalid"
+            assert res.reason == want, (drv.ident, res.data)
+    elif col == "mode":
+        if val == "ordinary":
+            _m_expect_ok(drv, env, drv.run(env, {}))
+        else:
+            _m_unknown_key(drv, env, "archive_mode", val, before)
+    elif col == "caps" and drv.route == "hybrid_page" and val != "default":
+        # hybrid admission is 72-T08's: the route takes no caps here
+        _m_unknown_key(drv, env, "max_bytes", 1, before)
+    elif col == "representation":
+        if compact:
+            if val == "base64":
+                _m_unknown_key(drv, env, "representation", "base64", before)
+            else:
+                _m_unknown_key(drv, env, "representation", "utf8", before)
+        else:
+            res = drv.run(env, {"representation": val})
+            _m_expect_ok(drv, env, res, utf8=val == "utf8")
+    elif col == "retrieval":
+        if drv.transport == "internal":
+            res = drv.run(env, {})
+            _m_expect_ok(drv, env, res)
+            if drv.route == "hybrid_page":
+                assert res.data["retrieval"] == "hybrid", res.data
+        elif compact:
+            if val == "lexical":
+                _m_expect_ok(drv, env, drv.run(env, {"retrieval": "lexical"}))
+            else:
+                res = drv.run(env, {"retrieval": "hybrid"})
+                assert res.code == drv.hybrid_refusal, (drv.ident, res.code, res.data)
+                assert "network" in _dump(res.data)
+                assert _m_effects(env) == before
+        else:
+            _m_unknown_key(drv, env, "retrieval", val, before)
+    elif col == "store" and drv.transport == "bridge" and val != "present":
+        # D22: a missing or unmigrated store is the constant session denial
+        res = drv.run(env, {})
+        _m_refused(drv, env, res, "E_PERMISSION", before)
+        assert res.data["message"] == "Unknown or revoked handoff session.", res.data
+    elif col == "store":
+        res = drv.run(env, {})
+        if val == "present":
+            _m_expect_ok(drv, env, res)
+        elif val == "absent":
+            if compact:
+                assert res.code == "OK" and res.ids == [], (
+                    drv.ident,
+                    res.code,
+                    res.data,
+                )
+                assert res.data["complete"] is True
+                used = _m_caps(res)
+                assert used[0] > 0
+            else:
+                assert res.code == "E_NOT_VISIBLE", (drv.ident, res.code, res.data)
+            assert not (env.root / ".rush" / "memory.db").exists(), (
+                "a store was created"
+            )
+            assert not _t2_tokens_db(env.root).exists()
+        else:
+            assert res.code == "E_MIGRATION", (drv.ident, res.code, res.data)
+            assert _m_effects(env) == before
+    elif col == "apply":
+        _m_unknown_key(drv, env, "apply", val == "apply", before)
+    elif col == "cache_write":
+        res = drv.run(env, {})
+        _m_expect_ok(drv, env, res)
+        db = _t2_tokens_db(env.root)
+        if drv.transport == "bridge":
+            # no execution permission is ever granted to the bridge
+            assert not db.exists()
+        elif val == "on":
+            assert db.exists(), f"{drv.ident}: cache_write recorded nothing"
+            kind = "retrieval" if compact else "expansion"
+            assert _t02_events(env.root, kind) == 1
+        else:
+            assert not db.exists()
+    elif col == "grant_ops":
+        res = drv.run(env, {})
+        if val == "exact":
+            _m_expect_ok(drv, env, res)
+        else:
+            _m_refused(drv, env, res, "E_PERMISSION", before)
+            assert res.reason == "operation_not_granted", (drv.ident, res.data)
+    elif col == "row_state":
+        res = drv.run(env, {})
+        if val == "active":
+            _m_expect_ok(drv, env, res)
+        elif val in ("archived", "expired", "tampered"):
+            if compact:
+                want_ids = [i for i in drv.expected_ids if i != "a1"]
+                assert res.code == "OK" and res.ids == want_ids, (
+                    drv.ident,
+                    res.code,
+                    res.data,
+                )
+            else:
+                assert res.code == "E_NOT_VISIBLE", (drv.ident, res.code, res.data)
+                assert not res.data.get("content_base64")
+        else:
+            _m_expect_ok(drv, env, res)
+            assert "applicability" not in _columns(
+                env.root / ".rush" / "memory.db", "memory_artifacts"
+            )
+    elif col == "ack":
+        _m_unknown_key(drv, env, "ack", val == "ack", before)
+    elif col == "capability_ids":
+        _m_expect_ok(drv, env, drv.run(env, {}))
+    elif col == "cursor":
+        _m_cursor_cell(drv, env, val, before)
+    else:
+        assert col == "caps"
+        _m_caps_cell(drv, env, val, before)
+
+
+def _m_overlay(drv: _MDriver, env: _MEnv) -> None:
+    """Producer 72-T05: the overlay access form has no public route yet, so the
+    strict surfaces refuse the operation; the baseline output is unchanged."""
+    if drv.transport == "dashboard":
+        refused = drv.post(env, "preference", {})  # type: ignore[attr-defined]
+        parsed = json.loads(refused.read())
+        assert refused.status == 400, parsed
+        assert parsed["error"]["code"] == "unknown_operation", parsed
+    elif drv.transport == "internal":
+        from rush.memory.authorization import user_overlay_owner_scope
+        from rush.memory.retrieval import MemoryAccess, expand_artifact, recall_page
+
+        overlay_owner = user_overlay_owner_scope(data_root=env.data_root)
+        _grant(
+            env.auth,
+            env.root,
+            overlay_owner,
+            env.data_root,
+            sources=("personal-preferences",),
+            ops=("overlay_read", "list"),
+        )
+        overlay = MemoryAccess.resolve(
+            env.root,
+            operation="ask",
+            overlay=True,
+            owner_scope=overlay_owner,
+            data_root=env.data_root,
+        )
+        assert overlay is not None
+        assert env.store is not None
+        if drv.kind == "compact":
+            page = recall_page(
+                env.store, subject=SUBJECT, query=M_QUERY, access=overlay
+            )
+            assert page["code"] == "OK" and page["items"] == [], page
+            assert page["complete"] is True
+        else:
+            page = expand_artifact(
+                env.store, artifact_id="u1", version=1, access=overlay
+            )
+            assert page["code"] == "E_NOT_VISIBLE", page
+        return
+    elif drv.transport == "bridge":
+        denied = drv.handler("preference", {})  # type: ignore[attr-defined]
+        assert denied["code"] == "E_PERMISSION", denied
+    elif drv.transport == "inproc":
+        result = MemoryTool().run(env.root, operation="preference")  # type: ignore[arg-type]
+        assert result["status"] == "error", result
+        assert "Unsupported memory operation: preference." in result["summary"]
+    elif drv.transport == "mcp":
+        from rush.mcp_support.request_models import validate_and_normalize
+
+        outcome = validate_and_normalize(
+            "rush_memory", {"path": str(env.root), "operation": "preference"}
+        )
+        assert outcome.rejected
+    else:
+        assert drv.transport == "cli"
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        outcome_cli = CliRunner().invoke(cli, ["memory", "preference"])
+        assert outcome_cli.exit_code == 2, outcome_cli.output
+        assert "No such command 'preference'" in outcome_cli.output
+    _m_expect_ok(drv, env, drv.run(env, {}))
+
+
+def _m_drivers() -> list[Any]:
+    return [
+        lambda: _MInproc("ask"),
+        lambda: _MInproc("recall"),
+        lambda: _MInproc("list"),
+        lambda: _MInproc("expand"),
+        lambda: _MMcp("ask"),
+        lambda: _MMcp("expand"),
+        lambda: _MCli(),
+        lambda: _MDashboard("ask"),
+        lambda: _MDashboard("expand"),
+        lambda: _MInternal("recall_page"),
+        lambda: _MInternal("hybrid_page"),
+        lambda: _MInternal("expand_artifact"),
+        lambda: _MBridge(),
+        lambda: _MStdio("ask"),
+        lambda: _MStdio("expand"),
+    ]
+
+
+def _m_run_p(
+    factory: Any,
+    col: str,
+    val: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Class P: a callable route, one column varied from the baseline."""
+    drv = factory()
+    cols = dict(M_BASE)
+    cols[col] = val
+    historical = (
+        drv.transport == "internal"
+        and drv.kind == "expand"
+        and col == "mode"
+        and val == "historical"
+    )
+    # A bridge session is prepared on a healthy store and grant; the column then
+    # changes what the receiver finds.
+    deferred = drv.transport == "bridge"
+    env = _m_build(
+        tmp_path,
+        monkeypatch,
+        cols,
+        drv.kind,
+        op=drv.op,
+        extra_ops=(*(("history",) if historical else ()), *drv.extra_ops),
+        defer_store=deferred,
+        defer_policy=deferred,
+        defer_grant=deferred,
+    )
+    drv.prepare(env, monkeypatch)
+    if deferred and env.store is not None:
+        if cols["grant_ops"] == "missing_one":
+            assert env.grant is not None
+            _fix1_revoke(env.auth, env.grant, env.data_root)
+            env.grant = _grant(env.auth, env.root, ALICE, env.data_root, ops=("write",))
+        _m_damage_policy(env)
+        if cols["store"] == "old_schema":
+            _drop_payload_columns(env.store.db_path)
+    try:
+        _m_check(drv, env, col, val)
+    finally:
+        drv.close()
+
+
+# Class S: producer-staged operations. Each is one cell asserting the strict
+# refusal naming the absent operation; its producer flips the cell.
+M_S_ROUTES = (
+    ("history", "mode", "historical", "72-T06"),
+    ("explain", "mode", "inspect", "72-T06"),
+    ("import", "apply", "apply", "72-T06"),
+    ("preference", "access", "overlay", "72-T05"),
+    ("capsule", "mode", "inspect", "CODEC"),
+)
+
+
+def _m_run_s(
+    operation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str
+) -> None:
+    from rush.mcp_support.request_models import validate_and_normalize
+
+    root = _pm_project(tmp_path, monkeypatch)
+    if transport == "inproc":
+        result = MemoryTool().run(root, operation=operation)  # type: ignore[arg-type]
+        assert result["status"] == "error", result
+        assert f"Unsupported memory operation: {operation}." in result["summary"]
+    elif transport == "mcp":
+        outcome = validate_and_normalize(
+            "rush_memory", {"path": str(root), "operation": operation}
+        )
+        assert outcome.rejected, operation
+    elif transport == "cli":
+        from click.testing import CliRunner
+
+        from rush.cli import cli
+
+        monkeypatch.chdir(root)
+        refused = CliRunner().invoke(cli, ["memory", operation.replace("_", "-")])
+        assert refused.exit_code == 2, refused.output
+        assert f"No such command '{operation}'" in refused.output, refused.output
+    else:
+        assert transport == "dashboard"
+        import uuid
+
+        from rush.dashboard import server as server_module
+        from rush.workflows.projects import register_project
+        from tests.test_dashboard_scan_actions import _post, _start_dashboard
+
+        monkeypatch.setattr(server_module, "ACTION_RATE_LIMIT", 1_000_000)
+        project_id = register_project(root, data_root=default_data_root()).project_id
+        server, base, cookie, csrf = _start_dashboard(project_id, root)
+        try:
+            body = json.dumps(
+                {
+                    "schema_version": 1,
+                    "operation": f"memory_{operation}",
+                    "arguments": {},
+                    "grants": {},
+                    "expected": {},
+                    "request_id": str(uuid.uuid4()),
+                }
+            ).encode("utf-8")
+            response = _post(
+                f"{base}/api/projects/{project_id}/actions",
+                headers={
+                    "Cookie": cookie,
+                    "X-Rush-CSRF": csrf,
+                    "Origin": base,
+                    "Content-Type": "application/json",
+                },
+                body=body,
+            )
+            parsed = json.loads(response.read())
+        finally:
+            server.shutdown()
+            server.server_close()
+        assert response.status == 400, parsed
+        assert parsed["error"]["code"] == "unknown_operation", parsed
+    assert not (root / ".rush" / "memory.db").exists()
+
+
+# Class R: a reader that selects `content` straight from memory.db. The
+# dimension is not expressible, so the cell is the D32 differential: with an
+# invalid-UTF-8 TEXT row beside a valid one it answers like the valid row alone.
+def _m_r_fixture(tmp_path: Path) -> Path:
+    root = tmp_path / "project"
+    root.mkdir()
+    store = TypedArtifactStore(root.resolve())
+    for artifact_id in ("o1", "o2"):
+        _row(store, artifact_id, None, "", source="migration:flight", content=T02_SAME)
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET origin_kind = 'mig', origin_id = id, "
+            "symbol_ref = 'sym'"
+        )
+        conn.commit()
+    _t2_bad_text_row(store, "o2")
+    return root.resolve()
+
+
+def _m_r_readers() -> dict[str, Any]:
+    from rush.memory import migration
+
+    return {
+        "read_origin": lambda root: migration.read_origin(root, "mig", "o1"),
+        "read_origin_kind": lambda root: migration.read_origin_kind(root, "mig"),
+        "read_origin_kind_by_symbol": lambda root: migration.read_origin_kind_by_symbol(
+            root, "mig", "sym"
+        ),
+        "read_origin_readonly": lambda root: migration.read_origin_readonly(
+            root, "mig", "o1"
+        ),
+        "read_origin_kind_readonly": lambda root: migration.read_origin_kind_readonly(
+            root, "mig"
+        ),
+        "read_origin_kind_by_symbol_readonly": lambda root: (
+            migration.read_origin_kind_by_symbol_readonly(root, "mig", "sym")
+        ),
+    }
+
+
+M_R_READERS = (
+    "read_origin",
+    "read_origin_kind",
+    "read_origin_kind_by_symbol",
+    "read_origin_readonly",
+    "read_origin_kind_readonly",
+    "read_origin_kind_by_symbol_readonly",
+)
+
+
+def _m_run_r(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _m_r_fixture(tmp_path)
+    before = _digest_dir(root)
+    result = _m_r_readers()[name](root)
+    expected = (
+        T02_SAME if name in ("read_origin", "read_origin_readonly") else [T02_SAME]
+    )
+    assert result == expected, (name, result)
+    assert _digest_dir(root) == before, f"{name} changed the project"
+
+
+def _m_run_tui(
+    col: str, val: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The TUI expand reads the payload through the same view. It has no access,
+    policy, mode, representation, retrieval, apply, cache-write, grant, ack, selection,
+    cursor or caps field, so those cells are the baseline expansion; a missing or
+    unmigrated store and an archived, expired or tampered row expand nothing."""
+    from rush.tui import default_scan_actions
+    from tests.test_dashboard_memory_tokens import _key, _tui_state
+
+    root = _pm_project(tmp_path, monkeypatch)
+    refused = (col, val) in (
+        ("store", "absent"),
+        ("store", "old_schema"),
+        ("row_state", "archived"),
+        ("row_state", "expired"),
+        ("row_state", "tampered"),
+    )
+    stored = b""
+    if (col, val) != ("store", "absent"):
+        store = TypedArtifactStore(root)
+        stored = _t2_literal_row(store, "u1", {"text": T02_TEXT}, None)
+        if (col, val) == ("row_state", "archived"):
+            store.archive("u1", expected_version=1, scope=SUBJECT, apply=True)
+        elif (col, val) == ("row_state", "expired"):
+            with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET expires_at = ? WHERE id = 'u1'",
+                    (time.time() - 3600,),
+                )
+                conn.commit()
+        elif (col, val) == ("row_state", "tampered"):
+            _m_tamper(store.db_path, "u1")
+        elif (col, val) == ("store", "old_schema"):
+            _drop_payload_columns(store.db_path)
+    state = _tui_state(root)
+    actions = default_scan_actions()
+    _key(state, "M", actions)
+    _key(state, "/", actions)
+    for ch in "needle":
+        _key(state, ch, actions)
+    _key(state, "enter", actions)
+    if refused:
+        assert state.memory_items == [], state.memory_items
+        _key(state, "x", actions)
+        assert state.memory_expanded is None
+        return
+    assert [item["id"] for item in state.memory_items] == ["u1"]
+    _key(state, "x", actions)
+    assert state.memory_expanded is not None, state.memory_message
+    assert base64.b64decode(state.memory_expanded["content_base64"]) == stored
+
+
+def _m_rule(col: str) -> str:
+    return "C02" if col in M_C02_ONLY else "C05" if col in M_C05_ONLY else "C02C05"
+
+
+def _m_g_policy_rows() -> dict[tuple[str, str], str]:
+    """The 72-T01 row for each access, policy-state and grant column value."""
+    rows = G2_POLICY_ROWS
+    return {
+        ("access", "policy"): rows[0],
+        ("access", "legacy_allowlist"): rows[2],
+        ("access", "overlay"): G2_OVERLAY_ROW,
+        ("policy_state", "ok"): rows[0],
+        ("policy_state", "missing_no_marker"): rows[5],
+        ("policy_state", "missing_marker"): rows[7],
+        ("policy_state", "invalid"): rows[4],
+        ("grant_ops", "exact"): rows[0],
+        ("grant_ops", "missing_one"): rows[6],
+    }
+
+
+#: cursor and caps carry no G2 dimension: the request key that names each value
+M_G_KEYS = {
+    ("cursor", "valid"): ("cursor", "m2." + "A" * 27),
+    ("cursor", "syntax_invalid"): ("cursor", "m2."),
+    ("cursor", "foreign"): ("cursor", "m2." + "B" * 27),
+    ("cursor", "drift_filter"): ("cursor", "m2." + "C" * 27),
+    ("cursor", "drift_generation"): ("cursor", "m2." + "D" * 27),
+    ("cursor", "drift_grant_replaced"): ("cursor", "m2." + "E" * 27),
+    ("cursor", "revision_only"): ("cursor", "m2." + "F" * 27),
+    ("caps", "min_minus_1_bytes"): ("max_bytes", "0"),
+    ("caps", "min_minus_1_tokens"): ("max_tokens", "0"),
+    ("caps", "min"): ("max_bytes", "1"),
+    ("caps", "min_plus_one_scalar"): ("max_tokens", "1"),
+    ("caps", "one"): ("max_bytes", "2"),
+}
+
+
+def _m_g_routes() -> list[Any]:
+    """Every 72-T01 route cell (`_G2_ROUTES`, the plan's 2.3 inventory) that has no
+    dedicated driver above and is not a producer-staged operation (class S)."""
+    covered = {factory().ident for factory in _m_drivers()}
+    return [
+        r
+        for r in _G2_ROUTES
+        if not r.ident.endswith("-producer") and r.ident not in covered
+    ]
+
+
+def _m_run_receive_cursor(
+    route: Any, val: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`receive` pages by the last artifact id it returned (`handoff._delta`: ids
+    strictly after `cursor`), not by an `m2.` token: whatever the cursor spells, the
+    page is the baseline page's ids sorted after it, and nothing is written."""
+    row = G2_POLICY_ROWS[0]
+    env = _g2_env(tmp_path, monkeypatch, route, row)
+    cell = _g2_parse_row(row)
+    before = _g2_effects(route, env.root, env.data_root)
+
+    def ids_of(out: Any) -> list[str]:
+        return sorted(re.findall(r'(?<![\w])"id":\s*"([^"]+)"', _dump(out.body)))
+
+    base = _g2_call(route, env, cell)
+    assert base.code == "OK", (route.ident, base.code)
+    base_ids = ids_of(base)
+    assert base_ids, (route.ident, "the baseline page names no artifact")
+    cursor = base_ids[0] if val == "valid" else M_G_KEYS[("cursor", val)][1]
+    assert route.carry is not None
+    out = route.carry(env, cell, "cursor", cursor)
+    assert out.code == "OK", (route.ident, val, out.code, out.reason)
+    assert ids_of(out) == [i for i in base_ids if i > cursor], (route.ident, val)
+    assert _g2_effects(route, env.root, env.data_root) == before
+
+
+def _m_run_g(
+    ident: str, col: str, val: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Class G: a route without a dedicated driver. A dimension it varies along is the
+    72-T01 matrix cell; one it does not accept is the strict model's `E_INPUT`, or,
+    where the transport has no such field, the byte-identical baseline."""
+    (route,) = [r for r in _G2_ROUTES if r.ident == ident]
+    # the MCP strict model has no `cursor` on `receive`: that is the generic cell below
+    if (
+        route.key == "receive"
+        and route.transport != "mcp"
+        and col == "cursor"
+        and val != "none"
+    ):
+        _m_run_receive_cursor(route, val, tmp_path, monkeypatch)
+        return
+    if col in ("cursor", "caps"):
+        if val in ("none", "default"):
+            row = G2_POLICY_ROWS[0]
+            test_t01_fix_policy_mode_matrix(route, row, tmp_path, monkeypatch)
+            return
+        key, value = M_G_KEYS[(col, val)]
+        row = f"{key}-{value}"
+        env = _g2_env(tmp_path, monkeypatch, route, row)
+        _g2_run_unsupported_row(route, row, env, _g2_parse_row(row))
+        return
+    row = _m_g_policy_rows().get((col, val)) or f"{col}-{val}"
+    if (col, val) in G2_PRODUCER_VALUES:
+        row += f"-producer-{G2_PRODUCER_VALUES[(col, val)]}"
+    test_t01_fix_policy_mode_matrix(route, row, tmp_path, monkeypatch)
+
+
+def _m_cell_ids() -> list[str]:
+    """Every `<route>-<column>-<value>` cell the matrix must register."""
+    idents = [
+        *(factory().ident for factory in _m_drivers()),
+        *(r.ident for r in _m_g_routes()),
+        "tui.expand",
+    ]
+    return [
+        f"{ident}-{col}-{val}-rule-{_m_rule(col)}"
+        for ident in idents
+        for col, values in M_VALUES.items()
+        for val in values
+    ]
+
+
+def _m_cells() -> list[Any]:
+    import functools
+
+    cells: list[Any] = []
+    for factory in _m_drivers():
+        probe = factory()
+        for col, values in M_VALUES.items():
+            for val in values:
+                cells.append(
+                    pytest.param(
+                        functools.partial(_m_run_p, factory, col, val),
+                        id=f"{probe.ident}-{col}-{val}-rule-{_m_rule(col)}",
+                    )
+                )
+    for route in _m_g_routes():
+        for col, values in M_VALUES.items():
+            for val in values:
+                cells.append(
+                    pytest.param(
+                        functools.partial(_m_run_g, route.ident, col, val),
+                        id=f"{route.ident}-{col}-{val}-rule-{_m_rule(col)}",
+                    )
+                )
+    for operation, dimension, label, producer in M_S_ROUTES:
+        for transport in ("inproc", "mcp", "cli", "dashboard"):
+            cells.append(
+                pytest.param(
+                    functools.partial(_m_run_s, operation, transport=transport),
+                    id=f"{transport}.{operation}-{dimension}-{label}-producer-{producer}",
+                )
+            )
+    for name in M_R_READERS:
+        cells.append(
+            pytest.param(
+                functools.partial(_m_run_r, name),
+                id=f"internal.{name}-store-invalid_utf8_text-rule-C02C05",
+            )
+        )
+    for col, values in M_VALUES.items():
+        for val in values:
+            cells.append(
+                pytest.param(
+                    functools.partial(_m_run_tui, col, val),
+                    id=f"tui.expand-{col}-{val}-rule-{_m_rule(col)}",
+                )
+            )
+    return cells
+
+
+def test_t02_route_mode_matrix(
+    runner: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner(tmp_path, monkeypatch)
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """The matrix crosses the 72-T01 route inventory (`_G2_ROUTES`), which is built
+    after this section, so its cells are generated once the module is loaded."""
+    if metafunc.function.__name__ == "test_t02_route_mode_matrix":
+        metafunc.parametrize("runner", _m_cells())
+
+
+def test_t02_route_mode_matrix_registers_every_cell() -> None:
+    """G2: every entry point crossed with every column value is a collected cell."""
+    collected = {param.id for param in _m_cells()}
+    missing = sorted(set(_m_cell_ids()) - collected)
+    assert not missing, missing[:10]
+    assert len(set(_m_cell_ids())) == len(_m_cell_ids())
+
+
+def test_t02_matrix_unknown_key_cell_fails_a_wrong_response_and_a_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-2: an internal route's unknown-key cell inspects the supplied-key
+    response and the effects digest, not only the baseline."""
+    drv = _MInternal("expand_artifact")
+    env = _m_build(tmp_path, monkeypatch, dict(M_BASE), drv.kind, op=drv.op)
+    before = _m_effects(env)
+    _m_unknown_key(drv, env, "retrieval", "hybrid", before)
+    real = drv.run
+
+    def wrong_and_writing(env_: _MEnv, request: dict[str, Any]) -> _MRes:
+        if request:
+            (env_.root / "stray.txt").write_text("x", encoding="utf-8")
+            return _MRes("E_NOT_VISIBLE", {}, None, None)
+        return real(env_, request)
+
+    monkeypatch.setattr(drv, "run", wrong_and_writing)
+    with pytest.raises(AssertionError):
+        _m_unknown_key(drv, env, "retrieval", "hybrid", before)
+
+
+def _m_dir(base: Path, name: str) -> Path:
+    path = base / name
+    path.mkdir()
+    return path
+
+
+def test_t02_matrix_reader_cell_fails_wrong_content_and_a_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-3: a compatibility reader cell asserts the exact valid-row result
+    and an unchanged project digest."""
+    from rush.memory import migration
+
+    _m_run_r("read_origin", _m_dir(tmp_path, "ok"), monkeypatch)
+    real = migration.read_origin
+
+    def writes(root: Path, kind: str, origin_id: str) -> Any:
+        (root / "stray.txt").write_text("x", encoding="utf-8")
+        return real(root, kind, origin_id)
+
+    monkeypatch.setattr(migration, "read_origin", writes)
+    with pytest.raises(AssertionError, match="changed the project"):
+        _m_run_r("read_origin", _m_dir(tmp_path, "write"), monkeypatch)
+    monkeypatch.setattr(migration, "read_origin", lambda *a: {"text": "WRONG"})
+    with pytest.raises(AssertionError):
+        _m_run_r("read_origin", _m_dir(tmp_path, "wrong"), monkeypatch)
+    monkeypatch.setattr(
+        migration, "_origin_rows_readonly", lambda *a, **k: [({"text": "WRONG"}, None)]
+    )
+    with pytest.raises(AssertionError):
+        _m_run_r("read_origin_readonly", _m_dir(tmp_path, "wrong-ro"), monkeypatch)
+
+
+def test_t02_exact_checks_minus_one_fails_a_truncated_ok_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-4: the cap-minus-one cells are the admission boundary, never a
+    truncated `OK` page."""
+    with _t2_transport("in_process", tmp_path, monkeypatch) as adapter:
+        _t2_exact_checks(adapter, "u1", {"eq", "tok-1", "byte-1"})
+
+        class Truncating:
+            def call(self, route: str, request: dict[str, Any], **kw: Any) -> _T2Out:
+                out = adapter.call(route, request, **kw)
+                capped = (
+                    request.get("max_bytes", T02_BIG) < T02_BIG
+                    or request.get("max_tokens", T02_BIG) < T02_BIG
+                )
+                if capped and request.get("offset") and out.code == "E_BUDGET":
+                    raw = {**out.raw, "code": "OK"}
+                    raw["data"] = {**out.data, "complete": False}
+                    return _T2Out(out.frame, raw)
+                return out
+
+        with pytest.raises(AssertionError):
+            _t2_exact_checks(Truncating(), "u1", {"tok-1"})
+        with pytest.raises(AssertionError):
+            _t2_exact_checks(Truncating(), "u1", {"byte-1"})
+
+
+def test_t02_concurrent_commit_mcp_case_goes_through_the_mcp_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """spec-tests-5: the `mcp_ask` case fails when the MCP server is broken."""
+    import rush.mcp
+
+    def broken() -> Any:
+        raise AssertionError("MCP transport broken")
+
+    monkeypatch.setattr(rush.mcp, "build_server", broken)
+    with pytest.raises(AssertionError, match="MCP transport broken"):
+        test_t02_emit_sees_concurrent_commit_on_immutable_view(
+            tmp_path, monkeypatch, "mcp_ask"
+        )
+
+
+# <<<T02-GATE F end>>>
 
 
 # === 72-T02 fix round 1 (T069): F1-F3 findings and F4 surviving mutants ======
@@ -4177,6 +8975,7 @@ def test_t02_fix1_m33_policy_change_during_scan_refuses_before_emit(
     assert _t02_events(root, "retrieval") == 1
     generation = store.current_generation()
 
+    # A grant for another owner moves only the policy revision: the page is whole.
     with monkeypatch.context() as patched:
         fired = _t02_fix1_hook_scan(
             patched,
@@ -4186,15 +8985,31 @@ def test_t02_fix1_m33_policy_change_during_scan_refuses_before_emit(
         moved = recall(resolved(), "revision")
     assert fired == [1]
     assert store.current_generation() == generation
-    _t02_restarted(moved, "policy revision during scan")
-    assert _t02_events(root, "retrieval") == 1
+    assert moved["code"] == "OK", moved
+    assert sorted(_ids(moved)) == list(seeded)
+    assert _t02_events(root, "retrieval") == 2
+
+    # Revoking Alice's grant and granting it again mid-scan is a new grant id.
+    replacements: list[dict[str, Any]] = []
+    with monkeypatch.context() as patched:
+
+        def regrant() -> None:
+            _fix1_revoke(auth, grant, data_root)
+            replacements.append(_grant(auth, root, ALICE, data_root, ops=("ask",)))
+
+        fired = _t02_fix1_hook_scan(patched, store, regrant)
+        replaced = recall(resolved(), "regrant")
+    assert fired == [1]
+    assert store.current_generation() == generation
+    _t02_restarted(replaced, "grant replaced during scan")
+    assert _t02_events(root, "retrieval") == 2
 
     with monkeypatch.context() as patched:
         fired = _t02_fix1_hook_scan(
             patched,
             store,
             lambda: auth.revoke_memory_scope(
-                grant_id=grant["grant_id"],
+                grant_id=replacements[0]["grant_id"],
                 expected_policy_revision=_revision(auth, data_root),
                 consent=True,
                 data_root=data_root,
@@ -4209,7 +9024,7 @@ def test_t02_fix1_m33_policy_change_during_scan_refuses_before_emit(
     serialized = _dump(revoked)
     for artifact_id in seeded:
         assert artifact_id not in serialized
-    assert _t02_events(root, "retrieval") == 1
+    assert _t02_events(root, "retrieval") == 2
 
 
 def test_t02_fix1_m35_utf8_expand_telemetry_has_its_own_request_id(
@@ -4280,6 +9095,174 @@ def test_t02_fix1_m29_page_token_falls_back_to_last_fit_at_token_cap(
     assert edge["next_cursor"] == low
     assert edge["complete"] is False
     _t02_assert_page(edge, T02_BIG, low_tokens)
+
+
+# --- 72-T02 pipeline fix round 1, fixer 2 (security-1, security-4, security-5) ------
+
+
+def _t02_fp1_mutate(root: Path, store: TypedArtifactStore, kind: str) -> None:
+    if kind == "archive":
+        TypedArtifactStore(root).archive(
+            "u1", expected_version=1, scope=SUBJECT, apply=True
+        )
+        return
+    column, value = (
+        ("expires_at", time.time() - 10)
+        if kind == "expiry"
+        else ("content", json.dumps({"text": "needle tampered"}))
+    )
+    with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            f"UPDATE memory_artifacts SET {column} = ? WHERE id = 'u1'", (value,)
+        )
+        conn.commit()
+
+
+@pytest.mark.parametrize("kind", ["archive", "expiry", "tamper"])
+@pytest.mark.parametrize("representation", ["base64", "utf8"])
+@pytest.mark.parametrize("form", ["legacy", "policy"])
+def test_t02_fp1_security1_expand_row_change_during_fit_restarts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    form: str,
+    representation: str,
+    kind: str,
+) -> None:
+    """The row archived, expired or tampered while the content page is being fitted
+    is never emitted: E_RESTART, no content, no telemetry event."""
+    from rush.memory import authorization as auth
+    from rush.memory.retrieval import MemoryAccess, expand_artifact
+    from rush.token_economy.telemetry import TelemetryStore
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = tmp_path / "user-data"
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    access: Any = None
+    allowlist: list[str] | None = ["source-a"]
+    owner = None
+    if form == "policy":
+        owner = ALICE
+        _grant(auth, root, ALICE, data_root, ops=("ask", "expand"))
+        access = MemoryAccess.resolve(
+            root, operation="expand", owner_scope=ALICE, data_root=data_root
+        )
+        assert access is not None
+        allowlist = None
+    _row(store, "u1", owner, "", content={"text": "needle plain words"})
+    telemetry = TelemetryStore(root)
+    fired: list[int] = []
+
+    def frame_bytes(code: str, data: dict[str, Any]) -> bytes:
+        carries = "content_base64" in data or "content_utf8" in data
+        if code == "OK" and carries and not fired:
+            fired.append(1)
+            _t02_fp1_mutate(root, store, kind)
+        return json.dumps({"code": code, "data": data}).encode()
+
+    page = expand_artifact(
+        store,
+        artifact_id="u1",
+        version=1,
+        session_allowlist=allowlist,
+        access=access,
+        representation=representation,  # type: ignore[arg-type]
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+        frame_bytes=frame_bytes,
+        telemetry=telemetry,
+        request_id="fp1",
+        event_id="expansion",
+        cache_write=True,
+    )
+    assert fired == [1]
+    assert page["code"] == "E_RESTART", page
+    serialized = _dump(page)
+    assert page.get("content_base64") is None, page
+    assert page.get("content_utf8") is None, page
+    assert "plain words" not in serialized and "bmVlZGxl" not in serialized
+    assert _t02_events(root, "expansion") == 0
+
+
+def test_t02_fp1_security1_unchanged_row_still_expands(tmp_path: Path) -> None:
+    store = TypedArtifactStore(tmp_path)
+    _row(store, "u1", None, "", content={"text": "needle plain words"})
+    for representation in ("base64", "utf8"):
+        page = _t02_expand(store, representation=representation)
+        assert page["code"] == "OK", page
+
+
+@pytest.mark.parametrize("form", ["legacy", "policy"])
+def test_t02_fp1_security4_malformed_cursor_wins_over_access_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
+) -> None:
+    """R6: a malformed cursor is E_INPUT before policy resolution or any store read,
+    for the empty legacy store and a marked project with a denying allowlist."""
+    from rush.memory.retrieval import recall_page
+
+    _fix1_data_root(monkeypatch, tmp_path)
+    data_root = tmp_path / "user-data"
+    root = _registered(tmp_path / "project", data_root)
+    store = TypedArtifactStore(root)
+    allowlist: list[str] = []
+    if form == "policy":
+        (root / ".rush").mkdir(exist_ok=True)
+        (root / ".rush" / "memory-policy.required").write_bytes(b"")
+        allowlist = ["source-a"]
+    calls: list[str] = []
+    for name in ("search_candidates", "current_generation", "cursor_key"):
+        monkeypatch.setattr(store, name, _t02_refuse(calls, name))
+    page = recall_page(
+        store,
+        subject=SUBJECT,
+        query="needle",
+        cursor="m2.",
+        session_allowlist=allowlist,
+    )
+    assert page["code"] == "E_INPUT", page
+    assert calls == []
+
+
+def test_t02_fp1_security5_special_token_spelling_in_stored_text(
+    tmp_path: Path,
+) -> None:
+    """Stored text spelling a tokenizer special token is ordinary text: compact
+    retrieval and both expansions succeed and reproduce the exact stored bytes."""
+    text = "needle <|endoftext|> payload"
+    store = TypedArtifactStore(tmp_path)
+    _row(store, "sp1", None, "", content={"text": text})
+    recalled = _t02_recall(store)
+    assert recalled["code"] == "OK", recalled
+    assert _ids(recalled) == ["sp1"]
+    stored = store.get_version_content("sp1", 1)
+    assert stored is not None and "<|endoftext|>" in stored
+    utf8 = _t02_expand(
+        store,
+        artifact_id="sp1",
+        representation="utf8",
+        max_bytes=T02_BIG,
+        max_tokens=T02_BIG,
+    )
+    assert utf8["code"] == "OK", utf8
+    assert utf8["content_utf8"].encode("utf-8") == stored.encode("utf-8")
+    raw = _t02_expand(store, artifact_id="sp1", max_bytes=T02_BIG, max_tokens=T02_BIG)
+    assert raw["code"] == "OK", raw
+    assert base64.b64decode(raw["content_base64"]) == stored.encode("utf-8")
+
+
+def test_t02_fp1_exact_body_token_containing_a_hex_address_run_is_still_a_token(
+    tmp_path: Path,
+) -> None:
+    """A minted 43-character token that spells `0x<hex>` stays a `<token>`: the
+    address-neutralizing pass runs after the token pass, so it cannot shorten the token
+    below 43 characters and leave it in the body (a rare, load-independent flake)."""
+    import types
+
+    token = "A" * 10 + "0x0c" + "B" * 29
+    assert len(token) == 43
+    env = types.SimpleNamespace(root=tmp_path / "root", data_root=tmp_path / "data")
+    body = {"delivery_nonce": token, "at": "x"}
+    assert _g2_exact_body(env, body) == '{"at": "x", "delivery_nonce": "<token>"}'  # type: ignore[arg-type]
 
 
 # --- 72-T02 fix round 2 (T071 F5, F6) ----------------------------------------
@@ -16559,7 +21542,10 @@ _G2_VOLATILE = re.compile(
 def _g2_normal_body(value: Any) -> str:
     """A route's whole response body with the volatile fields (durations, timestamps,
     object addresses) neutralized, for the byte-identity comparison."""
-    text = json.dumps(value, sort_keys=True, default=repr)
+    return _g2_neutralize_volatile(json.dumps(value, sort_keys=True, default=repr))
+
+
+def _g2_neutralize_volatile(text: str) -> str:
     return _G2_VOLATILE.sub(lambda m: f"{m.group(1)}0" if m.group(1) else "0x0", text)
 
 
@@ -16578,7 +21564,7 @@ _G2_EXACT_UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )
 # Values minted per run (timestamps, ids, digests over them, session secrets),
-# replaced in this order after `_g2_normal_body` and the root/data-root paths.
+# replaced in this order after the root/data-root paths and the token and `_G2_VOLATILE` passes.
 _G2_EXACT_VOLATILE = (
     (
         re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:[+-]\d\d:\d\d|Z)?"),
@@ -16588,16 +21574,19 @@ _G2_EXACT_VOLATILE = (
     (re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])"), "<sha>"),
     (re.compile(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])"), "<hex>"),
     (re.compile(r"(?<![\w.])1[0-9]{9}\.[0-9]+"), "<t>"),
-    (re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"), "<token>"),
 )
+# A minted 43-character urlsafe token, replaced before `_G2_VOLATILE` runs: that pass
+# rewrites any `0x<hex>` run, so a token containing one would no longer be 43 long.
+_G2_EXACT_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])")
 
 
 def _g2_exact_body(env: _G2Env, body: Any) -> str:
     text = (
-        _g2_normal_body(body)
+        json.dumps(body, sort_keys=True, default=repr)
         .replace(str(env.root), "<root>")
         .replace(str(env.data_root), "<data>")
     )
+    text = _g2_neutralize_volatile(_G2_EXACT_TOKEN.sub("<token>", text))
     for pattern, label in _G2_EXACT_VOLATILE:
         text = pattern.sub(label, text)
     return text

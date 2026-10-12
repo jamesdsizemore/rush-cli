@@ -909,3 +909,131 @@ def test_t02_fix1_m38_reassembly_rejects_overstated_total_bytes(
     with pytest.raises(HandoffError) as exc:
         transport.reassemble_utf8_expansion(inflated, artifact_id="u1", version=1)
     assert exc.value.code == "E_OFFSET"
+
+
+# <<<T02-GATE H begin>>>
+@pytest.mark.parametrize(
+    "row",
+    [
+        pytest.param("verified", id="verified"),
+        pytest.param("backfilled", id="backfilled"),
+        pytest.param("unbound", id="unbound"),
+        pytest.param("mismatch_historical", id="mismatch_historical"),
+        pytest.param("blob_utf8", id="blob_utf8"),
+    ],
+)
+def test_t02_receiver_reassembles_d32_rows(tmp_path: Path, row: str) -> None:
+    """Real multi-page `expand` pages for each D32 version-row label rebuild the
+    stored bytes and digest through the receiver; any changed digest, content or
+    version is refused; base64 pages of the same row rebuild the same bytes."""
+    import sqlite3
+    from contextlib import closing
+
+    from rush.memory.retrieval import expand_artifact
+
+    store, data = _t02_literal_utf8(tmp_path.resolve())
+    digest = hashlib.sha256(data).hexdigest()
+    stored = data
+    historical = row == "mismatch_historical"
+    with closing(sqlite3.connect(store.db_path)) as conn:
+
+        def set_rows(
+            content: Any,
+            payload_hash: str | None,
+            origin: str | None,
+            *,
+            current: bool = True,
+        ) -> None:
+            if current:
+                conn.execute(
+                    "UPDATE memory_artifacts SET content = ?, payload_hash = ?, "
+                    "payload_hash_origin = ? WHERE id = 'u1'",
+                    (content, payload_hash, origin),
+                )
+            conn.execute(
+                "UPDATE memory_artifact_versions SET content = ?, payload_hash = ?, "
+                "payload_hash_origin = ? "
+                "WHERE artifact_id = 'u1' AND artifact_version = 1",
+                (content, payload_hash, origin),
+            )
+
+        if row == "verified":
+            set_rows(data.decode("utf-8"), digest, "write")
+        elif row == "backfilled":
+            set_rows(data.decode("utf-8"), digest, "backfill")
+        elif row == "unbound":
+            set_rows(data.decode("utf-8"), None, None)
+        elif row == "mismatch_historical":
+            stored = data.decode("utf-8").replace("needle", "needlf", 1).encode("utf-8")
+            set_rows(stored.decode("utf-8"), digest, "write", current=False)
+        else:
+            assert row == "blob_utf8"
+            set_rows(data, digest, "write")
+        conn.commit()
+
+    mode = "historical" if historical else "ordinary"
+
+    def expand(representation: str, offset: int, **caps: Any) -> dict[str, Any]:
+        return expand_artifact(
+            store,
+            artifact_id="u1",
+            version=1,
+            session_allowlist=["source-a"],
+            mode=mode,  # type: ignore[arg-type]
+            representation=representation,  # type: ignore[arg-type]
+            offset=offset,
+            **caps,
+        )
+
+    def pages(representation: str) -> list[dict[str, Any]]:
+        end = expand(
+            representation, len(stored), max_bytes=_T02_BIG, max_tokens=_T02_BIG
+        )
+        assert end["code"] == "OK", (row, representation, end)
+        cap = end["bytes"] + 10
+        out: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(len(stored) + 2):
+            page = expand(representation, offset, max_bytes=cap)
+            assert page["code"] == "OK", (row, representation, page)
+            out.append(page)
+            if page["complete"]:
+                return out
+            offset = page["next_offset"]
+        raise AssertionError("expansion never completed")
+
+    utf8 = pages("utf8")
+    assert len(utf8) >= 3, row
+    rebuilt, rebuilt_digest = transport.reassemble_utf8_expansion(
+        utf8, artifact_id="u1", version=1
+    )
+    assert rebuilt == stored, row
+    assert rebuilt_digest == hashlib.sha256(stored).hexdigest(), row
+    assert {page["payload_hash"] for page in utf8} == {rebuilt_digest}
+
+    def refused(edited: list[dict[str, Any]], version: int = 1) -> str:
+        with pytest.raises(HandoffError) as exc:
+            transport.reassemble_utf8_expansion(
+                edited, artifact_id="u1", version=version
+            )
+        return exc.value.code
+
+    rehashed = [dict(page) for page in utf8]
+    rehashed[1]["payload_hash"] = "0" * 64
+    assert refused(rehashed) == "E_VERSION"
+    altered = [dict(page) for page in utf8]
+    first = altered[0]["content_utf8"]
+    altered[0]["content_utf8"] = ("X" if first[0] != "X" else "Y") + first[1:]
+    assert refused(altered) == "E_VERSION"
+    moved = [dict(page) for page in utf8]
+    moved[1]["version"] = 2
+    assert refused(moved) == "E_VERSION"
+    assert refused(utf8, version=2) == "E_VERSION"
+    assert refused([utf8[0], *utf8[2:]]) == "E_OFFSET"
+
+    base64_pages = pages("base64")
+    joined = b"".join(b64decode(page["content_base64"]) for page in base64_pages)
+    assert joined == stored, row
+
+
+# <<<T02-GATE H end>>>

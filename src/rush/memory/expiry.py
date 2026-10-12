@@ -23,6 +23,7 @@ from rush.memory.store import (
     _write_version,
     legacy_owner_scope,
     note_committed_write,
+    sqlite_text,
 )
 
 _DAY_SECONDS = 86400
@@ -172,6 +173,7 @@ def sweep_reviewed_expired(
     changed = 0
     expired: list[tuple[str, int, str]] = []
     with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
+        conn.text_factory = sqlite_text
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN IMMEDIATE")
         conflicts: list[tuple[str, int, int | None]] = []

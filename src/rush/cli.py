@@ -3786,6 +3786,8 @@ def _memory_input_request(input_file: Path) -> dict[str, Any]:
     by every new memory CLI leaf (Phase 63 plan §9.1's per-operation request schema)."""
     try:
         data = json.loads(input_file.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"--input must be UTF-8 JSON: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise click.ClickException(f"--input must be valid JSON: {exc}") from exc
     if not isinstance(data, dict):

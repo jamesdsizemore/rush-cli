@@ -578,24 +578,26 @@ def test_r5_hybrid_page_matches_the_old_loop_across_budgets(tmp_path: Path) -> N
 
 
 @pytest.mark.parametrize("max_bytes", [150, 1_000_000])
-def test_r5_special_token_content_raises_the_same_value_error(
+def test_r5_special_token_content_is_ordinary_text(
     tmp_path: Path, max_bytes: int
 ) -> None:
-    """keep-green: tiktoken refuses special-token text; the page must raise
-    exactly as the fully-tokenizing loop did, even when the byte budget
-    alone would have excluded the item."""
+    """72-T02 security-5: stored text spelling a tokenizer special token is
+    ordinary text. The page does not raise; only the byte budget decides whether the
+    item fits (`E_BUDGET` when it cannot), exactly as for any other text."""
     store = TypedArtifactStore(tmp_path)
     _write_memory(store, "s1", "needle " + "<|endoftext|>" + " tail " * 20)
-    with pytest.raises(ValueError, match="special token"):
-        recall_page(
-            store,
-            subject="domain_knowledge",
-            query="needle",
-            session_allowlist=["allowed"],
-            limit=10_000,
-            max_tokens=1_000_000,
-            max_bytes=max_bytes,
-        )
+    page = recall_page(
+        store,
+        subject="domain_knowledge",
+        query="needle",
+        session_allowlist=["allowed"],
+        limit=10_000,
+        max_tokens=1_000_000,
+        max_bytes=max_bytes,
+    )
+    fits = max_bytes == 1_000_000
+    assert page["code"] == ("OK" if fits else "E_BUDGET"), page
+    assert [item["id"] for item in page["items"]] == (["s1"] if fits else []), page
 
 
 # --- R6: the operations inventory reuses the module-level MCP server --------

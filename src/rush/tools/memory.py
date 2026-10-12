@@ -13,6 +13,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
 
+from ..delivery import compact
+from ..invocation.models import InvocationContext
 from ..memory.consolidation import consolidate_episodes
 from ..memory.embeddings import EmbeddingConfig
 from ..memory.experience import MemoryWriteDenied, compare_last_success, prepare_memory
@@ -37,9 +39,11 @@ from ..memory.retrieval import (
     DEFAULT_ENCODING,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
+    FrameBytes,
     MemoryAccess,
     RouteDenial,
     SourceValidationMemo,
+    _fit_optional,
     _measure_page,
     evaluate_artifact_visibility,
     expand_admission,
@@ -403,7 +407,17 @@ class MemoryTool(ToolFn):
         run_id: str | None = None,
         agent_id: str | None = None,
         session_id: str | None = None,
+        context: InvocationContext | None = None,
     ) -> ToolResult:
+        # 72-T02 D35: the transport frame a memory response leaves through (set by
+        # the transport adapter), carrying this call's InvocationContext so its
+        # default scope is part of every measured frame.
+        published = compact.MEMORY_FRAME.get()
+        frame: compact.FrameContext | None = None
+        if published is not None:
+            frame = dataclasses.replace(published, context=context)
+        elif context is not None:
+            frame = compact.FrameContext("in_process", None, context=context)
         return self.run(
             path,
             operation=operation,
@@ -435,6 +449,7 @@ class MemoryTool(ToolFn):
             run_id=run_id,
             agent_id=agent_id,
             session_id=session_id,
+            frame=frame,
         )
 
     def run(
@@ -483,8 +498,13 @@ class MemoryTool(ToolFn):
         # the restricted bridge's `(sender access, selected ids)`. `expand`, `related`
         # and `resume` then read under that access, limited to the selected ids.
         bridge_authority: _BridgeAuthority | None = None,
+        # 72-T02 D35: the response's transport frame; omitted, the frame a transport
+        # adapter published (`compact.MEMORY_FRAME`), else payload measurement.
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
         started = time.monotonic()
+        if frame is None:
+            frame = compact.MEMORY_FRAME.get()
         try:
             root = Path(path).resolve()
         except (TypeError, ValueError, OSError, RuntimeError):
@@ -532,6 +552,7 @@ class MemoryTool(ToolFn):
                     agent_id=agent_id,
                     session_id=session_id,
                     owner_scope=owner_scope,
+                    frame=frame,
                 )
                 if request is not None
                 else self._query(
@@ -560,6 +581,7 @@ class MemoryTool(ToolFn):
                     agent_id=agent_id,
                     session_id=session_id,
                     owner_scope=owner_scope,
+                    frame=frame,
                 )
                 if request is not None
                 else self._query(
@@ -588,6 +610,7 @@ class MemoryTool(ToolFn):
                     agent_id=agent_id,
                     session_id=session_id,
                     owner_scope=owner_scope,
+                    frame=frame,
                 )
                 if request is not None
                 else self._list_filtered(
@@ -630,6 +653,7 @@ class MemoryTool(ToolFn):
                 session_id=session_id,
                 owner_scope=owner_scope,
                 bridge=bridge_authority,
+                frame=frame,
             ),
             "write": lambda: self._run_write(
                 started,
@@ -722,12 +746,18 @@ class MemoryTool(ToolFn):
             return self._denied(started, operation, RouteDenial(exc.code, exc.reason))
         if operation in _MUTATION_VIEW_OPERATIONS:
             result = _with_mutation_view(root, result, committed)
-        return cast(
+        result = cast(
             ToolResult,
             attach_memory_attribution(
                 result, _memory_attribution(root, operation, result, committed)
             ),
         )
+        if frame is not None and frame.context is not None:
+            metadata = dict(result.get("metadata") or {})
+            if "scope" not in metadata:
+                metadata["scope"] = _frame_scope(frame)
+                result["metadata"] = metadata
+        return result
 
     @staticmethod
     def _list_filter_error(
@@ -1101,6 +1131,7 @@ class MemoryTool(ToolFn):
         agent_id: str | None = None,
         session_id: str | None = None,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
         """MC02 §9.0 bounded `view=compact` mode for `ask`/`recall`/`list`. Only reachable
         when a caller passes `request` — legacy calls (`request=None`) always take `_query()`
@@ -1137,8 +1168,16 @@ class MemoryTool(ToolFn):
                     + (" and query." if requires_query else ".")
                 },
             )
+        if not isinstance(query, str) or "\x00" in query or not _utf8_encodable(query):
+            # 72-T02 G4: a NUL or an unpaired surrogate never reaches SQLite.
+            return self._envelope_result(
+                started,
+                operation,
+                "E_INPUT",
+                {"field": "query", "message": "query must be UTF-8 text without NUL"},
+            )
         retrieval = request.get("retrieval", "lexical")
-        if retrieval not in _RETRIEVAL_MODES:
+        if not isinstance(retrieval, str) or retrieval not in _RETRIEVAL_MODES:
             return self._envelope_result(
                 started,
                 operation,
@@ -1162,6 +1201,8 @@ class MemoryTool(ToolFn):
             or not isinstance(max_bytes, int)
             or isinstance(max_bytes, bool)
             or not isinstance(encoding, str)
+            # 72-T02 G4: `encoding` is echoed in every page; it must be UTF-8 text.
+            or not _utf8_encodable(encoding)
             or (cursor is not None and not isinstance(cursor, str))
             # 72-T02: hybrid has no continuation; a cursor sent to it would silently
             # restart from the first page.
@@ -1197,25 +1238,41 @@ class MemoryTool(ToolFn):
             )
         # 72-T02 (C05): admission before access, the store view, telemetry or any
         # embedding call, for both retrieval modes. The lexical minimum is only a lower
-        # bound for hybrid's larger envelope; its exact minimum is 72-T08's job.
+        # bound for hybrid's larger envelope; its exact minimum is 72-T08's job. D35:
+        # under a transport frame the duration is frozen once, here, and admission,
+        # every page fit and the emitted envelope use the same framed bytes.
+        frozen = _frozen_duration(started) if frame is not None else None
+        fit = self._frame_fit(root, operation, frozen, frame)
         refused = recall_admission(
             limit=limit,
             max_bytes=max_bytes,
             max_tokens=max_tokens,
             encoding=encoding,
             cursor=cursor,
+            frame_bytes=fit,
         )
         if refused is not None:
             code = refused.pop("code")
-            return self._envelope_result(started, operation, code, refused)
+            return self._envelope_result(
+                started, operation, code, refused, duration_ms=frozen, frame=frame
+            )
+
+        def finish(code: str, data: dict[str, Any]) -> ToolResult:
+            """An admitted refusal: optional keys only when the frame still fits."""
+            page = _fit_optional(
+                {"code": code, **data}, fit, encoding, max_bytes, max_tokens
+            )
+            code = page.pop("code")
+            return self._envelope_result(
+                started, operation, code, page, duration_ms=frozen, frame=frame
+            )
+
         resolved = self._read_access(root, operation, session_allowlist, owner)
         if isinstance(resolved, RouteDenial):
-            return self._denied(started, operation, resolved)
+            return finish(resolved.code, _denial_data(operation, resolved))
         access = resolved
         if not access.sources:
-            return self._envelope_result(
-                started,
-                operation,
+            return finish(
                 "E_PERMISSION",
                 {
                     "message": f"memory {operation} requires a non-empty session_allowlist "
@@ -1223,29 +1280,27 @@ class MemoryTool(ToolFn):
                 },
             )
         if retrieval == "hybrid" and not granted.network:
-            return self._envelope_result(
-                started,
-                operation,
+            return finish(
                 "E_PERMISSION",
                 {"message": f"memory {operation} retrieval=hybrid requires network."},
             )
-        # 72-T01: reads use `open_readonly_view()`; only a hybrid read allowed to
-        # persist embeddings opens a writable store, and only on an existing DB.
+        # 72-T01: reads use `open_readonly_view()`. 72-T02 R2: only a hybrid read
+        # allowed to persist embeddings, over a store whose writable open runs no DDL
+        # or migration (`writable_open_ddl_free`), reopens it writable; any other
+        # store stays the read-only view (embeddings are then never persisted).
+        store, state = TypedArtifactStore.open_readonly_view(root)
+        if state is not None:
+            return finish(
+                _READ_STATE_CODES[state], {"message": readonly_view_reason(state)}
+            )
         if (
-            retrieval == "hybrid"
+            store is not None
+            and retrieval == "hybrid"
             and granted.cache_write
-            and (root / ".rush" / "memory.db").exists()
+            and store.writable_open_ddl_free()
         ):
-            store: TypedArtifactStore | None = TypedArtifactStore(root)
-        else:
-            store, state = TypedArtifactStore.open_readonly_view(root)
-            if state is not None:
-                return self._envelope_result(
-                    started,
-                    operation,
-                    _READ_STATE_CODES[state],
-                    {"message": readonly_view_reason(state)},
-                )
+            store.close()
+            store = TypedArtifactStore(root)
         if store is None:
             empty: dict[str, Any] = {
                 "items": [],
@@ -1263,7 +1318,7 @@ class MemoryTool(ToolFn):
                 empty["bytes"], empty["tokens"] = _measure_page(
                     [], None, True, encoding
                 )
-            return self._envelope_result(started, operation, "OK", empty)
+            return finish("OK", empty)
         try:
             return self._compact_page(
                 started,
@@ -1285,6 +1340,9 @@ class MemoryTool(ToolFn):
                 run_id=run_id,
                 agent_id=agent_id,
                 session_id=session_id,
+                frozen=frozen,
+                frame=frame,
+                fit=fit,
             )
         finally:
             store.close()
@@ -1311,6 +1369,9 @@ class MemoryTool(ToolFn):
         run_id: str | None,
         agent_id: str | None,
         session_id: str | None,
+        frozen: int | None = None,
+        frame: compact.FrameContext | None = None,
+        fit: FrameBytes | None = None,
     ) -> ToolResult:
         """`_compact_query()`'s page over an opened store and a resolved access."""
         root = store.project_root
@@ -1352,6 +1413,7 @@ class MemoryTool(ToolFn):
                 agent_id=agent_id,
                 session_id=session_id,
                 opt_in=False,
+                frame_bytes=fit,
             )
         else:
             page = recall_page(
@@ -1374,9 +1436,12 @@ class MemoryTool(ToolFn):
                 session_id=session_id,
                 opt_in=False,
                 cache_write=granted.cache_write,
+                frame_bytes=fit,
             )
         code = page.pop("code")
-        return self._envelope_result(started, operation, code, page)
+        return self._envelope_result(
+            started, operation, code, page, duration_ms=frozen, frame=frame
+        )
 
     def _expand(
         self,
@@ -1393,6 +1458,7 @@ class MemoryTool(ToolFn):
         session_id: str | None = None,
         owner_scope: dict[str, str] | OwnerScope | None = None,
         bridge: _BridgeAuthority | None = None,
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
         """MC02 §9.0 `expand` operation: exact-byte expansion of one artifact version.
 
@@ -1430,6 +1496,14 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": "memory expand requires id and version."},
             )
+        if not _utf8_encodable(artifact_id):
+            # 72-T02 G4: an unpaired surrogate never reaches SQLite.
+            return self._envelope_result(
+                started,
+                "expand",
+                "E_INPUT",
+                {"field": "id", "message": "id must be UTF-8 text"},
+            )
         offset = request.get("offset", 0)
         max_tokens = request.get("max_tokens", DEFAULT_MAX_TOKENS)
         max_bytes = request.get("max_bytes", DEFAULT_MAX_BYTES)
@@ -1443,6 +1517,8 @@ class MemoryTool(ToolFn):
             or not isinstance(max_bytes, int)
             or isinstance(max_bytes, bool)
             or not isinstance(encoding, str)
+            # 72-T02 G4: `encoding` is echoed in every page; it must be UTF-8 text.
+            or not _utf8_encodable(encoding)
             or representation not in ("base64", "utf8")
         ):
             return self._envelope_result(
@@ -1460,7 +1536,10 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        # 72-T02 (C05): admission before access, the store view or telemetry.
+        # 72-T02 (C05): admission before access, the store view or telemetry. D35:
+        # under a transport frame the duration is frozen once, here.
+        frozen = _frozen_duration(started) if frame is not None else None
+        fit = self._frame_fit(root, "expand", frozen, frame)
         refused = expand_admission(
             artifact_id=artifact_id,
             version=version,
@@ -1469,17 +1548,32 @@ class MemoryTool(ToolFn):
             max_tokens=max_tokens,
             encoding=encoding,
             representation=representation,
+            frame_bytes=fit,
         )
         if refused is not None:
             code = refused.pop("code")
-            return self._envelope_result(started, "expand", code, refused)
+            return self._envelope_result(
+                started, "expand", code, refused, duration_ms=frozen, frame=frame
+            )
+
+        def finish(code: str, data: dict[str, Any]) -> ToolResult:
+            """An admitted refusal: optional keys only when the frame still fits."""
+            page = _fit_optional(
+                {"code": code, **data}, fit, encoding, max_bytes, max_tokens
+            )
+            code = page.pop("code")
+            return self._envelope_result(
+                started, "expand", code, page, duration_ms=frozen, frame=frame
+            )
+
         resolved = self._read_access(root, "expand", session_allowlist, owner)
         if isinstance(resolved, RouteDenial):
-            return self._denied(started, "expand", resolved)
+            return finish(resolved.code, _denial_data("expand", resolved))
         if bridge is not None:
             authority = self._bridge_access(started, "expand", bridge, artifact_id)
             if isinstance(authority, dict):
-                return cast(ToolResult, authority)
+                refusal = cast(dict[str, Any], cast(ToolResult, authority)["raw"])
+                return finish(refusal["code"], refusal["data"])
             resolved = authority
         access: MemoryAccess | None = resolved if resolved.sources else None
         not_visible = _expand_body(
@@ -1490,28 +1584,20 @@ class MemoryTool(ToolFn):
             encoding=encoding,
             representation=representation,
         )
+        not_visible.pop("code")
         if access is None:
-            not_visible.pop("code")
-            return self._envelope_result(
-                started, "expand", "E_NOT_VISIBLE", not_visible
-            )
+            return finish("E_NOT_VISIBLE", not_visible)
         # 72-T01: a read-only view; a missing store creates nothing and expands nothing.
         store = self._readonly_store
         own_view = store is None
         if store is None:
             store, state = TypedArtifactStore.open_readonly_view(root)
             if state is not None:
-                return self._envelope_result(
-                    started,
-                    "expand",
-                    _READ_STATE_CODES[state],
-                    {"message": readonly_view_reason(state)},
+                return finish(
+                    _READ_STATE_CODES[state], {"message": readonly_view_reason(state)}
                 )
         if store is None:
-            not_visible.pop("code")
-            return self._envelope_result(
-                started, "expand", "E_NOT_VISIBLE", not_visible
-            )
+            return finish("E_NOT_VISIBLE", not_visible)
         telemetry = (
             cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
             if granted.cache_write
@@ -1535,12 +1621,15 @@ class MemoryTool(ToolFn):
                 run_id=run_id,
                 agent_id=agent_id,
                 session_id=session_id,
+                frame_bytes=fit,
             )
         finally:
             if own_view:
                 store.close()
         code = result.pop("code")
-        return self._envelope_result(started, "expand", code, result)
+        return self._envelope_result(
+            started, "expand", code, result, duration_ms=frozen, frame=frame
+        )
 
     @staticmethod
     def _expand_read(
@@ -1561,6 +1650,7 @@ class MemoryTool(ToolFn):
         run_id: str | None,
         agent_id: str | None,
         session_id: str | None,
+        frame_bytes: FrameBytes | None = None,
     ) -> dict[str, Any]:
         # 72-T02: base64 telemetry ids are unchanged; utf8 pages get their own.
         suffix = ":utf8" if representation == "utf8" else ""
@@ -1584,6 +1674,7 @@ class MemoryTool(ToolFn):
             session_id=session_id,
             opt_in=False,
             cache_write=cache_write,
+            frame_bytes=frame_bytes,
         )
 
     def _link(
@@ -1948,18 +2039,31 @@ class MemoryTool(ToolFn):
         return self._envelope_result(started, operation, code, result)
 
     def _envelope_result(
-        self, started: float, operation: str, code: str, data: dict[str, Any]
+        self,
+        started: float,
+        operation: str,
+        code: str,
+        data: dict[str, Any],
+        *,
+        duration_ms: int | None = None,
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
         """MC02 §9.0 operation envelope: `{"schema_version":1,"operation":...,"code":...,
         "data":{...}}` in `ToolResult.raw`, with `code` mapped onto `ToolResult.status` via
-        the §9.0 status/code pairs table."""
+        the §9.0 status/code pairs table. 72-T02 D35: `duration_ms` is the frozen
+        duration of a framed response; `frame.context` adds its default scope."""
         status = _CODE_STATUS.get(code, "error")
+        metadata: dict[str, Any] = {"operation": operation}
+        if frame is not None and frame.context is not None:
+            metadata["scope"] = _frame_scope(frame)
         return ToolResult(
             tool=self.name,
             engine=None,
             engine_version=None,
             status=status,  # type: ignore[typeddict-item]
-            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+            duration_ms=duration_ms
+            if duration_ms is not None
+            else _frozen_duration(started),
             summary=f"memory {operation} returned {code}.",
             findings=[],
             raw={
@@ -1968,8 +2072,32 @@ class MemoryTool(ToolFn):
                 "code": code,
                 "data": data,
             },
-            metadata={"operation": operation},
+            metadata=metadata,
         )
+
+    def _frame_fit(
+        self,
+        root: Path,
+        operation: str,
+        frozen: int | None,
+        frame: compact.FrameContext | None,
+    ) -> FrameBytes | None:
+        """72-T02 D35: the exact bytes `frame`'s transport writes for this
+        operation's envelope -- the same object `run()` returns (frozen duration,
+        default scope, memory attribution), so every fit is the emitted frame."""
+        if frame is None:
+            return None
+
+        def fit(code: str, data: dict[str, Any]) -> bytes:
+            result = self._envelope_result(
+                0.0, operation, code, data, duration_ms=frozen, frame=frame
+            )
+            final = attach_memory_attribution(
+                result, _memory_attribution(root, operation, result, [])
+            )
+            return compact.frame_bytes(frame, final)
+
+        return fit
 
     @staticmethod
     def _read_access(
@@ -2048,13 +2176,7 @@ class MemoryTool(ToolFn):
     ) -> ToolResult:
         """A D1 denial: the denial code with its exact reason, before any effect."""
         return self._envelope_result(
-            started,
-            operation,
-            denial.code,
-            {
-                "reason": denial.reason,
-                "message": f"memory {operation} denied: {denial.reason}.",
-            },
+            started, operation, denial.code, _denial_data(operation, denial)
         )
 
     def _revoked(
@@ -2082,14 +2204,25 @@ class MemoryTool(ToolFn):
         """
         if value is None:
             return None
-        owner_scope = OwnerScope.from_value(value)
+        try:
+            owner_scope = OwnerScope.from_value(value)
+        except TypeError as exc:
+            # 72-T02 G4: a list/dict where a string belongs is invalid input.
+            raise ValueError(str(exc)) from exc
         if owner_scope.kind == "project":
             candidate = Path(owner_scope.id)
+            resolved = candidate
+            try:
+                if candidate.is_absolute():
+                    resolved = candidate.resolve()
+            except (OSError, RuntimeError, ValueError) as exc:
+                # 72-T02 G4: a symlink loop or unencodable path is invalid input.
+                raise ValueError("invalid project owner path") from exc
             # 72-T01 D1: outside `legacy` mode the grant decides the owner (a
             # different project's owner is denied by resolution, not here).
             if (
                 candidate.is_absolute()
-                and candidate.resolve() != root
+                and resolved != root
                 and memory_policy_mode(root) == "legacy"
             ):
                 raise ValueError(
@@ -4189,6 +4322,32 @@ def _write_owner(owner: OwnerScope | None, access: MemoryAccess) -> OwnerScope |
 def _commit_check(access: MemoryAccess) -> Callable[[], tuple[str, str] | None]:
     """D1: the check every store mutation runs immediately before its commit."""
     return lambda: recheck_failure(access)
+
+
+def _frozen_duration(started: float) -> int:
+    return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _frame_scope(frame: compact.FrameContext) -> dict[str, Any]:
+    """72-T02 D35: the executor's default scope, attached before any fit."""
+    from ..invocation.executor import default_scope
+
+    return default_scope({}, frame.context)
+
+
+def _utf8_encodable(text: str) -> bool:
+    try:
+        text.encode("utf-8", "strict")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _denial_data(operation: str, denial: RouteDenial) -> dict[str, Any]:
+    return {
+        "reason": denial.reason,
+        "message": f"memory {operation} denied: {denial.reason}.",
+    }
 
 
 class _LazyTelemetry:

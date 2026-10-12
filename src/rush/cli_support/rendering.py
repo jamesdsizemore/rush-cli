@@ -333,14 +333,23 @@ def deliver_cli(
     def export(full: dict[str, Any]) -> None:
         export_reports(full, tool_name, export_sarif, export_html)
 
-    result = compact.deliver(
-        tool_name,
-        view,
-        cache_write=bool(permissions and permissions.cache_write),
-        prepare=prepare,
-        serialize=compact.cli_size,
-        export=export if view.compact else None,
-    )
+    def deliver() -> Any:
+        return compact.deliver(
+            tool_name,
+            view,
+            cache_write=bool(permissions and permissions.cache_write),
+            prepare=prepare,
+            serialize=compact.cli_size,
+            export=export if view.compact else None,
+        )
+
+    if tool_name == "memory":
+        # 72-T02 D35: memory pages fit the bytes `exit_with_result` prints.
+        frame = compact.FrameContext("cli_json" if as_json else "in_process", None)
+        with compact.memory_frame(frame):
+            result = deliver()
+    else:
+        result = deliver()
     exit_with_result(
         result,
         as_json=as_json,

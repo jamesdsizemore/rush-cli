@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import sqlite3
 import stat
@@ -667,10 +668,13 @@ def payload_digest(text: str) -> str:
 
 def payload_mismatched(text: Any, digest: Any) -> bool:
     """True when a payload binding exists and no longer matches the persisted text
-    (`integrity_payload_mismatch`); an unbound row (`digest` None) is not a mismatch."""
-    return digest is not None and (
-        not isinstance(text, str) or payload_digest(text) != digest
-    )
+    (`integrity_payload_mismatch`); an unbound row (`digest` None) is not a mismatch.
+    72-T02 D32: stored content is decoded first (a UTF-8 BLOB is its text); content
+    that does not decode as UTF-8 never matches a binding."""
+    if digest is None:
+        return False
+    decoded = _stored_text(text)
+    return decoded is None or payload_digest(decoded) != digest
 
 
 def source_predicate_sql(column: str, sources: Sequence[str]) -> tuple[str, list[str]]:
@@ -1467,6 +1471,16 @@ def _stored_text(stored: Any) -> str | None:
     return stored if isinstance(stored, str) else None
 
 
+def sqlite_text(raw: bytes) -> str | bytes:
+    """72-T02 D32 `text_factory` for every connection that selects `content`: valid
+    UTF-8 TEXT decodes as usual; non-UTF-8 TEXT comes back as its exact stored bytes
+    instead of raising `OperationalError` for the whole statement."""
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+
+
 def _content_unchanged(stored: Any, content: dict[str, Any] | None) -> bool:
     """Whether `content` is the same value the `stored` column holds. Type-strict
     (sorted canonical dumps): `True` vs `1` or `1` vs `1.0` is new content. `None`
@@ -1687,10 +1701,12 @@ def open_sqlite_readonly(db: Path) -> ReadOnlyOpenResult:
                 available=True, mode="ro", state="wal_index_missing"
             )
         conn = sqlite3.connect(f"file:{quoted}?mode=ro", uri=True)
+        conn.text_factory = sqlite_text
         conn.row_factory = sqlite3.Row
         return ReadOnlyOpenResult(available=True, connection=conn, mode="ro")
     mode = "ro&immutable=1"
     conn = sqlite3.connect(f"file:{quoted}?mode={mode}", uri=True)
+    conn.text_factory = sqlite_text
     conn.row_factory = sqlite3.Row
     try:
         tables = conn.execute(
@@ -1847,6 +1863,50 @@ HANDOFF_SENDER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("sender_policy_revision", "INTEGER"),
 )
 
+# 72-T02 R2: the declarations every additive migration below adds, shared by those
+# migration loops and `writable_open_ddl_free()` (one source of truth; a later
+# migration adds its declaration here in the same change).
+_EXPIRY_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("expires_at", "REAL"),
+    ("expired_at", "REAL"),
+    ("expired_by", "TEXT"),
+)
+_VERSION_COLUMN = ("artifact_version", "INTEGER NOT NULL DEFAULT 1")
+_ARCHIVED_COLUMN = ("archived_at", "REAL")
+_CHANGES_SUBJECT_COLUMN = ("subject", "TEXT")
+_HANDOFF_REVOKED_COLUMN = ("revoked_at", "REAL")
+_ORPHANED_COLUMN = ("orphaned_at", "REAL")
+_OWNER_SCOPE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("owner_scope_kind", "TEXT"),
+    ("owner_scope_id", "TEXT"),
+)
+_ROW_MAC_COLUMN = ("row_mac", "TEXT")
+# Created by `_migrate_owner_scope_columns` rather than `_SCHEMA_SQL` (see there).
+_OWNER_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_memory_owner "
+    "ON memory_artifacts(owner_scope_kind, owner_scope_id)"
+)
+_POST_SCHEMA_SQL: tuple[str, ...] = (_OWNER_INDEX_SQL,)
+_MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
+    *(("memory_artifacts", name) for name, _type in _EXPIRY_COLUMNS),
+    ("memory_artifacts", _VERSION_COLUMN[0]),
+    ("memory_artifacts", _ARCHIVED_COLUMN[0]),
+    ("memory_changes", _CHANGES_SUBJECT_COLUMN[0]),
+    ("memory_handoff_sessions", _HANDOFF_REVOKED_COLUMN[0]),
+    ("memory_artifacts", _ORPHANED_COLUMN[0]),
+    *(("memory_artifacts", name) for name, _type in _OWNER_SCOPE_COLUMNS),
+    ("memory_artifacts", _ROW_MAC_COLUMN[0]),
+    *(("memory_handoff_sessions", name) for name, _type in HANDOFF_SENDER_COLUMNS),
+    *(
+        (table, name)
+        for table in ("memory_artifacts", "memory_artifact_versions")
+        for name in PAYLOAD_HASH_COLUMNS
+    ),
+)
+_DDL_NAME_RE = re.compile(
+    r"CREATE (?:UNIQUE )?(?:VIRTUAL )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS (\w+)"
+)
+
 
 def _write_local_gitignore(rush_dir: Path) -> None:
     """D41/D1: a `.rush` this process created ignores everything in it."""
@@ -1986,6 +2046,7 @@ class TypedArtifactStore:
         conn = sqlite3.connect(
             str(self.db_path), timeout=10.0, factory=ClosingConnection
         )
+        conn.text_factory = sqlite_text
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -2031,8 +2092,11 @@ class TypedArtifactStore:
         artifact_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        if "row_mac" not in artifact_columns:
-            conn.execute("ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT")
+        if _ROW_MAC_COLUMN[0] not in artifact_columns:
+            conn.execute(
+                "ALTER TABLE memory_artifacts ADD COLUMN "
+                f"{_ROW_MAC_COLUMN[0]} {_ROW_MAC_COLUMN[1]}"
+            )
         session_columns = {
             row["name"]
             for row in conn.execute("PRAGMA table_info(memory_handoff_sessions)")
@@ -2606,14 +2670,38 @@ class TypedArtifactStore:
             pairs.add((right, left))
         return pairs
 
-    def get_current_row(self, artifact_id: str) -> sqlite3.Row | None:
+    def get_current_row(
+        self, artifact_id: str, *, conn: sqlite3.Connection | None = None
+    ) -> sqlite3.Row | None:
         """72-T01: the raw current row for one ID (what `evaluate_artifact_visibility`
-        decides on), or `None`."""
+        decides on), or `None`. 72-T02 R13: an open `conn` (a `fresh_reader()`) runs
+        the read inside the caller's own read transaction."""
+        sql = "SELECT * FROM memory_artifacts WHERE id = ?"
+        if conn is not None:
+            return cast(
+                "sqlite3.Row | None", conn.execute(sql, (artifact_id,)).fetchone()
+            )
+        with self._connect() as own_conn:
+            row = own_conn.execute(sql, (artifact_id,)).fetchone()
+        return cast("sqlite3.Row | None", row)
+
+    def get_version_binding(
+        self, artifact_id: str, version: int
+    ) -> tuple[str | bytes, str | None, str | None] | None:
+        """72-T02 D32: `(content, payload_hash, payload_hash_origin)` of one exact
+        version row, or `None` when that version does not exist (or is outside
+        SQLite's integer range). `content` is `bytes` when it is a BLOB or TEXT that
+        does not decode as UTF-8 (`sqlite_text`)."""
+        if not sqlite_integer_in_range(version):
+            return None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+                "SELECT content, payload_hash, payload_hash_origin "
+                "FROM memory_artifact_versions "
+                "WHERE artifact_id = ? AND artifact_version = ?",
+                (artifact_id, version),
             ).fetchone()
-        return cast("sqlite3.Row | None", row)
+        return (row[0], row[1], row[2]) if row else None
 
     def get_version_payload(
         self, artifact_id: str, version: int
@@ -3072,10 +3160,10 @@ class TypedArtifactStore:
         existing = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        if "artifact_version" not in existing:
+        if _VERSION_COLUMN[0] not in existing:
             conn.execute(
-                "ALTER TABLE memory_artifacts ADD COLUMN artifact_version "
-                "INTEGER NOT NULL DEFAULT 1"
+                "ALTER TABLE memory_artifacts ADD COLUMN "
+                f"{_VERSION_COLUMN[0]} {_VERSION_COLUMN[1]}"
             )
 
     def _migrate_archived_column(self, conn: sqlite3.Connection) -> None:
@@ -3085,8 +3173,11 @@ class TypedArtifactStore:
         existing = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        if "archived_at" not in existing:
-            conn.execute("ALTER TABLE memory_artifacts ADD COLUMN archived_at REAL")
+        if _ARCHIVED_COLUMN[0] not in existing:
+            conn.execute(
+                "ALTER TABLE memory_artifacts ADD COLUMN "
+                f"{_ARCHIVED_COLUMN[0]} {_ARCHIVED_COLUMN[1]}"
+            )
 
     def _migrate_changes_subject_column(self, conn: sqlite3.Connection) -> None:
         """Additive migration (P65-07.3): a pre-P65-07 DB's `memory_changes` predates the
@@ -3095,8 +3186,11 @@ class TypedArtifactStore:
         existing = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_changes)")
         }
-        if "subject" not in existing:
-            conn.execute("ALTER TABLE memory_changes ADD COLUMN subject TEXT")
+        if _CHANGES_SUBJECT_COLUMN[0] not in existing:
+            conn.execute(
+                "ALTER TABLE memory_changes ADD COLUMN "
+                f"{_CHANGES_SUBJECT_COLUMN[0]} {_CHANGES_SUBJECT_COLUMN[1]}"
+            )
 
     def _migrate_handoff_recovery_columns(self, conn: sqlite3.Connection) -> None:
         """S05 bullet 4: additive migration (mirrors `_migrate_expiry_columns`'s
@@ -3111,15 +3205,19 @@ class TypedArtifactStore:
             row["name"]
             for row in conn.execute("PRAGMA table_info(memory_handoff_sessions)")
         }
-        if "revoked_at" not in session_columns:
+        if _HANDOFF_REVOKED_COLUMN[0] not in session_columns:
             conn.execute(
-                "ALTER TABLE memory_handoff_sessions ADD COLUMN revoked_at REAL"
+                "ALTER TABLE memory_handoff_sessions ADD COLUMN "
+                f"{_HANDOFF_REVOKED_COLUMN[0]} {_HANDOFF_REVOKED_COLUMN[1]}"
             )
         artifact_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        if "orphaned_at" not in artifact_columns:
-            conn.execute("ALTER TABLE memory_artifacts ADD COLUMN orphaned_at REAL")
+        if _ORPHANED_COLUMN[0] not in artifact_columns:
+            conn.execute(
+                "ALTER TABLE memory_artifacts ADD COLUMN "
+                f"{_ORPHANED_COLUMN[0]} {_ORPHANED_COLUMN[1]}"
+            )
 
     def _migrate_owner_scope_columns(self, conn: sqlite3.Connection) -> None:
         """Additive migration (P69-07 ownership contract): a pre-P69-07 DB predates
@@ -3138,15 +3236,14 @@ class TypedArtifactStore:
         existing = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        for column in ("owner_scope_kind", "owner_scope_id"):
+        for column, col_type in _OWNER_SCOPE_COLUMNS:
             if column not in existing:
-                conn.execute(f"ALTER TABLE memory_artifacts ADD COLUMN {column} TEXT")
+                conn.execute(
+                    f"ALTER TABLE memory_artifacts ADD COLUMN {column} {col_type}"
+                )
         # Created here rather than in `_SCHEMA_SQL`: that script runs *before* this
         # migration, so on a pre-P69-07 database the columns don't exist yet.
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memory_owner "
-            "ON memory_artifacts(owner_scope_kind, owner_scope_id)"
-        )
+        conn.execute(_OWNER_INDEX_SQL)
 
     def _require_owner(
         self,
@@ -3178,11 +3275,7 @@ class TypedArtifactStore:
         existing = {
             row["name"] for row in conn.execute("PRAGMA table_info(memory_artifacts)")
         }
-        for column, col_type in (
-            ("expires_at", "REAL"),
-            ("expired_at", "REAL"),
-            ("expired_by", "TEXT"),
-        ):
+        for column, col_type in _EXPIRY_COLUMNS:
             if column not in existing:
                 conn.execute(
                     f"ALTER TABLE memory_artifacts ADD COLUMN {column} {col_type}"
@@ -3243,9 +3336,17 @@ class TypedArtifactStore:
             for row in conn.execute("PRAGMA table_info(memory_artifact_versions)")
         }
         # 72-T01: a store without the payload-hash columns predates the shared read
-        # decision; reads never backfill it (plan §2.1 item 2).
+        # decision; reads never backfill it (plan §2.1 item 2). 72-T02 R2: the
+        # ownership columns every read filters on are read-required too, so a store
+        # lacking them is refused here instead of failing mid-read.
         if not (
-            {"archived_at", "expired_at", *PAYLOAD_HASH_COLUMNS} <= columns
+            {
+                "archived_at",
+                "expired_at",
+                *(name for name, _type in _OWNER_SCOPE_COLUMNS),
+                *PAYLOAD_HASH_COLUMNS,
+            }
+            <= columns
             and set(PAYLOAD_HASH_COLUMNS) <= version_columns
         ):
             conn.close()
@@ -3256,6 +3357,65 @@ class TypedArtifactStore:
         view._owner_scope_default = legacy_owner_scope(view.project_root)
         view._readonly_conn = conn
         return view, None
+
+    @contextmanager
+    def fresh_reader(self) -> Iterator[sqlite3.Connection | None]:
+        """72-T02 R13: a new connection, never this store's own read-only view, with
+        one read transaction open, so a generation check and the selected-row re-reads
+        before emission see the same committed state. A read-only view's opener that
+        returns a `state` (or no connection) yields `None`: the caller refuses with
+        `E_RESTART`. The connection is closed on exit (its read transaction ends)."""
+        if self._readonly_conn is None:
+            conn = self._connect()
+        else:
+            opened = open_sqlite_readonly(self.db_path)
+            if opened.state is not None or opened.connection is None:
+                yield None
+                return
+            conn = opened.connection
+        try:
+            conn.execute("BEGIN")
+            yield conn
+        finally:
+            conn.close()
+
+    def writable_open_ddl_free(self) -> bool:
+        """72-T02 R2: True only when opening this store writable (`TypedArtifactStore(
+        root)`) would run no DDL: the file is in WAL mode, every object `_SCHEMA_SQL`
+        and `_POST_SCHEMA_SQL` declare exists, every column a migration adds
+        (`_MIGRATION_COLUMNS`) exists, and the cursor-key row exists. A read route
+        that gets False stays on its read-only view. A writable store has already run
+        its constructor's migrations."""
+        conn = self._readonly_conn
+        if conn is None:
+            return True
+        try:
+            with self.db_path.open("rb") as handle:
+                header = handle.read(20)
+        except OSError:
+            return False
+        # SQLite file header bytes 18/19 (read/write format version) are 2 in WAL
+        # mode; `PRAGMA journal_mode` reports `delete` on an immutable connection.
+        if len(header) < 20 or header[18] != 2 or header[19] != 2:
+            return False
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+        required = set(_DDL_NAME_RE.findall(_SCHEMA_SQL))
+        for statement in _POST_SCHEMA_SQL:
+            required.update(_DDL_NAME_RE.findall(statement))
+        if not required <= names:
+            return False
+        columns: dict[str, set[str]] = {}
+        for table, column in _MIGRATION_COLUMNS:
+            if table not in columns:
+                columns[table] = {
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+            if column not in columns[table]:
+                return False
+        return (
+            conn.execute("SELECT 1 FROM memory_cursor_key WHERE id = 1").fetchone()
+            is not None
+        )
 
     def close(self) -> None:
         """Close an `open_readonly_view()` connection; a no-op on a writable store."""

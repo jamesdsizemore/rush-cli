@@ -41,6 +41,7 @@ from rush.memory.store import (
     MemoryFamily,
     MemorySubject,
     TypedArtifactStore,
+    _stored_text,
     _verified_binding,
     _write_version,
     next_row_mac,
@@ -48,6 +49,7 @@ from rush.memory.store import (
     note_memory_read,
     read_sqlite_readonly,
     sqlite_has_table,
+    sqlite_text,
 )
 from rush.memory.trust import default_entry_tier
 from rush.safety.redactor import sanitize_value
@@ -134,6 +136,7 @@ def replace_origin_content(
     clean_content = sanitize_value(content).value
     with closing(sqlite3.connect(str(store.db_path))) as conn, conn:
         conn.row_factory = sqlite3.Row
+        conn.text_factory = sqlite_text  # 72-T02 D32
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT id, content, source FROM memory_artifacts "
@@ -215,6 +218,12 @@ def _origin_filter(
     return (lambda row: reader_row_allowed(access, root, row)), access.recheck
 
 
+def _decodable(row: sqlite3.Row) -> bool:
+    """72-T02 D32: a row whose stored content is not UTF-8 is skipped by every
+    compatibility-view reader (never decoded with replacement characters)."""
+    return _stored_text(row["content"]) is not None
+
+
 def read_origin(
     project_root: Path, origin_kind: str, origin_id: str
 ) -> dict[str, Any] | None:
@@ -290,13 +299,14 @@ def _origin_rows_readonly(
         )
         return [
             (
-                json.loads(row["content"]),
+                json.loads(_stored_text(row["content"]) or ""),
                 (row["id"], row["artifact_version"], row["source"])
                 if versioned
                 else None,
             )
             for row in cursor.fetchall()
             if visible(row)
+            and _decodable(row)
             and (
                 # The oldest schema has no trust tier, signature or payload binding.
                 "trust_tier" not in row.keys()  # noqa: SIM118 - sqlite3.Row
