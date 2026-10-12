@@ -60,7 +60,7 @@ def capture_hardware_profile() -> HardwareProfile:
 
             stat = MEMORYSTATUSEX()
             stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(  # type: ignore[attr-defined]  # windll is Windows-only
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(  # type: ignore[attr-defined]  # windll exists only on Windows
                 ctypes.byref(stat)
             )
             ram_gb = round(stat.ullTotalPhys / (1024**3), 1)

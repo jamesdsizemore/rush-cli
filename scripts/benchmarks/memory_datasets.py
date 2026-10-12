@@ -27,6 +27,7 @@ from typing import Any, Literal
 import tiktoken
 
 from rush.permissions import ExecutionPermissions
+from rush.tools.base import ToolResult
 from rush.tools.memory import MemoryTool
 
 from .contracts import FixtureError
@@ -187,11 +188,33 @@ def transform_longmemeval_v2(record: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in sanitized.items() if k not in _LONGMEMEVAL_V2_GOLD_KEYS}
 
 
+class CountingMemoryTool(MemoryTool):
+    """`MemoryTool` that counts every real `run` result toward a case budget.
+
+    `tokens` is the cl100k size of each compact-JSON result; `results` keeps
+    `(operation, result)` in call order so a decider can show its actual
+    retrieval history (Phase 72 D13a F22)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._encoder = tiktoken.get_encoding(_ENCODING)
+        self.tokens = 0
+        self.results: list[tuple[str, ToolResult]] = []
+
+    def run(self, path: Path, **kwargs: Any) -> ToolResult:
+        result = super().run(path, **kwargs)
+        self.tokens += len(
+            self._encoder.encode(json.dumps(result, separators=(",", ":")))
+        )
+        self.results.append((str(kwargs.get("operation", "ask")), result))
+        return result
+
+
 def run_longmemeval_case(
     record: dict[str, Any],
     *,
     decide_fn: Callable[[Path, MemoryTool, ExecutionPermissions, dict[str, Any]], str],
-    max_total_tokens: int,
+    max_total_tokens: int | None,
     timeout_seconds: float | None = None,
     workspace_root: Path | None = None,
 ) -> DatasetCaseResult:
@@ -202,7 +225,10 @@ def run_longmemeval_case(
     tool/root so it can query its own just-ingested namespace to produce a
     hypothesis. A timeout or a `max_total_tokens` overrun during ingestion
     ends the case early but still returns a `DatasetCaseResult` -- callers
-    must keep it in their denominator, never drop it."""
+    must keep it in their denominator, never drop it. Every tool call the
+    decider makes, plus the hypothesis, counts toward the same cap; an
+    overrun after the decision is `budget_exhausted` with no prediction.
+    `max_total_tokens=None` (live mode) records tokens without a local cap."""
     sanitized, _gold = strip_longmemeval_gold(record)
     case_id = str(sanitized.get("question_id", ""))
     start = time.perf_counter()
@@ -211,7 +237,7 @@ def run_longmemeval_case(
     workspace_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="memds-", dir=workspace_parent) as tmp:
         root = Path(tmp)
-        tool = MemoryTool()
+        tool = CountingMemoryTool()
         permissions = ExecutionPermissions(cache_write=True)
         total_tokens = 0
         for session in sanitized.get("haystack_sessions", []):
@@ -224,6 +250,7 @@ def run_longmemeval_case(
                         "session_id": session.get("session_id"),
                         "date": session.get("date"),
                         **turn,
+                        "kind": "observation",
                     },
                     source=str(session.get("session_id", "session")),
                     permissions=permissions,
@@ -241,15 +268,24 @@ def run_longmemeval_case(
                         prediction=None,
                         total_tokens=total_tokens,
                     )
-                if total_tokens > max_total_tokens:
+                if max_total_tokens is not None and total_tokens > max_total_tokens:
                     return DatasetCaseResult(
                         case_id=case_id,
                         outcome="budget_exhausted",
                         prediction=None,
                         total_tokens=total_tokens,
                     )
+        before = tool.tokens
         hypothesis = decide_fn(root, tool, permissions, sanitized)
+        total_tokens += tool.tokens - before
         total_tokens += len(encoder.encode(hypothesis))
+        if max_total_tokens is not None and total_tokens > max_total_tokens:
+            return DatasetCaseResult(
+                case_id=case_id,
+                outcome="budget_exhausted",
+                prediction=None,
+                total_tokens=total_tokens,
+            )
         prediction = to_longmemeval_prediction(case_id, hypothesis)
         return DatasetCaseResult(
             case_id=case_id,

@@ -3,28 +3,75 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
+import stat
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from rush.delivery.compact import canonical_json
+from rush.io.physical_paths import ContainmentError, PhysicalRoot
+from rush.memory.store import TypedArtifactStore
+from rush.patch_generator import patch_target_paths
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 
-from .contracts import FixtureError, Outcome, ProbeResult
+# D13a: `python scripts/benchmarks/run.py` (script form) resolves the
+# relative imports below exactly like `python -m scripts.benchmarks.run`.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "scripts.benchmarks"
+
+from .contracts import (
+    DecisionBudget,
+    DecisionResult,
+    FixtureError,
+    Outcome,
+    ProbeResult,
+)
 from .fixtures import load_scenarios
-from .memory import EPISODE_BUILDERS, run_named_episode
+from .memory import (
+    BASELINE_CASES_SHA256,
+    EPISODE_BUILDERS,
+    EPISODE_OPERATION_KWARGS,
+    OPERATION_SCHEMAS,
+    EpisodeAction,
+    EpisodeObservation,
+    expand_python_token,
+    fixture_revision,
+    load_task_manifest,
+    normalized_contains,
+    receiver_readback_acknowledged,
+    run_memory_episode,
+    run_named_episode,
+    verifier_receipt_completed,
+)
 from .memory_datasets import (
+    CountingMemoryTool,
     DatasetCaseResult,
     aggregate_dataset_results,
     load_dataset_section,
     run_longmemeval_case,
+    strip_longmemeval_gold,
 )
-from .reporting import paired_bootstrap_ci, write_memory_suite_report, write_result
+from .providers import (
+    invocation_record,
+    preflight_decision_route,
+    resolve_decision_route,
+    run_memory_decision,
+)
+from .reporting import (
+    paired_bootstrap_ci,
+    redact_report,
+    write_memory_suite_report,
+    write_result,
+)
 
 _MEMORY_VARIANTS = ("none", "current", "raw", "budgeted", "linked", "full", "hybrid")
 _VARIANT_MAX_TOKENS = {"budgeted": 256, "current": 2048, "full": 16000}
@@ -170,6 +217,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=16000,
         help="MC13.2: per-case/per-episode token budget for the memory suite",
     )
+    parser.add_argument(
+        "--decision-mode",
+        type=str,
+        choices=("component", "live"),
+        default="component",
+        help="Phase 72 D13: 'component' runs the scripted harness (harness "
+        "completion only); 'live' asks --decision-route for every decision",
+    )
+    parser.add_argument(
+        "--decision-route",
+        type=str,
+        default=None,
+        help="Phase 72 D13: live decision route ID (requires --decision-mode live "
+        "and its --allow-live-route grant)",
+    )
+    parser.add_argument(
+        "--task-manifest",
+        type=Path,
+        default=None,
+        help="Phase 72 D13a: strict memory task manifest "
+        "(tests/fixtures/phase75/task_manifest.json)",
+    )
     return parser
 
 
@@ -286,6 +355,748 @@ def _run_variant_cases(
     ]
 
 
+_COMPONENT_BLOCKER = (
+    "real agent decision-making (choosing the next tool call / producing "
+    "a hypothesis or patch from a live model) was not exercised: no live "
+    "provider credential or --allow-live-route grant was supplied in this "
+    "environment. Dataset ingestion, gold-stripping, hash verification, "
+    "namespace reset and every named episode's real MemoryTool/verify_attempt/"
+    "handoff mechanics ran for real; only the live-model reasoning step is "
+    "blocked, matching MC12's precedent for a missing external engine."
+)
+_EVALUATOR_VERSION = 1
+_VERIFY_REQUEST_KEYS = frozenset({"attempt_id", "behavior_ids", "contract", "patch"})
+_VERIFY_CONTRACT_KEYS = frozenset(
+    {
+        "base_commit",
+        "base_tree_digest",
+        "patch_content_digest",
+        "required_commands",
+        "config_digest",
+        "review_class",
+    }
+)
+_COMMAND_KEYS = frozenset({"command", "expected_exit_code"})
+_EPISODE_RESPONSE_SCHEMA = {
+    "action": {
+        "kind": "action",
+        "operation": "<one of permitted_actions except submit>",
+        "kwargs": "<object with keys from operations[operation].kwargs>",
+    },
+    "submit": {"kind": "submit", "final": "<any JSON value>"},
+}
+_ANSWER_RESPONSE_SCHEMA = {"kind": "answer", "text": "<string>"}
+
+
+def _check_decision_flags(args: argparse.Namespace) -> None:
+    """B2 steps 2-4: decision flag combinations, before any filesystem effect."""
+    if args.decision_route is not None and args.decision_mode == "component":
+        raise FixtureError(
+            "decision_route_requires_live_mode: --decision-route needs "
+            "--decision-mode live"
+        )
+    if args.decision_mode == "live" and args.decision_route is None:
+        raise FixtureError(
+            "live_requires_decision_route: --decision-mode live needs --decision-route"
+        )
+    if args.decision_mode == "live" and args.task_manifest is None:
+        raise FixtureError(
+            "live_requires_task_manifest: --decision-mode live needs --task-manifest"
+        )
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _cases_sha256(cases: list[dict[str, Any]]) -> str:
+    return _sha256_json(sorted(cases, key=lambda case: case["id"]))
+
+
+def _parse_seeds(raw: str) -> list[int]:
+    return [int(s) for s in raw.split(",") if s.strip()] or [0]
+
+
+def _check_output_guard(
+    output: Path, cases_sha256: str, embedding: dict[str, Any] | None
+) -> None:
+    """B9: an existing report under --output must come from the same frozen
+    manifest (cases digest and embedding identity); nothing is written."""
+    report_path = Path(output) / "memory-suite-report.json"
+    if not os.path.lexists(report_path):
+        return
+    try:
+        existing = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        existing = None
+    task_manifest = (
+        existing.get("task_manifest") if isinstance(existing, dict) else None
+    )
+    if (
+        not isinstance(task_manifest, dict)
+        or task_manifest.get("cases_sha256") != cases_sha256
+        or task_manifest.get("phase72_embedding") != embedding
+    ):
+        raise FixtureError(
+            f"output_manifest_mismatch: {report_path} was written for a different "
+            "task manifest"
+        )
+
+
+def _check_editable_path(root: Path, rel: str, case_id: str) -> None:
+    """B10: an editable path is a contained regular file whose last component
+    exists with exactly this spelling."""
+    try:
+        candidate = PhysicalRoot(root).open_contained(rel)
+        mode = os.lstat(candidate).st_mode
+        listing = os.listdir(candidate.parent)
+    except (ContainmentError, OSError, ValueError):
+        raise FixtureError(
+            f"unsafe_path: case {case_id} editable path {rel!r}"
+        ) from None
+    if not stat.S_ISREG(mode) or candidate.name not in listing:
+        raise FixtureError(f"unsafe_path: case {case_id} editable path {rel!r}")
+
+
+def _verify_fixtures(
+    cases: list[dict[str, Any]],
+    verify_root: Path,
+    records_by_id: dict[str, dict[str, Any]],
+) -> None:
+    """B10: builds every case's fixture once under `<workspace>/verify/<index>`
+    and checks its frozen revision, task text and editable paths before any
+    route preflight or provider call."""
+    for index, case in enumerate(cases):
+        root = verify_root / str(index)
+        root.mkdir(parents=True)
+        task: str | None = None
+        revision: str | None
+        if case["kind"] == "episode":
+            task, _scripted = EPISODE_BUILDERS[case["inputs"]["builder"]](root)
+            revision = fixture_revision(root)
+        else:
+            seen: list[str] = []
+
+            def capture(
+                case_root: Path,
+                _tool: MemoryTool,
+                _perms: ExecutionPermissions,
+                _sanitized: dict[str, Any],
+                _seen: list[str] = seen,
+            ) -> str:
+                _seen.append(fixture_revision(case_root))
+                return ""
+
+            run_longmemeval_case(
+                records_by_id[case["inputs"]["record_id"]],
+                decide_fn=capture,
+                max_total_tokens=None,
+                workspace_root=root,
+            )
+            revision = seen[0] if seen else None
+        if revision != case["fixture_revision"]:
+            raise FixtureError(
+                f"fixture_revision_mismatch: case {case['id']} fixture is {revision}"
+            )
+        if task is not None and task != case["inputs"]["task"]:
+            raise FixtureError(f"task_mismatch: case {case['id']} builder task changed")
+        for rel in case["editable_paths"]:
+            _check_editable_path(root, rel, case["id"])
+
+
+def _expand_commands(commands: Any) -> list[dict[str, Any]] | None:
+    """D13a: `{python}` expansion of a required-commands list; `None` when an
+    entry is not exactly `{command, expected_exit_code}`."""
+    if not isinstance(commands, list):
+        return None
+    expanded: list[dict[str, Any]] = []
+    for entry in commands:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != _COMMAND_KEYS
+            or not isinstance(entry["command"], list)
+            or not all(isinstance(part, str) for part in entry["command"])
+            or type(entry["expected_exit_code"]) is not int
+        ):
+            return None
+        expanded.append(
+            {
+                "command": list(expand_python_token(entry["command"])),
+                "expected_exit_code": entry["expected_exit_code"],
+            }
+        )
+    return expanded
+
+
+def _validate_episode_action(
+    case: dict[str, Any], decision: dict[str, Any]
+) -> tuple[str | None, EpisodeAction | None]:
+    """G8-A: a model action is checked against the fixture-owned case before
+    any tool call; a refused action never reaches `MemoryTool.run`."""
+    operation = decision["operation"]
+    kwargs = decision["kwargs"]
+    offered = set(case["permitted_actions"]) - {"submit"}
+    if not isinstance(operation, str) or operation not in offered:
+        return "action_not_permitted", None
+    if not isinstance(kwargs, dict) or set(kwargs) - set(
+        EPISODE_OPERATION_KWARGS[operation]
+    ):
+        return "unknown_decision_field", None
+    kwargs = copy.deepcopy(kwargs)
+    if operation == "verify_attempt":
+        request = kwargs.get("request")
+        if not isinstance(request, dict) or set(request) - _VERIFY_REQUEST_KEYS:
+            return "unknown_decision_field", None
+        contract = request.get("contract")
+        if not isinstance(contract, dict) or set(contract) - _VERIFY_CONTRACT_KEYS:
+            return "unknown_decision_field", None
+        patch = request.get("patch")
+        paths = patch_target_paths(patch) if isinstance(patch, str) else None
+        if paths is None or any(path not in case["editable_paths"] for path in paths):
+            return "edit_outside_editable_paths", None
+        expanded = _expand_commands(contract.get("required_commands"))
+        if expanded is None or expanded != _expand_commands(
+            case["acceptance"]["required_commands"]
+        ):
+            return "contract_not_fixture_owned", None
+        contract["required_commands"] = expanded
+    elif operation == "handoff" and case["acceptance"]["handoff"] is not None:
+        request = kwargs.get("request")
+        if isinstance(request, dict):
+            source = case["acceptance"]["handoff"]["source"]
+            if request.setdefault("receiver_namespace", source) != source:
+                return "action_not_permitted", None
+    return None, EpisodeAction(operation=operation, kwargs=kwargs)
+
+
+@dataclass
+class _LiveContext:
+    route_id: str
+    decision_route: Any
+    workspace_root: Path
+    route_overhead_tokens: int
+
+
+@dataclass
+class _CaseState:
+    reason: str | None = None
+    steps: int = 0
+    submitted: bool = False
+    answer: str | None = None
+    local_returned_tokens: int = 0
+    invocations: list[dict[str, Any]] = field(default_factory=list)
+    provider_ids: set[str] = field(default_factory=set)
+
+
+def _invoke_decision(
+    live: _LiveContext,
+    state: _CaseState,
+    request: dict[str, Any],
+    *,
+    kind: str,
+    root: Path,
+    budget: DecisionBudget,
+    timeout_s: float,
+    step: int,
+) -> DecisionResult:
+    """One live decision call (B12), recorded as an invocation (G8-O)."""
+    result = run_memory_decision(
+        request,
+        decision_route=live.decision_route,
+        kind=kind,
+        root=root,
+        workspace_root=live.workspace_root,
+        budget=budget,
+        timeout_s=timeout_s,
+    )
+    state.invocations.append(
+        invocation_record(result, step=step, route_id=live.route_id)
+    )
+    state.provider_ids.update(result.provider_ids)
+    return result
+
+
+def _remaining_tokens(budget: DecisionBudget) -> int:
+    return (
+        budget.max_total_tokens
+        - budget.model_tokens
+        - budget.route_overhead_tokens
+        - budget.output_reserve_tokens
+    )
+
+
+def _run_dataset_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    record: dict[str, Any],
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> bool:
+    """A dataset_answer case: ingestion by `run_longmemeval_case`, then one
+    decision (live) or the variant hypothesis (component). Returns whether
+    the harness completed; quality is the separate evaluator verdict."""
+    _sanitized, gold = strip_longmemeval_gold(record)
+    permissions = ExecutionPermissions(**{grant: True for grant in case["grants"]})
+    timeout_s = float(case["budget"]["timeout_s"])
+
+    def decide(
+        root: Path,
+        tool: MemoryTool,
+        _perms: ExecutionPermissions,
+        sanitized: dict[str, Any],
+    ) -> str:
+        state.steps += 1
+        if fixture_revision(root) != case["fixture_revision"]:
+            state.reason = "fixture_revision_mismatch"
+            return ""
+        counting = cast(CountingMemoryTool, tool)
+        before, before_tokens = len(counting.results), counting.tokens
+        context = _variant_hypothesis(args.variant, root, tool, permissions, sanitized)
+        state.local_returned_tokens += counting.tokens - before_tokens
+        if live is None or budget is None:
+            state.answer = context
+            return context
+        request = {
+            "schema_version": 1,
+            "decision_kind": "answer",
+            "case_id": case["id"],
+            "task": sanitized["question"],
+            "question_date": sanitized.get("question_date"),
+            "step": 0,
+            "variant": args.variant,
+            "history": [
+                {"operation": operation, "result": result}
+                for operation, result in counting.results[before:]
+            ],
+            "variant_context": context,
+            "remaining_budget_tokens": _remaining_tokens(budget),
+            "permitted_actions": ["answer"],
+            "response_schema": dict(_ANSWER_RESPONSE_SCHEMA),
+        }
+        result = _invoke_decision(
+            live,
+            state,
+            request,
+            kind="dataset_answer",
+            root=root,
+            budget=budget,
+            timeout_s=timeout_s,
+            step=0,
+        )
+        if result.reason is not None or result.decision is None:
+            state.reason = result.reason or "malformed_decision_json"
+            state.answer = result.text
+            return ""
+        state.answer = str(result.decision["text"])
+        return state.answer
+
+    outcome = run_longmemeval_case(
+        record,
+        decide_fn=decide,
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+        workspace_root=run_dir,
+    )
+    if state.reason is None and outcome.outcome != "scored":
+        state.reason = outcome.outcome
+    harness_completed = state.reason is None and state.steps > 0
+    if state.reason is None and not normalized_contains(
+        state.answer or "", str(gold.get("answer", ""))
+    ):
+        state.reason = "evaluator_failed"
+    return harness_completed
+
+
+def _run_episode_case(
+    case: dict[str, Any],
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> tuple[bool, list[dict[str, Any]] | None]:
+    """An episode case: rebuild the fixture, re-check its revision, then run
+    the scripted (component) or live decider through `run_memory_episode`."""
+    root = run_dir / "fixture"
+    root.mkdir()
+    _task, scripted = EPISODE_BUILDERS[case["inputs"]["builder"]](root)
+    if fixture_revision(root) != case["fixture_revision"]:
+        state.reason = "fixture_revision_mismatch"
+        return False, None
+    permissions = ExecutionPermissions(**{grant: True for grant in case["grants"]})
+    timeout_s = float(case["budget"]["timeout_s"])
+    acceptance = case["acceptance"]
+
+    def decide_component(observation: EpisodeObservation) -> EpisodeAction:
+        state.steps += 1
+        action = scripted(observation)
+        if action.operation == "submit":
+            state.submitted = True
+        return action
+
+    def decide_live(observation: EpisodeObservation) -> EpisodeAction:
+        if live is None or budget is None:
+            raise FixtureError("decision_route_unavailable: live decider without route")
+        state.steps += 1
+        request = {
+            "schema_version": 1,
+            "decision_kind": "episode",
+            "case_id": case["id"],
+            "task": case["inputs"]["task"],
+            "step": observation.step_index,
+            "history": list(observation.history),
+            "remaining_budget_tokens": _remaining_tokens(budget),
+            "permitted_actions": case["permitted_actions"],
+            "editable_paths": case["editable_paths"],
+            "acceptance": {
+                "behavior_ids": acceptance["behavior_ids"],
+                "required_commands": acceptance["required_commands"],
+                "handoff": acceptance["handoff"],
+            },
+            "operations": {
+                op: OPERATION_SCHEMAS[op]
+                for op in case["permitted_actions"]
+                if op != "submit"
+            },
+            "response_schema": copy.deepcopy(_EPISODE_RESPONSE_SCHEMA),
+        }
+        result = _invoke_decision(
+            live,
+            state,
+            request,
+            kind="episode",
+            root=root,
+            budget=budget,
+            timeout_s=timeout_s,
+            step=observation.step_index,
+        )
+        decision = result.decision
+        if result.reason is not None or decision is None:
+            state.reason = result.reason or "malformed_decision_json"
+            return EpisodeAction(operation="submit", final=None)
+        if decision["kind"] == "submit":
+            state.submitted = True
+            return EpisodeAction(operation="submit", final=decision.get("final"))
+        reason, action = _validate_episode_action(case, decision)
+        if reason is not None or action is None:
+            state.reason = reason or "malformed_decision_json"
+            return EpisodeAction(operation="submit", final=None)
+        return action
+
+    result = run_memory_episode(
+        case["id"],
+        case["inputs"]["task"],
+        decide_live if live is not None else decide_component,
+        root=root,
+        permissions=permissions,
+        max_steps=case["budget"]["max_steps"],
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+    )
+    state.local_returned_tokens = result.total_tokens
+    if state.reason is None:
+        if result.timed_out:
+            state.reason = "timeout"
+        elif result.budget_exhausted:
+            state.reason = "budget_exhausted"
+        elif not state.submitted:
+            state.reason = "max_steps_exhausted"
+    harness_completed = state.reason is None
+    bound_refs: list[dict[str, Any]] | None = None
+    if state.reason is None:
+        if acceptance["evaluator"] == "verifier_receipt_completed":
+            ok = verifier_receipt_completed(result.events, acceptance)
+        else:
+            ok, bound_refs = receiver_readback_acknowledged(
+                result.events, acceptance, root
+            )
+        if not ok:
+            state.reason = "evaluator_failed"
+    return harness_completed, bound_refs
+
+
+def _run_manifest_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    seed: int,
+    run_dir: Path,
+    records_by_id: dict[str, dict[str, Any]],
+    live: _LiveContext | None,
+    provider_ids: set[str],
+) -> dict[str, Any]:
+    """One case x seed (B17, B20): its own budget, decisions and evaluator."""
+    effective = min(args.max_total_tokens, case["budget"]["max_total_tokens"])
+    reserve = case["budget"]["output_reserve_tokens"]
+    budget = (
+        DecisionBudget(effective, reserve, live.route_overhead_tokens)
+        if live is not None
+        else None
+    )
+    state = _CaseState()
+    run_dir.mkdir(parents=True)
+    bound_refs: list[dict[str, Any]] | None = None
+    if case["kind"] == "dataset_answer":
+        harness_completed = _run_dataset_case(
+            args,
+            case,
+            records_by_id[case["inputs"]["record_id"]],
+            run_dir,
+            state,
+            live,
+            budget,
+            effective,
+        )
+    else:
+        harness_completed, bound_refs = _run_episode_case(
+            case, run_dir, state, live, budget, effective
+        )
+    provider_ids.update(state.provider_ids)
+    return {
+        "case_id": case["id"],
+        "seed": seed,
+        "kind": case["kind"],
+        "family": case["family"],
+        "variant": case["variant"],
+        "fixture_revision": case["fixture_revision"],
+        "passed": state.reason is None,
+        "reason": state.reason,
+        "harness_completed": harness_completed,
+        "evaluator": case["acceptance"]["evaluator"],
+        "evaluator_version": _EVALUATOR_VERSION,
+        "budget": {
+            "max_total_tokens": effective,
+            "output_reserve_tokens": reserve,
+            "model_tokens": None if budget is None else budget.model_tokens,
+            "local_returned_tokens": state.local_returned_tokens,
+        },
+        "steps": state.steps,
+        "invocations": state.invocations,
+        "answer": state.answer if case["kind"] == "dataset_answer" else None,
+        "bound_refs": bound_refs,
+    }
+
+
+def _aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
+    failed: dict[str, int] = {}
+    for record in records:
+        if not record["passed"]:
+            failed[record["reason"]] = failed.get(record["reason"], 0) + 1
+    return {
+        "total": len(records),
+        "passed": sum(1 for record in records if record["passed"]),
+        "failed_by_reason": failed,
+    }
+
+
+def _preflight_provider_ids(preflight: Any) -> list[str]:
+    if isinstance(preflight, DecisionResult):
+        return list(preflight.provider_ids)
+    if isinstance(preflight, dict):
+        ids = preflight.get("provider_ids") or []
+        return [value for value in ids if isinstance(value, str)]
+    return []
+
+
+def _execute_manifest(
+    args: argparse.Namespace,
+    manifest: dict[str, Any],
+    cases_sha256: str,
+    decision_route: Any,
+    workspace_root: Path,
+) -> int:
+    cases: list[dict[str, Any]] = manifest["cases"]
+    seeds = _parse_seeds(args.seeds)
+    is_live = decision_route is not None
+    records_by_id: dict[str, dict[str, Any]] = {}
+    if any(case["kind"] == "dataset_answer" for case in cases):
+        _section, records = load_dataset_section("longmemeval")
+        records_by_id = {str(r.get("question_id")): r for r in records}
+    _verify_fixtures(cases, workspace_root / "verify", records_by_id)
+
+    blockers: list[str] = []
+    route_report: dict[str, Any] | None = None
+    redaction_patterns: list[str] = []
+    provider_ids: set[str] = set()
+    live: _LiveContext | None = None
+    available = True
+    if is_live:
+        redaction_patterns = list(decision_route.redaction_patterns)
+        preflight = preflight_decision_route(
+            decision_route,
+            workspace_root=workspace_root,
+            case_budgets=[
+                (
+                    min(args.max_total_tokens, case["budget"]["max_total_tokens"]),
+                    case["budget"]["output_reserve_tokens"],
+                )
+                for case in cases
+            ],
+        )
+        provider_ids.update(_preflight_provider_ids(preflight.get("preflight")))
+        route_report = {
+            "route_id": args.decision_route,
+            "format": decision_route.format,
+            "executable": str(decision_route.executable),
+            "version": preflight.get("version"),
+            "status": preflight.get("status"),
+            "reason": preflight.get("reason"),
+            "route_overhead_tokens": preflight.get("route_overhead_tokens"),
+            "instruction_files": preflight.get("instruction_files"),
+            "preflight": preflight.get("preflight"),
+        }
+        if preflight.get("status") == "unavailable":
+            available = False
+            blockers.append(
+                f"decision route {args.decision_route} unavailable: "
+                f"{preflight.get('reason')}"
+            )
+        else:
+            live = _LiveContext(
+                route_id=args.decision_route,
+                decision_route=decision_route,
+                workspace_root=workspace_root,
+                route_overhead_tokens=int(preflight["route_overhead_tokens"]),
+            )
+    else:
+        blockers.append(_COMPONENT_BLOCKER)
+
+    case_results: list[dict[str, Any]] = []
+    if available:
+        for index, case in enumerate(cases):
+            for seed in seeds:
+                case_results.append(
+                    _run_manifest_case(
+                        args,
+                        case,
+                        seed,
+                        workspace_root / "runs" / f"{index}-{seed}",
+                        records_by_id,
+                        live,
+                        provider_ids,
+                    )
+                )
+
+    payload = {
+        "decision_mode": args.decision_mode,
+        "variant": args.variant,
+        "seeds": seeds,
+        "seed_semantics": "repetition_labels" if is_live else "bootstrap_seed",
+        "max_total_tokens": args.max_total_tokens,
+        "python": {"executable": sys.executable, "version": sys.version},
+        "task_manifest": {
+            "path": str(args.task_manifest),
+            "schema_version": manifest["schema_version"],
+            "cases_sha256": cases_sha256,
+            "baseline_cases_sha256": BASELINE_CASES_SHA256,
+            "phase72_cases_sha256": manifest.get("phase72_cases_sha256"),
+            "phase72_embedding": manifest.get("phase72_embedding"),
+            "case_count": len(cases),
+            "declared": manifest["declared"],
+            "phase75_family_coverage": manifest["phase75_family_coverage"],
+        },
+        "decision_route": route_report,
+        "case_results": case_results,
+        "aggregate": _aggregate(case_results),
+        "usage_accounting": {
+            "budget_basis": "provider_model_tokens" if is_live else "local_cl100k"
+        },
+        "blockers": blockers,
+    }
+    report_path = write_memory_suite_report(
+        args.output,
+        payload,
+        redaction_patterns=redaction_patterns,
+        provider_id_values=sorted(provider_ids),
+    )
+    sys.stdout.write(f"\nMemory suite report written to: {report_path}\n")
+    for blocker in blockers:
+        sys.stdout.write(f"BLOCKED (named): {blocker}\n")
+    return 0 if available else 1
+
+
+def _error_chain(err: BaseException | None) -> str:
+    parts: list[str] = []
+    seen: set[int] = set()
+    current = err
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current)
+        if text and text not in parts:
+            parts.append(text)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return " <- ".join(parts)
+
+
+def _raised_by_store_close(err: BaseException) -> bool:
+    """True when `err` was raised inside `TypedArtifactStore.close` (the
+    method currently bound on the store's class), wherever the caller was."""
+    tb = err.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        owner = frame.f_locals.get("self")
+        if isinstance(owner, TypedArtifactStore) and frame.f_code is getattr(
+            type(owner).close, "__code__", None
+        ):
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _run_manifest_suite(args: argparse.Namespace) -> int:
+    """B2 steps 5-6, B6-B11, B17, B20: a strict-manifest memory run in
+    component or live decision mode. Every rejection happens before any
+    provider call and before --output is touched; the workspace is always
+    removed, and a cleanup failure never masks the primary error."""
+    manifest = load_task_manifest(args.task_manifest)
+    cases: list[dict[str, Any]] = manifest["cases"]
+    if (
+        args.variant == "hybrid"
+        and any(case["id"].startswith("p72-") for case in cases)
+        and "phase72_embedding" not in manifest
+    ):
+        raise FixtureError(
+            "hybrid_requires_phase72_embedding: --variant hybrid with p72- cases "
+            "needs phase72_embedding"
+        )
+    cases_sha256 = _cases_sha256(cases)
+    _check_output_guard(args.output, cases_sha256, manifest.get("phase72_embedding"))
+    decision_route = None
+    if args.decision_mode == "live":
+        decision_route = resolve_decision_route(
+            args.decision_route,
+            allow_live_route=args.allow_live_route,
+            provider_executable=args.provider_executable,
+        )
+    workspace = tempfile.TemporaryDirectory(prefix="memory-suite-")
+    primary: Exception | None = None
+    code = 1
+    try:
+        code = _execute_manifest(
+            args, manifest, cases_sha256, decision_route, Path(workspace.name)
+        )
+    except Exception as exc:  # noqa: BLE001 - re-raised after workspace cleanup
+        primary = exc
+        if _raised_by_store_close(exc):
+            # a store/read-only view close failed inside a tool call; the
+            # chain keeps any primary error the close interrupted
+            primary = FixtureError(f"cleanup_failed: store close: {_error_chain(exc)}")
+    try:
+        workspace.cleanup()
+    except OSError as cleanup_exc:
+        detail = _error_chain(cleanup_exc)
+        if primary is not None:
+            detail += f"; primary error: {_error_chain(primary)}"
+        raise FixtureError(f"cleanup_failed: {detail}") from None
+    if primary is not None:
+        raise primary
+    return code
+
+
 def run_memory_suite(args: argparse.Namespace) -> int:
     """MC13.5: runs the local (no live-credential-required) portion of the
     memory benchmark suite -- LongMemEval-shaped dataset cases compared
@@ -293,6 +1104,9 @@ def run_memory_suite(args: argparse.Namespace) -> int:
     agent episodes -- and writes a combined report. Missing external dataset
     downloads or live-provider credentials are recorded as named blockers,
     never a fabricated pass."""
+    _check_decision_flags(args)
+    if args.task_manifest is not None:
+        return _run_manifest_suite(args)
     permissions = ExecutionPermissions(
         cache_write=True, artifact_write=True, build=True
     )
@@ -371,6 +1185,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
         diffs = [variant_scores[i] - baseline_scores[i] for i in range(len(case_ids))]
         ci_low, ci_high = paired_bootstrap_ci(diffs, seed=seeds[0])
         cross_variant_comparison[variant] = {
+            "score_kind": "harness_completion",
             "case_scores": variant_scores,
             "diff_vs_baseline": diffs,
             "paired_bootstrap_ci": {"low": ci_low, "high": ci_high},
@@ -386,15 +1201,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
             "--dataset-manifest with more cases is supplied."
         )
 
-    blockers.append(
-        "real agent decision-making (choosing the next tool call / producing "
-        "a hypothesis or patch from a live model) was not exercised: no live "
-        "provider credential or --allow-live-route grant was supplied in this "
-        "environment. Dataset ingestion, gold-stripping, hash verification, "
-        "namespace reset and every named episode's real MemoryTool/verify_attempt/"
-        "handoff mechanics ran for real; only the live-model reasoning step is "
-        "blocked, matching MC12's precedent for a missing external engine."
-    )
+    blockers.append(_COMPONENT_BLOCKER)
 
     episode_results = {}
     for episode_id in EPISODE_BUILDERS:
@@ -421,6 +1228,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
     )
 
     payload = {
+        "decision_mode": "component",
         "variant": args.variant,
         "seeds": seeds,
         "max_total_tokens": args.max_total_tokens,
@@ -1362,11 +2170,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.suite != "memory" and (
+        args.decision_mode == "live"
+        or args.decision_route is not None
+        or args.task_manifest is not None
+    ):
+        sys.stderr.write(
+            "Memory suite error: decision_flags_require_memory_suite: "
+            "--decision-mode live, --decision-route and --task-manifest need "
+            "--suite memory\n"
+        )
+        return 1
+
     if args.suite == "memory":
         try:
             return run_memory_suite(args)
         except (FixtureError, OSError, ValueError) as err:
-            sys.stderr.write(f"Memory suite error: {err}\n")
+            message, _count = redact_report(_error_chain(err))
+            sys.stderr.write(f"Memory suite error: {message}\n")
             return 1
 
     if args.suite == "project_journey":

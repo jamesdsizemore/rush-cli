@@ -75,6 +75,57 @@ class RouteDescriptor:
     credential_boundary: str
     redaction_patterns: list[str] = field(default_factory=list)
     timeout_s: float = 30.0
+    # Phase 72 D13a: fixture-owned hermetic decision contract
+    # (`format`, `argv` per decision kind, `help_args`); `None` keeps a route
+    # a presence probe only, never a decision route.
+    decision_protocol: dict[str, Any] | None = None
+
+
+@dataclass
+class DecisionBudget:
+    """Live decision budget for one case x seed (Phase 72 D13).
+
+    `max_total_tokens` is E = min(--max-total-tokens, case max_total_tokens);
+    provider model tokens are charged once per call, local tool results never.
+    """
+
+    max_total_tokens: int
+    output_reserve_tokens: int
+    route_overhead_tokens: int
+    model_tokens: int = 0
+
+    def admits(self, prompt_tokens: int) -> bool:
+        return (
+            self.model_tokens
+            + self.route_overhead_tokens
+            + prompt_tokens
+            + self.output_reserve_tokens
+        ) <= self.max_total_tokens
+
+    def charge(self, tokens: int) -> bool:
+        self.model_tokens += tokens
+        return self.model_tokens <= self.max_total_tokens
+
+
+@dataclass(frozen=True)
+class DecisionResult:
+    """Outcome of one `providers.run_memory_decision` call.
+
+    `reason is None` means a well-formed, budget-admitted decision; any other
+    value is the first failing step and `decision` is then `None`.
+    """
+
+    reason: str | None = None
+    decision: dict[str, Any] | None = None
+    text: str | None = None
+    model_tokens: int = 0
+    tool_items: int = 0
+    usage: dict[str, Any] = field(default_factory=dict)
+    model: list[str] = field(default_factory=list)
+    provider_ids: list[str] = field(default_factory=list)
+    returncode: int | None = None
+    stdout: str = ""
+    stderr: str = ""
 
 
 @dataclass(frozen=True)

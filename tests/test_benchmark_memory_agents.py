@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from rush.permissions import ExecutionPermissions
 from scripts.benchmarks.contracts import Outcome
 from scripts.benchmarks.memory import (
@@ -237,3 +239,41 @@ def test_all_named_episodes_run_for_real(tmp_path: Path) -> None:
     csv_workspace.mkdir()
     csv_result = run_named_episode("csv-adaptation", csv_workspace)
     assert csv_result.final is False  # real drift detected, not fabricated
+
+
+@pytest.mark.parametrize("episode_id", ["guest-handoff", "upload-repair"])
+def test_episode_without_local_cap_records_tokens(
+    episode_id: str, tmp_path: Path
+) -> None:
+    """Phase 72 D13a: `max_total_tokens=None` disables the local cap (live
+    mode counts provider tokens instead); the episode still records the sum
+    of every event's real serialized-result token cost."""
+    task, decide_fn = EPISODE_BUILDERS[episode_id](tmp_path)
+    result = run_memory_episode(
+        episode_id,
+        task,
+        decide_fn,
+        root=tmp_path,
+        permissions=_GRANTED,
+        max_total_tokens=None,
+    )
+
+    assert result.budget_exhausted is False
+    assert result.events
+    assert result.total_tokens == sum(e.token_count for e in result.events)
+    assert result.total_tokens > 0
+    assert result.outcome == Outcome.PASS
+
+    capped_root = tmp_path / "capped"
+    capped_root.mkdir()
+    capped_task, capped_decide = EPISODE_BUILDERS[episode_id](capped_root)
+    capped = run_memory_episode(
+        episode_id,
+        capped_task,
+        capped_decide,
+        root=capped_root,
+        permissions=_GRANTED,
+        max_total_tokens=1,
+    )
+    assert capped.budget_exhausted is True
+    assert capped.outcome == Outcome.FAIL

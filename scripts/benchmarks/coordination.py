@@ -40,7 +40,10 @@ def run_coordination_probe(
 
         lock_mgr = MeshLockManager(project_root=root)
         # Agent 1 acquires lock
-        acq_1 = lock_mgr.acquire(target_file, agent_id=agent_1, timeout_s=1.0)
+        # return_capability defaults to False, so acquire returns a plain bool
+        acq_1 = cast(
+            bool, lock_mgr.acquire(target_file, agent_id=agent_1, timeout_s=1.0)
+        )
         # Agent 2 attempts acquisition while held -> must be blocked
         acq_2 = lock_mgr.acquire(target_file, agent_id=agent_2, timeout_s=0.1)
         # Agent 1 releases

@@ -212,6 +212,8 @@ def test_variant_cases_produce_distinct_real_hypotheses(tmp_path) -> None:
     for none_case, raw_case in zip(none_results, raw_results, strict=True):
         assert none_case.outcome == "scored"
         assert raw_case.outcome == "scored"
+        assert none_case.prediction is not None
+        assert raw_case.prediction is not None
         assert none_case.prediction["hypothesis"] == ""
         assert raw_case.prediction["hypothesis"] != ""
 
@@ -292,3 +294,180 @@ def test_memory_tool_write_used_for_ingestion_sanity(tmp_path) -> None:
         permissions=ExecutionPermissions(cache_write=True),
     )
     assert result["status"] == "ok"
+
+
+def _session_ids(sanitized: dict) -> list[str]:
+    return [s["session_id"] for s in sanitized["haystack_sessions"]]
+
+
+def test_decide_fn_tool_calls_count_toward_case_budget(tmp_path, monkeypatch) -> None:
+    """Phase 72 D13a / F22: every `MemoryTool.run` result the case makes --
+    ingestion writes AND the decider's own retrieval calls -- is counted
+    toward `max_total_tokens`, plus the hypothesis tokens. The total is the
+    sum over every recorded call, with no omitted callback cost and no
+    duplicated ingestion cost."""
+    import tiktoken
+
+    _manifest, records = load_dataset_section("longmemeval")
+    record = records[0]
+    encoder = tiktoken.get_encoding("cl100k_base")
+    per_call: list[tuple[str | None, int]] = []
+    real_run = MemoryTool.run
+
+    def spy(self, path, *args, **kwargs):
+        result = real_run(self, path, *args, **kwargs)
+        per_call.append(
+            (
+                kwargs.get("operation"),
+                len(encoder.encode(json.dumps(result, separators=(",", ":")))),
+            )
+        )
+        return result
+
+    monkeypatch.setattr(MemoryTool, "run", spy)
+    hypothesis = "recalled context " * 100
+
+    def _decide(root, tool, permissions, sanitized):
+        for query in ("delayed", "flight"):
+            tool.run(
+                root,
+                operation="recall",
+                subject="episodic",
+                query=query,
+                session_allowlist=_session_ids(sanitized),
+                request={"view": "compact", "max_tokens": 2048},
+                permissions=permissions,
+            )
+        return hypothesis
+
+    result = run_longmemeval_case(
+        record, decide_fn=_decide, max_total_tokens=16000, workspace_root=tmp_path
+    )
+
+    turns = sum(len(s["turns"]) for s in record["haystack_sessions"])
+    assert [op for op, _ in per_call] == ["write"] * turns + ["recall", "recall"]
+    assert result.outcome == "scored"
+    assert result.total_tokens == sum(t for _, t in per_call) + len(
+        encoder.encode(hypothesis)
+    )
+
+    # The post-decision total is enforced: a cap above the ingestion cost but
+    # below ingestion + decider calls + hypothesis ends the case exhausted.
+    big = "recalled context " * 1000
+
+    def _decide_big(root, tool, permissions, sanitized):
+        return big
+
+    ingestion_total = sum(t for op, t in per_call if op == "write")
+    capped = run_longmemeval_case(
+        record,
+        decide_fn=_decide_big,
+        max_total_tokens=ingestion_total + 1000,
+        workspace_root=tmp_path,
+    )
+    assert capped.outcome == "budget_exhausted"
+    assert capped.prediction is None
+    assert capped.total_tokens > ingestion_total + 1000
+
+    roomy = run_longmemeval_case(
+        record,
+        decide_fn=_decide_big,
+        max_total_tokens=ingestion_total + 4000,
+        workspace_root=tmp_path,
+    )
+    assert roomy.outcome == "scored"
+
+
+def test_one_token_review_repro_is_budget_exhausted(tmp_path) -> None:
+    """Phase 72 D13a F22 repro: a one-token budget and a 202-token hypothesis
+    is `budget_exhausted` (never `scored`), and the completion score is 0.0."""
+    record = {"question_id": "f22", "question": "q?", "haystack_sessions": []}
+
+    def _decide(root, tool, permissions, sanitized):
+        return "recalled context " * 100
+
+    result = run_longmemeval_case(
+        record, decide_fn=_decide, max_total_tokens=1, workspace_root=tmp_path
+    )
+
+    assert result.outcome == "budget_exhausted"
+    assert result.prediction is None
+    assert result.total_tokens == 202
+    assert _case_completion_score(result) == 0.0
+
+    exact = run_longmemeval_case(
+        record, decide_fn=_decide, max_total_tokens=202, workspace_root=tmp_path
+    )
+    assert exact.outcome == "scored"
+    assert exact.total_tokens == 202
+    assert _case_completion_score(exact) == 1.0
+
+    unlimited = run_longmemeval_case(
+        record, decide_fn=_decide, max_total_tokens=None, workspace_root=tmp_path
+    )
+    assert unlimited.outcome == "scored"
+    assert unlimited.total_tokens == 202
+
+
+def test_longmemeval_rows_usable_after_d33(tmp_path, monkeypatch) -> None:
+    """Phase 72 D33: the ingested LongMemEval turns carry `kind: observation`,
+    so a current compact recall for `delayed` returns the s1 user-turn row as
+    ordinary evidence (freshness `not_applicable`), and no gold field enters
+    the stored turns or the decider's input."""
+    _manifest, records = load_dataset_section("longmemeval")
+    record = records[0]
+    calls: list[tuple[str | None, dict, dict]] = []
+    real_run = MemoryTool.run
+
+    def spy(self, path, *args, **kwargs):
+        result = real_run(self, path, *args, **kwargs)
+        calls.append((kwargs.get("operation"), kwargs, result))
+        return result
+
+    monkeypatch.setattr(MemoryTool, "run", spy)
+    seen: dict = {}
+
+    def _decide(root, tool, permissions, sanitized):
+        seen["sanitized"] = sanitized
+        seen["recall"] = tool.run(
+            root,
+            operation="recall",
+            subject="episodic",
+            query="delayed",
+            session_allowlist=_session_ids(sanitized),
+            request={"view": "compact", "max_tokens": 2048},
+            permissions=permissions,
+        )
+        return "unused"
+
+    result = run_longmemeval_case(
+        record, decide_fn=_decide, max_total_tokens=16000, workspace_root=tmp_path
+    )
+    assert result.outcome == "scored"
+
+    writes = [(kw, res) for op, kw, res in calls if op == "write"]
+    assert len(writes) == sum(len(s["turns"]) for s in record["haystack_sessions"])
+    gold_keys = {"answer", "answer_session_ids", "has_answer"}
+    for kwargs, _res in writes:
+        assert kwargs["content"]["kind"] == "observation"
+        assert kwargs["subject"] == "episodic"
+        assert not gold_keys & set(kwargs["content"])
+    assert not gold_keys & set(seen["sanitized"])
+    for session in seen["sanitized"]["haystack_sessions"]:
+        for turn in session["turns"]:
+            assert "has_answer" not in turn
+
+    s1_user = next(
+        res
+        for kw, res in writes
+        if kw["content"].get("session_id") == "s1"
+        and kw["content"].get("role") == "user"
+    )
+    s1_user_id = s1_user["raw"]["id"]
+    items = seen["recall"]["raw"]["data"]["items"]
+    matches = [i for i in items if (i.get("id") or i.get("artifact_id")) == s1_user_id]
+    assert len(matches) == 1, items
+    evidence = json.dumps(matches[0])
+    assert "not_applicable" in evidence
+    assert "flight just got delayed" in evidence
+    assert "2023-05-10" in evidence

@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "lme-q-001",
+      "kind": "dataset_answer",
+      "family": "longmemeval_sample",
+      "variant": "base",
+      "retrieval_required": false,
+      "inputs": {
+        "section": "longmemeval",
+        "corpus_section": null,
+        "record_id": "lme-q-001",
+        "query": "delayed"
+      },
+      "fixture_revision": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "lme-q-002",
+      "kind": "dataset_answer",
+      "family": "longmemeval_sample",
+      "variant": "base",
+      "retrieval_required": false,
+      "inputs": {
+        "section": "longmemeval",
+        "corpus_section": null,
+        "record_id": "lme-q-002",
+        "query": "branch"
+      },
+      "fixture_revision": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "upload-repair",
+      "kind": "episode",
+      "family": "bug_repair",
+      "variant": "base",
+      "retrieval_required": false,
+      "inputs": {
+        "builder": "upload-repair",
+        "task": "Fix upload() so it correctly rejects timed-out and oversized uploads."
+      },
+      "fixture_revision": "de47c4083fb7ae52158b157c912a8c09f13c27e545f79806bab6ad1146b8ee13",
+      "grants": [
+        "artifact_write",
+        "build",
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "verify_attempt",
+        "submit"
+      ],
+      "editable_paths": [
+        "upload.py"
+      ],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "verifier_receipt_completed",
+        "behavior_ids": [
+          "upload-size-limit-fixed",
+          "upload-timeout-fixed"
+        ],
+        "required_commands": [
+          {
+            "command": [
+              "{python}",
+              "check_upload.py"
+            ],
+            "expected_exit_code": 0
+          }
+        ],
+        "handoff": null
+      }
+    },
+    {
+      "id": "guest-handoff",
+      "kind": "episode",
+      "family": "agent_handoff",
+      "variant": "base",
+      "retrieval_required": false,
+      "inputs": {
+        "builder": "guest-handoff",
+        "task": "Hand off the guest-checkout regression note to a receiver."
+      },
+      "fixture_revision": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "grants": [
+        "artifact_write",
+        "build",
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "write",
+        "handoff",
+        "receive",
+        "expand",
+        "submit"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "receiver_readback_acknowledged",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": {
+          "subject": "domain_knowledge",
+          "source": "guest-session",
+          "write_count": 1,
+          "content_contains": "promo code"
+        }
+      }
+    },
+    {
+      "id": "diagnosis-handoff",
+      "kind": "episode",
+      "family": "agent_handoff",
+      "variant": "base",
+      "retrieval_required": false,
+      "inputs": {
+        "builder": "diagnosis-handoff",
+        "task": "Diagnose the deploy-pipeline regression and hand it off."
+      },
+      "fixture_revision": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "grants": [
+        "artifact_write",
+        "build",
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "last_success_diagnose",
+        "write",
+        "handoff",
+        "receive",
+        "expand",
+        "submit"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "receiver_readback_acknowledged",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": {
+          "subject": "domain_knowledge",
+          "source": "diagnosis-session",
+          "write_count": 1,
+          "content_contains": "deploy-pipeline"
+        }
+      }
+    }
+  ],
+  "declared": [
+    {
+      "family": "bug repair",
+      "case_family": "bug_repair"
+    },
+    {
+      "family": "critical late finding",
+      "case_family": null
+    },
+    {
+      "family": "repeated failure",
+      "case_family": null
+    },
+    {
+      "family": "changed dependency",
+      "case_family": null
+    },
+    {
+      "family": "explicit UI requirement",
+      "case_family": null
+    },
+    {
+      "family": "architecture seam",
+      "case_family": null
+    },
+    {
+      "family": "stale memory",
+      "case_family": null
+    },
+    {
+      "family": "contradictory correction",
+      "case_family": null
+    },
+    {
+      "family": "Unicode recovery",
+      "case_family": null
+    },
+    {
+      "family": "large log",
+      "case_family": null
+    },
+    {
+      "family": "agent handoff",
+      "case_family": "agent_handoff"
+    },
+    {
+      "family": "reuse",
+      "case_family": null
+    }
+  ],
+  "phase75_family_coverage": {
+    "open": {
+      "families": [
+        "critical late finding",
+        "repeated failure",
+        "changed dependency",
+        "explicit UI requirement",
+        "architecture seam",
+        "stale memory",
+        "contradictory correction",
+        "Unicode recovery",
+        "large log",
+        "reuse"
+      ],
+      "variants": [
+        "no reuse",
+        "misleading memory",
+        "search miss",
+        "initially irrelevant evidence later required",
+        "unsupported language",
+        "duplicate symbols",
+        "branch/worktree switch",
+        "rename",
+        "suppression",
+        "expired snapshot",
+        "long handoff"
+      ]
+    }
+  }
+}
