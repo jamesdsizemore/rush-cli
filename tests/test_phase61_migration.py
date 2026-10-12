@@ -51,6 +51,7 @@ def test_preference_store_rows_migrate_with_kind_preference(tmp_path: Path):
     old_file = tmp_path / ".rush" / "preferences.json"
     PreferenceStore(tmp_path).set("editor.theme", "dark")
     assert old_file.exists()
+    source_digest = hashlib.sha256(old_file.read_bytes()).hexdigest()
 
     migrated_count = migrate_preference_store(tmp_path)
     assert migrated_count == 1
@@ -63,7 +64,9 @@ def test_preference_store_rows_migrate_with_kind_preference(tmp_path: Path):
     assert content == {"key": "editor.theme", "value": "dark"}
 
     assert not old_file.exists()
-    assert old_file.with_name("preferences.json.migrated").exists()
+    assert old_file.with_name(
+        "preferences.json.migrated." + source_digest[:16]
+    ).exists()
 
 
 def test_invariant_graph_rows_migrate_with_kind_architectural_decision(tmp_path: Path):

@@ -104,14 +104,17 @@ def _reader_access(project_root: Path, source: str) -> tuple[Any, Path] | None:
 
 
 def _visible_current(view: Any, access: Any, artifact_id: str) -> Any:
-    """The current artifact when the shared decision shows it, else `None`."""
-    from rush.memory.retrieval import evaluate_artifact_visibility
+    """The current artifact when the shared decision shows it as current-capable
+    (never a rejected, superseded, pending or other-task row), else `None`. Anchor
+    freshness is not required: `resolve_recipe` reports applicability itself."""
+    from rush.memory.retrieval import NOT_CURRENT_REASONS, evaluate_artifact_visibility
     from rush.memory.store import _row_to_artifact, legacy_owner_scope
 
     row = view.get_current_row(artifact_id)
     if row is None:
         return None
-    if not evaluate_artifact_visibility(view, row, access=access).visible:
+    decision = evaluate_artifact_visibility(view, row, access=access)
+    if not decision.visible or NOT_CURRENT_REASONS & set(decision.reason_codes):
         return None
     try:
         return _row_to_artifact(
@@ -261,6 +264,7 @@ def resolve_recipe(
     recipe_id: str,
     current_dependencies: Mapping[str, str] | None = None,
     current_config_digest: str | None = None,
+    access: Any = None,
 ) -> dict[str, Any]:
     """MC08.2: read-only -- resolves `recipe_id`'s applicability against source on disk
     *right now*, never a cached/recorded snapshot. `required_symbols`,
@@ -270,10 +274,16 @@ def resolve_recipe(
     staleness never hides what safety checks the recipe declares (MC08 authority rule).
     """
     unknown = {"code": "E_INPUT", "message": f"unknown recipe {recipe_id!r}"}
-    authorized = _reader_access(project_root, f"recipe:{recipe_id}")
-    if authorized is None:
-        return unknown
-    access, root = authorized
+    # 72-T05 R16: a supplied access (the route's, carrying its task context) decides
+    # the row; `None` keeps the 72-T01 reader. Either way a rejected, superseded,
+    # pending or other-task row is not current.
+    if access is None:
+        authorized = _reader_access(project_root, f"recipe:{recipe_id}")
+        if authorized is None:
+            return unknown
+        access, root = authorized
+    else:
+        root = access.storage_root
     view, _state = TypedArtifactStore.open_readonly_view(root)
     if view is None:
         return unknown

@@ -220,9 +220,17 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
         {"request": {"scope": "episodic", "id": "a1", "expected_version": 1}},
         "request",
     ),
+    ("preference", {"request": {"action": "resolve", "key": "k"}}, "request"),
 ]
-assert len(MEMORY_OPERATIONS) == 22
-assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
+assert len(MEMORY_OPERATIONS) == 23
+
+
+def test_t06_memory_operations_table_matches_valid_operations():
+    """72-T05 D11: the table covers exactly the 23 `VALID_OPERATIONS`, `preference`
+    included. A test, not a module assert, so a missing operation fails this id and
+    leaves every other id of the file collectable."""
+    assert len(_MEMORY_VALID_OPERATIONS) == 23
+    assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
 
 
 @pytest.fixture(autouse=True)
@@ -302,6 +310,7 @@ def test_t06_keepgreen_memory_operation_literal_matches_valid_operations_set():
     already matches `VALID_OPERATIONS` today; T6 adds a third leg (model tags)
     that does not exist yet (see `test_t06_parity_sets_*` below)."""
     assert set(get_args(MemoryOperation)) == _MEMORY_VALID_OPERATIONS
+    assert "preference" in get_args(MemoryOperation)  # 72-T05 D11
 
 
 # ---------------------------------------------------------------------------
@@ -798,6 +807,7 @@ def test_t06_parity_sets_operation_enum_matches_every_source_of_truth():
 
     assert project_model_tags() == {op for op, _, _ in PROJECT_OPERATIONS}
     assert scan_model_tags() == {op for op, _, _ in SCAN_OPERATIONS}
+    assert "preference" in memory_model_tags()
     assert (
         memory_model_tags()
         == _MEMORY_VALID_OPERATIONS

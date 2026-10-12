@@ -15,7 +15,11 @@ from rush.config import RushConfigError, load_config
 from rush.delivery import compact
 from rush.invocation import InvocationContext, InvocationExecutor, resolve_invocation
 from rush.invocation.executor import invalid_target_result, invocation_arguments
-from rush.invocation.models import InvalidTargetError, SignatureAdaptationError
+from rush.invocation.models import (
+    InvalidTargetError,
+    ScopeWideningError,
+    SignatureAdaptationError,
+)
 from rush.invocation.targets import (
     anchor_path_value,
     assert_contained,
@@ -410,6 +414,7 @@ def make_tool_wrapper(
             )
         index = registered_root_index(strict=value is not None)
         declared = _declared_root(value, server_anchor, index)
+        requested = dict(call_args)  # `_standard_context` pops `path`
         try:
             context = _standard_context(
                 tool.name,
@@ -422,6 +427,11 @@ def make_tool_wrapper(
         except InvalidTargetError as exc:
             # T9/R9.2: malformed input is a result, never a traceback.
             return invalid_target_result(tool.name, exc)
+        except ScopeWideningError:
+            invalid = _memory_unresolvable_path(tool, requested)
+            if invalid is None:
+                raise
+            return invalid
         return context.workspace_root, lambda: exec_instance.execute(context)
 
     def serialize(value: dict[str, Any]) -> int:
@@ -451,6 +461,25 @@ def make_tool_wrapper(
     tool_mcp_wrapper.__dict__["__self__"] = tool
     tool_mcp_wrapper.__dict__["__signature__"] = public_sig
     return tool_mcp_wrapper
+
+
+def _memory_unresolvable_path(
+    tool: Any, call_args: dict[str, Any]
+) -> dict[str, Any] | None:
+    """72-T05 G4 (decisions.md:37): a `rush_memory` path that cannot be resolved at
+    all (a symlink loop) answers with `MemoryTool.run`'s shared path guard, `E_INPUT`
+    `{field: path, message: invalid project path}` with zero effects, instead of a
+    root-selection traceback. Every other scope-widening refusal is unchanged (`None`)."""
+    if getattr(tool, "name", None) != "memory" or "path" not in call_args:
+        return None
+    path = call_args["path"]
+    try:
+        Path(path).resolve()
+    except (TypeError, ValueError, OSError, RuntimeError):
+        return cast(
+            dict[str, Any], tool.run(path, operation=call_args.get("operation"))
+        )
+    return None
 
 
 def _custom_context(
@@ -734,6 +763,7 @@ def build_memory_bridge_handler(
         else:
             req.pop("session_allowlist", None)
             # Internal-only `run` keyword: no execution permission is ever granted here.
+            # 72-T05 3.12: delegated reads carry the sender's persisted task context.
             result = call(
                 tool.run,
                 path=root,
@@ -741,6 +771,7 @@ def build_memory_bridge_handler(
                 request=req,
                 session_allowlist=list(session.session_allowlist),
                 bridge_authority=(authority, session.granted_ids),
+                task_id=session.sender_task_id,
             )
         return result["raw"]
 

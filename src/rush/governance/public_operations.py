@@ -354,6 +354,15 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory archive --help",
             "admin",
         ),
+        # 72-T05 (D10/D11): consented layered preferences -- `resolve` reads, the
+        # other actions mutate, so "admin" kind with the edit/archive precedent.
+        "memory preference": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory preference --help",
+            "admin",
+        ),
         # P65-03.3 (Phase 65 §3.2): project registry operations over `ProjectTool`.
         # `list`/`show` are read-only queries ("tool" kind, matching the "memory
         # ask/recall/list" precedent); `add`/`select`/`configure`/`create`/`relink`

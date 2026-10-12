@@ -3446,11 +3446,18 @@ def memory_group(
     multiple=True,
     help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_ask_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
+    task_id: str | None,
     as_json: bool,
 ) -> None:
     """Ask the memory store a question, scoped to an explicit session allowlist."""
@@ -3462,6 +3469,7 @@ def memory_ask_cmd(
         subject=subject,
         query=query,
         session_allowlist=list(session_allowlist) or None,
+        task_id=task_id,
     )
     _render_session_result(dict(result), as_json)
 
@@ -3475,11 +3483,18 @@ def memory_ask_cmd(
     multiple=True,
     help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_recall_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
+    task_id: str | None,
     as_json: bool,
 ) -> None:
     """Recall memory artifacts, scoped to an explicit session allowlist."""
@@ -3491,6 +3506,7 @@ def memory_recall_cmd(
         subject=subject,
         query=query,
         session_allowlist=list(session_allowlist) or None,
+        task_id=task_id,
     )
     _render_session_result(dict(result), as_json)
 
@@ -3509,12 +3525,19 @@ def memory_recall_cmd(
     is_flag=True,
     help="Also return artifacts a `memory archive` call has excluded from normal recall.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_list_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
     include_archived: bool,
+    task_id: str | None,
     as_json: bool,
 ) -> None:
     """List defended memory artifacts scoped to explicit sessions."""
@@ -3527,6 +3550,7 @@ def memory_list_cmd(
         query=query,
         session_allowlist=list(session_allowlist) or None,
         include_archived=include_archived,
+        task_id=task_id,
     )
     _render_session_result(dict(result), as_json)
 
@@ -3790,6 +3814,12 @@ _MEMORY_OPERATION_HELP: dict[str, str] = {
         "require --allow-cache-write."
     ),
     "plan_checks": "Rank required checks by evidence without dropping required membership.",
+    "preference": (
+        "Resolve, record, correct, end a task's, or migrate layered preferences "
+        "(task > project > personal; explicit before inferred). Previews by default; "
+        "apply requires --allow-cache-write, and explicit writes and corrections also "
+        "require user_stated=true."
+    ),
     "last_success_diagnose": "Compare a current failure to the last successful behavior.",
     "handoff": (
         "Prepare a bounded cross-tool memory handoff (action=prepare). Requires "
@@ -3855,6 +3885,7 @@ def _build_memory_operation_command(operation: str):
     def _cmd(
         input_file: Path,
         session_allowlist: tuple[str, ...],
+        task_id: str | None,
         allow_network: bool,
         allow_download: bool,
         allow_cache_write: bool,
@@ -3876,6 +3907,9 @@ def _build_memory_operation_command(operation: str):
         }
         if owner is not None:
             extra["owner_scope"] = owner
+        if task_id is not None:
+            # 72-T05: forwarded only when given (omitted == MCP omitted).
+            extra["task_id"] = task_id
         _run_tool(
             "memory",
             _memory_logical_root(),
@@ -3907,7 +3941,7 @@ def _build_memory_operation_command(operation: str):
         help=(
             "Source to scope this operation to; repeat for multiple. Only consulted by "
             "operations that read session_allowlist (expand/related/consolidate/prepare/"
-            "resume); ignored otherwise."
+            "resume/preference); ignored otherwise."
         ),
     )(_cmd)
     if operation in _MEMORY_OWNER_OPERATIONS:
@@ -3924,6 +3958,12 @@ def _build_memory_operation_command(operation: str):
                 "or session."
             ),
         )(_cmd)
+    _cmd = click.option(
+        "--task-id",
+        "task_id",
+        default=None,
+        help="Task context (72-T05): task-bound memory is usable only under its own task.",
+    )(_cmd)
     _cmd = click.option(
         "--input",
         "input_file",
@@ -3945,6 +3985,7 @@ for _memory_op, _memory_cli_name in (
     ("intent", "intent"),
     ("recipe", "recipe"),
     ("plan_checks", "plan-checks"),
+    ("preference", "preference"),
     ("last_success_diagnose", "last-success-diagnose"),
     ("handoff", "handoff"),
     ("receive", "receive"),
@@ -5635,10 +5676,9 @@ def context_gain_cmd() -> None:
 )
 def context_persona_cmd(set_persona: str | None) -> None:
     """View or configure agent terse response persona style."""
-    from rush.memory.authorization import hold_policy_lock
+    from rush.memory.migration import PreferenceError
     from rush.memory.preference_store import PreferenceStore, get_preference_readonly
-    from rush.memory.retrieval import RouteDenial, recheck_failure, route_access
-    from rush.memory.store import legacy_owner_scope
+    from rush.memory.retrieval import RouteDenial, route_access
 
     # 72-T01 D1: the persona preference is memory (`migration:preference_store`);
     # its read and its write are authorized before any store is touched.
@@ -5650,24 +5690,18 @@ def context_persona_cmd(set_persona: str | None) -> None:
         raise click.exceptions.Exit(1)
 
     if set_persona:
-        access = route_access(
-            cwd,
-            "write",
-            apply=True,
-            owner_scope=legacy_owner_scope(cwd),
-            session_allowlist=sources,
-        )
-        if isinstance(access, RouteDenial):
-            unavailable(access.code, access.reason)
-            return
+        # 72-T05 D10 (persona): `PreferenceStore.set` authorizes itself (legacy,
+        # unavailable or policy mode); a refusal is a skipped result, exit 0.
         try:
-            with hold_policy_lock(data_root=access.data_root):
-                failure = recheck_failure(access)
-                if failure is not None:
-                    unavailable(*failure)
-                PreferenceStore().set("persona_style", set_persona)
-        except OSError:
-            unavailable("E_PERMISSION", "lock_unavailable")
+            PreferenceStore().set("persona_style", set_persona)
+        except PreferenceError as error:
+            hint = (
+                " (grant source migration:preference_store)"
+                if error.reason == "source_not_granted"
+                else ""
+            )
+            echo(f"skipped: {error.code} {error.reason}{hint}")
+            return
         echo(f"Persona style set to: {set_persona}")
         return
     access = route_access(cwd, "ask", session_allowlist=sources)

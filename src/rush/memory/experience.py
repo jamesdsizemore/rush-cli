@@ -24,7 +24,7 @@ import time
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from rush.invocation.models import InvocationContext
 from rush.memory.intent import intent_evidence as _intent_evidence
@@ -36,6 +36,9 @@ from rush.memory.store import (
     compute_content_signature,
 )
 from rush.memory.trust import default_entry_tier
+
+if TYPE_CHECKING:
+    from rush.memory.retrieval import MemoryAccess
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +400,7 @@ def recall_repair_episodes(
     conditions: Mapping[str, Any],
     session_allowlist: Iterable[str] | None,
     patch_hash: str | None = None,
+    access: MemoryAccess | None = None,
 ) -> dict[str, Any]:
     """MC06.2/MC06.3: recall prior repair episodes for `symptom`, bucketed by outcome.
 
@@ -409,10 +413,14 @@ def recall_repair_episodes(
     for retrial; entries under `"failures"` carry a `"match"` state for it. Omitting it
     never produces a `match="same"` claim -- recall never asserts an exact repeat for a
     patch it wasn't asked to compare.
+
+    72-T05 (R16): a supplied `access` decides the rows as is (its task context
+    included); `None` keeps the default access above.
     """
     from rush.memory.retrieval import read_access, read_visible
 
-    access = read_access(project_root, "ask", session_allowlist)
+    if access is None:
+        access = read_access(project_root, "ask", session_allowlist)
     if access is None:
         return {
             "code": "E_PERMISSION",
@@ -480,17 +488,20 @@ def prepare_memory(
     conditions: Mapping[str, Any],
     behavior_ids: Sequence[str] = (),
     session_allowlist: Iterable[str] | None = None,
+    access: MemoryAccess | None = None,
 ) -> dict[str, Any]:
     """MC06.3/MC07.3: read-only prepare pack -- bounded `failures`, `verified_repairs`,
     `untested_hypotheses`, `intent_evidence` and their `evidence_refs`. Executes no commands
     and never withholds or prohibits a patch; it only surfaces recorded evidence for a caller
-    to decide what to try next.
+    to decide what to try next. 72-T05 (R16): a supplied `access` decides both
+    the episodes and the intent evidence.
     """
     recalled = recall_repair_episodes(
         project_root=project_root,
         symptom=symptom,
         conditions=conditions,
         session_allowlist=session_allowlist,
+        access=access,
     )
     if behavior_ids:
         wanted = set(behavior_ids)
@@ -504,6 +515,7 @@ def prepare_memory(
         project_root=project_root,
         behavior_ids=behavior_ids,
         session_allowlist=session_allowlist,
+        access=access,
     )
     recalled["evidence_refs"] = [
         {"id": entry["id"], "version": entry["version"]}

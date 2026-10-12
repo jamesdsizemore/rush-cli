@@ -364,6 +364,43 @@ class MemoryArtifact:
     # `not_applicable`) on rows a read route returned; `None` when no decision ran.
     # Never written from this field.
     freshness: str | None = None
+    # 72-T05: the row's applicability (`active`, `rejected`, `superseded`, `pending`;
+    # `None` = a pre-T05 row, no gate) and its task binding (all three set, or none).
+    applicability: str | None = None
+    task_project_id: str | None = None
+    task_worktree_id: str | None = None
+    task_id: str | None = None
+
+
+@dataclass(frozen=True)
+class VersionBinding:
+    """72-T05: the applicability/task snapshot a new version row records
+    (`binding_recorded = 1`)."""
+
+    applicability: str | None
+    task_project_id: str | None = None
+    task_worktree_id: str | None = None
+    task_id: str | None = None
+
+
+# 72-T05: the `applicability` a correction kind writes onto its target.
+_CORRECTION_APPLICABILITY: dict[str, str] = {
+    "correct": "active",
+    "reject": "rejected",
+    "supersede": "superseded",
+}
+
+# 72-T05: the additive columns (`_migrate_applicability_columns`).
+APPLICABILITY_COLUMNS: tuple[str, ...] = (
+    "applicability",
+    "task_project_id",
+    "task_worktree_id",
+    "task_id",
+)
+VERSION_BINDING_COLUMNS: tuple[tuple[str, str], ...] = (
+    *((name, "TEXT") for name in APPLICABILITY_COLUMNS),
+    ("binding_recorded", "INTEGER"),
+)
 
 
 _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
@@ -378,6 +415,11 @@ _VERSION_TABLE_STATEMENTS: tuple[str, ...] = (
         deleted INTEGER NOT NULL DEFAULT 0,
         payload_hash TEXT,
         payload_hash_origin TEXT,
+        applicability TEXT,
+        task_project_id TEXT,
+        task_worktree_id TEXT,
+        task_id TEXT,
+        binding_recorded INTEGER,
         PRIMARY KEY (artifact_id, artifact_version)
     )
     """,
@@ -531,7 +573,8 @@ CREATE TABLE IF NOT EXISTS memory_handoff_sessions (
     sender_owner_id TEXT,
     sender_project_id TEXT,
     sender_worktree_id TEXT,
-    sender_policy_revision INTEGER
+    sender_policy_revision INTEGER,
+    sender_task_id TEXT
 );
 CREATE TABLE IF NOT EXISTS memory_handoff_receipts (
     session_id TEXT NOT NULL,
@@ -616,7 +659,11 @@ CREATE TABLE IF NOT EXISTS memory_artifacts (
     orphaned_at REAL,
     payload_hash TEXT,
     payload_hash_origin TEXT,
-    row_mac TEXT
+    row_mac TEXT,
+    applicability TEXT,
+    task_project_id TEXT,
+    task_worktree_id TEXT,
+    task_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memory_subject ON memory_artifacts(subject);
 CREATE INDEX IF NOT EXISTS idx_memory_trust ON memory_artifacts(trust_tier);
@@ -650,8 +697,9 @@ INSERT INTO memory_artifacts (
     id, family, subject, trust_tier, content, source, created_at,
     symbol_ref, content_hash, corroboration_count, promoted_at, stale,
     signature, origin_kind, origin_id, artifact_version,
-    owner_scope_kind, owner_scope_id, payload_hash, payload_hash_origin, row_mac
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    owner_scope_kind, owner_scope_id, payload_hash, payload_hash_origin, row_mac,
+    applicability, task_project_id, task_worktree_id, task_id
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 """
 
 # 72-T01 (plan §2.1 item 2): `payload_hash` is the SHA-256 of the exact persisted
@@ -771,6 +819,11 @@ ROW_MAC_COLUMNS: tuple[str, ...] = (
     "owner_scope_id",
     "origin_kind",
     "origin_id",
+    # 72-T05: NULL values are omitted, so every pre-T05 MAC stays valid.
+    "applicability",
+    "task_project_id",
+    "task_worktree_id",
+    "task_id",
 )
 _STORE_KEY_NAME = "memory_store.key"
 _STORE_KEY_TMP_PREFIX = _STORE_KEY_NAME + ".tmp-"
@@ -1517,6 +1570,7 @@ def _write_version(
     expected_version: int | None,
     tombstone: bool = False,
     subject: str | None = None,
+    binding: VersionBinding | None = None,
 ) -> int:
     """Atomically advances `artifact_id`'s version inside the caller's transaction (MC01 §6.1).
 
@@ -1531,9 +1585,13 @@ def _write_version(
     `memory_changes` row only -- it lets `list_deleted_refs()` show *what kind* of artifact a
     tombstoned id used to be without retaining any of its deleted content. Callers that don't
     care (every pre-P65-07 call site) simply omit it and get `NULL`, unchanged behavior.
+
+    72-T05: the new version row records `binding` (or, omitted, the row's current
+    applicability/task columns) with `binding_recorded = 1`.
     """
     row = conn.execute(
-        "SELECT artifact_version, content, payload_hash, payload_hash_origin "
+        "SELECT artifact_version, content, payload_hash, payload_hash_origin, "
+        "applicability, task_project_id, task_worktree_id, task_id "
         "FROM memory_artifacts WHERE id = ?",
         (artifact_id,),
     ).fetchone()
@@ -1564,10 +1622,22 @@ def _write_version(
         assert content is not None
         text = json.dumps(content)
         digest, origin = payload_digest(text), "write"
+    snapshot = (
+        (
+            binding.applicability,
+            binding.task_project_id,
+            binding.task_worktree_id,
+            binding.task_id,
+        )
+        if binding is not None
+        else (row[4], row[5], row[6], row[7])
+    )
     conn.execute(
         "INSERT INTO memory_artifact_versions "
         "(artifact_id, artifact_version, content, source, trust_tier, created_at, "
-        "deleted, payload_hash, payload_hash_origin) VALUES (?,?,?,?,?,?,?,?,?)",
+        "deleted, payload_hash, payload_hash_origin, applicability, task_project_id, "
+        "task_worktree_id, task_id, binding_recorded) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)",
         (
             artifact_id,
             new_version,
@@ -1578,6 +1648,7 @@ def _write_version(
             int(tombstone),
             digest,
             origin,
+            *snapshot,
         ),
     )
     conn.execute(
@@ -1655,6 +1726,10 @@ def _row_to_artifact(
         artifact_version=row["artifact_version"],
         owner_scope=owner_scope,
         archived_at=_row_value(row, "archived_at"),
+        applicability=_row_value(row, "applicability"),
+        task_project_id=_row_value(row, "task_project_id"),
+        task_worktree_id=_row_value(row, "task_worktree_id"),
+        task_id=_row_value(row, "task_id"),
     )
 
 
@@ -1852,6 +1927,29 @@ def artifact_version_sources(
         return read_sqlite_readonly(db, read) or {}
     except MemoryStoreUnreadableError:
         return {}
+
+
+# 72-T05: table -> additive columns. The one declaration the migration loop below
+# and the 72-T02 `writable_open_ddl_free` schema check both read.
+APPLICABILITY_MIGRATION_COLUMNS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("memory_artifacts", tuple((name, "TEXT") for name in APPLICABILITY_COLUMNS)),
+    ("memory_artifact_versions", VERSION_BINDING_COLUMNS),
+    ("memory_handoff_sessions", (("sender_task_id", "TEXT"),)),
+)
+
+
+def _migrate_applicability_columns(conn: sqlite3.Connection) -> None:
+    """72-T05 additive migration, inside the caller's transaction (no commit):
+    the current-row applicability/task columns, the version-row binding snapshot
+    and `memory_handoff_sessions.sender_task_id`, each only when absent. Existing
+    rows and versions keep NULL (`binding_recorded` NULL = pre-T05 history)."""
+    for table, columns in APPLICABILITY_MIGRATION_COLUMNS:
+        if not sqlite_has_table(conn, table):
+            continue
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, col_type in columns:
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
 
 
 HANDOFF_SENDER_COLUMNS: tuple[tuple[str, str], ...] = (
@@ -2081,6 +2179,10 @@ class TypedArtifactStore:
             self._migrate_owner_scope_columns(conn)
             self._migrate_handoff_recovery_columns(conn)
             self._migrate_binding_columns(conn)
+            # 72-T05: the additive columns in one write-locked step (no inner commit).
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
+            _migrate_applicability_columns(conn)
             self._ensure_cursor_key(conn)
             if not candidate_fts_existed:
                 self._backfill_candidate_fts(conn)
@@ -3553,6 +3655,7 @@ class TypedArtifactStore:
                     )
             if "row_mac" not in columns:
                 conn.execute("ALTER TABLE memory_artifacts ADD COLUMN row_mac TEXT")
+            _migrate_applicability_columns(conn)
             default_owner = legacy_owner_scope(root)
             ownerless = conn.execute(
                 "SELECT id FROM memory_artifacts "
@@ -3715,7 +3818,17 @@ class TypedArtifactStore:
                 "owner_scope_id": owner.id,
                 "origin_kind": stored.origin_kind,
                 "origin_id": stored.origin_id,
+                "applicability": stored.applicability,
+                "task_project_id": stored.task_project_id,
+                "task_worktree_id": stored.task_worktree_id,
+                "task_id": stored.task_id,
             },
+        )
+        binding = (
+            stored.applicability,
+            stored.task_project_id,
+            stored.task_worktree_id,
+            stored.task_id,
         )
         conn.execute(
             _INSERT_SQL,
@@ -3741,12 +3854,15 @@ class TypedArtifactStore:
                 digest,
                 "write",
                 mac,
+                *binding,
             ),
         )
         conn.execute(
             "INSERT INTO memory_artifact_versions "
             "(artifact_id, artifact_version, content, source, trust_tier, created_at, "
-            "deleted, payload_hash, payload_hash_origin) VALUES (?,?,?,?,?,?,0,?,?)",
+            "deleted, payload_hash, payload_hash_origin, applicability, "
+            "task_project_id, task_worktree_id, task_id, binding_recorded) "
+            "VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,1)",
             (
                 stored.id,
                 stored.artifact_version,
@@ -3756,6 +3872,7 @@ class TypedArtifactStore:
                 now,
                 digest,
                 "write",
+                *binding,
             ),
         )
         conn.execute(
@@ -3882,6 +3999,7 @@ class TypedArtifactStore:
         receipt_operation_id: str | None = None,
         sender: Mapping[str, Any] | None = None,
         commit_check: CommitCheck | None = None,
+        sender_task_id: str | None = None,
     ) -> None:
         """MC11 §9.0: persist one bounded-handoff session descriptor. `granted_ids` is the
         exact, immutable authorized artifact-ID set for this session -- widening scope
@@ -3895,8 +4013,9 @@ class TypedArtifactStore:
                 "(session_id, root, audience, capability_hash, granted_ids, "
                 "session_allowlist, constraints, created_at, expires_at, "
                 "sender_grant_id, sender_owner_kind, sender_owner_id, "
-                "sender_project_id, sender_worktree_id, sender_policy_revision) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "sender_project_id, sender_worktree_id, sender_policy_revision, "
+                "sender_task_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     session_id,
                     root,
@@ -3908,6 +4027,7 @@ class TypedArtifactStore:
                     created_at,
                     expires_at,
                     *(bound.get(name) for name, _type in HANDOFF_SENDER_COLUMNS),
+                    sender_task_id,
                 ),
             )
             if receipt_operation_id:
@@ -3949,6 +4069,8 @@ class TypedArtifactStore:
                 for name, _type in HANDOFF_SENDER_COLUMNS
             ),
             **{name: _row_value(row, name) for name, _type in HANDOFF_SENDER_COLUMNS},
+            # 72-T05: an older read-only schema without the column reads as no task.
+            "sender_task_id": _row_value(row, "sender_task_id"),
         }
 
     def revoke_handoff_session(
@@ -4252,6 +4374,285 @@ class TypedArtifactStore:
                 artifact.id, artifact.artifact_version, artifact.source, "promote"
             )
         return artifact, decision
+
+    def apply_correction(
+        self,
+        *,
+        access: MemoryAccess,
+        kind: str,
+        artifact_id: str,
+        expected_version: int,
+        target_content: dict[str, Any],
+        replacement_content: dict[str, Any] | None = None,
+        binding: VersionBinding,
+        supersedes: Sequence[Any] | None = None,
+        receipt_writer: Callable[[sqlite3.Connection, dict[str, Any]], None]
+        | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """72-T05 correction core: `reject`, `correct` or `supersede` one current row
+        inside one `BEGIN IMMEDIATE` under the policy lock.
+
+        Every cited ref (the primary target plus `supersedes`, normalized with the
+        primary once) is validated before the first write: visible in ordinary mode
+        (`usable_as_current` is not required), owned by `access.owner_scope`, at its
+        cited current version. `correct` appends the target version and promotes it
+        to STATED; `reject` appends the `rejected` version; `supersede` inserts the
+        replacement (v1, promoted to v2), writes one `supersedes` edge from
+        replacement@1 to every cited version and appends the target's `superseded`
+        version. A final access recheck precedes `receipt_writer` (called once with
+        every written ref); any failure rolls back every effect. Returns `{"code":
+        "OK", ...}` or `{"code", "reason"}`; exceptions roll back and propagate."""
+        from rush.memory import relations
+        from rush.memory.authorization import MemoryPolicyError, hold_policy_lock
+        from rush.memory.retrieval import recheck_failure
+
+        def refused(code: str, reason: str) -> dict[str, Any]:
+            return {"code": code, "reason": reason}
+
+        def version_ok(value: Any) -> bool:
+            return type(value) is int and value >= 1 and sqlite_integer_in_range(value)
+
+        if not isinstance(kind, str) or kind not in _CORRECTION_APPLICABILITY:
+            return refused("E_INPUT", "kind_invalid")
+        if not isinstance(artifact_id, str) or not artifact_id:
+            return refused("E_INPUT", "artifact_id_invalid")
+        if not version_ok(expected_version):
+            return refused("E_INPUT", "expected_version_invalid")
+        if not isinstance(target_content, dict) or (
+            (kind == "supersede") != isinstance(replacement_content, dict)
+        ):
+            return refused("E_INPUT", "content_invalid")
+        if not isinstance(binding, VersionBinding):
+            return refused("E_INPUT", "binding_invalid")
+        cited: list[tuple[str, int]] = [(artifact_id, expected_version)]
+        explicit: set[tuple[str, int]] = set()
+        if supersedes is not None and not isinstance(supersedes, (list, tuple)):
+            return refused("E_INPUT", "supersedes_invalid")
+        for ref in supersedes or ():
+            if not isinstance(ref, Mapping) or set(ref) != {
+                "artifact_id",
+                "artifact_version",
+            }:
+                return refused("E_INPUT", "supersedes_invalid")
+            ref_id, ref_version = ref["artifact_id"], ref["artifact_version"]
+            if not isinstance(ref_id, str) or not ref_id or not version_ok(ref_version):
+                return refused("E_INPUT", "supersedes_invalid")
+            if (ref_id, ref_version) in explicit:
+                return refused("E_INPUT", "supersedes_duplicate")
+            explicit.add((ref_id, ref_version))
+            if (ref_id, ref_version) not in cited:
+                cited.append((ref_id, ref_version))
+        if access.kind != "policy" or "write" not in access.required_operations:
+            return refused("E_PERMISSION", "policy_grant_required")
+        with ExitStack() as stack:
+            try:
+                stack.enter_context(hold_policy_lock(data_root=access.data_root))
+            except (OSError, MemoryPolicyError):
+                return refused("E_PERMISSION", "lock_unavailable")
+            failure = recheck_failure(access)
+            if failure is not None:
+                return refused(*failure)
+            if self.project_root != access.storage_root:
+                return refused("E_NOT_VISIBLE", "not_visible")
+            written: list[tuple[str, int, str, str]] = []
+            with self._connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    result = self._correction_effects(
+                        conn,
+                        relations.insert_relation_tx,
+                        access=access,
+                        kind=kind,
+                        cited=cited,
+                        target_content=target_content,
+                        replacement_content=replacement_content,
+                        binding=binding,
+                        now=now,
+                        written=written,
+                    )
+                    if result["code"] == "OK":
+                        failure = recheck_failure(access)
+                        if failure is not None:
+                            result = refused(*failure)
+                    if result["code"] != "OK":
+                        conn.rollback()
+                        return result
+                    if receipt_writer is not None:
+                        receipt_writer(
+                            conn,
+                            {
+                                "artifact_id": artifact_id,
+                                "artifact_version": result["artifact_version"],
+                                "result_refs": [
+                                    {"artifact_id": ref_id, "artifact_version": v}
+                                    for ref_id, v, _source, _op in written
+                                ],
+                                "result": result,
+                            },
+                        )
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+        for ref_id, version, source, operation in written:
+            note_committed_write(ref_id, version, source, operation)
+        return result
+
+    def _correction_effects(
+        self,
+        conn: sqlite3.Connection,
+        insert_relation: Callable[..., dict[str, Any]],
+        *,
+        access: MemoryAccess,
+        kind: str,
+        cited: list[tuple[str, int]],
+        target_content: dict[str, Any],
+        replacement_content: dict[str, Any] | None,
+        binding: VersionBinding,
+        now: float | None,
+        written: list[tuple[str, int, str, str]],
+    ) -> dict[str, Any]:
+        """`apply_correction`'s transaction body (caller owns BEGIN/commit)."""
+        from rush.memory.retrieval import evaluate_artifact_visibility
+
+        rows: dict[str, sqlite3.Row] = {}
+        for ref_id, version in cited:
+            row = conn.execute(
+                "SELECT * FROM memory_artifacts WHERE id = ?", (ref_id,)
+            ).fetchone()
+            if (
+                row is None
+                or not evaluate_artifact_visibility(
+                    self, row, access=access, mode="ordinary", now=now
+                ).visible
+                or owner_scope_for_row(row, self.project_root) != access.owner_scope
+            ):
+                return {"code": "E_NOT_VISIBLE", "reason": "not_visible"}
+            if row["artifact_version"] != version:
+                return {"code": "E_VERSION", "reason": "version_changed"}
+            rows[ref_id] = row
+        artifact_id, expected_version = cited[0]
+        row = rows[artifact_id]
+        tier = "DERIVED" if row["trust_tier"] == "STATED" else row["trust_tier"]
+        applicability = _CORRECTION_APPLICABILITY[kind]
+        target_binding = dataclasses.replace(binding, applicability=applicability)
+
+        def promote(target_id: str, version: int) -> dict[str, Any] | None:
+            _artifact, decision = promote_stored_artifact(
+                conn,
+                target_id,
+                store=self,
+                access=access,
+                user_stated=True,
+                expected_version=version,
+            )
+            if not decision.promoted:
+                return {
+                    "code": "E_INPUT",
+                    "reason": str(decision.denial_reason or "promotion_denied"),
+                }
+            written.append((target_id, version + 1, row["source"], "update"))
+            return None
+
+        replacement: dict[str, Any] | None = None
+        edge: dict[str, Any] | None = None
+        if kind == "supersede":
+            assert replacement_content is not None
+            new_id = str(uuid.uuid4())
+            stored, _evicted = self._prepare_write(
+                conn,
+                MemoryArtifact(
+                    id=new_id,
+                    family=row["family"],
+                    subject=row["subject"],
+                    trust_tier="DERIVED",
+                    content=replacement_content,
+                    source=row["source"],
+                    created_at=now if now is not None else time.time(),
+                    owner_scope=access.owner_scope,
+                    applicability="active",
+                    task_project_id=binding.task_project_id,
+                    task_worktree_id=binding.task_worktree_id,
+                    task_id=binding.task_id,
+                ),
+            )
+            self._insert_row(conn, stored)
+            written.append((new_id, 1, row["source"], "write"))
+            denied = promote(new_id, 1)
+            if denied is not None:
+                return denied
+            replacement = {"artifact_id": new_id, "artifact_version": 2}
+            for ref_id, version in cited:
+                out = insert_relation(
+                    conn,
+                    source_id=new_id,
+                    source_version=1,
+                    target_id=ref_id,
+                    target_version=version,
+                    kind="supersedes",
+                    origin_ref="correction",
+                )
+                if out.get("code") != "OK":
+                    return {
+                        "code": str(out.get("code")),
+                        "reason": str(out.get("reason") or "edge_refused"),
+                    }
+            edge = {
+                "source_id": new_id,
+                "source_version": 1,
+                "target_id": artifact_id,
+                "target_version": expected_version,
+            }
+        new_version = _write_version(
+            conn,
+            artifact_id,
+            content=target_content,
+            source=row["source"],
+            trust_tier=tier,
+            expected_version=expected_version,
+            binding=target_binding,
+        )
+        text = _persisted_text(row["content"], target_content)
+        task_columns = (
+            target_binding.task_project_id,
+            target_binding.task_worktree_id,
+            target_binding.task_id,
+        )
+        mac = next_row_mac(
+            conn,
+            self.project_root,
+            artifact_id,
+            {
+                "content": text,
+                "trust_tier": tier,
+                "applicability": applicability,
+                "task_project_id": task_columns[0],
+                "task_worktree_id": task_columns[1],
+                "task_id": task_columns[2],
+            },
+        )
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, trust_tier = ?, signature = NULL, "
+            "promoted_at = NULL, corroboration_count = 0, applicability = ?, "
+            "task_project_id = ?, task_worktree_id = ?, task_id = ?, "
+            "artifact_version = ?, row_mac = ? WHERE id = ?",
+            (text, tier, applicability, *task_columns, new_version, mac, artifact_id),
+        )
+        written.append((artifact_id, new_version, row["source"], "update"))
+        current = new_version
+        if kind == "correct":
+            denied = promote(artifact_id, new_version)
+            if denied is not None:
+                return denied
+            current = new_version + 1
+        return {
+            "code": "OK",
+            "artifact_id": artifact_id,
+            "artifact_version": current,
+            "replacement": replacement,
+            "edge": edge,
+        }
 
     def delete(
         self,

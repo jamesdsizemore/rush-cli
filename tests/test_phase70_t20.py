@@ -864,10 +864,11 @@ def test_ask_without_session_allowlist_fails_closed(tmp_path: Path) -> None:
     assert result["status"] == "skipped"
 
 
-def test_rush_memory_schema_operation_count_unchanged_at_22(tmp_path: Path) -> None:
+def test_rush_memory_schema_operation_count_at_23(tmp_path: Path) -> None:
     from rush.tools.memory import VALID_OPERATIONS
 
-    assert len(VALID_OPERATIONS) == 22
+    assert len(VALID_OPERATIONS) == 23
+    assert "preference" in VALID_OPERATIONS
     assert "overview" not in VALID_OPERATIONS
 
 

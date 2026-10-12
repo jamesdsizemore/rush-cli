@@ -486,6 +486,15 @@ class MemoryAccess:
     requested_sources: tuple[str, ...] = ()
     required_operations: frozenset[str] = frozenset()
     required_operations_order: tuple[str, ...] = ()
+    # 72-T05 3.11: the caller's task context; it changes usability, never authority.
+    task_id: str | None = None
+    # 72-T05 D25: the store this access reads or writes (the overlay owner's
+    # `<data_root>/user` store, else the project root); set by every constructor.
+    storage_root: Path = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.storage_root is None:
+            object.__setattr__(self, "storage_root", self.project_root)
 
     @classmethod
     def legacy(
@@ -496,16 +505,20 @@ class MemoryAccess:
         owner_scope: OwnerScope | None = None,
         operation: str = "ask",
         data_root: Path | None = None,
+        task_id: str | None = None,
     ) -> MemoryAccess:
         """The legacy explicit-allowlist access. An empty allowlist yields no sources,
         so every route fails closed on it."""
+        root = Path(project_root).resolve()
         return cls(
             kind="legacy_allowlist",
-            project_root=Path(project_root).resolve(),
+            project_root=root,
             operation=operation,
             sources=tuple(sorted(set(session_allowlist or ()))),
             owner_scope=owner_scope,
             data_root=data_root,
+            task_id=task_id,
+            storage_root=root,
         )
 
     @classmethod
@@ -522,6 +535,7 @@ class MemoryAccess:
         requested_sources: Iterable[str] = (),
         session_binding: str | None = None,
         data_root: Path | None = None,
+        task_id: str | None = None,
     ) -> MemoryAccess | None:
         """Policy access for one operation, or `None` when the policy denies it (a
         missing policy included). Never writes: `resolve_memory_scope` only reads."""
@@ -536,6 +550,7 @@ class MemoryAccess:
             requested_sources=requested_sources,
             session_binding=session_binding,
             data_root=data_root,
+            task_id=task_id,
         )[0]
 
     @classmethod
@@ -552,15 +567,17 @@ class MemoryAccess:
         requested_sources: Iterable[str] = (),
         session_binding: str | None = None,
         data_root: Path | None = None,
+        task_id: str | None = None,
     ) -> tuple[MemoryAccess | None, str]:
-        """`resolve()` plus the denial reason (`granted` on success)."""
+        """`resolve()` plus the denial reason (`granted` on success). D25: the
+        overlay operation set applies whenever `owner_scope` is the overlay owner."""
         try:
             required = required_operation_set(
                 operation,
                 action=action,
                 apply=apply,
                 historical=historical,
-                overlay=overlay,
+                overlay=overlay or is_overlay_owner(owner_scope, data_root),
             )
         except ValueError:
             return None, "invalid_request"
@@ -572,6 +589,7 @@ class MemoryAccess:
             requested_sources=tuple(requested_sources),
             session_binding=session_binding,
             data_root=data_root,
+            task_id=task_id,
         )
 
     @classmethod
@@ -585,6 +603,7 @@ class MemoryAccess:
         requested_sources: tuple[str, ...],
         session_binding: str | None,
         data_root: Path | None,
+        task_id: str | None = None,
     ) -> tuple[MemoryAccess | None, str]:
         from rush.memory.authorization import (
             WRITER_SOURCE_FAMILIES,
@@ -631,6 +650,11 @@ class MemoryAccess:
             owner = OwnerScope.from_value(result["owner_scope"])
         except (TypeError, ValueError):
             return None, "policy_invalid"
+        storage_root = (
+            Path(owner.id)
+            if is_overlay_owner(owner, data_root)
+            else Path(result["project_root"])
+        )
         return (
             cls(
                 kind="policy",
@@ -647,6 +671,8 @@ class MemoryAccess:
                 requested_sources=requested_sources,
                 required_operations=frozenset(required),
                 required_operations_order=required,
+                task_id=task_id,
+                storage_root=storage_root,
             ),
             "granted",
         )
@@ -666,6 +692,7 @@ class MemoryAccess:
             requested_sources=self.requested_sources,
             session_binding=self.session_binding,
             data_root=self.data_root,
+            task_id=self.task_id,
         )
 
     def recheck(self) -> Literal["ok", "changed", "denied"]:
@@ -704,6 +731,18 @@ class MemoryAccess:
         return memory_policy_mode(self.project_root, data_root=self.data_root) == (
             "legacy"
         )
+
+
+def is_overlay_owner(owner: OwnerScope | None, data_root: Path | None) -> bool:
+    """D25: `owner` is the personal-overlay owner (`user_overlay_owner_scope()`)."""
+    if owner is None:
+        return False
+    from rush.memory.authorization import MemoryPolicyError, user_overlay_owner_scope
+
+    try:
+        return owner == user_overlay_owner_scope(data_root=data_root)
+    except MemoryPolicyError:
+        return False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -926,6 +965,7 @@ def route_access(
     session_allowlist: Iterable[str] | None = None,
     owner_scope: OwnerScope | None = None,
     data_root: Path | None = None,
+    task_id: str | None = None,
 ) -> MemoryAccess | RouteDenial:
     """D1: the one route-resolution helper. `policy` mode resolves the grant (an
     allowlist only narrows it), `legacy` mode builds the explicit-allowlist access,
@@ -944,6 +984,7 @@ def route_access(
             owner_scope=owner_scope,
             operation=operation,
             data_root=data_root,
+            task_id=task_id,
         )
     access, why = MemoryAccess.resolve_with_reason(
         project_root,
@@ -954,6 +995,7 @@ def route_access(
         owner_scope=owner_scope,
         requested_sources=allowlist,
         data_root=data_root,
+        task_id=task_id,
     )
     return access if access is not None else RouteDenial("E_PERMISSION", why)
 
@@ -996,6 +1038,7 @@ def read_access(
     data_root: Path | None = None,
     action: str | None = None,
     historical: bool = False,
+    task_id: str | None = None,
 ) -> MemoryAccess | None:
     """72-T01 read convention shared by `MemoryTool` and the learned-advice readers:
     `route_access` with a `RouteDenial` (or a source-less legacy access) as `None`,
@@ -1008,6 +1051,7 @@ def read_access(
         session_allowlist=session_allowlist,
         owner_scope=owner_scope,
         data_root=data_root,
+        task_id=task_id,
     )
     if isinstance(result, RouteDenial) or not result.sources:
         return None
@@ -1062,22 +1106,19 @@ def _row_owner(row: sqlite3.Row, project_root: Path) -> OwnerScope | None:
 
 
 def _root_allows(store: TypedArtifactStore, access: MemoryAccess) -> bool:
-    """§3 step 2 root check. X1: the personal-overlay access (`overlay_read` with the
-    overlay owner) reads only the store rooted at `<data_root>/user`; every other
-    access needs `access.project_root == store.project_root`."""
-    if access.operation == "overlay_read" and access.owner_scope is not None:
-        from rush.memory.authorization import (
-            MemoryPolicyError,
-            user_overlay_owner_scope,
+    """§3 step 2 root check (72-T05 D25): the store must be the access's
+    `storage_root`; a storage root other than the project root (the personal overlay
+    store) needs a policy access resolved for `overlay_read` or for `write` alone."""
+    return store.project_root == access.storage_root and (
+        access.storage_root == access.project_root
+        or (
+            access.kind == "policy"
+            and (
+                "overlay_read" in access.required_operations
+                or access.required_operations == frozenset({"write"})
+            )
         )
-
-        try:
-            overlay = user_overlay_owner_scope(data_root=access.data_root)
-        except MemoryPolicyError:
-            return False
-        if access.owner_scope == overlay:
-            return str(store.project_root) == overlay.id
-    return access.project_root == store.project_root
+    )
 
 
 def _access_allows(
@@ -1345,10 +1386,55 @@ def _reference(
         "integrity": integrity,
         "payload_hash": _row_value(row, "payload_hash"),
         "reason_codes": list(informational),
+        "applicability": _row_value(row, "applicability"),
+        "task_binding": _task_binding(row),
     }
     if binding == "unbound":
         reference["store_binding"] = "unbound"
     return reference
+
+
+_APPLICABILITY_REASONS = {
+    "rejected": "applicability_rejected",
+    "superseded": "applicability_superseded",
+    "pending": "applicability_pending",
+}
+# 72-T05: rows a plain listing never shows as current artifacts (it carries no
+# reasons); `PreferenceStore.resolve` reads them through the decision instead.
+NOT_CURRENT_REASONS = frozenset(
+    {*_APPLICABILITY_REASONS.values(), "applicability_invalid", "task_mismatch"}
+)
+
+
+def _task_binding(row: sqlite3.Row) -> list[Any] | None:
+    binding = [
+        _row_value(row, "task_project_id"),
+        _row_value(row, "task_worktree_id"),
+        _row_value(row, "task_id"),
+    ]
+    return binding if binding[2] is not None else None
+
+
+def _applicability_reasons(row: sqlite3.Row, access: MemoryAccess) -> list[str]:
+    """72-T05 3.3: non-blocking reasons that keep a row visible but not usable as
+    current: a non-active applicability, or a task binding other than the access's
+    own (project, worktree, task)."""
+    reasons: list[str] = []
+    applicability = _row_value(row, "applicability")
+    if applicability in _APPLICABILITY_REASONS:
+        reasons.append(_APPLICABILITY_REASONS[applicability])
+    elif applicability not in (None, "active"):
+        reasons.append("applicability_invalid")
+    binding = _task_binding(row)
+    if binding is not None and not (
+        access.kind == "policy"
+        and access.task_id is not None
+        and access.project_id is not None
+        and access.worktree_id is not None
+        and binding == [access.project_id, access.worktree_id, access.task_id]
+    ):
+        reasons.append("task_mismatch")
+    return reasons
 
 
 def _decide(
@@ -1397,6 +1483,7 @@ def _decide(
                 *blocking,
                 *(r for r in freshness_reasons if r not in informational),
                 *derived_reasons,
+                *_applicability_reasons(row, access),
             }
         )
     )
@@ -1504,8 +1591,10 @@ def visible_artifacts(
             memo=memo,
             verifier=verifier,
         )
-        if not decision.visible or (
-            mode == "ordinary" and not decision.usable_as_current
+        if (
+            not decision.visible
+            or (mode == "ordinary" and not decision.usable_as_current)
+            or (mode == "inspect" and NOT_CURRENT_REASONS & set(decision.reason_codes))
         ):
             continue
         try:
@@ -1536,7 +1625,7 @@ def read_visible(
     one result list per query. A missing, old or unreadable store reads nothing and
     creates nothing."""
     pending = list(queries)
-    view, _state = TypedArtifactStore.open_readonly_view(project_root)
+    view, _state = TypedArtifactStore.open_readonly_view(access.storage_root)
     if view is None:
         return [[] for _ in pending]
     memo = SourceValidationMemo()
@@ -1694,6 +1783,7 @@ def _cursor_binding(
     subject: str,
     query: str,
     sources: Sequence[str],
+    task_id: str | None = None,
 ) -> bytes:
     """72-T02: the digest a page token is bound to. Any change to the scope, the query or
     the ranking makes every earlier token fail closed (`E_RESTART`). R3: the policy
@@ -1708,6 +1798,7 @@ def _cursor_binding(
         "subject": subject,
         "query": query,
         "sources": sorted(sources),
+        "task_id": task_id,
         "archive_mode": "active",
         "ranking_version": _RANKING_VERSION,
     }
@@ -2408,6 +2499,7 @@ def recall_page(
         subject=subject,
         query=query,
         sources=allowed_sources,
+        task_id=access.task_id,
     )
     if cursor is None:
         scan_offset = 0

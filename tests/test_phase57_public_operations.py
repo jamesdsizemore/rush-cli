@@ -201,8 +201,8 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
         manifest_data = tomllib.load(f)
 
     operations = manifest_data.get("operations", [])
-    assert len(operations) == 194
-    assert manifest_data.get("manifest", {}).get("total_operations") == 194
+    assert len(operations) == 195
+    assert manifest_data.get("manifest", {}).get("total_operations") == 195
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -237,19 +237,19 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
             declared_transports[op_id] = "mcp"
 
     # Phase 70 T25: cli.help added (cli-only admin). Governance generator fix:
-    # `gain` is a cli-only alias of `context gain`. Total 194: 63 dual-transport,
-    # 113 cli-only, 18 mcp-only.
-    assert len(declared_transports) == 194
+    # `gain` is a cli-only alias of `context gain`. 72-T05 adds the cli-only
+    # `memory preference`. Total 195: 63 dual-transport, 114 cli-only, 18 mcp-only.
+    assert len(declared_transports) == 195
     assert sum(1 for t in declared_transports.values() if t == "both") == 63
-    assert sum(1 for t in declared_transports.values() if t == "cli") == 113
+    assert sum(1 for t in declared_transports.values() if t == "cli") == 114
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 194
+    assert report["total"] == 195
     assert report["tool_count"] == 81
-    assert report["admin_count"] == 95
+    assert report["admin_count"] == 96
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
     assert len(report["errors"]) == 0
@@ -422,8 +422,8 @@ def test_only_tool_pairs_require_semantic_parity() -> None:
     #    routed through the shared "rush_memory" MCP tool per its RawResult contract)
     #    are allowed both transports, unlike every other admin operation.
     admin_ops = [op for op in operations if op["kind"] == "admin"]
-    # Phase 70 T25: 94->95 (cli.help added, kind=admin).
-    assert len(admin_ops) == 95
+    # Phase 70 T25: 94->95 (cli.help added, kind=admin). 72-T05: 95->96.
+    assert len(admin_ops) == 96
     _dual_transport_admin_ids = {"admin.memory_promote", "admin.memory_write"}
     for op in admin_ops:
         if op["id"] not in _dual_transport_admin_ids:

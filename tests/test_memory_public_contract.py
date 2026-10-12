@@ -174,7 +174,10 @@ _SESSION_SCOPED_OPERATIONS = {"expand", "related", "prepare", "resume"}
 
 
 def _mcp_call(
-    root: Path, operation: str, request: dict[str, Any], **permission_kwargs: bool
+    root: Path,
+    operation: str,
+    request: dict[str, Any],
+    **permission_kwargs: bool | str,
 ) -> dict[str, Any]:
     tool = MemoryTool()
     executor = InvocationExecutor()
@@ -1084,3 +1087,175 @@ def test_arbitrary_nonempty_user_agent_labels_accepted_structurally_and_persist_
             (stored_id,),
         ).fetchone()
     assert row == ("agent", "some-arbitrary-agent-label-123")
+
+
+# --- 72-T05: `--task-id` / `task_id` parity ------------------------------------------
+
+
+def _policy_task_roots(tmp_path: Path) -> tuple[Path, Path]:
+    """Two identically-seeded registered projects (one per transport) with a project
+    grant: `A1`/`A2` plain rows and a task-bound row `T1` for task "A"."""
+    from rush.memory import authorization as auth
+    from rush.setup.provision import default_data_root
+
+    data_root = default_data_root()
+    roots: list[Path] = []
+    for name in ("mcp_policy_root", "cli_policy_root"):
+        root = tmp_path / name
+        root.mkdir()
+        register_project(root, data_root=data_root)
+        root = root.resolve()
+        _seed_store(root)
+        revision = int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        )
+        issued = auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=OwnerScope("project", str(root)),
+            approved_sources=["s1"],
+            allowed_operations=["ask", "expand", "list", "write"],
+            expected_policy_revision=revision,
+            consent=True,
+            data_root=data_root,
+        )
+        TypedArtifactStore(root).write(
+            MemoryArtifact(
+                id="T1",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"body": "seed task"},
+                source="s1",
+                created_at=time.time(),
+                task_project_id=issued["project_id"],
+                task_worktree_id=issued["worktree_id"],
+                task_id="A",
+            )
+        )
+        roots.append(root)
+    return roots[0], roots[1]
+
+
+def _cli_dedicated(
+    root: Path, leaf: str, *args: str, flags: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    old_cwd = os.getcwd()
+    os.chdir(root)
+    try:
+        result = CliRunner().invoke(
+            cli, ["memory", leaf, "domain_knowledge", "seed", "--json", *flags]
+        )
+    finally:
+        os.chdir(old_cwd)
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        result.output
+    )
+    return json.loads(result.output)  # type: ignore[no-any-return]
+
+
+def _mcp_dedicated(root: Path, operation: str, **kwargs: Any) -> dict[str, Any]:
+    tool = MemoryTool()
+    executor = InvocationExecutor()
+    executor.register("memory", tool.__call__)
+    wrapper = make_tool_wrapper(tool, executor)
+    return dict(
+        wrapper(
+            path=root,
+            operation=operation,
+            subject="domain_knowledge",
+            query="seed",
+            **kwargs,
+        )
+    )
+
+
+# `_policy_task_roots` seeds the two transports' projects separately, so these differ by
+# construction: row timestamps, the root path in `owner_scope.id`, the project and
+# worktree ids on a task-bound row, and the MCP-only `metadata.scope`.
+_SEEDED_ROOT_FIELDS = ("created_at", "task_project_id", "task_worktree_id")
+
+
+def _seeded_root_view(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """`_normalized` minus what two separately seeded roots legitimately differ in."""
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, dict):
+            out = {
+                k: scrub(v) for k, v in value.items() if k not in _SEEDED_ROOT_FIELDS
+            }
+            owner = out.get("owner_scope")
+            if isinstance(owner, dict):
+                out["owner_scope"] = {k: v for k, v in owner.items() if k != "id"}
+            return out
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        return value
+
+    view: dict[str, Any] = scrub(_normalized(operation, payload))
+    view["metadata"] = {
+        k: v for k, v in (view.get("metadata") or {}).items() if k != "scope"
+    }
+    return view
+
+
+def _delivered_ids(payload: dict[str, Any]) -> set[str]:
+    """Item ids of a dedicated-leaf result: `raw` is a list for the legacy `ask` and a
+    page dict (`raw.data.items`) for the others."""
+    raw = payload["raw"]
+    items = raw if isinstance(raw, list) else raw["data"]["items"]
+    return {i["id"] for i in items}
+
+
+def test_cli_mcp_task_id_parity(tmp_path: Path) -> None:
+    """`--task-id A` on every task-aware leaf equals MCP `task_id="A"`, and omitting it
+    equals MCP with `task_id` omitted; the task-bound row `T1` is delivered only with
+    "A"."""
+    mcp_root, cli_root = _policy_task_roots(tmp_path)
+
+    for leaf in ("ask", "recall", "list"):
+        with_task_cli = _cli_dedicated(cli_root, leaf, flags=("--task-id", "A"))
+        with_task_mcp = _mcp_dedicated(mcp_root, leaf, task_id="A")
+        assert _seeded_root_view(leaf, with_task_cli) == _seeded_root_view(
+            leaf, with_task_mcp
+        ), leaf
+        without_cli = _cli_dedicated(cli_root, leaf)
+        without_mcp = _mcp_dedicated(mcp_root, leaf)
+        assert _seeded_root_view(leaf, without_cli) == _seeded_root_view(
+            leaf, without_mcp
+        ), leaf
+        delivered = _delivered_ids(with_task_cli)
+        plain = _delivered_ids(without_cli)
+        assert "T1" in delivered and "T1" in _delivered_ids(with_task_mcp), leaf
+        assert "T1" not in plain, leaf
+        assert plain <= delivered, leaf
+
+    leaves = (
+        ("expand", "expand", {"id": "T1", "version": 1}),
+        ("related", "related", {"id": "T1", "version": 1}),
+        ("resume", "resume", _request_for("resume")),
+        ("intent", "intent", _request_for("intent")),
+        ("recipe", "recipe", _request_for("recipe")),
+    )
+    for operation, cli_name, request in leaves:
+        cli_a = _cli_call(
+            cli_root, cli_name, operation, request, flags=("--task-id", "A")
+        )
+        mcp_a = _mcp_call(mcp_root, operation, request, task_id="A")
+        assert _seeded_root_view(operation, cli_a) == _seeded_root_view(
+            operation, mcp_a
+        ), operation
+        cli_none = _cli_call(cli_root, cli_name, operation, request)
+        mcp_none = _mcp_call(mcp_root, operation, request)
+        assert _seeded_root_view(operation, cli_none) == _seeded_root_view(
+            operation, mcp_none
+        ), operation
+    expand_a = _cli_call(
+        cli_root,
+        "expand",
+        "expand",
+        {"id": "T1", "version": 1},
+        flags=("--task-id", "A"),
+    )
+    expand_none = _cli_call(cli_root, "expand", "expand", {"id": "T1", "version": 1})
+    assert expand_a["raw"]["code"] == "OK"
+    assert expand_none["raw"]["code"] == "E_NOT_VISIBLE"

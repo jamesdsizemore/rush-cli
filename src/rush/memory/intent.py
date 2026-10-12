@@ -89,14 +89,16 @@ def _reader_access(project_root: Path, source: str) -> tuple[Any, Path] | None:
 
 
 def _visible_current(view: Any, access: Any, artifact_id: str) -> Any:
-    """The current artifact when the shared decision shows it, else `None`."""
-    from rush.memory.retrieval import evaluate_artifact_visibility
+    """The current artifact when the shared decision shows it as current-capable
+    (never a rejected, superseded, pending or other-task row, 72-T05), else `None`."""
+    from rush.memory.retrieval import NOT_CURRENT_REASONS, evaluate_artifact_visibility
     from rush.memory.store import _row_to_artifact, legacy_owner_scope
 
     row = view.get_current_row(artifact_id)
     if row is None:
         return None
-    if not evaluate_artifact_visibility(view, row, access=access).visible:
+    decision = evaluate_artifact_visibility(view, row, access=access)
+    if not decision.visible or NOT_CURRENT_REASONS & set(decision.reason_codes):
         return None
     try:
         return _row_to_artifact(
@@ -323,17 +325,28 @@ def check_intent(
     project_root: Path,
     intent_id: str,
     current_revision: str | None = None,
+    access: Any = None,
 ) -> dict[str, Any]:
     """MC07.3: read-only -- exact-revision execution evidence for one intent's `check_refs`,
     or `"UNRESOLVED"`. Never launches a command; a stale reference, an unrecognized
     label/tag record, a behavior-ID mismatch, or a revision mismatch (when `current_revision`
     is given) is silently skipped, never treated as proof.
+
+    72-T05 (R16): a supplied `access` (the operation's access, carrying its task
+    context) decides the intent row (visible and usable as current); `None` keeps the
+    72-T01 shared decision for the intent's own source.
     """
     unknown = {"code": "E_INPUT", "message": f"unknown intent {intent_id!r}"}
-    authorized = _reader_access(project_root, f"intent:{intent_id}")
-    if authorized is None:
-        return unknown
-    access, root = authorized
+    if access is None:
+        authorized = _reader_access(project_root, f"intent:{intent_id}")
+        if authorized is None:
+            return unknown
+        access, root = authorized
+    else:
+        try:
+            root = Path(project_root).resolve()
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return unknown
     view, _state = TypedArtifactStore.open_readonly_view(root)
     if view is None:
         return unknown
@@ -393,6 +406,7 @@ def intent_evidence(
     project_root: Path,
     behavior_ids: Sequence[str] = (),
     session_allowlist: Iterable[str] | None = None,
+    access: Any = None,
 ) -> list[dict[str, Any]]:
     """MC07.3: read-only -- the current intent record (refs only, not resolved evidence) for
     each of `behavior_ids`, for `prepare_memory` to surface without executing anything.
@@ -401,12 +415,14 @@ def intent_evidence(
     the legacy access form (no owner filter); otherwise the memory policy at the default
     data root decides, and no grant fails closed, matching `recall_repair_episodes()`.
     Every record goes through the shared decision (ordinary mode) over a read-only view.
+    72-T05 (R16): a supplied `access` is used as is (its task context included).
     """
     from rush.memory.retrieval import read_access
 
     if not behavior_ids:
         return []
-    access = read_access(project_root, "ask", session_allowlist)
+    if access is None:
+        access = read_access(project_root, "ask", session_allowlist)
     if access is None:
         return []
     return intent_records_under(project_root, behavior_ids, access)

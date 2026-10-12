@@ -12309,6 +12309,21 @@ def test_t01_overlay_storage_root_never_project_route(
     (overlay_root / "sub").mkdir(exist_ok=True)
     store = TypedArtifactStore(overlay_root)
     _row(store, "p1", overlay_owner, "mk-p1", source=OVERLAY_SOURCE)
+    _row(
+        store,
+        "pref-p1",
+        overlay_owner,
+        "mk-pref",
+        source=OVERLAY_SOURCE,
+        subject="preference",
+        content={
+            "key": "p1.key",
+            "value": "p1-value",
+            "scope": "personal",
+            "authority": "inferred",
+            "applicability": "active",
+        },
+    )
     if policy == "other_project_grant":
         other = _registered(tmp_path / "other", data_root)
         _grant(auth, other, ALICE, data_root, ops=FULL_OPS)
@@ -12333,6 +12348,41 @@ def test_t01_overlay_storage_root_never_project_route(
         assert _reason_of(result) == "overlay_storage_root", name
         assert "mk-p1" not in _dump(result.get("raw")), name
         assert "overlay write" not in _dump(result.get("raw")), name
+    # 72-T05: every `preference` action, preview and apply (`user_stated=True`), over
+    # the same roots: D1 row 1a, no overlay value, overlay DB and file list unchanged.
+    permissions = ExecutionPermissions(cache_write=True)
+    preference_requests: dict[str, dict[str, Any]] = {
+        "resolve": {"key": "p1.key"},
+        "record": {
+            "key": "k",
+            "value": "v",
+            "scope": "project",
+            "authority": "explicit",
+            "source": "prefs",
+        },
+        "correct": {
+            "artifact_id": "x",
+            "layer": "project",
+            "kind": "correct",
+            "reason": "r",
+            "expected_version": 1,
+            "value": "v",
+        },
+        "end_task": {"task_id": "T", "expected_versions": {}},
+        "migrate": {"preview_digest": "0" * 64},
+    }
+    for action, fields in preference_requests.items():
+        for apply in (False, True):
+            body: dict[str, Any] = {"action": action, **fields}
+            if action != "resolve":
+                body.update(apply=apply, user_stated=True)
+            result = MemoryTool().run(
+                target, operation="preference", request=body, permissions=permissions
+            )
+            cell = f"preference-{action}-{apply}"
+            assert _code_of(result) == "E_PERMISSION", (cell, _dump(_rd(result)))
+            assert _reason_of(result) == "overlay_storage_root", cell
+            assert "p1-value" not in _dump(result.get("raw")), cell
     from rush.memory.authorization import MemoryPolicyError
 
     for user_stated in (True, False):
@@ -12347,6 +12397,614 @@ def test_t01_overlay_storage_root_never_project_route(
     assert (
         _nn(TypedArtifactStore(overlay_root).get_current("p1")).trust_tier == "DERIVED"
     )
+
+    # Control: a project holding an overlay-owner grant reads `p1` through the overlay.
+    holder = _registered(tmp_path / "holder", data_root)
+    _grant(
+        auth,
+        holder,
+        overlay_owner,
+        data_root,
+        sources=(OVERLAY_SOURCE,),
+        ops=("overlay_read", "list", "expand"),
+    )
+    read = MemoryTool().run(
+        holder, operation="preference", request={"action": "resolve", "key": "p1.key"}
+    )
+    assert _code_of(read) == "OK", _dump(_rd(read))
+    layers = _rd(read)["data"]["layers"]
+    assert layers["personal"]["state"] == "read"
+    advice = [
+        ref["value"]
+        for item in _rd(read)["data"]["preferences"]
+        for ref in item["advice"]
+    ]
+    assert advice == ["p1-value"]
+
+
+# --- 72-T05: G2a flips of the 72-T02/T03/T04 route matrices --------------------
+#
+# 72-T05 produces the overlay owner shape (`owner_scope == user_overlay_owner_scope()`;
+# no `overlay` request field exists, plan amendment A2) and the `rejected` / `pending`
+# `applicability` row states. The cells below are the 72-T05 side of the
+# `test_t0{2,3,4}_route_mode_matrix` tables: the D25 route rule (T05 brief 3.2) for the
+# overlay form, and exclusion from ordinary delivery (brief 3.3) for the two row states.
+# 72-T02/T03/T04 contribute their own cells to the same-named tests; the cell ids here
+# are prefixed `T05-` so the two sets never collide.
+
+
+@dataclasses.dataclass(frozen=True)
+class _T05World:
+    data_root: Path
+    owner: OwnerScope
+    overlay_root: Path
+    project: Path
+    auth: Any
+
+    @property
+    def project_db(self) -> Path:
+        return self.project / ".rush" / "memory.db"
+
+    def effects(self) -> dict[str, Any]:
+        """The project tree and db, and the whole data root (overlay store included)."""
+        return _effects(self.project, self.data_root)
+
+    def grant(self, ops: tuple[str, ...]) -> None:
+        _grant(
+            self.auth,
+            self.project,
+            self.owner,
+            self.data_root,
+            sources=(OVERLAY_SOURCE,),
+            ops=ops,
+        )
+
+
+def _t05_world(tmp_path: Path, *, edge: bool = False) -> _T05World:
+    """A registered project and an overlay store holding `p1` (plus `p2` and the edge
+    `p1 -> p2` at their current versions when `edge`). No grant yet."""
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    owner = auth.user_overlay_owner_scope(data_root=data_root)
+    overlay_root = data_root / "user"
+    overlay_root.mkdir(parents=True, exist_ok=True)
+    store = TypedArtifactStore(overlay_root)
+    _row(store, "p1", owner, "mk-p1", source=OVERLAY_SOURCE)
+    if edge:
+        _row(store, "p2", owner, "mk-p2", source=OVERLAY_SOURCE)
+        _t05_edge(store.db_path, "p1", "p2")
+    store.close()
+    project = _registered(tmp_path / "project", data_root)
+    return _T05World(data_root, owner, overlay_root, project, auth)
+
+
+def _t05_edge(db: Path, source_id: str, target_id: str) -> None:
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.execute(
+            "INSERT INTO memory_relations (source_id, source_version, target_id, "
+            "target_version, kind, origin_ref, created_at) VALUES (?, 1, ?, 1, ?, NULL, ?)",
+            (source_id, target_id, "relates_to", time.time()),
+        )
+        conn.commit()
+
+
+def _t05_row(
+    store: TypedArtifactStore,
+    artifact_id: str,
+    owner: OwnerScope,
+    marker: str,
+    *,
+    source: str = "source-a",
+    applicability: str | None = None,
+    symbol_ref: str | None = None,
+    content_hash: str | None = None,
+    origin: tuple[str, str] | None = None,
+) -> MemoryArtifact:
+    """`_row` with the 72-T05 `applicability` state and an optional origin. The fields
+    go through a dict so the module type-checks before and after `applicability`
+    exists on `MemoryArtifact`."""
+    fields: dict[str, Any] = {
+        "id": artifact_id,
+        "family": "memory",
+        "subject": SUBJECT,
+        "trust_tier": "DERIVED",
+        "content": {"text": f"needle {marker}"},
+        "source": source,
+        "created_at": time.time(),
+        "symbol_ref": symbol_ref,
+        "content_hash": content_hash,
+        "origin_kind": None if origin is None else origin[0],
+        "origin_id": None if origin is None else origin[1],
+        "owner_scope": owner,
+        "applicability": applicability,
+    }
+    return store.write(MemoryArtifact(**fields))
+
+
+_T05_COMPACT = ("ask", "recall", "list")
+
+
+def _t05_read(
+    route: str, root: Path, owner: OwnerScope, *, source: str, artifact_id: str
+) -> Any:
+    """One ordinary read of `route` (`ask`/`recall`/`list` compact, the `*_legacy`
+    forms, or `expand` of `artifact_id` at version 1) as `owner` over `source`."""
+    tool = MemoryTool()
+    if route == "expand":
+        return tool.run(
+            root,
+            operation="expand",
+            session_allowlist=[source],
+            owner_scope=owner.as_dict(),
+            request={"id": artifact_id, "version": 1},
+        )
+    extra: dict[str, Any] = {}
+    if route in _T05_COMPACT:
+        extra["request"] = {"view": "compact"}
+    return tool.run(
+        root,
+        operation=cast(MemoryOperation, route.removesuffix("_legacy")),
+        subject=SUBJECT,
+        query="needle",
+        session_allowlist=[source],
+        owner_scope=owner.as_dict(),
+        **extra,
+    )
+
+
+def _t05_ok(route: str, result: Any) -> None:
+    if route in {"ask_legacy", "recall_legacy", "list_legacy"}:
+        assert result["status"] == "ok", _dump(result)
+    else:
+        assert _code_of(result) == "OK", _dump(_rd(result))
+
+
+def _t05_seen(route: str, result: Any) -> list[str]:
+    """The compact item ids, or for the other forms the `mk-<id>` markers present."""
+    if route in _T05_COMPACT:
+        return [item["id"] for item in _items(result)]
+    text = _dump(result)
+    # An omitted `representation` is base64 (72-T02 B20): decode before looking.
+    for blob in re.findall(r'"content_base64": "([A-Za-z0-9+/=]+)"', text):
+        text += base64.b64decode(blob).decode("utf-8", "replace")
+    return [m for m in ("mk-p1", "mk-p2", "mk-a1", "mk-a2", "mk-a3") if m in text]
+
+
+def _t05_expected(route: str, *ids: str) -> list[str]:
+    return list(ids) if route in _T05_COMPACT else [f"mk-{i}" for i in ids]
+
+
+def _t05_denied(result: Any, code: str, reason: str, *hidden: str) -> None:
+    assert _code_of(result) == code, _dump(result)
+    assert _reason_of(result) == reason, _dump(result)
+    text = _dump(result)
+    for marker in hidden:
+        assert marker not in text, marker
+
+
+def _t05_params(
+    routes: tuple[str, ...], cells: tuple[tuple[str, str], ...]
+) -> list[Any]:
+    return [
+        pytest.param(route, column, value, id=f"T05-{route}-{column}={value}")
+        for route in routes
+        for column, value in cells
+    ]
+
+
+_T05_READ_ROUTES = (
+    "ask",
+    "recall",
+    "list",
+    "ask_legacy",
+    "recall_legacy",
+    "list_legacy",
+    "expand",
+)
+
+
+@pytest.mark.parametrize(
+    ("route", "column", "value"),
+    _t05_params(
+        _T05_READ_ROUTES,
+        (
+            ("access_form", "overlay"),
+            ("grant_ops", "missing_overlay_read"),
+            ("row_state", "rejected"),
+            ("row_state", "pending"),
+        ),
+    ),
+)
+def test_t05_read_route_applicability_matrix(
+    route: str, column: str, value: str, tmp_path: Path
+) -> None:
+    """72-T05 cells of the 72-T02 read matrix. `access_form=overlay`: an
+    overlay-owner request with `{overlay_read, list|expand}` reads `D/user` rows, opens
+    no project store and changes nothing; without `overlay_read` it is
+    `E_PERMISSION operation_not_granted`. `row_state=rejected|pending`: the row is
+    absent from ordinary delivery and an ordinary `expand` of it is `E_NOT_VISIBLE`."""
+    world = _t05_world(tmp_path)
+    if column == "access_form":
+        world.grant(("overlay_read", "list", "expand"))
+        before = world.effects()
+        result = _t05_read(
+            route, world.project, world.owner, source=OVERLAY_SOURCE, artifact_id="p1"
+        )
+        _t05_ok(route, result)
+        assert _t05_seen(route, result) == _t05_expected(route, "p1")
+        assert not world.project_db.exists()
+        assert world.effects() == before
+    elif column == "grant_ops":
+        world.grant(("list", "expand"))
+        before = world.effects()
+        result = _t05_read(
+            route, world.project, world.owner, source=OVERLAY_SOURCE, artifact_id="p1"
+        )
+        _t05_denied(result, "E_PERMISSION", "operation_not_granted", "mk-p1")
+        assert world.effects() == before
+    else:
+        store = TypedArtifactStore(world.project)
+        _t05_row(store, "a1", ALICE, "mk-a1")
+        _t05_row(store, "a2", ALICE, "mk-a2", applicability=value)
+        store.close()
+        _grant(
+            world.auth,
+            world.project,
+            ALICE,
+            world.data_root,
+            ops=("ask", "expand", "list"),
+        )
+        before = world.effects()
+        if route == "expand":
+            hidden = _t05_read(
+                route, world.project, ALICE, source="source-a", artifact_id="a2"
+            )
+            assert _code_of(hidden) == "E_NOT_VISIBLE", _dump(hidden)
+            assert "mk-a2" not in _dump(hidden)
+            result = _t05_read(
+                route, world.project, ALICE, source="source-a", artifact_id="a1"
+            )
+        else:
+            result = _t05_read(
+                route, world.project, ALICE, source="source-a", artifact_id="a1"
+            )
+        _t05_ok(route, result)
+        assert _t05_seen(route, result) == _t05_expected(route, "a1")
+        assert world.effects() == before
+
+
+_T05_OWNER_ROUTES = (
+    "link",
+    "consolidate",
+    "write_preview",
+    "write_apply",
+    "edit_preview",
+    "edit_apply",
+)
+
+
+@pytest.mark.parametrize(
+    ("route", "column", "value"),
+    [
+        *_t05_params(
+            ("related",),
+            (
+                ("access_form", "overlay"),
+                ("grant_ops", "missing_overlay_read"),
+                ("row_state", "rejected"),
+                ("row_state", "pending"),
+            ),
+        ),
+        *_t05_params(
+            _T05_OWNER_ROUTES,
+            (("access_form", "overlay"), ("access_form", "overlay_no_grant")),
+        ),
+        *_t05_params(
+            ("archive_preview", "delete_preview"), (("access_form", "overlay"),)
+        ),
+        *_t05_params(
+            ("archive_apply", "delete_apply"),
+            (("access_form", "overlay"), ("grant_ops", "missing_write")),
+        ),
+    ],
+)
+def test_t05_owner_route_applicability_matrix(
+    route: str, column: str, value: str, tmp_path: Path
+) -> None:
+    """72-T05 cells of the 72-T03 relation and writer matrix (T05 brief 3.2).
+    `related` reads the overlay under `{overlay_read, list}`; a `rejected` or `pending`
+    neighbor is dropped from ordinary traversal. `link`, `consolidate`, `write` and
+    `edit` with an overlay owner are `E_OWNER overlay_requires_preference_route` before
+    any grant is resolved, with zero effects. `archive` and `delete` act on the overlay
+    store under `{overlay_read, list}` (preview) and `{write}` (apply)."""
+    if route == "related" and column == "row_state":
+        world = _t05_world(tmp_path)
+        store = TypedArtifactStore(world.project)
+        _t05_row(store, "a1", ALICE, "mk-a1")
+        _t05_row(store, "a2", ALICE, "mk-a2")
+        _t05_row(store, "a3", ALICE, "mk-a3", applicability=value)
+        _t05_edge(store.db_path, "a1", "a2")
+        _t05_edge(store.db_path, "a1", "a3")
+        store.close()
+        _grant(world.auth, world.project, ALICE, world.data_root, ops=FULL_OPS)
+        before = world.effects()
+        result = MemoryTool().run(
+            world.project,
+            operation="related",
+            session_allowlist=["source-a"],
+            owner_scope=ALICE.as_dict(),
+            request={"id": "a1", "version": 1},
+        )
+        assert _code_of(result) == "OK", _dump(_rd(result))
+        assert [(i["id"], i["version"]) for i in _items(result)] == [("a2", 1)]
+        assert "mk-a3" not in _dump(result)
+        assert world.effects() == before
+        return
+    world = _t05_world(tmp_path, edge=route == "related")
+    calls = _overlay_calls()
+    if route == "related":
+        world.grant(
+            ("overlay_read", "list") if column == "access_form" else ("list", "expand")
+        )
+        before = world.effects()
+        result = MemoryTool().run(
+            world.project,
+            operation="related",
+            session_allowlist=[OVERLAY_SOURCE],
+            owner_scope=world.owner.as_dict(),
+            request={"id": "p1", "version": 1},
+        )
+        if column == "access_form":
+            assert _code_of(result) == "OK", _dump(_rd(result))
+            assert [
+                (i["id"], i["version"], i["kind"], i["direction"])
+                for i in _items(result)
+            ] == [("p2", 1, "relates_to", "outgoing")]
+            assert not world.project_db.exists()
+        else:
+            _t05_denied(result, "E_PERMISSION", "operation_not_granted", "p2")
+        assert world.effects() == before
+    elif route in _T05_OWNER_ROUTES:
+        if value == "overlay":
+            world.grant(("overlay_read", "list", "expand", "write"))
+        before = world.effects()
+        result = calls[route](world.project, world.owner)
+        _t05_denied(
+            result, "E_OWNER", "overlay_requires_preference_route", "overlay write"
+        )
+        assert not world.project_db.exists()
+        assert world.effects() == before
+    elif route.endswith("_preview"):
+        world.grant(("overlay_read", "list"))
+        before = world.effects()
+        result = calls[route](world.project, world.owner)
+        assert _code_of(result) == "OK", _dump(_rd(result))
+        assert _rd(result)["data"]["applied"] is False
+        assert not world.project_db.exists()
+        assert world.effects() == before
+    elif column == "grant_ops":
+        world.grant(("overlay_read", "list", "expand"))
+        before = world.effects()
+        result = calls[route](world.project, world.owner)
+        _t05_denied(result, "E_PERMISSION", "operation_not_granted")
+        assert world.effects() == before
+    else:
+        world.grant(("overlay_read", "list", "expand", "write"))
+        result = calls[route](world.project, world.owner)
+        assert _code_of(result) == "OK", _dump(_rd(result))
+        listing = _t05_read(
+            "list", world.project, world.owner, source=OVERLAY_SOURCE, artifact_id="p1"
+        )
+        assert _code_of(listing) == "OK", _dump(_rd(listing))
+        assert _t05_seen("list", listing) == []
+        assert not world.project_db.exists()
+        if route == "delete_apply":
+            overlay = TypedArtifactStore(world.overlay_root)
+            assert overlay.get_current("p1") is None
+            overlay.close()
+
+
+@pytest.mark.parametrize(
+    ("route", "column", "value"),
+    [
+        *_t05_params(
+            ("promote_preview", "promote_apply", "maintain_preview", "maintain_apply"),
+            (("access_form", "overlay"), ("access_form", "overlay_no_grant")),
+        ),
+        *_t05_params(
+            ("promotion_sweep",),
+            (
+                ("peer_state", "rejected"),
+                ("peer_state", "pending"),
+                ("peer_state", "active"),
+            ),
+        ),
+    ],
+)
+def test_t05_maintenance_route_applicability_matrix(
+    route: str, column: str, value: str, tmp_path: Path
+) -> None:
+    """72-T05 cells of the 72-T04 maintenance and promotion matrix. `promote` and
+    `maintain` with an overlay owner are `E_OWNER overlay_requires_preference_route`
+    (preview and apply, with and without an overlay grant), zero effects. A `rejected` or
+    `pending` peer is not an eligible corroborating peer (`usable_as_current` is False),
+    so the settled candidate stays `DERIVED` at count 1; the `active` control with a
+    distinct origin promotes it to `STATED` at count 2."""
+    if column == "access_form":
+        world = _t05_world(tmp_path)
+        if value == "overlay":
+            world.grant(("overlay_read", "list", "expand", "write"))
+        before = world.effects()
+        result = _overlay_calls()[route](world.project, world.owner)
+        _t05_denied(result, "E_OWNER", "overlay_requires_preference_route")
+        assert not world.project_db.exists()
+        assert world.effects() == before
+        return
+    from rush.memory import authorization as auth
+
+    data_root = default_data_root()
+    root = _git_repo(
+        tmp_path / "project", {"mod.py": "def helper():\n    return 1\n"}, branch="main"
+    )
+    register_project(root, data_root=data_root)
+    anchor = {
+        "symbol_ref": "mod.py::helper",
+        "content_hash": _sha_file(root / "mod.py"),
+    }
+    store = TypedArtifactStore(root)
+    _t05_row(store, "a1", ALICE, "shared", origin=("evidence", "o1"), **anchor)
+    store.close()
+    _grant(
+        auth,
+        root,
+        ALICE,
+        data_root,
+        sources=("source-a", "source-b"),
+        ops=("list", "write"),
+    )
+    db = root / ".rush" / "memory.db"
+
+    def sweep() -> Any:
+        return MemoryTool().run(
+            root,
+            operation="maintain",
+            task="promotion_sweep",
+            owner_scope=ALICE.as_dict(),
+            request={
+                "apply": True,
+                "candidate_ids": ["a1"],
+                "expected_revisions": {"a1": _version(db, "a1")},
+            },
+            permissions=ExecutionPermissions(cache_write=True),
+        )
+
+    assert _rd(sweep())["processed"] == 1
+    store = TypedArtifactStore(root)
+    _t05_row(
+        store,
+        "a2",
+        ALICE,
+        "shared",
+        source="source-b",
+        origin=("evidence", "o2"),
+        applicability=None if value == "active" else value,
+        **anchor,
+    )
+    store.close()
+    swept = sweep()
+    current = TypedArtifactStore(root)
+    candidate = current.get_current("a1")
+    current.close()
+    assert candidate is not None
+    if value == "active":
+        assert _rd(swept)["changed"] == 1
+        assert (candidate.trust_tier, candidate.corroboration_count) == ("STATED", 2)
+    else:
+        assert _rd(swept)["changed"] == 0
+        assert (candidate.trust_tier, candidate.corroboration_count) == ("DERIVED", 1)
+
+
+_T05_ADDED_COLUMNS = {
+    "memory_artifacts": (
+        "applicability",
+        "task_project_id",
+        "task_worktree_id",
+        "task_id",
+    ),
+    "memory_artifact_versions": (
+        "applicability",
+        "task_project_id",
+        "task_worktree_id",
+        "task_id",
+        "binding_recorded",
+    ),
+    "memory_handoff_sessions": ("sender_task_id",),
+}
+
+
+def _t05_schema(db: Path) -> dict[str, Any]:
+    """Every `sqlite_master` row and every real table's `table_info`."""
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db}?mode=ro&immutable=1", uri=True)
+    ) as conn:
+        master = [
+            tuple(r) for r in conn.execute("SELECT type, name, sql FROM sqlite_master")
+        ]
+        tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name"
+            )
+        ]
+        info = {
+            t: [tuple(r) for r in conn.execute(f'PRAGMA table_info("{t}")')]
+            for t in tables
+        }
+    return {"master": sorted(master, key=str), "info": info}
+
+
+def _t05_drop_added_columns(db: Path) -> None:
+    """Turn a current store into one lacking only the 72-T05 additions: any index on an
+    added column goes first, then each added column."""
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        for table, names in _T05_ADDED_COLUMNS.items():
+            for index in conn.execute(f'PRAGMA index_list("{table}")').fetchall():
+                covered = {
+                    r[2] for r in conn.execute(f'PRAGMA index_info("{index[1]}")')
+                }
+                if covered & set(names) and index[3] == "c":
+                    conn.execute(f'DROP INDEX "{index[1]}"')
+            for name in names:
+                conn.execute(f'ALTER TABLE "{table}" DROP COLUMN "{name}"')
+        conn.commit()
+
+
+def test_t05_hybrid_compact_no_migration_on_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """72-T05 variant of B12: a store lacking only the 72-T05 additions is read by a
+    compact `ask` in both retrieval modes with `cache_write` and `network` through the
+    read view. `memory.db` bytes, `sqlite_master` and every `table_info` are unchanged
+    and no sidecar appears; only a writable constructor adds the columns."""
+    root = _pm_project(tmp_path, monkeypatch)
+    store = TypedArtifactStore(root)
+    _row(store, "p1", None, "mk1")
+    store.close()
+    db = root / ".rush" / "memory.db"
+    for table, names in _T05_ADDED_COLUMNS.items():
+        assert set(names) <= _columns(db, table), table
+    _t05_drop_added_columns(db)
+    for table, names in _T05_ADDED_COLUMNS.items():
+        assert not set(names) & _columns(db, table), table
+    before_sha, before_schema = _sha_file(db), _t05_schema(db)
+    before_tree = [p for p in _tree(root) if not p.startswith(".rush/telemetry")]
+    permissions = ExecutionPermissions(cache_write=True, network=True)
+    for retrieval, code in (("lexical", "OK"), ("hybrid", "E_EMBEDDING_UNAVAILABLE")):
+        result = MemoryTool().run(
+            root,
+            operation="ask",
+            subject=SUBJECT,
+            query="needle",
+            session_allowlist=["source-a"],
+            request={"view": "compact", "retrieval": retrieval},
+            permissions=permissions,
+        )
+        assert _rd(result)["code"] == code, (retrieval, _dump(_rd(result)))
+        if retrieval == "lexical":
+            assert [item["id"] for item in _items(result)] == ["p1"]
+        assert _sha_file(db) == before_sha, retrieval
+        assert _t05_schema(db) == before_schema, retrieval
+        _no_sidecars(db)
+        assert [
+            p for p in _tree(root) if not p.startswith(".rush/telemetry")
+        ] == before_tree, retrieval
+    TypedArtifactStore(root).close()
+    assert _sha_file(db) != before_sha
+    assert _t05_schema(db) != before_schema
+    for table, names in _T05_ADDED_COLUMNS.items():
+        assert set(names) <= _columns(db, table), table
 
 
 # --- R12: PR6 mutation set over authorization.py ------------------------------
@@ -15419,6 +16077,10 @@ ROW_MAC_COLUMN_NAMES = (
     "owner_scope_id",
     "origin_kind",
     "origin_id",
+    "applicability",
+    "task_project_id",
+    "task_worktree_id",
+    "task_id",
 )
 _INSERT_RE = re.compile(
     r"(?is)\b(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO)\s+"
@@ -22652,6 +23314,24 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     ids = [r.ident for r in _G2_ROUTES]
     assert len(ids) == len(set(ids))
     assert not any("producer" in r.ident for r in existing)
+    # 72-T05: the preference matrix keeps every apply cell real; its only producer-staged
+    # cells are the 72-T06 `archive_mode` (inspect/historical) request-field cells.
+    import test_phase72_preferences as preferences_matrix
+
+    preference_ids = [cell.ident for cell in preferences_matrix._MATRIX]
+    staged = [i for i in preference_ids if i.endswith("-72-T06")]
+    assert staged and all("-mode-" in i for i in staged)
+    assert all(
+        i.endswith(("-mode-inspect-72-T06", "-mode-historical-72-T06")) for i in staged
+    )
+    real_apply = [i for i in preference_ids if "-apply-apply" in i]
+    assert real_apply and not any(i.endswith("-72-T06") for i in real_apply)
+    assert {i.split("_", 1)[0].split(".")[0] for i in preference_ids} == {
+        "tool",
+        "mcp",
+        "cli",
+        "bridge",
+    }
     # Each such cell reaches authorization: a grant lacking exactly its operation (for
     # `list-mode-historical`, `history`) is denied `operation_not_granted`, zero effects.
     row = "access-policy-policy_state-ok-grant_ops-missing_one"
@@ -22709,10 +23389,13 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     assert not [i for i in t04_ids if "-apply-" in i and "producer" in i]
 
 
-def test_t01_g2a_producer_staged_cells() -> None:
+def test_t01_g2a_producer_staged_cells(tmp_path: Path) -> None:
     """G2a: dimensions whose producer is a later packet are one strict-model `E_INPUT`
-    cell naming the absent field or operation; the absent producers are unchanged here."""
+    cell naming the absent field or operation; the absent producers are unchanged here.
+    72-T05 owns the overlay owner shape and the `preference` operation: both normalize
+    (positive cells); `overlay=True` and an empty `preference` request stay malformed."""
     from rush.mcp_support.request_models import validate_and_normalize
+    from rush.memory.authorization import user_overlay_owner_scope
 
     base: dict[str, Any] = {
         "path": ".",
@@ -22722,7 +23405,7 @@ def test_t01_g2a_producer_staged_cells() -> None:
         "session_allowlist": ["s1"],
     }
     cells: dict[str, dict[str, Any]] = {
-        "overlay-72-T05": {**base, "overlay": True},
+        "overlay_field_never_exists": {**base, "overlay": True},
         "schema_version-72-T06": {**base, "schema_version": 2},
         "history-op-72-T06": {
             "path": ".",
@@ -22734,14 +23417,29 @@ def test_t01_g2a_producer_staged_cells() -> None:
             "operation": "explain",
             "request": {"id": "a1"},
         },
-        "preference-op-72-T05": {"path": ".", "operation": "preference", "request": {}},
         "capsule-op-73-T09": {"path": ".", "operation": "capsule", "request": {}},
         "import-op-73-T09": {"path": ".", "operation": "import", "request": {}},
+        "preference-empty-request_malformed": {
+            "path": ".",
+            "operation": "preference",
+            "request": {},
+        },
     }
     for ident, arguments in cells.items():
         outcome = validate_and_normalize("rush_memory", arguments)
         assert outcome.rejected and outcome.error is not None, ident
         assert outcome.error["data"]["details"], ident
+    overlay_owner = user_overlay_owner_scope(data_root=tmp_path / "data").as_dict()
+    positives: dict[str, dict[str, Any]] = {
+        "owner_scope-overlay_owner": {**base, "owner_scope": overlay_owner},
+        "preference-resolve": {
+            "path": ".",
+            "operation": "preference",
+            "request": {"action": "resolve"},
+        },
+    }
+    for ident, arguments in positives.items():
+        assert validate_and_normalize("rush_memory", arguments).rejected is False, ident
 
 
 # --- G4: shared trust-boundary inputs -------------------------------------------------
@@ -23447,6 +24145,49 @@ def test_t01_token_usage_agent_and_session_filters_exclude_foreign_totals(
     assert total(agent_id="ag-1") == 1200
     assert total(session_id="s-2") == 300
     assert total(agent_id="ag-1", session_id="s-2") is None
+
+
+def test_t05_g6_related_incoming_edge_records_source_version(tmp_path: Path) -> None:
+    """72-T05 G6 survivor kill (`relations.py` INSERT storing `source_version + 1`): an
+    edge whose source is the neighbor is delivered from the target's seed with the
+    stored endpoint versions equal to the cited versions, because traversal compares
+    an incoming edge's `source_version` with the neighbor's current version."""
+    from rush.memory.relations import add_relation, related_artifacts
+
+    store = TypedArtifactStore(tmp_path)
+    for artifact_id in ("seed", "linked"):
+        store.write(
+            MemoryArtifact(
+                id=artifact_id,
+                family="memory",
+                subject=SUBJECT,
+                trust_tier="IMPORTED",
+                content={"text": artifact_id},
+                source="allowed",
+                created_at=1.0,
+            )
+        )
+    added = add_relation(
+        store,
+        source_id="linked",
+        source_version=1,
+        target_id="seed",
+        target_version=1,
+        kind="fixed_by",
+    )
+    assert added["code"] == "OK"
+    with sqlite3.connect(store.db_path) as conn:
+        stored = conn.execute(
+            "SELECT source_id, source_version, target_id, target_version "
+            "FROM memory_relations"
+        ).fetchall()
+    assert stored == [("linked", 1, "seed", 1)]
+    related = related_artifacts(
+        store, artifact_id="seed", version=1, session_allowlist=["allowed"]
+    )
+    assert related["items"] == [
+        {"id": "linked", "version": 1, "kind": "fixed_by", "direction": "incoming"}
+    ]
 
 
 # --- G12 FIX ROUND 1 (security findings) -------------------------------------

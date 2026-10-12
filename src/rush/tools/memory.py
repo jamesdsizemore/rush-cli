@@ -11,6 +11,7 @@ import unicodedata
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Literal, cast, get_args
 
@@ -40,6 +41,7 @@ from ..memory.retrieval import (
     DEFAULT_ENCODING,
     DEFAULT_MAX_BYTES,
     DEFAULT_MAX_TOKENS,
+    NOT_CURRENT_REASONS,
     FrameBytes,
     MemoryAccess,
     RouteDenial,
@@ -50,6 +52,7 @@ from ..memory.retrieval import (
     expand_admission,
     expand_artifact,
     hybrid_page,
+    memory_policy_decision,
     memory_policy_mode,
     recall_admission,
     recall_page,
@@ -115,6 +118,7 @@ MemoryOperation = Literal[
     "delete",
     "edit",
     "archive",
+    "preference",
 ]
 SourceKind = Literal["local_tool", "cross_tool_handoff", "human_derived"]
 
@@ -141,7 +145,14 @@ VALID_OPERATIONS = {
     "delete",
     "edit",
     "archive",
+    "preference",
 }
+# 72-T05 §3.11: the task context of the `run` in progress. Every access a handler
+# builds reads it (`task_id=_TASK_ID.get()`); `run` sets and resets it.
+_TASK_ID: ContextVar[str | None] = ContextVar("rush_memory_task_id", default=None)
+_OVERLAY_REFUSED_OPERATIONS = frozenset(
+    {"write", "promote", "edit", "link", "consolidate", "maintain"}
+)
 _VERIFY_ATTEMPT_REQUEST_KEYS = {
     "attempt_id",
     "behavior_ids",
@@ -411,6 +422,7 @@ class MemoryTool(ToolFn):
         agent_id: str | None = None,
         session_id: str | None = None,
         context: InvocationContext | None = None,
+        task_id: str | None = None,
     ) -> ToolResult:
         # 72-T02 D35: the transport frame a memory response leaves through (set by
         # the transport adapter), carrying this call's InvocationContext so its
@@ -454,6 +466,7 @@ class MemoryTool(ToolFn):
             agent_id=agent_id,
             session_id=session_id,
             frame=frame,
+            task_id=task_id,
         )
 
     def run(
@@ -508,6 +521,7 @@ class MemoryTool(ToolFn):
         # 72-T02 D35: the response's transport frame; omitted, the frame a transport
         # adapter published (`compact.MEMORY_FRAME`), else payload measurement.
         frame: compact.FrameContext | None = None,
+        task_id: str | None = None,
     ) -> ToolResult:
         started = time.monotonic()
         if frame is None:
@@ -537,6 +551,31 @@ class MemoryTool(ToolFn):
                 str(operation),
                 "E_INPUT",
                 {"field": "sources", "message": "sources is a maintain field"},
+            )
+        if task_id is not None and not _valid_task_id(task_id):
+            return self._envelope_result(
+                started,
+                str(operation),
+                "E_INPUT",
+                {
+                    "field": "task_id",
+                    "reason": "task_id_invalid",
+                    "message": "task_id must be a non-empty string without "
+                    "control characters.",
+                },
+            )
+        # D25 / plan A2: only the preference route writes personal content; these
+        # routes refuse the overlay owner before any resolution or construction.
+        overlay_owner = _overlay_owner_named(owner_scope, request)
+        if operation in _OVERLAY_REFUSED_OPERATIONS and overlay_owner is not None:
+            # D1 row 1a (an overlay storage root as the project) still answers first.
+            mode, why = memory_policy_decision(root)
+            return self._denied(
+                started,
+                operation,
+                RouteDenial("E_PERMISSION", why or "policy_invalid")
+                if mode == "unavailable"
+                else RouteDenial("E_OWNER", "overlay_requires_preference_route"),
             )
         list_filters = {
             "trust_filter": trust_filter,
@@ -759,15 +798,23 @@ class MemoryTool(ToolFn):
             "archive": lambda: self._run_archive(
                 started, root, granted, request, owner_scope
             ),
+            "preference": lambda: self._preference(
+                started, root, granted, request, session_allowlist
+            ),
         }
+        token = _TASK_ID.set(task_id)
         try:
             with collect_committed_writes() as committed:
                 result = dispatch_table[operation]()
         except (MemoryAccessChanged, MemoryWriteDenied) as exc:
             # D1 race rule: the access changed before the commit; nothing committed.
             return self._denied(started, operation, RouteDenial(exc.code, exc.reason))
+        finally:
+            _TASK_ID.reset(token)
         if operation in _MUTATION_VIEW_OPERATIONS:
-            result = _with_mutation_view(root, result, committed)
+            # D25: an overlay-owner archive/delete changed the overlay store.
+            view_root = root if overlay_owner is None else Path(overlay_owner.id)
+            result = _with_mutation_view(view_root, result, committed)
         result = cast(
             ToolResult,
             attach_memory_attribution(
@@ -853,6 +900,7 @@ class MemoryTool(ToolFn):
             [source_filter] if source_filter else session_allowlist,
             None,
             historical=bool(want_archived),
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "list", resolved)
@@ -867,7 +915,7 @@ class MemoryTool(ToolFn):
                 "(fail-closed, no default cross-session access).",
                 operation="list",
             )
-        view, state = TypedArtifactStore.open_readonly_view(root)
+        view, state = TypedArtifactStore.open_readonly_view(access.storage_root)
         if state is not None:
             return self._result(
                 started, "error", readonly_view_reason(state), operation="list"
@@ -913,7 +961,10 @@ class MemoryTool(ToolFn):
                 decision = evaluate_artifact_visibility(
                     view, row, access=access, mode=mode, memo=memo
                 )
-                if decision.visible:
+                if decision.visible and not (
+                    mode != "historical"
+                    and NOT_CURRENT_REASONS & set(decision.reason_codes)
+                ):
                     decided.append((row, decision.freshness))
         finally:
             view.close()
@@ -1078,7 +1129,12 @@ class MemoryTool(ToolFn):
             )
         historical = operation == "list" and include_archived
         resolved = self._read_access(
-            root, operation, session_allowlist, owner, historical=historical
+            root,
+            operation,
+            session_allowlist,
+            owner,
+            historical=historical,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, operation, resolved)
@@ -1091,7 +1147,7 @@ class MemoryTool(ToolFn):
                 "(fail-closed, no default cross-session access).",
                 operation=operation,
             )
-        view, state = TypedArtifactStore.open_readonly_view(root)
+        view, state = TypedArtifactStore.open_readonly_view(access.storage_root)
         if state is not None:
             return self._result(
                 started, "error", readonly_view_reason(state), operation=operation
@@ -1289,7 +1345,9 @@ class MemoryTool(ToolFn):
                 started, operation, code, page, duration_ms=frozen, frame=frame
             )
 
-        resolved = self._read_access(root, operation, session_allowlist, owner)
+        resolved = self._read_access(
+            root, operation, session_allowlist, owner, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return finish(resolved.code, _denial_data(operation, resolved))
         access = resolved
@@ -1310,7 +1368,8 @@ class MemoryTool(ToolFn):
         # allowed to persist embeddings, over a store whose writable open runs no DDL
         # or migration (`writable_open_ddl_free`), reopens it writable; any other
         # store stays the read-only view (embeddings are then never persisted).
-        store, state = TypedArtifactStore.open_readonly_view(root)
+        store_root = access.storage_root
+        store, state = TypedArtifactStore.open_readonly_view(store_root)
         if state is not None:
             return finish(
                 _READ_STATE_CODES[state], {"message": readonly_view_reason(state)}
@@ -1322,7 +1381,7 @@ class MemoryTool(ToolFn):
             and store.writable_open_ddl_free()
         ):
             store.close()
-            store = TypedArtifactStore(root)
+            store = TypedArtifactStore(store_root)
         if store is None:
             empty: dict[str, Any] = {
                 "items": [],
@@ -1588,7 +1647,9 @@ class MemoryTool(ToolFn):
                 started, "expand", code, page, duration_ms=frozen, frame=frame
             )
 
-        resolved = self._read_access(root, "expand", session_allowlist, owner)
+        resolved = self._read_access(
+            root, "expand", session_allowlist, owner, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return finish(resolved.code, _denial_data("expand", resolved))
         if bridge is not None:
@@ -1610,10 +1671,10 @@ class MemoryTool(ToolFn):
         if access is None:
             return finish("E_NOT_VISIBLE", not_visible)
         # 72-T01: a read-only view; a missing store creates nothing and expands nothing.
-        store = self._readonly_store
+        store = self._readonly_store if access.storage_root == root else None
         own_view = store is None
         if store is None:
-            store, state = TypedArtifactStore.open_readonly_view(root)
+            store, state = TypedArtifactStore.open_readonly_view(access.storage_root)
             if state is not None:
                 return finish(
                     _READ_STATE_CODES[state], {"message": readonly_view_reason(state)}
@@ -1766,7 +1827,9 @@ class MemoryTool(ToolFn):
             return self._envelope_result(
                 started, "link", "E_INPUT", {"message": f"invalid owner_scope: {exc}"}
             )
-        resolved = self._read_access(root, "link", None, owner, apply=True)
+        resolved = self._read_access(
+            root, "link", None, owner, apply=True, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._mutation_denied(started, "link", resolved)
         invalid = relation_input_error(
@@ -1921,7 +1984,9 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        resolved = self._read_access(root, "related", session_allowlist, owner)
+        resolved = self._read_access(
+            root, "related", session_allowlist, owner, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "related", resolved)
         if bridge is not None:
@@ -1929,10 +1994,10 @@ class MemoryTool(ToolFn):
             if isinstance(authority, dict):
                 return cast(ToolResult, authority)
             resolved = authority
-        store = self._readonly_store
+        store = self._readonly_store if resolved.storage_root == root else None
         own_view = store is None
         if store is None:
-            store, state = TypedArtifactStore.open_readonly_view(root)
+            store, state = TypedArtifactStore.open_readonly_view(resolved.storage_root)
             if state is not None:
                 return self._envelope_result(
                     started,
@@ -2063,7 +2128,14 @@ class MemoryTool(ToolFn):
             # The summary is written under source "consolidation"; the grant must
             # approve it beside the narrowed sources (72-T03 B17).
             requested = sorted({*session_allowlist, "consolidation"})
-        resolved = self._read_access(root, "consolidate", requested, owner, apply=True)
+        resolved = self._read_access(
+            root,
+            "consolidate",
+            requested,
+            owner,
+            apply=True,
+            task_id=_TASK_ID.get(),
+        )
         if isinstance(resolved, RouteDenial):
             return self._mutation_denied(started, "consolidate", resolved)
         access = resolved
@@ -2169,17 +2241,26 @@ class MemoryTool(ToolFn):
         if isinstance(gated, dict):
             return cast(ToolResult, gated)
         allowlist = session_allowlist
+        prepare_access = (
+            gated
+            if isinstance(gated, MemoryAccess) and gated.kind == "policy"
+            else None
+        )
         if bridge is not None:
             authority = self._bridge_access(started, operation, bridge)
             if isinstance(authority, dict):
                 return cast(ToolResult, authority)
             allowlist = list(authority.sources)
+            # 72-T05 3.12: a delegated read carries the sender's task context, which
+            # the sender's authority already holds.
+            prepare_access = authority if authority.kind == "policy" else None
         result = prepare_memory(
             project_root=root,
             symptom=query or task,
             conditions=conditions,
             behavior_ids=behavior_ids,
             session_allowlist=allowlist,
+            access=prepare_access,
         )
         if bridge is not None:
             # D22: only the session's selected ids are enumerated.
@@ -2192,6 +2273,248 @@ class MemoryTool(ToolFn):
             ]
         code = result.pop("code")
         return self._envelope_result(started, operation, code, result)
+
+    def _preference(
+        self,
+        started: float,
+        root: Path,
+        granted: ExecutionPermissions,
+        request: dict[str, Any] | None,
+        session_allowlist: list[str] | None,
+    ) -> ToolResult:
+        """72-T05 §3.1/§3.13/§3.14: layered preferences. Precedence: strict request,
+        `memory_policy_decision`, the legacy write refusal, the layer/owner predicate,
+        the apply-only `cache_write`/`user_stated` checks, the D2 resolve, then the
+        `PreferenceStore` action (which owns every row, id and content check)."""
+        from pydantic import TypeAdapter, ValidationError
+
+        from ..mcp_support.request_models import _REQUEST_MODELS
+        from ..memory.authorization import MemoryPolicyError, user_overlay_owner_scope
+        from ..memory.preference_store import PreferenceError, PreferenceStore
+        from ..memory.retrieval import is_overlay_owner
+
+        task_id = _TASK_ID.get()
+
+        def refuse(code: str, reason: str, **extra: Any) -> ToolResult:
+            return self._envelope_result(
+                started,
+                "preference",
+                code,
+                {**extra, "reason": reason, "message": f"{code}: {reason}"},
+            )
+
+        if not isinstance(request, dict):
+            return refuse("E_INPUT", "request_invalid", field="request")
+        try:
+            TypeAdapter(_REQUEST_MODELS["preference"]).validate_python(request)
+        except ValidationError as exc:
+            errors = exc.errors(include_url=False, include_input=False)
+            loc = [str(p) for p in errors[0]["loc"]] if errors else []
+            if len(loc) > 1 and loc[0] == request.get("action"):
+                loc = loc[1:]
+            field = loc[0] if loc else "action"
+            return refuse(
+                "E_INPUT",
+                f"{field}_invalid",
+                field=field,
+                details=[
+                    {"loc": [str(p) for p in e["loc"]], "msg": e["msg"]} for e in errors
+                ],
+            )
+        action = request["action"]
+        if action != "end_task" and "task_id" in request:
+            return refuse("E_INPUT", "task_id_top_level", field="task_id")
+        try:
+            owner = (
+                None
+                if request.get("owner_scope") is None
+                else OwnerScope.from_value(request["owner_scope"])
+            )
+        except (TypeError, ValueError):
+            return refuse("E_INPUT", "owner_scope_invalid", field="owner_scope")
+
+        mode, why = memory_policy_decision(root)
+        if mode == "unavailable":
+            return refuse("E_PERMISSION", why or "policy_invalid")
+        apply = bool(request.get("apply", False))
+        user_stated = bool(request.get("user_stated", False))
+        try:
+            store = PreferenceStore(root)
+            if mode == "legacy":
+                if action != "resolve":
+                    return refuse("E_PERMISSION", "policy_grant_required")
+                legacy = MemoryAccess.legacy(
+                    root,
+                    session_allowlist,
+                    owner_scope=legacy_owner_scope(root),
+                    operation="preference",
+                    task_id=task_id,
+                )
+                if not legacy.sources:
+                    return refuse("E_PERMISSION", "session_allowlist_required")
+                return self._preference_result(
+                    started,
+                    store.resolve(
+                        request.get("key"),
+                        access=legacy,
+                        overlay_access=None,
+                        query=request.get("query"),
+                        project_id=request.get("project_id"),
+                        worktree_id=request.get("worktree_id"),
+                        task_id=task_id,
+                    ),
+                )
+
+            personal = is_overlay_owner(owner, None)
+            mismatch = {
+                "resolve": personal,
+                "record": (request.get("scope") == "personal") != personal,
+                "correct": (request.get("layer") == "personal") != personal,
+                "end_task": personal,
+                "migrate": personal,
+            }[action]
+            if mismatch:
+                return refuse("E_OWNER", "layer_owner_mismatch")
+            if apply and action != "resolve":
+                if not granted.cache_write:
+                    return refuse("E_PERMISSION", "cache_write_required")
+                needs_statement = action == "correct" or (
+                    action == "record" and request.get("authority") == "explicit"
+                )
+                if needs_statement and not user_stated:
+                    return refuse("E_PERMISSION", "user_stated_required")
+
+            if action == "resolve":
+                project, project_why = MemoryAccess.resolve_with_reason(
+                    root,
+                    operation="preference",
+                    action="resolve",
+                    owner_scope=owner,
+                    requested_sources=session_allowlist or (),
+                    task_id=task_id,
+                )
+                overlay, _overlay_why = MemoryAccess.resolve_with_reason(
+                    root,
+                    operation="preference",
+                    action="resolve",
+                    owner_scope=user_overlay_owner_scope(),
+                    task_id=task_id,
+                )
+                # An explicit owner the project grant does not name is refused even
+                # when the personal layer alone could still resolve (D2: E_OWNER).
+                if project is None and (
+                    overlay is None
+                    or project_why == "owner_required"
+                    or (owner is not None and project_why == "owner_not_granted")
+                ):
+                    return self._preference_denial(refuse, project_why, owner)
+                ids = project or overlay
+                assert ids is not None
+                return self._preference_result(
+                    started,
+                    store.resolve(
+                        request.get("key"),
+                        access=project,
+                        overlay_access=overlay,
+                        query=request.get("query"),
+                        project_id=request.get("project_id", ids.project_id),
+                        worktree_id=request.get("worktree_id", ids.worktree_id),
+                        task_id=task_id,
+                    ),
+                )
+
+            if action == "migrate":
+                sources: list[str] = ["migration:preference_store"]
+            elif action == "record" and request.get("source") is not None:
+                sources = [request["source"]]
+            else:
+                sources = []
+            access, access_why = MemoryAccess.resolve_with_reason(
+                root,
+                operation="preference",
+                action=action,
+                apply=apply,
+                owner_scope=user_overlay_owner_scope() if personal else owner,
+                requested_sources=sources,
+                task_id=task_id,
+            )
+            if access is None:
+                return self._preference_denial(refuse, access_why, owner)
+            cache_write = granted.cache_write
+            if action == "record":
+                result = store.record(
+                    request["key"],
+                    request["value"],
+                    access=access,
+                    apply=apply,
+                    cache_write=cache_write,
+                    scope=request["scope"],
+                    authority=request["authority"],
+                    task_id=task_id,
+                    expires_at=request.get("expires_at"),
+                    user_stated=user_stated,
+                    attribution=request.get("attribution"),
+                )
+            elif action == "correct":
+                value = {"value": request["value"]} if "value" in request else {}
+                result = store.correct_with_receipt(
+                    request["artifact_id"],
+                    access=access,
+                    apply=apply,
+                    cache_write=cache_write,
+                    layer=request["layer"],
+                    kind=request["kind"],
+                    reason=request["reason"],
+                    expected_version=request["expected_version"],
+                    user_stated=user_stated,
+                    receipt_operation_id=request.get("receipt_operation_id"),
+                    **value,
+                )
+            elif action == "end_task":
+                result = store.end_task(
+                    access=access,
+                    apply=apply,
+                    cache_write=cache_write,
+                    project_id=cast(str, request.get("project_id", access.project_id)),
+                    worktree_id=cast(
+                        str, request.get("worktree_id", access.worktree_id)
+                    ),
+                    task_id=request["task_id"],
+                    expected_versions=request["expected_versions"],
+                )
+            else:
+                result = store.migrate(
+                    access=access,
+                    apply=apply,
+                    cache_write=cache_write,
+                    preview_digest=request.get("preview_digest"),
+                )
+        except PreferenceError as exc:
+            return refuse(exc.code, exc.reason)
+        except MemoryPolicyError as exc:
+            return refuse("E_PERMISSION", str(getattr(exc, "reason", "policy_invalid")))
+        return self._preference_result(started, result)
+
+    @staticmethod
+    def _preference_denial(
+        refuse: Callable[..., ToolResult], reason: str, owner: OwnerScope | None
+    ) -> ToolResult:
+        """D2 resolve denial mapping (§3.1)."""
+        if reason == "source_not_granted":
+            return refuse("E_SCOPE", reason)
+        if reason == "owner_not_granted" and owner is not None:
+            return refuse("E_OWNER", reason)
+        if reason == "owner_required":
+            return refuse("E_INPUT", reason, field="owner_scope")
+        return refuse("E_PERMISSION", reason)
+
+    def _preference_result(self, started: float, result: dict[str, Any]) -> ToolResult:
+        """A `PreferenceStore` answer as the envelope: `code` (default `OK`) plus every
+        other key as `data`, identical to the in-process dict."""
+        data = {k: v for k, v in result.items() if k != "code"}
+        return self._envelope_result(
+            started, "preference", str(result.get("code", "OK")), data
+        )
 
     def _envelope_result(
         self,
@@ -2264,6 +2587,7 @@ class MemoryTool(ToolFn):
         action: str | None = None,
         apply: bool = False,
         historical: bool = False,
+        task_id: str | None = None,
     ) -> MemoryAccess | RouteDenial:
         """72-T01 D1/D2 access for one route (`retrieval.route_access`): `legacy`
         mode builds the explicit-allowlist form (a source-less one keeps each route's
@@ -2277,6 +2601,7 @@ class MemoryTool(ToolFn):
             historical=historical,
             session_allowlist=session_allowlist,
             owner_scope=owner,
+            task_id=task_id,
         )
 
     def _read_gate(
@@ -2301,7 +2626,12 @@ class MemoryTool(ToolFn):
                 {"message": f"invalid owner_scope: {exc}"},
             )
         resolved = self._read_access(
-            root, operation, allowlist, owner, historical=historical
+            root,
+            operation,
+            allowlist,
+            owner,
+            historical=historical,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, operation, resolved)
@@ -2455,7 +2785,9 @@ class MemoryTool(ToolFn):
             return self._result(
                 started, "error", f"invalid owner_scope: {exc}", operation="write"
             )
-        resolved = self._read_access(root, "write", [source], owner, apply=apply)
+        resolved = self._read_access(
+            root, "write", [source], owner, apply=apply, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "write", resolved)
         artifact = self._build_artifact(
@@ -2618,7 +2950,12 @@ class MemoryTool(ToolFn):
         # legacy mode keeps the candidate-source allowlist for the candidate write.
         policy = memory_policy_mode(root) == "policy"
         resolved = self._read_access(
-            root, "promote", None if policy else [source], owner, apply=apply
+            root,
+            "promote",
+            None if policy else [source],
+            owner,
+            apply=apply,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "promote", resolved)
@@ -2970,7 +3307,12 @@ class MemoryTool(ToolFn):
             # ones it grants (D9); a request naming none of them is `E_SCOPE`.
             narrowed: list[str] | None = None
             resolved = route_access(
-                root, "maintain", apply=apply, owner_scope=owner, data_root=None
+                root,
+                "maintain",
+                apply=apply,
+                owner_scope=owner,
+                data_root=None,
+                task_id=_TASK_ID.get(),
             )
             if not isinstance(resolved, RouteDenial) and requested:
                 narrowed = [s for s in requested if source_granted(s, resolved.sources)]
@@ -2984,6 +3326,7 @@ class MemoryTool(ToolFn):
                         owner_scope=owner,
                         session_allowlist=narrowed,
                         data_root=None,
+                        task_id=_TASK_ID.get(),
                     )
             if isinstance(resolved, RouteDenial):
                 if resolved.reason == "source_not_granted":
@@ -3162,7 +3505,9 @@ class MemoryTool(ToolFn):
             )
         # 72-T01 G3: D2 `{write}` before the sandbox or any observation write; the
         # observation write itself requires its `verify_attempt:<id>` source (D40).
-        resolved = self._read_access(root, "verify_attempt", None, owner, apply=True)
+        resolved = self._read_access(
+            root, "verify_attempt", None, owner, apply=True, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "verify_attempt", resolved)
         try:
@@ -3260,6 +3605,7 @@ class MemoryTool(ToolFn):
             None if action == "check" else [f"intent:{intent_id}"],
             owner,
             action=action,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "intent", resolved)
@@ -3277,6 +3623,7 @@ class MemoryTool(ToolFn):
                 project_root=root,
                 intent_id=intent_id,
                 current_revision=current_revision,
+                access=resolved if resolved.kind == "policy" else None,
             )
             revoked = self._revoked(started, "intent", resolved)
             if revoked is not None:
@@ -3459,6 +3806,7 @@ class MemoryTool(ToolFn):
             None if action == "resolve" else [f"recipe:{recipe_id}"],
             owner,
             action=action,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "recipe", resolved)
@@ -3489,6 +3837,7 @@ class MemoryTool(ToolFn):
                 recipe_id=recipe_id,
                 current_dependencies=current_dependencies,
                 current_config_digest=current_config_digest,
+                access=resolved if resolved.kind == "policy" else None,
             )
             code = result.pop("code")
             return self._envelope_result(started, "recipe", code, result)
@@ -3791,7 +4140,9 @@ class MemoryTool(ToolFn):
                 {"message": f"invalid owner_scope: {exc}"},
             )
         # 72-T01 D2/D21: every handoff action needs one grant with write+expand.
-        gate = self._read_access(root, "handoff", None, owner, action=action)
+        gate = self._read_access(
+            root, "handoff", None, owner, action=action, task_id=_TASK_ID.get()
+        )
         if isinstance(gate, RouteDenial):
             return self._denied(started, "handoff", gate)
         if action in ("dispatch", "status"):
@@ -3850,7 +4201,12 @@ class MemoryTool(ToolFn):
             [receiver_namespace] if receiver_namespace else [receiver_audience]
         )
         resolved = self._read_access(
-            root, "handoff", session_allowlist, owner, action=action
+            root,
+            "handoff",
+            session_allowlist,
+            owner,
+            action=action,
+            task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "handoff", resolved)
@@ -3958,7 +4314,7 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        gate = self._read_access(root, "receive", None, owner)
+        gate = self._read_access(root, "receive", None, owner, task_id=_TASK_ID.get())
         if isinstance(gate, RouteDenial):
             return self._denied(started, "receive", gate)
         # 72-T01 D22: a read-only load; a writable store opens only for a valid,
@@ -4100,14 +4456,16 @@ class MemoryTool(ToolFn):
             return self._envelope_result(
                 started, "delete", "E_INPUT", {"message": grants_error}
             )
-        resolved = self._read_access(root, "delete", None, owner, apply=apply)
+        resolved = self._read_access(
+            root, "delete", None, owner, apply=apply, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "delete", resolved)
         owner = _write_owner(owner, resolved)
         hidden = _hidden_targets(
             resolved,
             artifact_ids,
-            lambda: TypedArtifactStore.open_readonly_view(root),
+            lambda: TypedArtifactStore.open_readonly_view(resolved.storage_root),
         )
         if hidden:
             return self._envelope_result(
@@ -4138,7 +4496,9 @@ class MemoryTool(ToolFn):
                 # A preview is genuinely read-only: it runs over a query-only view and
                 # never constructs a writable `TypedArtifactStore` (which would create
                 # `.rush/memory.db`).
-                view, view_state = TypedArtifactStore.open_readonly_view(root)
+                view, view_state = TypedArtifactStore.open_readonly_view(
+                    resolved.storage_root
+                )
                 if view is None:
                     if view_state is None:
                         raise KeyError(artifact_ids[0])
@@ -4165,7 +4525,7 @@ class MemoryTool(ToolFn):
                 with _policy_mutation(resolved) as lock_refused:
                     if lock_refused is not None:
                         return self._denied(started, "delete", lock_refused)
-                    store = TypedArtifactStore(root)
+                    store = TypedArtifactStore(resolved.storage_root)
                     result = store.delete_batch(
                         artifact_ids,
                         expected_revisions=expected_revisions,
@@ -4352,14 +4712,16 @@ class MemoryTool(ToolFn):
             return self._envelope_result(
                 started, operation, "E_INPUT", {"message": grants_error}
             )
-        resolved = self._read_access(root, operation, None, owner, apply=apply)
+        resolved = self._read_access(
+            root, operation, None, owner, apply=apply, task_id=_TASK_ID.get()
+        )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, operation, resolved)
         owner = _write_owner(owner, resolved)
         hidden = _hidden_targets(
             resolved,
             [artifact_id],
-            lambda: TypedArtifactStore.open_readonly_view(root),
+            lambda: TypedArtifactStore.open_readonly_view(resolved.storage_root),
         )
         if hidden:
             return self._envelope_result(
@@ -4392,7 +4754,7 @@ class MemoryTool(ToolFn):
                 # creates `.rush/`, runs the schema script, mints a cursor key, and
                 # (as of this packet) runs the `owner_scope` migration.
                 result = TypedArtifactStore.preview_mutation(
-                    root,
+                    resolved.storage_root,
                     artifact_id,
                     expected_version=expected_version,
                     scope=scope,
@@ -4418,7 +4780,7 @@ class MemoryTool(ToolFn):
                             commit_check=_commit_check(resolved),
                         )
                     else:
-                        result = TypedArtifactStore(root).archive(
+                        result = TypedArtifactStore(resolved.storage_root).archive(
                             artifact_id,
                             expected_version=expected_version,
                             scope=scope,
@@ -4568,6 +4930,38 @@ def _legacy_link_access(
         operation="write",
         data_root=resolved.data_root,
     )
+
+
+def _valid_task_id(task_id: Any) -> bool:
+    """§3.11: a non-empty string with no Cc (incl. NUL), Cf or lone surrogate."""
+    import unicodedata
+
+    return (
+        type(task_id) is str
+        and bool(task_id)
+        and all(unicodedata.category(ch) not in {"Cc", "Cf", "Cs"} for ch in task_id)
+    )
+
+
+def _overlay_owner_named(owner_scope: Any, request: Any) -> OwnerScope | None:
+    """The personal-overlay owner when the call's `owner_scope` (argument or
+    request field) is it (D25 owner equality; malformed owners are not), else
+    `None`."""
+    from ..memory.retrieval import is_overlay_owner
+
+    candidates = [owner_scope]
+    if isinstance(request, dict):
+        candidates.append(request.get("owner_scope"))
+    for value in candidates:
+        if value is None:
+            continue
+        try:
+            owner = OwnerScope.from_value(value)
+        except (TypeError, ValueError):
+            continue
+        if is_overlay_owner(owner, None):
+            return owner
+    return None
 
 
 # --- 72-T01 D1 mutation guard ------------------------------------------------
@@ -4880,6 +5274,16 @@ def _envelope_read_refs(operation: str, code: Any, data: dict[str, Any]) -> list
     if operation == "intent":
         ref = _ref(data.get("evidence_ref"))
         return [ref] if ref is not None else []
+    if operation == "preference":
+        keys = {"id_key": "artifact_id", "version_key": "artifact_version"}
+        refs: list[_Ref] = []
+        for item in data.get("preferences") or []:
+            if isinstance(item, dict):
+                selected = _ref(item.get("selected"), **keys)
+                refs += [selected] if selected is not None else []
+                refs += _refs(item.get("applied_refs"), **keys)
+                refs += _refs(item.get("advice"), **keys)
+        return refs
     return []
 
 

@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 194
+total_operations = 195
 
 [[operations]]
 id = "admin.agent_connect"
@@ -153,6 +153,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "read-only"
 safe_probe = "rush memory plan-checks --help"
+
+[[operations]]
+id = "admin.memory_preference"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory preference"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory preference --help"
 
 [[operations]]
 id = "admin.memory_prepare"

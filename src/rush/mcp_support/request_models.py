@@ -32,6 +32,7 @@ from pydantic import (
     Field,
     PlainValidator,
     StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     Tag,
@@ -506,6 +507,55 @@ _HANDOFF_REQUIRED: dict[str, dict[str, Any]] = {
     "status": {},
 }
 
+# 72-T05 §3.13: the `preference` request. Every key is optional at the model level
+# (the handler enforces per-action content rules); each action tightens its own
+# required keys. A `value` left out stays absent (never `null`).
+_PREFERENCE_KEYS = {
+    "key": (NonEmptyStr | None, _OPTIONAL),
+    "query": (NonEmptyStr | None, _OPTIONAL),
+    "value": (Any, _OPTIONAL),
+    "scope": (Literal["personal", "project", "task"] | None, _OPTIONAL),
+    "authority": (Literal["explicit", "inferred"] | None, _OPTIONAL),
+    "source": (NonEmptyStr | None, _OPTIONAL),
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+    "expires_at": (StrictFloat | StrictInt | None, _OPTIONAL),
+    "attribution": (StrictStr | None, _OPTIONAL),
+    "artifact_id": (ArtifactId | None, _OPTIONAL),
+    "layer": (Literal["project", "personal"] | None, _OPTIONAL),
+    "kind": (Literal["correct", "reject", "supersede"] | None, _OPTIONAL),
+    "reason": (NonEmptyStr | None, _OPTIONAL),
+    "expected_version": (StrictInt | None, _OPTIONAL),
+    "expected_versions": (dict[str, StrictInt] | None, _OPTIONAL),
+    "project_id": (NonEmptyStr | None, _OPTIONAL),
+    "worktree_id": (NonEmptyStr | None, _OPTIONAL),
+    "task_id": (NonEmptyStr | None, _OPTIONAL),
+    "preview_digest": (NonEmptyStr | None, _OPTIONAL),
+    "apply": (StrictBool, _OPTIONAL),
+    "user_stated": (StrictBool, _OPTIONAL),
+    "receipt_operation_id": (StrictStr | None, _OPTIONAL),
+}
+_PREFERENCE_REQUIRED: dict[str, dict[str, Any]] = {
+    "resolve": {},
+    "record": {
+        "key": (NonEmptyStr, _REQUIRED),
+        "value": (Any, _REQUIRED),
+        "scope": (Literal["personal", "project", "task"], _REQUIRED),
+        "authority": (Literal["explicit", "inferred"], _REQUIRED),
+    },
+    "correct": {
+        "artifact_id": (ArtifactId, _REQUIRED),
+        "layer": (Literal["project", "personal"], _REQUIRED),
+        "kind": (Literal["correct", "reject", "supersede"], _REQUIRED),
+        "reason": (NonEmptyStr, _REQUIRED),
+        "expected_version": (StrictInt, _REQUIRED),
+    },
+    "end_task": {
+        "task_id": (NonEmptyStr, _REQUIRED),
+        "expected_versions": (dict[str, StrictInt], _REQUIRED),
+    },
+    "migrate": {},
+}
+
 
 def _action_union(
     prefix: str, keys: Mapping[str, Any], required: Mapping[str, Mapping[str, Any]]
@@ -596,6 +646,9 @@ _REQUEST_MODELS: dict[str, Any] = {
         },
     ),
     "handoff": _action_union("MemoryHandoff", _HANDOFF_KEYS, _HANDOFF_REQUIRED),
+    "preference": _action_union(
+        "MemoryPreference", _PREFERENCE_KEYS, _PREFERENCE_REQUIRED
+    ),
     "receive": _model(
         "MemoryReceiveRequest",
         {
@@ -617,6 +670,7 @@ _NESTED_ACTIONS = {
     "intent": frozenset(_INTENT_REQUIRED),
     "recipe": frozenset(_RECIPE_REQUIRED),
     "handoff": frozenset(_HANDOFF_REQUIRED),
+    "preference": frozenset(_PREFERENCE_REQUIRED),
 }
 
 # --- rush_memory top-level operation fields -------------------------------------
@@ -641,6 +695,8 @@ _MEMORY_COMMON: dict[str, Any] = {
     "run_id": (StrictStr | None, _OPTIONAL),
     "agent_id": (StrictStr | None, _OPTIONAL),
     "session_id": (StrictStr | None, _OPTIONAL),
+    # 72-T05 §3.11: the optional task context of every memory operation.
+    "task_id": (NonEmptyStr | None, _OPTIONAL),
     # Phase 70 T16 (R16.5/finding 1): the shared result-view parameters. The
     # values pass through unchanged so `rush.delivery.compact` applies the
     # one validation (RESULT_VIEW_INVALID) every transport shares.
@@ -731,7 +787,14 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
                 **_OWNER_SELECTOR.get(op, {}),
             },
         )
-        for op in ("expand", "related", "consolidate", "prepare", "resume")
+        for op in (
+            "expand",
+            "related",
+            "consolidate",
+            "prepare",
+            "resume",
+            "preference",
+        )
     },
     **{
         op: (op, {**_request_field(op), **_OWNER_SELECTOR.get(op, {})})

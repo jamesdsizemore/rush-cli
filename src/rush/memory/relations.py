@@ -230,6 +230,69 @@ def _supersedes_cycle_exists(
     return False
 
 
+def insert_relation_tx(
+    conn: sqlite3.Connection,
+    *,
+    source_id: str,
+    source_version: int,
+    target_id: str,
+    target_version: int,
+    kind: str,
+    origin_ref: str | None = None,
+) -> dict[str, Any]:
+    """72-T05 3.6.3: insert one edge inside the caller's open transaction (never
+    begins or commits). Validates the kind, both versions (strict, storable
+    integers), the `supersedes` self-edge/cycle rule and that both
+    `(id, version)` pairs are live version rows. No visibility, owner or
+    current-version check: callers that need them (`add_relation`) run them first."""
+    if kind not in RELATION_KINDS:
+        return {"code": "E_INPUT", "message": f"unsupported relation kind: {kind!r}"}
+    for endpoint_id, endpoint_version in (
+        (source_id, source_version),
+        (target_id, target_version),
+    ):
+        if type(endpoint_version) is not int or not sqlite_integer_in_range(
+            endpoint_version
+        ):
+            return {
+                "code": "E_INPUT",
+                "message": f"endpoint {endpoint_id!r} version must be a storable integer",
+            }
+    if kind in _ACYCLIC_KINDS and (
+        source_id == target_id or _supersedes_cycle_exists(conn, source_id, target_id)
+    ):
+        return {
+            "code": "E_INPUT",
+            "message": f"{kind} {source_id!r}->{target_id!r} would create a cycle",
+        }
+    for endpoint_id, endpoint_version in (
+        (source_id, source_version),
+        (target_id, target_version),
+    ):
+        live = conn.execute(
+            "SELECT 1 FROM memory_artifact_versions WHERE artifact_id = ? "
+            "AND artifact_version = ? AND deleted = 0",
+            (endpoint_id, endpoint_version),
+        ).fetchone()
+        if live is None:
+            return {"code": "E_NOT_VISIBLE", "message": "relation endpoint not visible"}
+    cur = conn.execute(
+        "INSERT INTO memory_relations "
+        "(source_id, source_version, target_id, target_version, kind, origin_ref, created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            source_id,
+            source_version,
+            target_id,
+            target_version,
+            kind,
+            origin_ref,
+            time.time(),
+        ),
+    )
+    return {"code": "OK", "sequence": cur.lastrowid}
+
+
 def add_relation(
     store: TypedArtifactStore,
     *,

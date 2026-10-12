@@ -91,6 +91,8 @@ class HandoffSession:
     created_at: float
     expires_at: float
     sender: dict[str, Any] | None = None
+    # 72-T05: the sender's task context; delivery decides task-bound rows under it.
+    sender_task_id: str | None = None
 
 
 def _session_from_row(row: Mapping[str, Any]) -> HandoffSession:
@@ -115,6 +117,7 @@ def _session_from_row(row: Mapping[str, Any]) -> HandoffSession:
                 "sender_policy_revision",
             )
         },
+        sender_task_id=row.get("sender_task_id"),
     )
 
 
@@ -148,7 +151,12 @@ def delivery_access(store: TypedArtifactStore, session: HandoffSession) -> Any:
             f"Handoff delivery denied: {reason}.", reason=reason or "policy_invalid"
         )
     if mode == "legacy":
-        return MemoryAccess.legacy(root, session.session_allowlist, operation="receive")
+        return MemoryAccess.legacy(
+            root,
+            session.session_allowlist,
+            operation="receive",
+            task_id=session.sender_task_id,
+        )
     sender = session.sender or {}
     grant_id = sender.get("sender_grant_id")
     kind, owner_id = sender.get("sender_owner_kind"), sender.get("sender_owner_id")
@@ -171,6 +179,7 @@ def delivery_access(store: TypedArtifactStore, session: HandoffSession) -> Any:
         operation="receive",
         owner_scope=owner,
         requested_sources=list(session.session_allowlist),
+        task_id=session.sender_task_id,
     )
     if access is None:
         raise HandoffError(f"Handoff delivery denied: {why}.", reason=why)
@@ -221,6 +230,8 @@ def prepare_handoff(
             "prepare_handoff requires a non-empty session_allowlist.", code="E_INPUT"
         )
     ts = now if now is not None else time.time()
+    # 72-T05: the preparing access's task context (none without an access).
+    sender_task_id = getattr(sender, "task_id", None)
     session_id = secrets.token_hex(16)
     raw_capability = secrets.token_urlsafe(32)
 
@@ -265,6 +276,7 @@ def prepare_handoff(
         receipt_operation_id=receipt_operation_id,
         sender=sender_binding(sender),
         commit_check=commit_check,
+        sender_task_id=sender_task_id,
     )
     # The initial delta is computed under the preparing sender's own access (an
     # internal caller with none reads under the session's allowlist); every later
@@ -294,6 +306,7 @@ def prepare_handoff(
             created_at=ts,
             expires_at=ts + SESSION_TTL_SECONDS,
             sender=sender_binding(sender),
+            sender_task_id=sender_task_id,
         ),
         raw_capability,
         delta,
