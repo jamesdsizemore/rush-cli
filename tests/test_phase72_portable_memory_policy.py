@@ -365,7 +365,10 @@ def test_preview_no_files_then_atomic_apply(
         )
         assert preview.code == "OK", (transport, preview)
         assert dest.effects() == before, transport
-        assert not (dest.root / ".rush").exists(), transport
+        # `register_project` (in `make_env`) already wrote the `.rush` descriptor; the
+        # preview's own zero-effect proof is `effects()` above plus the store never
+        # having been created.
+        assert not dest.db.exists(), transport
         assert not (dest.data_root / "dashboard" / "project_locks").exists()
 
     # the store appears only by publishing a complete database in one step
@@ -374,25 +377,40 @@ def test_preview_no_files_then_atomic_apply(
     def watching(real: Any) -> Any:
         def wrapper(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
             if os.path.basename(os.fspath(dst)) == "memory.db":
-                with contextlib.closing(
-                    sqlite3.connect(f"file:{os.fspath(src)}?mode=ro", uri=True)
-                ) as conn:
+                # The store publishes through pinned directory descriptors, so `src`
+                # and `dst` are relative to `src_dir_fd` / `dst_dir_fd`.
+                src_fd = os.open(
+                    os.fspath(src), os.O_RDONLY, dir_fd=kwargs.get("src_dir_fd")
+                )
+                try:
+                    data = b"".join(iter(lambda: os.read(src_fd, 1 << 20), b""))
+                finally:
+                    os.close(src_fd)
+                with contextlib.closing(sqlite3.connect(":memory:")) as conn:
+                    conn.deserialize(data)
                     count = conn.execute(
                         "SELECT COUNT(*) FROM memory_artifacts "
                         "WHERE trust_tier = 'IMPORTED'"
                     ).fetchone()[0]
-                observed.append((os.path.exists(dst), int(count)))
+                try:
+                    os.stat(dst, dir_fd=kwargs.get("dst_dir_fd"))
+                    present = True
+                except FileNotFoundError:
+                    present = False
+                observed.append((present, int(count)))
             return real(src, dst, *args, **kwargs)
 
         return wrapper
 
-    for name in ("replace", "rename", "link"):
-        monkeypatch.setattr(os, name, watching(getattr(os, name)))
-    _preview, done = cap.imported(dest, capsule_file)
+    # A nested context: `monkeypatch.undo()` would also revert the autouse HOME
+    # isolation and let the rest of the test write under the real data root.
+    with monkeypatch.context() as watch:
+        for name in ("replace", "rename", "link"):
+            watch.setattr(os, name, watching(getattr(os, name)))
+        _preview, done = cap.imported(dest, capsule_file)
     assert done.code == "OK", done
     assert observed and set(observed) == {(False, 5)}, observed
     assert len(cap.imported_rows(dest)) == 5
-    monkeypatch.undo()
 
     # an existing store applies all-or-nothing as well
     live = cap.make_env(tmp_path, "live")
@@ -727,7 +745,9 @@ def test_import_review_cli_tui_same_state(
     auth.grant_memory_scope(
         project_root=root,
         owner_scope=ALICE,
-        approved_sources=["r13-src"],
+        # The import apply writes the `capsule:import` writer source, which the grant
+        # must name (E_SCOPE `source_not_granted` otherwise).
+        approved_sources=["r13-src", "capsule:import"],
         allowed_operations=["ask", "expand", "list", "history", "write"],
         expected_policy_revision=revision,
         consent=True,
@@ -874,5 +894,7 @@ def test_import_review_cli_tui_same_state(
                 tui_rows[row_key] = ",".join(badges.get(ref["artifact_id"], []))
     assert set(tui_rows) == set(cli_rows), (tui_rows, cli_rows)
     for row_key, row in cli_rows.items():
-        assert row.get("applicability") == "pending", row
+        # A schema-2 item has no `applicability` key; its exclusion reason names it.
+        assert "applicability_pending" in row["reason_codes"], row
+        assert row["usable_as_current"] is False, row
         assert "pending" in tui_rows[row_key].split(","), (row_key, tui_rows[row_key])

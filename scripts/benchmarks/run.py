@@ -30,6 +30,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
     __package__ = "scripts.benchmarks"
 
+from . import memory_datasets
 from .contracts import (
     DecisionBudget,
     DecisionResult,
@@ -97,6 +98,9 @@ _ISOLATED_ENV_KEYS = ("HOME", "XDG_DATA_HOME", "LOCALAPPDATA")
 # return, so `E_i = 36` eligible records per case.
 _P72_ELIGIBLE = 36
 _P72_SECURITY_ROLES = frozenset({"denied_owner", "revoked_source", "stale_hash"})
+_P72_READER = OwnerScope("user", "p72-reader")
+_P72_QUERIES_SECTION = "phase72_hybrid_queries"
+_P72_CORPUS_SECTION = "phase72_hybrid_corpus"
 
 # Probe registry forward references (imported lazily or dynamically)
 _PROBE_MAP: dict[str, Callable[..., ProbeResult]] = {}
@@ -585,15 +589,57 @@ def _check_editable_path(root: Path, rel: str, case_id: str) -> None:
         raise FixtureError(f"unsafe_path: case {case_id} editable path {rel!r}")
 
 
+@dataclass
+class _Phase72Data:
+    """72-T08: the frozen query records by id, the corpus records and the hybrid arm's
+    request override (`None` for a manifest without `phase72_embedding`)."""
+
+    queries: dict[str, dict[str, Any]]
+    corpus: list[dict[str, Any]]
+    override: dict[str, str] | None
+
+
+def _is_phase72(case: dict[str, Any]) -> bool:
+    return (
+        case["kind"] == "dataset_answer"
+        and case["inputs"].get("section") == _P72_QUERIES_SECTION
+    )
+
+
+def _load_phase72(manifest: dict[str, Any]) -> _Phase72Data:
+    _queries_manifest, queries = load_dataset_section(_P72_QUERIES_SECTION)
+    _corpus_manifest, corpus = load_dataset_section(_P72_CORPUS_SECTION)
+    embedding = manifest.get("phase72_embedding")
+    override = (
+        {
+            "retrieval": "hybrid",
+            "embedding_endpoint": embedding["endpoint"],
+            "embedding_model": embedding["model"],
+            "embedding_model_digest": embedding["model_digest"],
+        }
+        if isinstance(embedding, dict)
+        else None
+    )
+    return _Phase72Data(
+        queries={str(q["question_id"]): q for q in queries},
+        corpus=list(corpus),
+        override=override,
+    )
+
+
 def _verify_fixtures(
     cases: list[dict[str, Any]],
     verify_root: Path,
     records_by_id: dict[str, dict[str, Any]],
+    phase72: _Phase72Data | None = None,
 ) -> None:
     """B10: builds every case's fixture once under `<workspace>/verify/<index>`
     and checks its frozen revision, task text and editable paths before any
     route preflight or provider call."""
-    for index, case in enumerate(cases):
+    # The Phase 72 fixtures (the T08 subject, seeded in-process) are built first; every
+    # case is still checked before any route preflight or provider call.
+    ordered = sorted(enumerate(cases), key=lambda item: not _is_phase72(item[1]))
+    for index, case in ordered:
         root = verify_root / str(index)
         root.mkdir(parents=True)
         task: str | None = None
@@ -601,6 +647,27 @@ def _verify_fixtures(
         if case["kind"] == "episode":
             task, _scripted = EPISODE_BUILDERS[case["inputs"]["builder"]](root)
             revision = fixture_revision(root)
+        elif phase72 is not None and _is_phase72(case):
+            seen72: list[str] = []
+
+            def capture72(
+                case_root: Path,
+                _tool: MemoryTool,
+                _perms: ExecutionPermissions,
+                _record: dict[str, Any],
+                _seen: list[str] = seen72,
+            ) -> dict[str, Any]:
+                _seen.append(fixture_revision(case_root))
+                return {}
+
+            memory_datasets.run_phase72_case(
+                phase72.queries[case["inputs"]["record_id"]],
+                phase72.corpus,
+                decide_fn=capture72,
+                max_total_tokens=None,
+                workspace_root=root,
+            )
+            revision = seen72[0] if seen72 else None
         else:
             seen: list[str] = []
 
@@ -702,6 +769,7 @@ class _LiveContext:
     decision_route: Any
     workspace_root: Path
     route_overhead_tokens: int
+    provider_env: Mapping[str, str] | None = None
 
 
 @dataclass
@@ -735,6 +803,7 @@ def _invoke_decision(
         workspace_root=live.workspace_root,
         budget=budget,
         timeout_s=timeout_s,
+        env=live.provider_env,
     )
     state.invocations.append(
         invocation_record(result, step=step, route_id=live.route_id)
@@ -750,6 +819,23 @@ def _remaining_tokens(budget: DecisionBudget) -> int:
         - budget.route_overhead_tokens
         - budget.output_reserve_tokens
     )
+
+
+def _history_result(result: Any) -> Any:
+    """72-T08: a decision request's history entry. The `metadata` arm's legacy `list`
+    answers with whole rows (a LongMemEval turn carries its own `role` key); the request
+    carries each row's id and excerpt, the same text `variant_context` holds."""
+    raw = result.get("raw") if isinstance(result, dict) else None
+    if not isinstance(raw, list):
+        return result
+    return {
+        **result,
+        "raw": [
+            {"id": entry.get("id"), "excerpt": _excerpt(entry.get("content") or {})}
+            for entry in raw
+            if isinstance(entry, dict)
+        ],
+    }
 
 
 def _run_dataset_case(
@@ -795,7 +881,7 @@ def _run_dataset_case(
             "step": 0,
             "variant": args.variant,
             "history": [
-                {"operation": operation, "result": result}
+                {"operation": operation, "result": _history_result(result)}
                 for operation, result in counting.results[before:]
             ],
             "variant_context": context,
@@ -835,6 +921,131 @@ def _run_dataset_case(
     ):
         state.reason = "evaluator_failed"
     return harness_completed
+
+
+def _run_phase72_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    phase72: _Phase72Data,
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> tuple[bool, DatasetCaseResult]:
+    """72-T08: a `p72-` dataset_answer case. The arm's retrieval runs in the seeded
+    fresh root with the case's own query and the reader's grant; the decision (live) or
+    the recalled excerpts (component) is scored against the query record's gold answer
+    here, after the decision. Gold keys, `split` and the corpus `role` never enter the
+    decision request."""
+    query_record = phase72.queries[case["inputs"]["record_id"]]
+    gold_answer = str(query_record.get("answer", ""))
+    timeout_s = float(case["budget"]["timeout_s"])
+
+    def decide(
+        root: Path,
+        tool: MemoryTool,
+        perms: ExecutionPermissions,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        state.steps += 1
+        measured: dict[str, Any] = {
+            "returned_ids": [],
+            "retrieval": None,
+            "embedding_fallback_code": None,
+            "override_skipped": None,
+            "page_tokens": 0,
+            "retrieval_ms": 0.0,
+            "decision_ms": 0.0,
+            "embedded_texts": 0,
+            "passed": False,
+            "model_tokens": 0,
+            "local_returned_tokens": 0,
+        }
+        if fixture_revision(root) != case["fixture_revision"]:
+            state.reason = "fixture_revision_mismatch"
+            return measured
+        retrieved = _variant_retrieval(
+            args.variant,
+            root,
+            tool,
+            perms,
+            query=case["inputs"]["query"],
+            subject="domain_knowledge",
+            owner_scope=_P72_READER,
+            session_allowlist=None,
+            request_override=phase72.override if args.variant == "hybrid" else None,
+        )
+        state.local_returned_tokens += int(retrieved["page_tokens"])
+        measured.update(
+            returned_ids=retrieved["ids"],
+            retrieval=retrieved["retrieval"],
+            embedding_fallback_code=retrieved["embedding_fallback_code"],
+            override_skipped=retrieved["override_skipped"],
+            page_tokens=retrieved["page_tokens"],
+            retrieval_ms=retrieved["retrieval_ms"],
+            embedded_texts=retrieved["embedded_texts"],
+            local_returned_tokens=int(retrieved["page_tokens"]),
+        )
+        context = " ".join(retrieved["excerpts"])
+        text = context
+        if live is not None and budget is not None:
+            request = {
+                "schema_version": 1,
+                "decision_kind": "answer",
+                "case_id": case["id"],
+                "task": record["question"],
+                "step": 0,
+                "variant": args.variant,
+                "history": [],
+                "variant_context": context,
+                "remaining_budget_tokens": _remaining_tokens(budget),
+                "permitted_actions": ["answer"],
+                "response_schema": dict(_ANSWER_RESPONSE_SCHEMA),
+            }
+            started = time.perf_counter()
+            result = _invoke_decision(
+                live,
+                state,
+                request,
+                kind="dataset_answer",
+                root=root,
+                budget=budget,
+                timeout_s=timeout_s,
+                step=0,
+            )
+            measured["decision_ms"] = (time.perf_counter() - started) * 1000.0
+            measured["model_tokens"] = budget.model_tokens
+            if result.reason is not None or result.decision is None:
+                state.reason = result.reason or "malformed_decision_json"
+                text = ""
+            else:
+                text = str(result.decision["text"])
+        state.answer = text
+        measured["passed"] = state.reason is None and normalized_contains(
+            text, gold_answer
+        )
+        return measured
+
+    case_started = time.perf_counter()
+    outcome = memory_datasets.run_phase72_case(
+        query_record,
+        phase72.corpus,
+        decide_fn=decide,
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+        workspace_root=run_dir,
+    )
+    if outcome.phase72 is not None:
+        # The case's own wall-clock (seeding, retrieval and decision): the PR4 cost per
+        # correct answer is measured on it, not on the retrieval call alone.
+        outcome.phase72["case_ms"] = (time.perf_counter() - case_started) * 1000.0
+    if state.reason is None and outcome.outcome != "scored":
+        state.reason = outcome.outcome
+    harness_completed = state.reason is None and state.steps > 0
+    if state.reason is None and not (outcome.phase72 or {}).get("passed"):
+        state.reason = "evaluator_failed"
+    return harness_completed, outcome
 
 
 def _run_episode_case(
@@ -953,6 +1164,8 @@ def _run_manifest_case(
     records_by_id: dict[str, dict[str, Any]],
     live: _LiveContext | None,
     provider_ids: set[str],
+    phase72: _Phase72Data | None = None,
+    phase72_results: dict[int, list[DatasetCaseResult]] | None = None,
 ) -> dict[str, Any]:
     """One case x seed (B17, B20): its own budget, decisions and evaluator."""
     effective = min(args.max_total_tokens, case["budget"]["max_total_tokens"])
@@ -965,7 +1178,14 @@ def _run_manifest_case(
     state = _CaseState()
     run_dir.mkdir(parents=True)
     bound_refs: list[dict[str, Any]] | None = None
-    if case["kind"] == "dataset_answer":
+    phase72_result: DatasetCaseResult | None = None
+    if phase72 is not None and _is_phase72(case):
+        harness_completed, phase72_result = _run_phase72_case(
+            args, case, phase72, run_dir, state, live, budget, effective
+        )
+        if phase72_results is not None:
+            phase72_results.setdefault(seed, []).append(phase72_result)
+    elif case["kind"] == "dataset_answer":
         harness_completed = _run_dataset_case(
             args,
             case,
@@ -981,7 +1201,7 @@ def _run_manifest_case(
             case, run_dir, state, live, budget, effective
         )
     provider_ids.update(state.provider_ids)
-    return {
+    record = {
         "case_id": case["id"],
         "seed": seed,
         "kind": case["kind"],
@@ -1004,6 +1224,9 @@ def _run_manifest_case(
         "answer": state.answer if case["kind"] == "dataset_answer" else None,
         "bound_refs": bound_refs,
     }
+    if phase72_result is not None:
+        record["phase72"] = phase72_result.phase72
+    return record
 
 
 def _aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1033,6 +1256,7 @@ def _execute_manifest(
     cases_sha256: str,
     decision_route: Any,
     workspace_root: Path,
+    provider_env: Mapping[str, str] | None = None,
 ) -> int:
     cases: list[dict[str, Any]] = manifest["cases"]
     seeds = _parse_seeds(args.seeds)
@@ -1041,7 +1265,8 @@ def _execute_manifest(
     if any(case["kind"] == "dataset_answer" for case in cases):
         _section, records = load_dataset_section("longmemeval")
         records_by_id = {str(r.get("question_id")): r for r in records}
-    _verify_fixtures(cases, workspace_root / "verify", records_by_id)
+    phase72 = _load_phase72(manifest) if any(_is_phase72(c) for c in cases) else None
+    _verify_fixtures(cases, workspace_root / "verify", records_by_id, phase72)
 
     blockers: list[str] = []
     route_report: dict[str, Any] | None = None
@@ -1061,6 +1286,7 @@ def _execute_manifest(
                 )
                 for case in cases
             ],
+            env=provider_env,
         )
         provider_ids.update(_preflight_provider_ids(preflight.get("preflight")))
         route_report = {
@@ -1086,11 +1312,13 @@ def _execute_manifest(
                 decision_route=decision_route,
                 workspace_root=workspace_root,
                 route_overhead_tokens=int(preflight["route_overhead_tokens"]),
+                provider_env=provider_env,
             )
     else:
         blockers.append(_COMPONENT_BLOCKER)
 
     case_results: list[dict[str, Any]] = []
+    phase72_results: dict[int, list[DatasetCaseResult]] = {}
     if available:
         for index, case in enumerate(cases):
             for seed in seeds:
@@ -1103,6 +1331,8 @@ def _execute_manifest(
                         records_by_id,
                         live,
                         provider_ids,
+                        phase72,
+                        phase72_results,
                     )
                 )
 
@@ -1132,12 +1362,28 @@ def _execute_manifest(
         },
         "blockers": blockers,
     }
+    # 72-T08: the verdict rows (the provider of a row is its route directory,
+    # `<eval root>/<arm>/<route>`) and the R20 counts of the arm.
+    output = Path(args.output).resolve()
+    if phase72 is not None:
+        verdict_rows = (
+            _phase72_rows(
+                phase72_results, manifest, arm=args.variant, provider=output.name
+            )
+            if available
+            else [_unavailable_row(output.name, args.variant)]
+        )
+        payload["verdict_rows"] = verdict_rows
+        payload["phase72_summary"] = _phase72_summary(verdict_rows)
     report_path = write_memory_suite_report(
         args.output,
         payload,
         redaction_patterns=redaction_patterns,
         provider_id_values=sorted(provider_ids),
+        home=None if provider_env is None else provider_env.get("HOME"),
     )
+    if phase72 is not None and output.parent.name in HYBRID_ARMS:
+        write_hybrid_verdict(output.parent.parent)
     sys.stdout.write(f"\nMemory suite report written to: {report_path}\n")
     for blocker in blockers:
         sys.stdout.write(f"BLOCKED (named): {blocker}\n")
@@ -1178,7 +1424,39 @@ def _run_manifest_suite(args: argparse.Namespace) -> int:
     """B2 steps 5-6, B6-B11, B17, B20: a strict-manifest memory run in
     component or live decision mode. Every rejection happens before any
     provider call and before --output is touched; the workspace is always
-    removed, and a cleanup failure never masks the primary error."""
+    removed, and a cleanup failure never masks the primary error. 72-T08 (D14):
+    every in-process Rush call sees `HOME`, `XDG_DATA_HOME` and `LOCALAPPDATA` inside a
+    temporary root, restored on every exit."""
+    original_env = dict(os.environ)
+    isolated = tempfile.TemporaryDirectory(prefix="memory-suite-home-")
+    primary: Exception | None = None
+    code = 1
+    try:
+        for key in _ISOLATED_ENV_KEYS:
+            os.environ[key] = str(Path(isolated.name) / key.lower())
+        code = _run_isolated_manifest_suite(args, original_env)
+    except Exception as exc:  # noqa: BLE001 - re-raised after the cleanup below
+        primary = exc
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
+    try:
+        isolated.cleanup()
+    except OSError as cleanup_exc:
+        detail = _error_chain(cleanup_exc)
+        if primary is not None:
+            detail += f"; primary error: {_error_chain(primary)}"
+        raise FixtureError(f"cleanup_failed: {detail}") from None
+    if primary is not None:
+        raise primary
+    return code
+
+
+def _run_isolated_manifest_suite(
+    args: argparse.Namespace, provider_env: Mapping[str, str]
+) -> int:
+    """`_run_manifest_suite`'s body, run inside the isolated environment; every
+    provider subprocess takes `provider_env`, the caller's original one."""
     manifest = load_task_manifest(args.task_manifest)
     cases: list[dict[str, Any]] = manifest["cases"]
     if (
@@ -1204,7 +1482,12 @@ def _run_manifest_suite(args: argparse.Namespace) -> int:
     code = 1
     try:
         code = _execute_manifest(
-            args, manifest, cases_sha256, decision_route, Path(workspace.name)
+            args,
+            manifest,
+            cases_sha256,
+            decision_route,
+            Path(workspace.name).resolve(),
+            provider_env,
         )
     except Exception as exc:  # noqa: BLE001 - re-raised after workspace cleanup
         primary = exc
@@ -1296,8 +1579,11 @@ def _phase72_rows(
                 ),
                 "passed": bool(phase72.get("passed")),
                 "case_tokens": result.total_tokens,
-                "case_ms": float(phase72.get("retrieval_ms") or 0.0)
-                + float(phase72.get("decision_ms") or 0.0),
+                "case_ms": float(
+                    phase72.get("case_ms")
+                    or float(phase72.get("retrieval_ms") or 0.0)
+                    + float(phase72.get("decision_ms") or 0.0)
+                ),
                 "page_tokens": phase72.get("page_tokens"),
                 "retrieval_ms": phase72.get("retrieval_ms"),
                 "embedded_texts": phase72.get("embedded_texts"),
@@ -1308,6 +1594,22 @@ def _phase72_rows(
             }
         )
     return rows
+
+
+def _unavailable_row(provider: str, arm: str) -> dict[str, Any]:
+    """The one verdict row of an arm whose decision route was unavailable: the verdict
+    for that provider is `unavailable`, never absent."""
+    return {
+        "provider": provider,
+        "arm": arm,
+        "case_id": "route",
+        "seed": 0,
+        "fixture_revision": None,
+        "grants": None,
+        "budgets": None,
+        "split": None,
+        "route_available": False,
+    }
 
 
 def _phase72_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:

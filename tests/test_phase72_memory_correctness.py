@@ -385,25 +385,39 @@ def _t04_access(
 
 
 def _t04_cycle(
-    task: str, root: Path, *, owner: OwnerScope | None = None, **kwargs: Any
+    task: str,
+    root: Path,
+    *,
+    owner: OwnerScope | None = None,
+    access: Any = None,
+    **kwargs: Any,
 ) -> Any:
     from rush.memory.maintenance import run_maintenance_cycle
 
     return run_maintenance_cycle(
         task,  # type: ignore[arg-type]
         project_root=root,
-        access=_t04_access(root, owner=owner),
+        access=access if access is not None else _t04_access(root, owner=owner),
         **kwargs,
     )
 
 
 def _t04_expire(
-    root: Path, candidate_ids: list[str], *, owner: OwnerScope | None = None
+    root: Path,
+    candidate_ids: list[str],
+    *,
+    owner: OwnerScope | None = None,
+    access: Any = None,
 ) -> int:
-    """The `expiry_sweep` over `candidate_ids`; the public `sweep_expired` is gone."""
+    """The `expiry_sweep` over `candidate_ids`; the public `sweep_expired` is gone.
+    A project in policy mode needs the caller's own write-capable policy `access`."""
     return int(
         _t04_cycle(
-            "expiry_sweep", root, owner=owner, candidate_ids=candidate_ids
+            "expiry_sweep",
+            root,
+            owner=owner,
+            access=access,
+            candidate_ids=candidate_ids,
         ).changed
     )
 
@@ -4273,6 +4287,8 @@ def _t2_break_schema(db: Path, kind: str, table: str, name: str | None) -> None:
         if kind == "column":
             if name in ("owner_scope_kind", "owner_scope_id"):
                 conn.execute("DROP INDEX idx_memory_owner")
+                # 72-T06 D30: the conditional event-identity index keys on the owner.
+                conn.execute("DROP INDEX IF EXISTS idx_memory_event_identity")
             conn.execute(f'ALTER TABLE "{table}" DROP COLUMN "{name}"')
         elif kind in ("index", "trigger", "table"):
             conn.execute(f'DROP {kind.upper()} "{name}"')
@@ -5067,14 +5083,36 @@ def _t2_blob_promotion(tmp_path: Path, case: str) -> None:
         sub = tmp_path / variant
         sub.mkdir()
         sub_store = TypedArtifactStore(sub.resolve())
-        _row(sub_store, "m1", None, "mk-m1", source="s1")
-        _row(sub_store, "m2", None, "mk-m2", source="s2")
+        # 72-T04 D8: a peer agrees by equal canonical content, from another source and
+        # another complete origin.
+        for artifact_id, source in (("m1", "s1"), ("m2", "s2")):
+            sub_store.write(
+                MemoryArtifact(
+                    id=artifact_id,
+                    family="memory",
+                    subject=SUBJECT,  # type: ignore[arg-type]
+                    trust_tier="DERIVED",
+                    content={"text": "needle mk-agree"},
+                    source=source,
+                    created_at=time.time(),
+                    origin_kind="fixture",
+                    origin_id=f"origin-{artifact_id}",
+                )
+            )
         if variant == "blob":
             raw = _fix1_raw_content(sub_store.db_path, "m1")
+            from rush.memory.store import next_row_mac
+
             with contextlib.closing(sqlite3.connect(sub_store.db_path)) as conn:
+                # A bound BLOB row: its row MAC covers the stored bytes (D41).
+                mac = next_row_mac(
+                    conn, sub_store.project_root, "m1", {"content": raw.encode("utf-8")}
+                )
+                assert mac is not None
                 conn.execute(
-                    "UPDATE memory_artifacts SET content = ? WHERE id = 'm1'",
-                    (raw.encode("utf-8"),),
+                    "UPDATE memory_artifacts SET content = ?, row_mac = ? "
+                    "WHERE id = 'm1'",
+                    (raw.encode("utf-8"), mac),
                 )
                 conn.execute(
                     "UPDATE memory_artifact_versions SET content = ? "
@@ -7425,6 +7463,13 @@ def _m_build(
                 conn.commit()
         elif state == "tampered":
             _m_tamper(db, target)
+        elif state in ("rejected", "pending"):
+            with contextlib.closing(sqlite3.connect(db)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET applicability = ? WHERE id = ?",
+                    (state, target),
+                )
+                conn.commit()
         if cols["store"] == "old_schema" and not defer_store:
             _drop_payload_columns(db)
     if unregistered:
@@ -7461,7 +7506,9 @@ class _MDriver:
     op = "ask"
     query = M_QUERY
     subject = SUBJECT
-    hybrid_refusal = "E_PERMISSION"
+    # 72-T08: hybrid retrieval without the network permission is a labelled lexical
+    # fallback (`embedding_fallback_code: network_not_granted`), never `E_PERMISSION`.
+    hybrid_refusal = "E_EMBEDDING_UNAVAILABLE"
     expected_ids: tuple[str, ...] = ("a1", "a2")
     forces_allowlist = False
     strict_unknown = "E_INPUT"  # what an unaccepted request key becomes
@@ -8103,7 +8150,11 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
         if val == "ok":
             _m_expect_ok(drv, env, res)
         elif val == "missing_no_marker":
-            if drv.forces_allowlist:
+            if drv.transport == "bridge":
+                # 72-T06 D22: a legacy project's bridge reads under the store's legacy
+                # owner, so the fixture's user-owned row is not visible to it.
+                _m_refused(drv, env, res, "E_NOT_VISIBLE", before)
+            elif drv.forces_allowlist:
                 _m_expect_ok(drv, env, res)
             elif compact:
                 assert res.ids == [], (drv.ident, res.data)
@@ -8118,6 +8169,10 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
     elif col == "mode":
         if val == "ordinary":
             _m_expect_ok(drv, env, drv.run(env, {}))
+        elif drv.transport == "dashboard":
+            # 72-T07: the dashboard reads take the archive mode as a request field.
+            _m_expect_ok(drv, env, drv.run(env, {"archive_mode": val}))
+            assert _m_effects(env) == before
         else:
             _m_unknown_key(drv, env, "archive_mode", val, before)
     elif col == "caps" and drv.route == "hybrid_page" and val != "default":
@@ -8144,7 +8199,9 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
             else:
                 res = drv.run(env, {"retrieval": "hybrid"})
                 assert res.code == drv.hybrid_refusal, (drv.ident, res.code, res.data)
-                assert "network" in _dump(res.data)
+                # `list` browses with an empty query, which hybrid labels first.
+                reason_word = "empty_query" if drv.route == "list" else "network"
+                assert reason_word in _dump(res.data)
                 assert _m_effects(env) == before
         else:
             _m_unknown_key(drv, env, "retrieval", val, before)
@@ -8202,7 +8259,9 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
         res = drv.run(env, {})
         if val == "active":
             _m_expect_ok(drv, env, res)
-        elif val in ("archived", "expired", "tampered"):
+        else:
+            # 72-T05: a rejected or pending row is not current, like an archived one.
+            assert val in ("archived", "expired", "tampered", "rejected", "pending")
             if compact:
                 want_ids = [i for i in drv.expected_ids if i != "a1"]
                 assert res.code == "OK" and res.ids == want_ids, (
@@ -8213,11 +8272,6 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
             else:
                 assert res.code == "E_NOT_VISIBLE", (drv.ident, res.code, res.data)
                 assert not res.data.get("content_base64")
-        else:
-            _m_expect_ok(drv, env, res)
-            assert "applicability" not in _columns(
-                env.root / ".rush" / "memory.db", "memory_artifacts"
-            )
     elif col == "ack":
         _m_unknown_key(drv, env, "ack", val == "ack", before)
     elif col == "capability_ids":
@@ -8277,7 +8331,8 @@ def _m_overlay(drv: _MDriver, env: _MEnv) -> None:
     elif drv.transport == "inproc":
         result = MemoryTool().run(env.root, operation="preference")  # type: ignore[arg-type]
         assert result["status"] == "error", result
-        assert "Unsupported memory operation: preference." in result["summary"]
+        # 72-T05 supplies the operation: a request-less call is its `E_INPUT`.
+        assert "memory preference returned E_INPUT." in result["summary"]
     elif drv.transport == "mcp":
         from rush.mcp_support.request_models import validate_and_normalize
 
@@ -8293,7 +8348,8 @@ def _m_overlay(drv: _MDriver, env: _MEnv) -> None:
 
         outcome_cli = CliRunner().invoke(cli, ["memory", "preference"])
         assert outcome_cli.exit_code == 2, outcome_cli.output
-        assert "No such command 'preference'" in outcome_cli.output
+        # 72-T05 supplies the leaf: an input-less call is its usage error.
+        assert "Missing option '--input'" in outcome_cli.output
     _m_expect_ok(drv, env, drv.run(env, {}))
 
 
@@ -8363,15 +8419,22 @@ def _m_run_p(
         drv.close()
 
 
-# Class S: producer-staged operations. Each is one cell asserting the strict
-# refusal naming the absent operation; its producer flips the cell.
+# Class S: operations with no routine of their own in this matrix. `history` and
+# `explain` were producer-staged until 72-T06 landed them: their cells are now the
+# public matrix's real cells. `import` is a store seam, not an operation (72-T06 D18),
+# so its cell stays the strict refusal naming the absent operation; a non-empty
+# producer is a later task that flips the cell.
 M_S_ROUTES = (
-    ("history", "mode", "historical", "72-T06"),
-    ("explain", "mode", "inspect", "72-T06"),
-    ("import", "apply", "apply", "72-T06"),
+    ("history", "mode", "historical", ""),
+    ("explain", "mode", "inspect", ""),
+    ("import", "apply", "apply", ""),
     ("preference", "access", "overlay", "72-T05"),
     ("capsule", "mode", "inspect", "CODEC"),
 )
+
+
+#: producer-staged operations whose producing task has landed on the combined tree
+M_S_PRODUCED = frozenset({"history", "explain", "preference", "capsule"})
 
 
 def _m_run_s(
@@ -8379,11 +8442,27 @@ def _m_run_s(
 ) -> None:
     from rush.mcp_support.request_models import validate_and_normalize
 
+    if operation in ("history", "explain") and transport != "dashboard":
+        # 72-T06 flipped this cell: `history`/`explain` are real v2 operations, so the
+        # cell is the public matrix's real cell for the route, not a strict refusal.
+        memory_public = importlib.import_module("tests.test_phase72_memory_public")
+        if transport == "cli":
+            real = ("cli", operation, "access", "policy")
+        elif operation == "history":
+            real = (transport, operation, "mode", "historical_with_grant")
+        else:
+            real = (transport, operation, "mode", "ordinary")
+        memory_public.test_t06_route_mode_matrix(*real, tmp_path, monkeypatch)
+        return
     root = _pm_project(tmp_path, monkeypatch)
     if transport == "inproc":
         result = MemoryTool().run(root, operation=operation)  # type: ignore[arg-type]
         assert result["status"] == "error", result
-        assert f"Unsupported memory operation: {operation}." in result["summary"]
+        if operation in M_S_PRODUCED:
+            # The producer landed: a request-less call is the operation's `E_INPUT`.
+            assert f"memory {operation} returned E_INPUT." in result["summary"]
+        else:
+            assert f"Unsupported memory operation: {operation}." in result["summary"]
     elif transport == "mcp":
         outcome = validate_and_normalize(
             "rush_memory", {"path": str(root), "operation": operation}
@@ -8397,7 +8476,11 @@ def _m_run_s(
         monkeypatch.chdir(root)
         refused = CliRunner().invoke(cli, ["memory", operation.replace("_", "-")])
         assert refused.exit_code == 2, refused.output
-        assert f"No such command '{operation}'" in refused.output, refused.output
+        if operation in M_S_PRODUCED:
+            # The leaf exists now: an argument-less call is its usage error.
+            assert "No such command" not in refused.output, refused.output
+        else:
+            assert f"No such command '{operation}'" in refused.output, refused.output
     else:
         assert transport == "dashboard"
         import uuid
@@ -8520,6 +8603,9 @@ def _m_run_tui(
         ("row_state", "expired"),
         ("row_state", "tampered"),
     )
+    # 72-T07: the review view lists a rejected or pending row, but its expansion is
+    # an ordinary read and refuses a row that is not current.
+    listed_not_current = col == "row_state" and val in ("rejected", "pending")
     stored = b""
     if (col, val) != ("store", "absent"):
         store = TypedArtifactStore(root)
@@ -8535,6 +8621,13 @@ def _m_run_tui(
                 conn.commit()
         elif (col, val) == ("row_state", "tampered"):
             _m_tamper(store.db_path, "u1")
+        elif col == "row_state" and val in ("rejected", "pending"):
+            with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET applicability = ? WHERE id = 'u1'",
+                    (val,),
+                )
+                conn.commit()
         elif (col, val) == ("store", "old_schema"):
             _drop_payload_columns(store.db_path)
     state = _tui_state(root)
@@ -8551,8 +8644,12 @@ def _m_run_tui(
         return
     assert [item["id"] for item in state.memory_items] == ["u1"]
     _key(state, "x", actions)
+    if listed_not_current:
+        assert state.memory_expanded is None
+        return
     assert state.memory_expanded is not None, state.memory_message
-    assert base64.b64decode(state.memory_expanded["content_base64"]) == stored
+    # 72-T07: the view keeps the exact payload bytes across its content pages.
+    assert base64.b64decode(state.memory_expanded["content_bytes_base64"]) == stored
 
 
 def _m_rule(col: str) -> str:
@@ -8704,7 +8801,8 @@ def _t02_matrix_cells() -> list[Any]:
             cells.append(
                 pytest.param(
                     functools.partial(_m_run_s, operation, transport=transport),
-                    id=f"{transport}.{operation}-{dimension}-{label}-producer-{producer}",
+                    id=f"{transport}.{operation}-{dimension}-{label}"
+                    + (f"-producer-{producer}" if producer else ""),
                 )
             )
     for name in M_R_READERS:
@@ -13541,7 +13639,13 @@ def test_t01_classification_covers_every_writer(tmp_path: Path) -> None:
         ("memory/intent.py", "record_intent"),
         ("memory/maintenance.py", "_artifact_from_row"),
         ("memory/migration.py", "write_if_new"),
+        # 72-T05/T06/73-T09: `preference` rows (the `preference` class case below) and
+        # two sites that rebuild or import a row with the row's own subject and family.
+        ("memory/migration.py", "_commit_preference_rows"),
+        ("memory/preference_store.py", "_record_apply"),
         ("memory/recipes.py", "record_recipe"),
+        ("memory/store.py", "_correction_effects"),
+        ("memory/store.py", "_import_artifacts"),
         ("memory/store.py", "_row_to_artifact"),
         ("plugins/skills_generator.py", "generate_skill_markdown"),
         ("session_memory.py", "record_turn"),
@@ -13622,9 +13726,13 @@ def test_t01_classification_covers_every_writer(tmp_path: Path) -> None:
             subject="episodic",
             content={"kind": kind, "text": "needle"},
         )
+    # 72-T03: freshness stays `not_applicable`; a summary naming no valid member is
+    # unusable (`derived_members_invalid`).
     case(
         "kind-consolidated",
         "not_applicable",
+        ("derived_members_invalid",),
+        usable=False,
         subject="episodic",
         content={"kind": "consolidated_episode_summary", "text": "needle"},
     )
@@ -13766,7 +13874,10 @@ def test_t01_write_never_evicts_stated(
         )
 
     anchored("b-stated", ALICE, True, "source-b")
-    _, promotion = store.promote("b-stated", user_stated=True, expected_version=1)
+    # 72-T04 D8: a legacy promotion runs for the declared owner, else the legacy owner.
+    _, promotion = store.promote(
+        "b-stated", user_stated=True, expected_version=1, owner_scope=ALICE
+    )
     assert promotion.promoted is True
     before = _nn(store.get_current_row("b-stated"))
     kept = (before["trust_tier"], before["artifact_version"], before["content"])
@@ -16995,19 +17106,39 @@ def test_t01_store_binding_key_and_mac(
         key_dir.chmod(0o700)
 
 
-def _windows_cases() -> list[Any]:
-    names = [
-        "windows_create_reopen",
-        "windows_foreign_owner",
-        "windows_broad_access",
-        "windows_reparse",
-        "windows_shared_read",
-        "windows_unavailable_key",
-    ]
-    return [pytest.param(n, id=n, marks=pytest.mark.windows_only) for n in names]
-
-
-@pytest.mark.parametrize("case", _windows_cases())
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            "windows_create_reopen",
+            id="windows_create_reopen",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_foreign_owner",
+            id="windows_foreign_owner",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_broad_access",
+            id="windows_broad_access",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_reparse", id="windows_reparse", marks=pytest.mark.windows_only
+        ),
+        pytest.param(
+            "windows_shared_read",
+            id="windows_shared_read",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_unavailable_key",
+            id="windows_unavailable_key",
+            marks=pytest.mark.windows_only,
+        ),
+    ],
+)
 def test_t01_store_binding_key_windows_native(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -18307,7 +18438,14 @@ def _g2_more_specs() -> list[_G2Spec]:
             operation="maintain",
             kwargs=lambda env, cell, apply=apply: {
                 "task": "staleness_sweep",
-                "owner_scope": _g2_owner(cell.owner),
+                # 72-T04 (D3/D9): a declared owner other than `legacy_owner_scope(root)`
+                # is `E_NOT_VISIBLE` in `legacy` mode (brief 72-T04 line 61), so a
+                # legacy row declares the legacy owner.
+                "owner_scope": _g2_owner(
+                    legacy_owner_scope(env.root)
+                    if "missing_no_marker" in cell.row
+                    else cell.owner
+                ),
                 # 72-T04 (D3/D9): `owner_scope` is optional -- a `policy` grant
                 # supplies the owner (an ambiguous grant set is `owner_required`),
                 # and `legacy` mode names its sources explicitly.
@@ -18452,7 +18590,15 @@ def _g2_setup_statement(env: _G2Env) -> None:
     _g2_setup_intent(env)
     assert env.store is not None
     _row(env.store, "stm", ALICE, "mk-stm", source="source-a")
-    env.store.promote("stm", user_stated=True)
+    # 72-T04 D8: `store.promote` needs a resolved access in policy mode; the fixture
+    # row is STATED by construction, whatever the policy state of the cell is.
+    with contextlib.closing(sqlite3.connect(env.store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET trust_tier = 'STATED', promoted_at = ? "
+            "WHERE id = 'stm'",
+            (time.time(),),
+        )
+        conn.commit()
     env.extra["statement_version"] = _nn(env.store.get_current("stm")).artifact_version
 
 
@@ -19173,9 +19319,20 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
         )
 
     def setup(env: _G2Env) -> None:
+        cell = env.extra.get("cell")
+        if cell is not None and "missing_no_marker" in cell.row:
+            # 72-T06 D22: a legacy bridge reads under `legacy_owner_scope(root)`, so the
+            # fixture rows carry that owner (they stay Alice's in every policy row).
+            legacy = legacy_owner_scope(env.root)
+            with contextlib.closing(sqlite3.connect(_nn(env.store).db_path)) as conn:
+                conn.execute(
+                    "UPDATE memory_artifacts SET owner_scope_kind = ?, "
+                    "owner_scope_id = ?",
+                    (legacy.kind, legacy.id),
+                )
+                conn.commit()
         if spec.setup is not None:
             spec.setup(env)
-        cell = env.extra.get("cell")
         if cell is not None and cell.capability_ids == "unselected":
             # D22: the session selects only `a2`; the request still names `a1`.
             env.extra.pop("session", None)
@@ -19232,9 +19389,9 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
 #: operations a later task adds, with the producing task: until it lands the operation
 #: is unknown, so a request is refused and creates nothing
 _G2_PRODUCER_OPERATIONS = (
-    ("history", "72-T06"),
-    ("explain", "72-T06"),
-    ("import", "72-T06"),
+    ("history", None),
+    ("explain", None),
+    ("import", None),
     ("preference", "72-T05"),
     ("capsule", "73-T09"),
 )
@@ -19262,7 +19419,15 @@ def _g2_producer_routes() -> list[_G2Route]:
                     cell=f"{operation}-producer",
                     op="ask",
                     call=call,
-                    rows_only=(f"operation-absent-producer-{producer}",),
+                    rows_only=(
+                        f"operation-absent-producer-{producer}"
+                        if producer
+                        # 72-T06 flipped `history`/`explain` (a bare request is
+                        # `E_INPUT`); `import` is a store seam, never an operation.
+                        else "request-empty"
+                        if operation in ("history", "explain")
+                        else "operation-absent",
+                    ),
                 )
             )
     return routes
@@ -19415,6 +19580,10 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
                 ok_codes=frozenset(legacy_codes),
                 check_ok=shown_exact(G2_ACTIVE),
                 check_legacy=shown_exact(G2_ACTIVE),
+                # 72-T06 section 3.3: `memory list` is a v2 read, so an omitted owner
+                # is `E_INPUT owner_required` and an ungranted source `E_SCOPE`.
+                owner_required=leaf == "list",
+                ungranted=_ex("E_SCOPE") if leaf == "list" else None,
                 covers=(("cli.py", "memory_ask_cmd"),) if leaf == "ask" else (),
             )
         )
@@ -19439,6 +19608,8 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
             ok_codes=frozenset(legacy_codes),
             check_ok=_g2_ok_list_hist,
             check_legacy=_g2_ok_list_hist,
+            owner_required=True,
+            ungranted=_ex("E_SCOPE"),
         )
     )
 
@@ -19476,8 +19647,14 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
 
     def maintain_call(env: _G2Env, cell: _G2Cell) -> _G2Out:
         args = ["memory", "maintain", "--task", "staleness_sweep"]
-        if cell.owner is not None:
-            args += ["--owner-kind", cell.owner.kind, "--owner-id", cell.owner.id]
+        # 72-T04 D3: `legacy` mode needs `--source` and admits only the legacy owner.
+        legacy = "missing_no_marker" in cell.row
+        owner = legacy_owner_scope(env.root) if legacy else cell.owner
+        if legacy:
+            for source in cell.allow or ():
+                args += ["--source", source]
+        if owner is not None:
+            args += ["--owner-kind", owner.kind, "--owner-id", owner.id]
         args.append("--json")
         if cell.cache_write is not False:
             args.append("--allow-cache-write")
@@ -19574,7 +19751,6 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
             check_legacy=_g2_maintain_check(True),
             idempotent=False,
             intrinsic_apply=True,
-            owner_omitted_reason="owner_not_granted",
         )
     )
     return routes
@@ -19584,12 +19760,19 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
 
 
 def _g2_guarded(call: Any) -> _G2Out:
-    """Run an internal call, turning a `MemoryWriteDenied` into an `E_PERMISSION`."""
+    """Run an internal call, turning a `MemoryWriteDenied` or a policy-denied
+    `PreferenceError` (72-T05: the one exception a preference action raises) into an
+    `E_PERMISSION`."""
     from rush.memory import experience
+    from rush.memory.migration import PreferenceError
 
     try:
         value = call()
     except experience.MemoryWriteDenied as exc:
+        return _G2Out("E_PERMISSION", exc.reason, frozenset(), 0, None)
+    except PreferenceError as exc:
+        if exc.code != "E_PERMISSION":
+            raise
         return _G2Out("E_PERMISSION", exc.reason, frozenset(), 0, None)
     return _G2Out(None, None, _g2_markers(repr(value)), 0, value)
 
@@ -21345,9 +21528,19 @@ def _g2_pref_delete(env: _G2Env, cell: _G2Cell) -> Any:
 
 
 def _g2_pref_row(env: _G2Env) -> Any:
-    from rush.memory.migration import read_origin
-
-    return read_origin(env.root, "preference", "editor.theme")
+    # The raw row, not the policy-filtered `read_origin`: with Alice and Bob grants on
+    # the root (the `owner-omitted` cell) that read refuses to pick an owner and hides
+    # the row the writer did commit.
+    db = env.root / ".rush" / "memory.db"
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        row = conn.execute(
+            "SELECT content FROM memory_artifacts "
+            "WHERE origin_kind = 'preference' AND origin_id = 'editor.theme'"
+        ).fetchone()
+    finally:
+        conn.close()
+    return json.loads(row[0]) if row else None
 
 
 def _g2_pref_set_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
@@ -21443,8 +21636,9 @@ def _g2_origin_routes() -> list[_G2Route]:
                 committed=0,
                 pre_setup=_g2_pre_pref,
             ),
+            # 72-T05: a policy-mode `PreferenceStore.set`/`delete` always resolves the
+            # project owner (`legacy_owner_scope`), so the owner is fixed like any D4 writer
             ignore=_G2_PREF_FILES,
-            owner_fixed=False,
         ),
         dataclasses.replace(
             _g2_writer(
@@ -21458,7 +21652,6 @@ def _g2_origin_routes() -> list[_G2Route]:
                 pre_setup=_g2_pre_pref,
             ),
             ignore=_G2_PREF_FILES,
-            owner_fixed=False,
         ),
     ]
     return routes
@@ -21663,6 +21856,9 @@ def _g2_dashboard_mutation(spec: _G2Spec) -> _G2Route:
         kwargs = spec.kwargs(env, cell)
         if spec.operation == "maintain":
             arguments = {"task": kwargs["task"], "owner_scope": kwargs["owner_scope"]}
+            if "missing_no_marker" in cell.row:
+                # 72-T04 D3: `legacy` mode refuses a maintain that names no sources.
+                arguments["sources"] = kwargs["sources"]
         else:
             arguments = dict(kwargs["request"])
         perms = _g2_permissions(cell, default_cache_write=spec.default_cache_write)
@@ -22403,10 +22599,16 @@ def _g2_run_overlay_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -
         route.custom_policy(route, row, env, cell, out)
         assert _g2_effects(route, target, env.data_root) == before
         return
+    mutation = False
     if route.takes_owner:
         before = _g2_effects(route, env.root, env.data_root)
         out = _g2_call(route, env, dataclasses.replace(cell, owner=overlay))
         reason = "owner_not_granted"
+        # 72-T05 D25: only the preference route writes personal content, so a
+        # content mutation refuses the overlay owner with `E_OWNER` before any grant.
+        mutation = route.key in _G2_OVERLAY_MUTATIONS or any(
+            name in route.cell for name in ("memory_edit", "memory_maintain")
+        )
         target = env.root
     else:
         target = Path(overlay.id)
@@ -22422,11 +22624,20 @@ def _g2_run_overlay_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -
         out = _g2_call(route, env, cell)
         reason = "overlay_storage_root"
     detail = (route.ident, row, out.code, out.reason, sorted(out.shown), out.status)
-    assert _g2_denied(route, out), detail
-    if route.coded:
-        assert out.reason == reason, detail
+    if mutation:
+        assert out.code == "E_OWNER", detail
+        assert out.reason == "overlay_requires_preference_route", detail
+    else:
+        assert _g2_denied(route, out), detail
+        if route.coded:
+            assert out.reason == reason, detail
     assert not out.shown and out.committed == 0, detail
     assert _g2_effects(route, target, env.data_root) == before, detail
+
+
+_G2_OVERLAY_MUTATIONS = frozenset(
+    {"write", "promote", "edit", "link", "consolidate", "maintain"}
+)
 
 
 def _g2_run_dim_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -> None:
@@ -22549,7 +22760,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
             'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
             'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
-            'urce": "source-a"}]}, "operation": "write"}, "raw": {"archived_a'
+            'urce": "source-a"}]}, "operation": "write"}, "raw": {"applicability": null, "archived_a'
             't": null, "artifact_version": 1, "changed": {"<id>": {"kind": "w'
             'rite", "revision": 1}}, "content": {"text": "needle w"}, "conten'
             't_hash": null, "corroboration_count": 0, "created_at": 0, "expir'
@@ -22559,7 +22770,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'se, "present": true, "revision": 1, "source": "source-a", "subje'
             'ct": "domain_knowledge", "trust_tier": "EXTERNAL_WRITE"}}, "sign'
             'ature": null, "source": "source-a", "stale": false, "subject": "'
-            'domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNAL_W'
+            'domain_knowledge", "symbol_ref": null, "task_id": null, "task_project_id": null, "task_worktree_id": null, "trust_tier": "EXTERNAL_W'
             'RITE"}, "status": "ok", "summary": "Wrote memory artifact to sub'
             'ject \'domain_knowledge\'.", "tool": "memory"}'
         ),
@@ -22579,13 +22790,13 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
             'urce": "source-a"}, {"id": "<id>", "operation": "promote", "revi'
             'sion": 2, "source": "source-a"}]}, "operation": "promote"}, "raw'
-            '": {"artifact": {"archived_at": null, "artifact_version": 2, "co'
+            '": {"artifact": {"applicability": null, "archived_at": null, "artifact_version": 2, "co'
             'ntent": {"text": "needle p"}, "content_hash": null, "corroborati'
             'on_count": 0, "created_at": 0, "expired": false, "family": "memo'
             'ry", "id": "<id>", "origin_id": null, "origin_kind": null, "owne'
             'r_scope": {"id": "alice", "kind": "user"}, "promoted_at": 0, "si'
             'gnature": "<sha>", "source": "source-a", "stale": false, "subjec'
-            't": "domain_knowledge", "symbol_ref": null, "trust_tier": "STATE'
+            't": "domain_knowledge", "symbol_ref": null, "task_id": null, "task_project_id": null, "task_worktree_id": null, "trust_tier": "STATE'
             'D"}, "changed": {"<id>": {"kind": "write, promote", "revision": '
             '2}}, "corroboration_count": 0, "denial_reason": null, "new_tier"'
             ': "STATED", "promoted": true, "readback": {"<id>": {"archived": '
@@ -22599,14 +22810,15 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         effects=frozenset(
             {
                 "root:.rush/locks",
+                "root:.rush/locks/.rush_memory-maintenance.lock.claim",
             }
         ),
         out=(None, None, "ok", (), 0),
         body=(
             '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
             'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
-            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
-            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'ed": 0, "errors": [], "lock_lost": false, "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep", "unprocessed": []}, "status": "ok", "summary": "Maintenance cycle \''
             'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
             'y"}'
         ),
@@ -22624,7 +22836,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
             'ings": [], "metadata": {"memory": {"used": [], "version": 1, "wr'
             'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
-            'urce": "source-a"}]}, "operation": "write"}, "raw": {"archived_a'
+            'urce": "source-a"}]}, "operation": "write"}, "raw": {"applicability": null, "archived_a'
             't": null, "artifact_version": 1, "changed": {"<id>": {"kind": "w'
             'rite", "revision": 1}}, "content": {"text": "needle w"}, "conten'
             't_hash": null, "corroboration_count": 0, "created_at": 0, "expir'
@@ -22634,7 +22846,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'se, "present": true, "revision": 1, "source": "source-a", "subje'
             'ct": "domain_knowledge", "trust_tier": "EXTERNAL_WRITE"}}, "sign'
             'ature": null, "source": "source-a", "stale": false, "subject": "'
-            'domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNAL_W'
+            'domain_knowledge", "symbol_ref": null, "task_id": null, "task_project_id": null, "task_worktree_id": null, "trust_tier": "EXTERNAL_W'
             'RITE"}, "status": "ok", "summary": "Wrote memory artifact to sub'
             'ject \'domain_knowledge\'.", "tool": "memory"}'
         ),
@@ -22654,13 +22866,13 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'itten": [{"id": "<id>", "operation": "write", "revision": 1, "so'
             'urce": "source-a"}, {"id": "<id>", "operation": "promote", "revi'
             'sion": 2, "source": "source-a"}]}, "operation": "promote"}, "raw'
-            '": {"artifact": {"archived_at": null, "artifact_version": 2, "co'
+            '": {"artifact": {"applicability": null, "archived_at": null, "artifact_version": 2, "co'
             'ntent": {"text": "needle p"}, "content_hash": null, "corroborati'
             'on_count": 0, "created_at": 0, "expired": false, "family": "memo'
             'ry", "id": "<id>", "origin_id": null, "origin_kind": null, "owne'
             'r_scope": {"id": "alice", "kind": "user"}, "promoted_at": 0, "si'
             'gnature": "<sha>", "source": "source-a", "stale": false, "subjec'
-            't": "domain_knowledge", "symbol_ref": null, "trust_tier": "STATE'
+            't": "domain_knowledge", "symbol_ref": null, "task_id": null, "task_project_id": null, "task_worktree_id": null, "trust_tier": "STATE'
             'D"}, "changed": {"<id>": {"kind": "write, promote", "revision": '
             '2}}, "corroboration_count": 0, "denial_reason": null, "new_tier"'
             ': "STATED", "promoted": true, "readback": {"<id>": {"archived": '
@@ -22674,14 +22886,15 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         effects=frozenset(
             {
                 "root:.rush/locks",
+                "root:.rush/locks/.rush_memory-maintenance.lock.claim",
             }
         ),
         out=(None, None, "ok", (), 0),
         body=(
             '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
             'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
-            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
-            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'ed": 0, "errors": [], "lock_lost": false, "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep", "unprocessed": []}, "status": "ok", "summary": "Maintenance cycle \''
             'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
             'y"}'
         ),
@@ -22876,7 +23089,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
                 "db",
                 "root:.rush/memory.db",
                 "root:.rush/preferences.json",
-                "root:.rush/preferences.json.migrated",
+                "root:.rush/preferences.json.migrated.67412e87e23aa9cf",
             }
         ),
         out=(None, None, None, (), 1),
@@ -23104,15 +23317,15 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             ' "findings": [], "metadata": {"memory": {"used": [], "version": '
             '1, "written": [{"id": "<id>", "operation": "write", "revision": '
             '1, "source": "source-a"}]}, "operation": "promote"}, "raw": {"ar'
-            'tifact": {"archived_at": null, "artifact_version": 1, "content":'
+            'tifact": {"applicability": null, "archived_at": null, "artifact_version": 1, "content":'
             ' {"text": "needle mk-pro"}, "content_hash": null, "corroboration'
             '_count": 0, "created_at": 0, "expired": false, "family": "memory'
             '", "id": "<id>", "origin_id": null, "origin_kind": null, "owner_'
             'scope": {"id": "alice", "kind": "user"}, "promoted_at": null, "s'
             'ignature": null, "source": "source-a", "stale": false, "subject"'
-            ': "domain_knowledge", "symbol_ref": null, "trust_tier": "EXTERNA'
+            ': "domain_knowledge", "symbol_ref": null, "task_id": null, "task_project_id": null, "task_worktree_id": null, "trust_tier": "EXTERNA'
             'L_WRITE"}, "changed": {"<id>": {"kind": "write", "revision": 1}}'
-            ', "corroboration_count": 0, "denial_reason": "insufficient_corro'
+            ', "corroboration_count": 1, "denial_reason": "insufficient_corro'
             'boration", "new_tier": "EXTERNAL_WRITE", "promoted": false, "rea'
             'dback": {"<id>": {"archived": false, "present": true, "revision"'
             ': 1, "source": "source-a", "subject": "domain_knowledge", "trust'
@@ -23193,14 +23406,15 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         effects=frozenset(
             {
                 "root:.rush/locks",
+                "root:.rush/locks/.rush_memory-maintenance.lock.claim",
             }
         ),
         out=(None, None, "ok", (), 0),
         body=(
             '{"duration_ms": 0, "engine": null, "engine_version": null, "find'
             'ings": [], "metadata": {"operation": "maintain"}, "raw": {"chang'
-            'ed": 0, "errors": [], "processed": 0, "refused": [], "task": "st'
-            'aleness_sweep"}, "status": "ok", "summary": "Maintenance cycle \''
+            'ed": 0, "errors": [], "lock_lost": false, "processed": 0, "refused": [], "task": "st'
+            'aleness_sweep", "unprocessed": []}, "status": "ok", "summary": "Maintenance cycle \''
             'staleness_sweep\' processed 0 row(s), changed 0.", "tool": "memor'
             'y"}'
         ),
@@ -23477,16 +23691,16 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     ids = [r.ident for r in _G2_ROUTES]
     assert len(ids) == len(set(ids))
     assert not any("producer" in r.ident for r in existing)
-    # 72-T05: the preference matrix keeps every apply cell real; its only producer-staged
-    # cells are the 72-T06 `archive_mode` (inspect/historical) request-field cells.
+    # 72-T05: the preference matrix keeps every apply cell real; 72-T06 flipped its
+    # `archive_mode` (inspect/historical) request-field cells (a preference request has
+    # no such key), so none of its cell ids is producer-staged any more.
     import test_phase72_preferences as preferences_matrix
 
     preference_ids = [cell.ident for cell in preferences_matrix._MATRIX]
-    staged = [i for i in preference_ids if i.endswith("-72-T06")]
-    assert staged and all("-mode-" in i for i in staged)
-    assert all(
-        i.endswith(("-mode-inspect-72-T06", "-mode-historical-72-T06")) for i in staged
-    )
+    assert not [i for i in preference_ids if i.endswith("-72-T06")]
+    assert [
+        i for i in preference_ids if i.endswith(("-mode-inspect", "-mode-historical"))
+    ]
     real_apply = [i for i in preference_ids if "-apply-apply" in i]
     assert real_apply and not any(i.endswith("-72-T06") for i in real_apply)
     assert {i.split("_", 1)[0].split(".")[0] for i in preference_ids} == {
@@ -23973,10 +24187,12 @@ def test_t01_restricted_bridge_readonly(tmp_path: Path) -> None:
 
     # A store with a real session: wrong capability, unknown id and revoked session are
     # byte-identical to the missing-store denial; nothing is created, no key, no sidecar.
+    # 72-T06 D22: a legacy-mode bridge reads under the store's legacy owner, so the
+    # granted row is owned by it.
     root = tmp_path / "project"
     root.mkdir()
     store = TypedArtifactStore(root)
-    _row(store, "a1", ALICE, "mk-a1", source="source-a")
+    _row(store, "a1", None, "mk-a1", source="source-a")
     session, capability, _delta = prepare_handoff(
         store,
         root=root,
@@ -24555,10 +24771,10 @@ NX_ROW_FOR_REASON = {
     "project_not_registered": "access-policy-policy_state-ok-grant_ops-exact",
 }
 NX_SOURCE_ROUTES = frozenset({"write", "promote"})
-# H4: the denied call's inputs are the request's own. `receive` sends no
-# `owner_scope`, so its guidance is built for owner `None` (no `--owner` unless the
-# caller has exactly one same-project grant owner, H3).
-NX_OWNERLESS_ROUTES = frozenset({"receive"})
+# H4: the denied call's inputs are the request's own. 72-T06 D21/D23: `receive`
+# re-resolves the sender grant recorded on the handoff session, so its denied call
+# carries the sender's owner and no route is ownerless by name.
+NX_OWNERLESS_ROUTES: frozenset[str] = frozenset()
 
 
 def _nx_required(route: _G2Route) -> list[str]:
@@ -24574,9 +24790,42 @@ def _nx_sources(route: _G2Route, allow: list[str] | None, src: str) -> list[str]
     no source (`intent`, `recipe`, `receive` narrow or bind internally)."""
     if route.key in NX_SOURCE_ROUTES:
         return [src]
+    if route.transport == "bridge" and route.key != "receive":
+        # 72-T06 D22: a bridge call always runs with the receiver session's own
+        # stored allowlist (the fixture session is bound to `source-a`).
+        return ["source-a"]
     if route.takes_allowlist:
-        return list(allow or ())
+        # 72-T03 B17: a consolidate grant also approves the summary's own source, so
+        # the denied call's sources include that writer family.
+        return [*(allow or ()), *([route.writer_family] if route.writer_family else [])]
     return []
+
+
+def _nx_item7(route: _G2Route) -> bool:
+    """Whether a route is an item 7 route: a `MemoryTool` operation on the in-process,
+    MCP, CLI or bridge transport, or a dashboard memory reader or mutation (72-T07
+    D19). Every other §2.3 route keeps its own denial return and never carries
+    guidance."""
+    from rush.tools.memory import VALID_OPERATIONS
+
+    if route.rows_only is not None:
+        return False
+    if route.transport == "dashboard":
+        return route.key in ("dashboard_readers", "dashboard_mutations")
+    return route.transport in ("inproc", "mcp", "cli", "bridge") and (
+        route.key in VALID_OPERATIONS
+    )
+
+
+def _nx_carries_owner(route: _G2Route) -> bool:
+    """Whether the route's request names an owner: a top-level owner field, or the
+    `edit`, `archive` and `delete` requests that embed it."""
+    return route.takes_owner or route.key in ("edit", "archive", "delete")
+
+
+def _summary_of(result: Any) -> str:
+    """The summary line of a ToolResult body; the restricted bridge's bare `raw` has none."""
+    return str(result.get("summary", "")) if hasattr(result, "get") else ""
 
 
 def _nx_env(
@@ -24641,9 +24890,25 @@ def _nx_check(
     from rush.memory import authorization as auth
 
     env, owner, allow, src = _nx_env(tmp_path, monkeypatch, route, reason)
-    before = _effects(env.root, env.data_root)
-    result = _nx_call(route, env, NX_ROW_FOR_REASON[reason], owner, allow, src)
+    before = _g2_effects(route, env.root, env.data_root)
+    item7 = _nx_item7(route)
+    try:
+        result = _nx_call(route, env, NX_ROW_FOR_REASON[reason], owner, allow, src)
+    except Exception:
+        if item7:
+            raise
+        # A route outside item 7 may refuse by raising: it carries no guidance (the
+        # exception is its own denial return, so there is no body to scan).
+        return False
     raw = _rd(result)
+    # A section reader returns its guidance beside its denial, not inside a `raw`.
+    holder = (
+        result
+        if "next_action" not in raw
+        and isinstance(result, dict)
+        and "next_action" in result
+        else raw
+    )
     code, got = _code_of(result), _reason_of(result)
     data = cast(
         "dict[str, Any]",
@@ -24655,25 +24920,51 @@ def _nx_check(
     label = (route.cell, reason, code, got)
     if not denied:
         assert not expect_denial, (label, _dump(raw))
-        assert "next_action" not in raw, label
+        # A route denied for another resolve reason carries that reason's own guidance.
+        if not (got in NX_RESOLVE_REASONS and code in NX_CODES):
+            assert "next_action" not in holder, label
         return False
+    if not item7:
+        assert not _k_has_key(result, "next_action"), label
+        assert _g2_effects(route, env.root, env.data_root) == before, label
+        return True
     expected = auth.memory_next_action(
         reason=reason,
         project_root=env.root,
         operations=_nx_required(route),
-        owner_scope=None if route.key in NX_OWNERLESS_ROUTES else owner,
+        # H4: the denied call's own owner; a route whose request carries none (a CLI
+        # leaf, a bridge or MCP route without an owner field) is denied with `None`.
+        owner_scope=(
+            None
+            if route.key in NX_OWNERLESS_ROUTES or not _nx_carries_owner(route)
+            # 72-T04 D3: a `maintain` call in a legacy row declares the store's legacy
+            # owner (any other owner is `E_NOT_VISIBLE`).
+            else legacy_owner_scope(env.root)
+            if (
+                route.key == "maintain"
+                or route.cell.startswith("dashboard_mutations-memory_maintain")
+            )
+            and "missing_no_marker" in NX_ROW_FOR_REASON[reason]
+            else owner
+        ),
         requested_sources=_nx_sources(route, allow, src),
     )
     assert set(expected) == {"text", "command"}
-    assert raw["next_action"] == expected, label
+    assert holder["next_action"] == expected, label
     suffix = (
         expected["command"] if expected["command"] is not None else expected["text"]
     )
-    assert result["summary"].endswith(f" Next: {suffix}"), (label, result["summary"])
+    # The restricted bridge returns the bare `raw` envelope and a section reader its
+    # section body: neither has a summary line.
+    if route.transport != "bridge" and "summary" in result:
+        assert result["summary"].endswith(f" Next: {suffix}"), (
+            label,
+            result["summary"],
+        )
     assert (expected["command"] is None) == (
         reason not in GRANT_COMMAND_REASONS | {"project_not_registered"}
     ), label
-    assert _effects(env.root, env.data_root) == before, label
+    assert _g2_effects(route, env.root, env.data_root) == before, label
     return True
 
 
@@ -24718,8 +25009,15 @@ def test_policy_denial_next_action_every_path(
     # A route that has the input a reason concerns must be denied by it: reads and
     # writes take an owner and (for allowlist routes, write and promote) a source.
     has_source = route.takes_allowlist or route.key in NX_SOURCE_ROUTES
-    must_deny = route.key in _NX_GUARANTEED and (
-        reason != "source_not_granted" or has_source
+    # An owner reason needs a request that can name an owner (a CLI leaf cannot).
+    has_owner = _nx_carries_owner(route) or reason not in (
+        "owner_not_granted",
+        "owner_required",
+    )
+    must_deny = (
+        route.key in _NX_GUARANTEED
+        and has_owner
+        and (reason != "source_not_granted" or has_source)
     )
     _nx_check(tmp_path, monkeypatch, route, reason, expect_denial=must_deny)
 
@@ -26474,7 +26772,7 @@ def test_t03_link_rejects_ineligible_endpoints(
         assert applied["applied"] is True
     elif state == "expired":
         _row(store, "x1", ALICE, "x1", created_at=time.time() - 15 * DAY)
-        assert _t04_expire(root, ["x1"], owner=ALICE) == 1
+        assert _t04_expire(root, ["x1"], owner=ALICE, access=world["write"]) == 1
     elif state == "tampered":
         _row(store, "x1", ALICE, "x1")
         _tamper(store.db_path, "x1")
@@ -26750,7 +27048,7 @@ def test_t03_summary_invalidation_matrix(
         later = time.time() + 15 * DAY
         with monkeypatch.context() as patch:
             patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
-            swept = _t04_expire(root, ["m1"], owner=ALICE)
+            swept = _t04_expire(root, ["m1"], owner=ALICE, access=world["write"])
         assert swept == 1
     elif action == "tamper":
         _tamper(store.db_path, "m1")
@@ -27248,30 +27546,36 @@ def _codes_ask_v1(root: Path, owner: OwnerScope | None, allow: list[str] | None)
 def _codes_list_v2(
     root: Path, owner: OwnerScope | None, allow: list[str] | None
 ) -> Any:
-    return MemoryTool().run(
-        root,
-        operation="list",
-        session_allowlist=allow,
-        owner_scope=_g2_owner(owner),
-        request={"schema_version": 2},
-    )
+    # 72-T06: a v2 request carries `owner_scope` and `sources` itself; a top-level
+    # `session_allowlist` or `owner_scope` is `extra_forbidden`.
+    request: dict[str, Any] = {"schema_version": 2, "subjects": [SUBJECT]}
+    if owner is not None:
+        request["owner_scope"] = _g2_owner(owner)
+    if allow is not None:
+        request["sources"] = allow
+    return MemoryTool().run(root, operation="list", request=request)
 
 
 def _codes_preference_record(
     root: Path, owner: OwnerScope | None, allow: list[str] | None
 ) -> Any:
+    # 72-T05: the preference route reads its owner from the request.
+    request: dict[str, Any] = {
+        "action": "record",
+        "key": "ui.panel_layout",
+        "value": "verbose",
+        "scope": "project",
+        "authority": "explicit",
+    }
+    if owner is not None:
+        request["owner_scope"] = _g2_owner(owner)
+    if allow is not None:
+        # A record names the source it writes; an allowlist only narrows a resolve.
+        request["source"] = allow[0]
     return MemoryTool().run(
         root,
         operation=cast(MemoryOperation, "preference"),
-        session_allowlist=allow,
-        owner_scope=_g2_owner(owner),
-        request={
-            "action": "record",
-            "key": "ui.panel_layout",
-            "value": "verbose",
-            "scope": "project",
-            "authority": "explicit",
-        },
+        request=request,
         permissions=_g2_perm(),
     )
 
@@ -28385,7 +28689,7 @@ def _k_item7_with(
             allow = ["source-a"]
         result = _nx_call(route, env, legacy_row, ALICE, allow, "source-a")
         assert "next_action" not in _rd(result)
-        assert "Next:" not in str(result["summary"])
+        assert "Next:" not in str(_summary_of(result))
         assert _reason_of(result) not in NX_RESOLVE_REASONS
         return
     if variant == "exact":
@@ -28394,7 +28698,7 @@ def _k_item7_with(
         result = _nx_call(route, env, exact_row, ALICE, None, "source-a")
         assert _code_of(result) in route.ok_codes, _dump(_rd(result))
         assert "next_action" not in _rd(result)
-        assert "Next:" not in str(result["summary"])
+        assert "Next:" not in str(_summary_of(result))
         return
     if variant in ("store_absent", "store_old_schema"):
         missing_row = "access-policy-policy_state-ok-grant_ops-missing_one"
@@ -28408,15 +28712,23 @@ def _k_item7_with(
         else:
             _drop_payload_columns(env.store.db_path)
         before = _effects(env.root, env.data_root)
-        result = _nx_call(route, env, missing_row, ALICE, None, "source-a")
+        allow = ["source-a"] if route.key == "consolidate" else None
+        result = _nx_call(route, env, missing_row, ALICE, allow, "source-a")
         raw = _rd(result)
+        if route.transport == "bridge":
+            # 72-T06 D22: a missing or unreadable store is the bridge's constant
+            # session denial, not a policy denial: no guidance, nothing created.
+            assert _code_of(result) == "E_PERMISSION", _dump(raw)
+            assert "next_action" not in raw
+            assert _effects(env.root, env.data_root) == before
+            return
         assert _reason_of(result) == "operation_not_granted", _dump(raw)
         expected = auth.memory_next_action(
             reason="operation_not_granted",
             project_root=env.root,
             operations=_nx_required(route),
-            owner_scope=ALICE,
-            requested_sources=_nx_sources(route, None, "source-a"),
+            owner_scope=ALICE if _nx_carries_owner(route) else None,
+            requested_sources=_nx_sources(route, allow, "source-a"),
         )
         assert raw["next_action"] == expected
         assert _effects(env.root, env.data_root) == before
@@ -28428,6 +28740,12 @@ def _k_item7_with(
     before = _effects(env.root, env.data_root)
     result = _nx_call(route, env, exact_row, overlay, None, "source-a")
     raw = _rd(result)
+    if not _nx_carries_owner(route) and _reason_of(result) != "owner_not_granted":
+        # The request carries no owner (a CLI leaf, a bridge or an owner-less MCP
+        # route): the overlay owner never reaches it, so it keeps its own outcome.
+        assert "next_action" not in raw
+        assert "Next:" not in str(_summary_of(result))
+        return
     if route.key in OVERLAY_PREFERENCE_ROUTES and (
         _reason_of(result) == "overlay_requires_preference_route"
     ):
@@ -28811,8 +29129,20 @@ def _k_cells() -> list[Any]:
         add(transport, row, {"policy_state": "invalid"}, runner)
         add(transport, row, {"project": "none"}, runner)
     add("mcp", "mcp_connect", {"access": "policy"}, _k_mcp_connect)
-    # item-7 rows: every MemoryTool route of the T01 matrix
+    # item-7 rows: every MemoryTool route of the T01 matrix (the operations on the
+    # in-process, MCP, CLI and bridge transports); every other §2.3 route is a
+    # `K_OTHER_ROWS` cell below and carries no guidance.
+    from rush.tools.memory import VALID_OPERATIONS
+
     for route in _G2_ROUTES:
+        # A producer-staged route has only its operation-absent row (`rows_only`); its
+        # real routes are the producing tasks' own matrices.
+        if (
+            route.transport not in ("inproc", "mcp", "cli", "bridge")
+            or route.key not in VALID_OPERATIONS
+            or route.rows_only is not None
+        ):
+            continue
         for dims in (
             {"access": "legacy_allowlist", "policy_state": "missing_no_marker"},
             {"access": "policy", "policy_state": "ok", "grant_ops": "exact"},
@@ -28882,7 +29212,13 @@ def _mcp_frame(**arguments: Any) -> tuple[str, dict[str, Any]]:
     return text, json.loads(text)
 
 
-def _frame_size(text: str) -> tuple[int, int]:
+def _frame_size(payload: dict[str, Any]) -> tuple[int, int]:
+    """What the caps measure: the emitted frame (an in-process MCP call emits the
+    canonical JSON of its structured content), for a v1 route and, with its caps
+    supplied, a v2 route (72-T06 D35). The indented `content[0].text` is neither."""
+    from rush.delivery.compact import canonical_json
+
+    text = canonical_json(payload).decode("utf-8")
     return (
         len(text.encode("utf-8")),
         len(tiktoken.get_encoding("cl100k_base").encode(text)),
@@ -28892,11 +29228,14 @@ def _frame_size(text: str) -> tuple[int, int]:
 def _caps_call(
     route: str, root: Path, caps: dict[str, int]
 ) -> tuple[str, dict[str, Any]]:
+    # The v1 `expand` model takes no owner selector (the single granted owner is
+    # inferred); a schema-2 request carries its owner and sources inside `request`
+    # (72-T06 strict models reject them as top-level arguments).
+    v2_scope = {"owner_scope": ALICE.as_dict(), "sources": ["source-a"]}
     if route == "expand":
         return _mcp_frame(
             path=str(root),
             operation="expand",
-            owner_scope=ALICE.as_dict(),
             session_allowlist=["source-a"],
             request={"id": "a1", "version": 1, **caps},
         )
@@ -28904,25 +29243,29 @@ def _caps_call(
         return _mcp_frame(
             path=str(root),
             operation="history",
-            owner_scope=ALICE.as_dict(),
-            session_allowlist=["source-a"],
-            request={"schema_version": 2, "artifact_id": "a1", **caps},
+            request={
+                "schema_version": 2,
+                "artifact_id": "a1",
+                **v2_scope,
+                **caps,
+            },
         )
     if route == "explain":
         return _mcp_frame(
             path=str(root),
             operation="explain",
-            owner_scope=ALICE.as_dict(),
-            session_allowlist=["source-a"],
-            request={"schema_version": 2, "query": "needle", **caps},
+            request={"schema_version": 2, "query": "needle", **v2_scope, **caps},
         )
     if route == "list_v2":
         return _mcp_frame(
             path=str(root),
             operation="list",
-            owner_scope=ALICE.as_dict(),
-            session_allowlist=["source-a"],
-            request={"schema_version": 2, **caps},
+            request={
+                "schema_version": 2,
+                "subjects": [SUBJECT],
+                **v2_scope,
+                **caps,
+            },
         )
     return _mcp_frame(
         path=str(root),
@@ -28974,8 +29317,10 @@ def test_consent_guidance_fits_response_caps(
             requested_sources=["source-a"],
         )
 
-    # The admitted minimum caps are what the route itself reports below its floor.
-    _text, probe = _caps_call(route, root, {"max_bytes": 1})
+    # The admitted minimum caps are what the route itself reports below its floor,
+    # with both caps supplied (a single supplied cap leaves the other on the payload
+    # measure, a lower floor than the one both caps are held to).
+    _text, probe = _caps_call(route, root, {"max_bytes": 1, "max_tokens": 1})
     assert probe["raw"]["code"] == "E_INPUT", _dump(probe)
     required = probe["raw"]["data"]["required"]
     assert set(required) == {"max_bytes", "max_tokens"}, required
@@ -28988,11 +29333,11 @@ def test_consent_guidance_fits_response_caps(
         caps = dict(required)
     else:
         caps = {}
-    text, payload = _caps_call(route, root, caps)
+    _text, payload = _caps_call(route, root, caps)
     raw = payload["raw"]
     assert raw["code"] == "E_PERMISSION", _dump(raw)
     assert _reason_of(payload) == "operation_not_granted", _dump(raw)
-    frame_bytes, frame_tokens = _frame_size(text)
+    frame_bytes, frame_tokens = _frame_size(payload)
     max_bytes = caps.get("max_bytes", DEFAULT_MAX_BYTES)
     max_tokens = caps.get("max_tokens", DEFAULT_MAX_TOKENS)
     assert frame_bytes <= max_bytes, (frame_bytes, max_bytes)
@@ -29102,7 +29447,7 @@ def _g8_h4_attach_with(
     guidance; the `legacy_allowlist` form never does."""
     from rush.memory import authorization as auth
 
-    ask = next(r for r in _G2_ROUTES if r.cell == "ask-mode-ordinary-retrieval-lexical")
+    ask = next(r for r in _G2_ROUTES if r.ident == "inproc.ask")
     if access == "policy":
         assert _nx_check(
             tmp_path, monkeypatch, ask, "operation_not_granted", expect_denial=True
@@ -30259,7 +30604,7 @@ def _t03_late_change(
         later = time.time() + 15 * DAY
         with monkeypatch.context() as patch:
             patch.setattr(expiry, "time", SimpleNamespace(time=lambda: later))
-            assert _t04_expire(root, [target], owner=ALICE) == 1
+            assert _t04_expire(root, [target], owner=ALICE, access=world["write"]) == 1
     elif kind == "tamper":
         _tamper(store.db_path, target)
     elif kind == "source_file":
@@ -31563,15 +31908,20 @@ def _g4_bad_path(kind: str) -> Any:
                 }
                 if route != "related":
                     arguments["allow_cache_write"] = True
-                # 72-T01 brief: transport errors stay transport errors before
-                # MemoryTool.run (shared target resolver, invocation/targets.py)
+                # A NUL path is a transport error before MemoryTool.run (shared target
+                # resolver, invocation/targets.py). A symlink loop is the shared
+                # MemoryTool.run path guard's result (decisions.md 72-T01 conflict 0,
+                # 72-T05 G4): `E_INPUT` `{field: path, message: invalid project path}`.
+                rejected = _mcp_memory(**arguments)
                 if kind == "nul":
-                    rejected = _mcp_memory(**arguments)
                     assert rejected["status"] == "error", (route, rejected)
                     assert rejected["raw"] is None, (route, rejected)
                 else:
-                    with pytest.raises(Exception, match="SYMLINK_DISALLOWED"):
-                        _mcp_memory(**arguments)
+                    assert rejected["raw"]["code"] == "E_INPUT", (route, rejected)
+                    assert rejected["raw"]["data"] == {
+                        "field": "path",
+                        "message": "invalid project path",
+                    }, (route, rejected)
         assert _t03_edges(g.store) == edges
         assert _t03_effects(g.root, g.world["data_root"]) == effects
 
@@ -33077,12 +33427,12 @@ def _m3_mode_historical(m: _M3, route: str, tr: str) -> None:
     _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
 
 
-@_m3_cell("mode-historical-producer-72-T06", routes=("related",), transports=_M3_PUBLIC)
+@_m3_cell("archive_mode-historical", routes=("related",), transports=_M3_PUBLIC)
 def _m3_mode_historical_producer(m: _M3, route: str, tr: str) -> None:
-    # `request.mode`/`archive_mode` is the 72-T06 producer: until it lands the strict
-    # request keys refuse it with no effect.
+    # 72-T06 owns `archive_mode` on the schema-version-2 request only: beside the legacy
+    # request keys the strict request still refuses it with no effect.
     before = m.effects()
-    req = {**m.request("related"), "mode": "historical"}
+    req = {**m.request("related"), "archive_mode": "historical"}
     _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
 
 
@@ -33195,9 +33545,24 @@ def _m3_apply_state(m: _M3, state: str, artifact_id: str) -> None:
         )
         assert applied["applied"] is True, applied
     elif state == "expired":
-        assert _t04_expire(m.root, [artifact_id], owner=ALICE) == 1
+        # The maintenance sweep takes a resolved access and a policy world refuses a
+        # `legacy` one (D1 race rule), so the sweep's own marks are written directly.
+        with contextlib.closing(sqlite3.connect(m.db)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET expired_at = ?, "
+                "expired_by = 'expiry_sweep', expires_at = ? WHERE id = ?",
+                (time.time(), time.time() - 60, artifact_id),
+            )
+            conn.commit()
     elif state == "tampered":
         _tamper(m.db, artifact_id)
+    elif state in ("rejected", "pending"):
+        with contextlib.closing(sqlite3.connect(m.db)) as conn:
+            conn.execute(
+                "UPDATE memory_artifacts SET applicability = ? WHERE id = ?",
+                (state, artifact_id),
+            )
+            conn.commit()
     else:
         assert state == "source_stale", state
         rel = "mod.py" if artifact_id == "m1" else "mod2.py"
@@ -33328,16 +33693,9 @@ def _m3_cross_project(m: _M3, route: str, tr: str) -> None:
 
 
 for _applic in ("rejected", "pending"):
-
-    def _m3_producer_t05(m: _M3, route: str, tr: str, _applic: str = _applic) -> None:
-        if tr == "inproc":
-            assert "applicability" not in _columns(m.db, "memory_artifacts")
-            return
-        before = m.effects()
-        req = {**m.request(route), "applicability": {"state": _applic}}
-        _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
-
-    _m3_cell(f"row_state-{_applic}-producer-72-T05")(_m3_producer_t05)
+    # 72-T05: a row whose applicability is not `active` is not current, so a route
+    # treats it like any other non-current endpoint.
+    _m3_cell(f"row_state-{_applic}-producer-72-T05")(_m3_state_check(_applic))
 
 
 # -- Group B: readers that carry item relations / other transports ---------------------
@@ -33587,7 +33945,7 @@ def _m3_bridge_unselected(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "capability_ids-unselected-neighbor-producer-72-T06",
+    "capability_ids-unselected-neighbor",
     mode="legacy",
     pairs=(("bridge", "mcp_bridge"),),
 )
@@ -34126,9 +34484,10 @@ for _wcell in _M3_D_NOEFFECT:
     )
 
 
-@_m3_cell("schema_version-2-producer-72-T06", transports=_M3_PUBLIC)
+@_m3_cell("schema_version-2-legacy_fields", transports=_M3_PUBLIC)
 def _m3_schema_version_producer(m: _M3, route: str, tr: str) -> None:
-    # `schema_version: 2` is the 72-T06 producer: the strict request refuses it today.
+    # 72-T06: `schema_version: 2` beside the legacy request keys is refused (a v2
+    # request carries none of them).
     before = m.effects()
     req = {**m.request(route), "schema_version": 2}
     _m3_denied(m, m.call(tr, route, request=req), before, "E_INPUT")
@@ -35020,8 +35379,9 @@ def test_t04_sources_from_grant(
         owner_scope=carol,
         data_root=env.data_root,
     )[1]
-    assert why != "granted"
-    assert (_code_of(no_grant), _reason_of(no_grant)) == ("E_PERMISSION", why)
+    # 72-T06 plan 2.1 item 3: an explicit owner no grant names is `E_OWNER`.
+    assert why == "owner_not_granted"
+    assert (_code_of(no_grant), _reason_of(no_grant)) == ("E_OWNER", why)
     auth.revoke_memory_scope(
         grant_id=env.grants["alice"]["grant_id"],
         expected_policy_revision=_revision(auth, env.data_root),
@@ -38689,6 +39049,12 @@ def _m_env(tmp_path: Path, sc: _MS, name: str) -> _TE:
         )
     elif sc.row_state == "tampered":
         _tamper(env.db, target)
+    elif sc.row_state == "rejected":
+        _te_sql(
+            env,
+            "UPDATE memory_artifacts SET applicability = 'rejected' WHERE id = ?",
+            target,
+        )
     if sc.policy_state == "missing_marker":
         auth.policy_path(data_root=env.data_root).unlink()
     elif sc.policy_state == "invalid":
@@ -39306,11 +39672,6 @@ def test_t04_route_mode_matrix(
     if dim == "discriminator":
         _m_check_discriminator(sc, tmp_path, monkeypatch)
         return
-    if dim == "row_state" and value == "rejected":
-        # producer 72-T05: the `applicability` column does not exist at this HEAD.
-        env = _m_env(tmp_path, dataclasses.replace(sc, row_state="active"), "cell")
-        assert "applicability" not in _columns(env.db, "memory_artifacts")
-        return
 
     def baseline() -> _MOut:
         base_sc = _m_scenario(family, transport, "apply", "apply")
@@ -39353,9 +39714,16 @@ def test_t04_route_mode_matrix(
         elif transport == "tui" or (transport == "cli" and family == "promote"):
             # the TUI and the promote CLI carry no overlay owner: byte-identical.
             assert out.key() == baseline().key()
+        elif transport == "store":
+            # the in-process API resolves the access itself: no overlay grant.
+            _m_denied(out, _m_overlay_reason(env, sc))
+            untouched()
         else:
-            reason = _m_overlay_reason(env, sc)
-            _m_denied(out, reason)
+            # 72-T05 D25: only the preference route writes personal content.
+            assert (out.code, out.reason) == (
+                "E_OWNER",
+                "overlay_requires_preference_route",
+            ), out
             untouched()
         return
     # --- policy state -----------------------------------------------------------
@@ -39423,8 +39791,9 @@ def test_t04_route_mode_matrix(
         if family == "maintain":
             assert out.raised is None, out
         elif transport == "tui":
-            # the TUI selects through the read-only view, which never migrates.
-            assert out.raised == "NoCall" and "predates" in out.message, out
+            # the TUI selects through the read-only view, which never migrates; 72-T07
+            # words the refusal as the D19 `migration_required` state.
+            assert out.raised == "NoCall" and "migration_required" in out.message, out
         else:
             assert out.raised in (None, "VersionConflictError", "KeyError"), out
         return
@@ -39445,7 +39814,9 @@ def test_t04_route_mode_matrix(
             return
         if transport in ("cli", "dashboard"):
             if transport == "dashboard":
-                assert out.http == 400, out
+                # 72-T07: the dashboard route takes `apply: false` as a preview.
+                assert out.http == 200, out
+                assert _m_state(env, transport) == before, "a preview changed state"
             else:
                 assert out.key() == baseline().key()
             return
@@ -39518,7 +39889,7 @@ def _m_check_row_state(
         if value in ("archived", "expired"):
             assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
             assert _te_get(env, "a1")["corroboration_count"] <= 1
-        elif value == "tampered":
+        elif value in ("tampered", "rejected"):
             assert _te_get(env, "a1")["trust_tier"] == "DERIVED"
             assert _te_get(env, "a1")["promoted_at"] is None
         else:
@@ -39526,15 +39897,16 @@ def _m_check_row_state(
             assert _te_get(env, "a1")["trust_tier"] == "IMPORTED"
             assert _te_get(env, "a1")["promoted_at"] is None
         return
-    # promote: a2 (the named peer) is archived / expired / tampered / pending.
+    # promote: a2 (the named peer) is archived / expired / tampered / pending / rejected.
     assert out.promoted is not True, out
     if transport == "store":
-        if value == "tampered" or value == "pending":
-            expected = (
-                "integrity_payload_mismatch"
-                if value == "tampered"
-                else "imported_unverified"
-            )
+        if value in ("tampered", "pending", "rejected"):
+            expected = {
+                "tampered": "integrity_payload_mismatch",
+                "pending": "imported_unverified",
+                # a rejected row stays visible, but nothing corroborates it: refused.
+                "rejected": "insufficient_corroboration",
+            }[value]
             assert out.raised is None and out.denial == expected, out
         else:
             assert out.raised == "VersionConflictError", out
@@ -39929,7 +40301,12 @@ def test_t04_g4_path_rows(bad: str, tmp_path: Path) -> None:
                 request=extra["request"],
             )
             assert published["status"] == "error", published
-            assert _code_of(published["raw"]) == "E_INPUT", published
+            if bad == "nul":
+                # 72-T03 G4: a NUL path is a transport error before MemoryTool.run
+                # (shared target resolver, invocation/targets.py).
+                assert published["raw"] is None, published
+            else:
+                assert _code_of(published["raw"]) == "E_INPUT", published
     assert _tree(tmp_path) == before
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import dataclasses
 import functools
 import hashlib
@@ -12,7 +13,7 @@ import sqlite3
 import time
 import unicodedata
 import uuid
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -61,11 +62,13 @@ from ..memory.retrieval import (
     NOT_CURRENT_REASONS,
     FrameBytes,
     MemoryAccess,
+    MixedFrame,
     RouteDenial,
     SourceValidationMemo,
     _access_allows,
     _count_tokens,
     _fit_optional,
+    _frame_tokens,
     _measure_page,
     _source_input_denial,
     evaluate_artifact_visibility,
@@ -334,10 +337,19 @@ def _ui_row(item: Mapping[str, Any]) -> dict[str, Any]:
     integrity = ref.get("integrity")
     if integrity in ("backfilled", "unbound", "mismatch"):
         badges.append(f"integrity:{integrity}")
+    reason_codes = item.get("reason_codes")
     applicability = item.get("applicability", ref.get("applicability"))
+    if applicability not in ("pending", "rejected", "superseded") and isinstance(
+        reason_codes, list | tuple
+    ):
+        # A schema-2 item carries no `applicability` key (its reference keys are
+        # pinned); the exclusion reason `applicability_<state>` names it.
+        for state in ("pending", "rejected", "superseded"):
+            if f"applicability_{state}" in reason_codes:
+                applicability = state
+                break
     if applicability in ("pending", "rejected", "superseded"):
         badges.append(str(applicability))
-    reason_codes = item.get("reason_codes")
     if item.get("expired") is True or (
         isinstance(reason_codes, list | tuple) and "expired" in reason_codes
     ):
@@ -833,6 +845,10 @@ class _V2Call:
     granted: ExecutionPermissions
     task_id: str | None
     attribution: dict[str, Any]
+    # 72-T06 D35: the transport frame and the duration frozen once for this call, so
+    # admission, every page fit and the emitted envelope measure the same bytes.
+    frame: compact.FrameContext | None = None
+    frozen: int | None = None
 
     @property
     def echo(self) -> dict[str, Any]:
@@ -1086,6 +1102,7 @@ class MemoryTool(ToolFn):
                 permissions or ExecutionPermissions(),
                 task_id=task_id,
                 attribution=attribution,
+                frame=frame,
             )
         return self._run_legacy(
             path,
@@ -1098,6 +1115,7 @@ class MemoryTool(ToolFn):
             **filters,
             bridge=bridge_authority,
             frame=frame,
+            task_id=task_id,
             transport=transport,
         )
 
@@ -1480,7 +1498,11 @@ class MemoryTool(ToolFn):
     # --- 72-T06: schema_version 2 -------------------------------------------------
 
     def _v2_wrap(
-        self, started: float, operation: str, raw: dict[str, Any]
+        self,
+        started: float,
+        operation: str,
+        raw: dict[str, Any],
+        duration_ms: int | None = None,
     ) -> ToolResult:
         code = str(raw.get("code"))
         return ToolResult(
@@ -1488,7 +1510,9 @@ class MemoryTool(ToolFn):
             engine=None,
             engine_version=None,
             status=_CODE_STATUS.get(code, "error"),  # type: ignore[typeddict-item]
-            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+            duration_ms=duration_ms
+            if duration_ms is not None
+            else max(0, int((time.monotonic() - started) * 1000)),
             summary=f"memory {operation} returned {code}.",
             findings=[],
             raw=raw,
@@ -1504,7 +1528,67 @@ class MemoryTool(ToolFn):
             call.started,
             call.operation,
             _v2_raw(call.operation, code, data=data, **fields),
+            duration_ms=call.frozen,
         )
+
+    def _v2_fit(self, call: _V2Call) -> FrameBytes | None:
+        """72-T06 D35: the exact bytes the call's transport writes for a v2 page of
+        `(code, data)` -- the same object `_v2_page` returns, so every fit is the
+        emitted frame. `None` outside a transport frame, and when the caller supplied
+        neither cap (payload measurement: a default-cap page is identical on every
+        transport). With one cap supplied, that cap is measured on the frame and the
+        defaulted one on the payload (`MixedFrame`)."""
+        frame = call.frame
+        if frame is None:
+            return None
+        supplied = (
+            "max_bytes" in call.req.model_fields_set,
+            "max_tokens" in call.req.model_fields_set,
+        )
+        if not any(supplied):
+            return None
+        payload_frame = compact.FrameContext("in_process", None, context=frame.context)
+
+        def build(code: str, data: dict[str, Any]) -> Any:
+            body = dict(data)
+            items = body.pop("items", None) or []
+            next_cursor = body.pop("next_cursor", None)
+            complete = bool(body.pop("complete", False)) and code in {
+                "OK",
+                "E_EMBEDDING_UNAVAILABLE",
+            }
+            result = self._v2_wrap(
+                call.started,
+                call.operation,
+                _v2_raw(
+                    call.operation,
+                    code,
+                    items=items,
+                    next_cursor=next_cursor,
+                    complete=complete,
+                    data=body,
+                ),
+                duration_ms=call.frozen,
+            )
+            if frame.context is not None:
+                result["metadata"] = {
+                    **(result.get("metadata") or {}),
+                    "scope": _frame_scope(frame),
+                }
+            return attach_memory_attribution(
+                result, _memory_attribution(call.root, call.operation, result, [])
+            )
+
+        def fit(code: str, data: dict[str, Any]) -> bytes:
+            return compact.frame_bytes(frame, build(code, data))
+
+        if all(supplied):
+            return fit
+
+        def payload(code: str, data: dict[str, Any]) -> bytes:
+            return compact.frame_bytes(payload_frame, build(code, data))
+
+        return MixedFrame(fit, payload, supplied)
 
     def _v2_dispatch(
         self,
@@ -1517,13 +1601,12 @@ class MemoryTool(ToolFn):
         *,
         task_id: str | None,
         attribution: dict[str, Any],
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
-        """Strict validation (the MCP model), path, then the operation."""
+        """The path (72-T01: an invalid one is `E_INPUT` before anything else, for
+        every operation), strict validation (the MCP model), then the operation."""
         from ..mcp_support.request_models import validate_memory_v2
 
-        req, rejection = validate_memory_v2(operation, request, top_level)
-        if rejection is not None:
-            return self._v2_wrap(started, operation, rejection)
         try:
             root = Path(path).resolve()
             os.fsencode(root)  # an unencodable path fails here, before any OS call
@@ -1537,7 +1620,20 @@ class MemoryTool(ToolFn):
                     data={"field": "path", "message": "invalid project path"},
                 ),
             )
-        call = _V2Call(started, root, operation, req, granted, task_id, attribution)
+        req, rejection = validate_memory_v2(operation, request, top_level)
+        if rejection is not None:
+            return self._v2_wrap(started, operation, rejection)
+        call = _V2Call(
+            started,
+            root,
+            operation,
+            req,
+            granted,
+            task_id,
+            attribution,
+            frame=frame,
+            frozen=_frozen_duration(started) if frame is not None else None,
+        )
         handlers: dict[str, Callable[[_V2Call], ToolResult]] = {
             "ask": self._v2_read,
             "recall": self._v2_read,
@@ -1556,6 +1652,11 @@ class MemoryTool(ToolFn):
                 if failure is None:
                     raise
                 result = self._v2_out(call, failure[0], data=failure[1])
+        if frame is not None and frame.context is not None:
+            metadata = dict(result.get("metadata") or {})
+            if "scope" not in metadata:
+                metadata["scope"] = _frame_scope(frame)
+                result["metadata"] = metadata
         return cast(
             ToolResult,
             attach_memory_attribution(
@@ -1580,19 +1681,24 @@ class MemoryTool(ToolFn):
             getattr(req, "archive_mode", "active") == "historical"
         )
         mode, why = memory_policy_decision(root)
-        if mode == "unavailable":
-            return self._v2_out(
-                call, "E_PERMISSION", data={"reason": why or "policy_invalid"}
-            )
         overlay = owner is not None and owner == user_overlay_owner_scope()
+        if mode == "unavailable":
+            return self._v2_policy_denied(
+                call,
+                "E_PERMISSION",
+                {"reason": why or "policy_invalid"},
+                owner,
+                apply=apply,
+                historical=historical,
+                overlay=overlay,
+            )
         if mode == "legacy":
             return self._v2_legacy_access(call, owner, overlay, apply=apply)
         if overlay and op in _OVERLAY_PREFERENCE_ONLY:
             return self._v2_out(
                 call, "E_OWNER", data={"reason": "overlay_requires_preference_route"}
             )
-        # 72-T05 binds the task context; omitted when the caller names none.
-        task: dict[str, Any] = {"task_id": call.task_id} if call.task_id else {}
+        # 72-T05 binds the task context; `None` when the caller names none.
         access, reason = MemoryAccess.resolve_with_reason(
             root,
             operation=op,
@@ -1601,12 +1707,55 @@ class MemoryTool(ToolFn):
             overlay=overlay,
             owner_scope=owner,
             requested_sources=tuple(getattr(req, "sources", None) or ()),
-            **task,
+            task_id=call.task_id,
         )
         if access is None:
             code, data = _v2_denial(owner, reason)
-            return self._v2_out(call, code, data=data)
+            return self._v2_policy_denied(
+                call,
+                code,
+                data,
+                owner,
+                apply=apply,
+                historical=historical,
+                overlay=overlay,
+            )
         return access
+
+    def _v2_policy_denied(
+        self,
+        call: _V2Call,
+        code: str,
+        data: dict[str, Any],
+        owner: OwnerScope | None,
+        *,
+        apply: bool,
+        historical: bool,
+        overlay: bool,
+    ) -> ToolResult:
+        """D19/73-T02 item 7: a v2 policy denial names the command that fixes it, as
+        the legacy routes' `_denied` does."""
+        result = self._v2_out(call, code, data=data)
+        try:
+            operations = required_operation_set(
+                call.operation, apply=apply, historical=historical, overlay=overlay
+            )
+        except ValueError:
+            operations = ()
+        _attach_policy_next_action(
+            result,
+            reason=str(data.get("reason") or ""),
+            project_root=call.root,
+            operations=operations,
+            owner_scope=owner,
+            requested_sources=tuple(getattr(call.req, "sources", None) or ()),
+            budget=(
+                (call.req.encoding, call.req.max_bytes, call.req.max_tokens)
+                if hasattr(call.req, "max_bytes")
+                else None
+            ),
+        )
+        return result
 
     def _v2_legacy_access(
         self,
@@ -1635,9 +1784,15 @@ class MemoryTool(ToolFn):
                     call, "E_OWNER", data={"reason": "owner_not_granted"}
                 )
             return MemoryAccess.legacy(
-                root, sources, owner_scope=default_owner, operation="write"
+                root,
+                sources,
+                owner_scope=default_owner,
+                operation="write",
+                task_id=call.task_id,
             )
-        return MemoryAccess.legacy(root, sources, owner_scope=owner, operation=op)
+        return MemoryAccess.legacy(
+            root, sources, owner_scope=owner, operation=op, task_id=call.task_id
+        )
 
     def _v2_view(
         self, call: _V2Call, access: MemoryAccess
@@ -1657,7 +1812,23 @@ class MemoryTool(ToolFn):
         before access, any store or telemetry."""
         req = call.req
         try:
-            need = _v2_budget_floor(call.operation, req.encoding)
+            fit = self._v2_fit(call)
+            if fit is None:
+                need = _v2_budget_floor(call.operation, req.encoding)
+            else:
+                # D35: the floor is the largest framed refusal the transport emits.
+                framed = recall_admission(
+                    limit=1,
+                    max_bytes=0,
+                    max_tokens=0,
+                    encoding=req.encoding,
+                    frame_bytes=fit,
+                )
+                required_floor = (framed or {})["required"]
+                need = (
+                    int(required_floor["max_bytes"]),
+                    int(required_floor["max_tokens"]),
+                )
         except (ValueError, TypeError, KeyError):
             return self._v2_out(
                 call,
@@ -1733,15 +1904,25 @@ class MemoryTool(ToolFn):
         access = self._v2_access(call, apply=False)
         if not isinstance(access, MemoryAccess):
             return access
-        hybrid = req.retrieval == "hybrid"
-        if hybrid and not call.granted.network:
-            return self._v2_out(
-                call,
-                "E_PERMISSION",
-                data={
-                    "reason": "network_required",
-                    "message": f"memory {op} retrieval=hybrid requires network.",
+        # 72-T08 §3.1: the effective retrieval of a compact read, for a v2 read. An
+        # absent `retrieval` is the implicit default; a missing network grant or engine is
+        # a labelled lexical page, never `E_PERMISSION`.
+        hybrid, p_default, cfg_options, cfg_error = self._retrieval_plan(
+            call.root, "retrieval" in req.model_fields_set, req.retrieval
+        )
+        fallback: str | None = None
+        embed_config: EmbeddingConfig | None = None
+        if hybrid:
+            fallback, embed_config = self._hybrid_engine(
+                {
+                    key: getattr(req, key)
+                    for key in (*_EMBEDDING_OPTION_KEYS, "embedding_chunking_version")
                 },
+                req.query,
+                req.cursor,
+                call.granted,
+                cfg_options,
+                cfg_error,
             )
         root = _storage_root(access)
         # Every v2 read is a read-only view: a read never runs a constructor
@@ -1750,13 +1931,30 @@ class MemoryTool(ToolFn):
         if isinstance(opened, dict):
             return cast(ToolResult, opened)
         store = opened
+        if p_default and fallback is None and embed_config is not None:
+            fallback = self._tags_fallback(embed_config)
         if store is None:
-            size = _measure_page([], None, True, req.encoding)
+            labels: dict[str, Any] | None = None
+            if fallback is not None:
+                labels = _fallback_labels(fallback, 0)
+            elif hybrid:
+                labels = {
+                    "retrieval": "hybrid",
+                    "candidates_truncated": False,
+                    "incomplete_reason": None,
+                    "embedded_texts": 0,
+                }
+            size = _measure_page([], None, True, req.encoding, labels)
             return self._v2_out(
                 call,
                 "OK",
                 complete=True,
-                data={"tokens": size[1], "bytes": size[0], "encoding": req.encoding},
+                data={
+                    "tokens": size[1],
+                    "bytes": size[0],
+                    "encoding": req.encoding,
+                    **(labels or {}),
+                },
             )
         mode = (
             "historical"
@@ -1771,8 +1969,11 @@ class MemoryTool(ToolFn):
             "archive_mode": req.archive_mode,
             "v2_items": True,
         }
-        overhead = _v2_overhead(op, req.encoding)
+        fit = self._v2_fit(call)
+        # D35: under a transport frame the caps measure the whole emitted frame.
+        overhead = (0, 0) if fit is not None else _v2_overhead(op, req.encoding)
         common: dict[str, Any] = {
+            "frame_bytes": fit,
             "query": req.query,
             "access": access,
             "limit": req.limit,
@@ -1789,18 +1990,6 @@ class MemoryTool(ToolFn):
         }
         try:
             if hybrid:
-                embed_config = None
-                if (
-                    req.embedding_endpoint
-                    and req.embedding_model
-                    and (req.embedding_model_digest)
-                ):
-                    embed_config = EmbeddingConfig(
-                        endpoint=req.embedding_endpoint,
-                        model=req.embedding_model,
-                        model_digest=req.embedding_model_digest,
-                        chunking_version=req.embedding_chunking_version or "mc12-v1",
-                    )
                 subjects = sorted(set(req.subjects))
                 page = hybrid_page(
                     store,
@@ -1808,8 +1997,12 @@ class MemoryTool(ToolFn):
                         MemorySubject, subjects[0] if len(subjects) == 1 else subjects
                     ),
                     embed_config=embed_config,
+                    fallback_code=fallback,
+                    cursor=req.cursor,
                     v2_filters=filters,
-                    **{**common, "cache_write": False},
+                    # No `fill_access`: a v2 read never persists a vector, but its
+                    # delivered page is still a receipt under `cache_write`.
+                    **common,
                 )
             else:
                 page = recall_page(store, cursor=req.cursor, **common, **filters)
@@ -1823,7 +2016,12 @@ class MemoryTool(ToolFn):
         code = str(data.pop("code"))
         items = data.pop("items", None) or []
         next_cursor = data.pop("next_cursor", None)
-        complete = bool(data.pop("complete", False))
+        # 72-T06 §3.4: an error carries `items=[]`, `complete=False` (e.g. the
+        # `related` missing-root body is `complete: True` at the relations layer).
+        complete = bool(data.pop("complete", False)) and code in {
+            "OK",
+            "E_EMBEDDING_UNAVAILABLE",
+        }
         if code == "E_INPUT" and "required" in data:
             data["field"] = "max_bytes"
         if code == "E_EMBEDDING_UNAVAILABLE":
@@ -1846,7 +2044,11 @@ class MemoryTool(ToolFn):
             return refused
         # C05: caps below the smallest expand envelope plus the v2 envelope are
         # `E_INPUT` naming the cap, before access, any store or telemetry.
-        overhead = _v2_overhead(call.operation, req.encoding)
+        fit = self._v2_fit(call)
+        # D35: under a transport frame the caps measure the whole emitted frame.
+        overhead = (
+            (0, 0) if fit is not None else _v2_overhead(call.operation, req.encoding)
+        )
         floor = expand_admission(
             artifact_id=req.artifact_id,
             version=req.artifact_version,
@@ -1855,6 +2057,7 @@ class MemoryTool(ToolFn):
             max_tokens=req.max_tokens - overhead[1],
             encoding=req.encoding,
             representation=req.representation or "utf8",
+            frame_bytes=fit,
         )
         if (
             floor is not None
@@ -1890,6 +2093,42 @@ class MemoryTool(ToolFn):
             "historical" if req.archive_mode == "historical" else "ordinary"
         )
         try:
+            expand_fit = fit
+            if fit is not None:
+                # The delivered page is `items=[payload + reference]`: measure it so.
+                try:
+                    reference_probe: dict[str, Any] = {
+                        **v2_reference(
+                            evaluate_artifact_visibility(
+                                store,
+                                store.get_current_row(req.artifact_id),
+                                access=access,
+                                mode=mode,
+                            )
+                        ),
+                        "artifact_version": req.artifact_version,
+                    }
+                except Exception:  # noqa: BLE001 - a refusal frame carries no reference
+                    reference_probe = {}
+
+                def expand_fit(code: str, data: dict[str, Any]) -> bytes:
+                    if code != "OK":
+                        return fit(code, data)
+                    return fit(
+                        "OK",
+                        {
+                            "items": [{**data, "reference": reference_probe}],
+                            "complete": bool(
+                                data.get("complete", data.get("next_offset") is None)
+                            ),
+                            **{
+                                key: data[key]
+                                for key in ("tokens", "bytes", "encoding")
+                                if key in data
+                            },
+                        },
+                    )
+
             payload = expand_artifact(
                 store,
                 artifact_id=req.artifact_id,
@@ -1901,8 +2140,12 @@ class MemoryTool(ToolFn):
                 max_bytes=req.max_bytes - overhead[0],
                 encoding=req.encoding,
                 representation=req.representation or "utf8",
+                frame_bytes=expand_fit,
                 telemetry=self._v2_telemetry(call, _storage_root(access)),
-                request_id=f"expand:v2:{req.artifact_id}:{req.artifact_version}",
+                # The `id:version:` prefix is how the expansion-receipt readers find
+                # the events of an exact revision (the v1 shape, utf8 suffixed).
+                request_id=f"{req.artifact_id}:{req.artifact_version}:{req.offset}"
+                + (":utf8" if (req.representation or "utf8") == "utf8" else ""),
                 event_id="expansion",
                 cache_write=call.granted.cache_write,
                 **call.attribution,
@@ -1923,6 +2166,9 @@ class MemoryTool(ToolFn):
             store.close()
         code = str(payload.pop("code"))
         if code != "OK" or reference is None:
+            # A refusal carries no content field, not even a null one.
+            for content_key in ("content_utf8", "content_base64"):
+                payload.pop(content_key, None)
             return self._v2_out(call, code, data=payload)
         complete = bool(payload.get("complete", payload.get("next_offset") is None))
         return self._v2_out(
@@ -1973,6 +2219,10 @@ class MemoryTool(ToolFn):
             )
         finally:
             store.close()
+        if page.get("code") == "OK":
+            # The seed the traversal started from, so a caller can tie the page to it.
+            page["root"] = {"artifact_id": req.artifact_id, "artifact_version": version}
+            self._v2_note_read(call, access, page)
         return self._v2_page(call, page)
 
     def _v2_history(self, call: _V2Call) -> ToolResult:
@@ -2260,7 +2510,18 @@ class MemoryTool(ToolFn):
         sources: set[str] = {req.source} if op == "write" else set()
         for artifact_id in self._v2_targets(call):
             row = store.get_current_row(artifact_id)
-            if row is None or not _access_allows(store, row, access, "inspect"):
+            if (
+                row is None
+                or not _access_allows(store, row, access, "inspect")
+                # 72-T06 matrix: an edit needs the ordinary-mode view, so an archived
+                # or expired row is `E_NOT_VISIBLE` (as `promote` already is).
+                or (
+                    op == "edit"
+                    and not evaluate_artifact_visibility(
+                        store, row, access=access
+                    ).visible
+                )
+            ):
                 raise KeyError(artifact_id)
             sources.add(str(row["source"]))
         binding = _v2_binding(access, sources)
@@ -2293,11 +2554,23 @@ class MemoryTool(ToolFn):
                 req.source_kind,
                 owner,
             )
+            task_binding = _v2_task_binding(access, call.task_id)
+            if task_binding is not None:
+                artifact = dataclasses.replace(
+                    artifact,
+                    task_project_id=task_binding[0],
+                    task_worktree_id=task_binding[1],
+                    task_id=task_binding[2],
+                )
             result = store.write(
                 artifact, access=access, receipt_writer=writer, commit_check=check
             )
         elif op == "edit" and req.correction is not None:
             result = self._v2_correction(call, store, access, writer)
+            if result.get("code") != "OK":
+                # A refused correction wrote nothing and recorded no receipt.
+                code = str(result.pop("code"))
+                return self._v2_out(call, code, data=result)
         elif op == "edit":
             result = store.edit(
                 req.artifact_id,
@@ -2308,6 +2581,7 @@ class MemoryTool(ToolFn):
                 apply=True,
                 receipt_writer=writer,
                 commit_check=check,
+                task_binding=_v2_task_binding(access, call.task_id),
             )
         elif op == "archive":
             result = store.archive(
@@ -2418,13 +2692,24 @@ class MemoryTool(ToolFn):
             task_worktree_id=access.worktree_id,
             task_id=call.task_id,
         )
+        # `apply_correction` takes a replacement for `supersede` only (omitted: the
+        # row's own content); a `correct` with content states the corrected content
+        # of the same row; `reject` keeps it.
+        target_content = json.loads(row["content"])
+        replacement_content = None
+        if correction.kind == "supersede":
+            replacement_content = (
+                req.content if req.content is not None else dict(target_content)
+            )
+        elif correction.kind == "correct" and req.content is not None:
+            target_content = req.content
         return store.apply_correction(  # type: ignore[attr-defined]
             access=access,
             kind=correction.kind,
             artifact_id=req.artifact_id,
             expected_version=req.expected_version,
-            target_content=json.loads(row["content"]),
-            replacement_content=req.content,
+            target_content=target_content,
+            replacement_content=replacement_content,
             binding=binding,
             supersedes=[ref.model_dump() for ref in correction.supersedes]
             if correction.supersedes is not None
@@ -3116,30 +3401,8 @@ class MemoryTool(ToolFn):
             )
         # 72-T08 (§3.1): the `[tools.memory]` engine options are read (no effect) only when
         # the request is not explicitly lexical.
-        cfg_options: dict[str, Any] | None = None
-        cfg_error = False
-        if not (explicit and retrieval == "lexical"):
-            try:
-                tool_config = load_config(root).tools.get("memory")
-            except (RushConfigError, UnicodeDecodeError, OSError):
-                cfg_error = True
-            else:
-                if tool_config is not None:
-                    cfg_options = dict(tool_config.options)
-        verdict = _retrieval.HYBRID_DEFAULT_VERDICT
-        p_default = (
-            not explicit
-            and cfg_options is not None
-            and all(cfg_options.get(key) is not None for key in _EMBEDDING_OPTION_KEYS)
-            and verdict is not None
-            and verdict.get("verdict") == "benefit"
-            and cfg_options.get("embedding_model") == verdict.get("model")
-            and cfg_options.get("embedding_model_digest") == verdict.get("model_digest")
-        )
-        hybrid_requested = (
-            (explicit and retrieval == "hybrid")
-            or p_default
-            or (not explicit and cfg_error)
+        hybrid_requested, p_default, cfg_options, cfg_error = self._retrieval_plan(
+            root, explicit, retrieval
         )
         # 72-T02 (C05) / 72-T08 (§3.3): admission before access, the store view, telemetry
         # or any embedding call; a hybrid-requested read is admitted against the largest
@@ -3177,7 +3440,18 @@ class MemoryTool(ToolFn):
             root, operation, session_allowlist, owner, task_id=_TASK_ID.get()
         )
         if isinstance(resolved, RouteDenial):
-            return finish(resolved.code, _denial_data(operation, resolved))
+            denied = finish(resolved.code, _denial_data(operation, resolved))
+            if isinstance(resolved, _PolicyDenial):
+                _attach_policy_next_action(
+                    denied,
+                    reason=resolved.reason,
+                    project_root=resolved.project_root,
+                    operations=resolved.operations,
+                    owner_scope=resolved.owner_scope,
+                    requested_sources=resolved.requested_sources,
+                    budget=(encoding, max_bytes, max_tokens),
+                )
+            return denied
         access = resolved
         if not access.sources:
             return finish(
@@ -3261,6 +3535,40 @@ class MemoryTool(ToolFn):
         finally:
             if store is not None:
                 store.close()
+
+    @staticmethod
+    def _retrieval_plan(
+        root: Path, explicit: bool, retrieval: str
+    ) -> tuple[bool, bool, dict[str, Any] | None, bool]:
+        """72-T08 §3.1: `(hybrid_requested, p_default, cfg_options, cfg_error)` for one
+        compact or v2 read. The `[tools.memory]` options are read (no effect) only when
+        the request is not explicitly lexical."""
+        cfg_options: dict[str, Any] | None = None
+        cfg_error = False
+        if not (explicit and retrieval == "lexical"):
+            try:
+                tool_config = load_config(root).tools.get("memory")
+            except (RushConfigError, UnicodeDecodeError, OSError):
+                cfg_error = True
+            else:
+                if tool_config is not None:
+                    cfg_options = dict(tool_config.options)
+        verdict = _retrieval.HYBRID_DEFAULT_VERDICT
+        p_default = (
+            not explicit
+            and cfg_options is not None
+            and all(cfg_options.get(key) is not None for key in _EMBEDDING_OPTION_KEYS)
+            and verdict is not None
+            and verdict.get("verdict") == "benefit"
+            and cfg_options.get("embedding_model") == verdict.get("model")
+            and cfg_options.get("embedding_model_digest") == verdict.get("model_digest")
+        )
+        hybrid_requested = (
+            (explicit and retrieval == "hybrid")
+            or p_default
+            or (not explicit and cfg_error)
+        )
+        return hybrid_requested, p_default, cfg_options, cfg_error
 
     @staticmethod
     def _hybrid_engine(
@@ -3434,9 +3742,15 @@ class MemoryTool(ToolFn):
         resolved engine; a `fallback` code is a labelled lexical page (`OK` reported as
         `E_EMBEDDING_UNAVAILABLE`, every other code kept)."""
         root = store.project_root
+        # 72-T02 R2: a hybrid read over a read-only view (a store whose writable open
+        # would run DDL) creates nothing, the labelled lexical fallback included.
         telemetry = (
             cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
             if granted.cache_write
+            and not (
+                retrieval == "hybrid"
+                and getattr(store, "_readonly_conn", None) is not None
+            )
             else None
         )
         if retrieval == "hybrid" and fallback is None:
@@ -3492,6 +3806,20 @@ class MemoryTool(ToolFn):
             )
             if fallback is not None and page["code"] == "OK":
                 page["code"] = "E_EMBEDDING_UNAVAILABLE"
+        if (
+            retrieval == "hybrid"
+            and page["code"] == "E_MIGRATION"
+            and "message" not in page
+        ):
+            # 72-T02 B12: a hybrid read over a store that needs a write to open names
+            # why, as the state-denial branch does, when the framed response fits.
+            page = _fit_optional(
+                {**page, "message": readonly_view_reason("migration_required")},
+                fit,
+                encoding,
+                max_bytes,
+                max_tokens,
+            )
         code = page.pop("code")
         return self._envelope_result(
             started, operation, code, page, duration_ms=frozen, frame=frame
@@ -3624,7 +3952,18 @@ class MemoryTool(ToolFn):
             root, "expand", session_allowlist, owner, task_id=_TASK_ID.get()
         )
         if isinstance(resolved, RouteDenial):
-            return finish(resolved.code, _denial_data("expand", resolved))
+            denied = finish(resolved.code, _denial_data("expand", resolved))
+            if isinstance(resolved, _PolicyDenial):
+                _attach_policy_next_action(
+                    denied,
+                    reason=resolved.reason,
+                    project_root=resolved.project_root,
+                    operations=resolved.operations,
+                    owner_scope=resolved.owner_scope,
+                    requested_sources=resolved.requested_sources,
+                    budget=(encoding, max_bytes, max_tokens),
+                )
+            return denied
         if bridge is not None:
             authority = self._bridge_access(started, "expand", bridge, artifact_id)
             if isinstance(authority, dict):
@@ -3654,9 +3993,11 @@ class MemoryTool(ToolFn):
                 )
         if store is None:
             return finish("E_NOT_VISIBLE", not_visible)
+        # D25: an expand of the personal overlay store is not this project's usage, so
+        # it records nothing in the project's token economy.
         telemetry = (
             cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
-            if granted.cache_write
+            if granted.cache_write and access.storage_root == root
             else None
         )
         try:
@@ -3957,16 +4298,16 @@ class MemoryTool(ToolFn):
                 "E_INPUT",
                 {"message": f"invalid owner_scope: {exc}"},
             )
-        resolved: MemoryAccess | RouteDenial
-        if bridge is not None:
+        # 72-T06 D22: the receiver's own route gate first (its denial names the grant
+        # that fixes it), then the sender's authority, as `expand` and `resume` do.
+        resolved: MemoryAccess | RouteDenial = self._read_access(
+            root, "related", session_allowlist, owner, task_id=_TASK_ID.get()
+        )
+        if not isinstance(resolved, RouteDenial) and bridge is not None:
             authority = self._bridge_access(started, "related", bridge, artifact_id)
             if isinstance(authority, dict):
                 return cast(ToolResult, authority)
             resolved = authority
-        else:
-            resolved = self._read_access(
-                root, "related", session_allowlist, owner, task_id=_TASK_ID.get()
-            )
         if isinstance(resolved, RouteDenial):
             return self._denied(started, "related", resolved)
         store = self._readonly_store if resolved.storage_root == root else None
@@ -4141,6 +4482,7 @@ class MemoryTool(ToolFn):
                 owner_scope=legacy_owner,
                 operation="write",
                 data_root=resolved.data_root,
+                task_id=_TASK_ID.get(),
             )
         with _policy_mutation(resolved) as refused:
             if refused is not None:
@@ -4288,9 +4630,15 @@ class MemoryTool(ToolFn):
             if len(loc) > 1 and loc[0] == request.get("action"):
                 loc = loc[1:]
             field = loc[0] if loc else "action"
+            reason = f"{field}_invalid"
+            if (
+                field == "authority"
+                and request.get("authority") == "imported_unverified"
+            ):
+                reason = "authority_import_only"  # only a reviewed import writes it
             return refuse(
                 "E_INPUT",
-                f"{field}_invalid",
+                reason,
                 field=field,
                 details=[
                     {"loc": [str(p) for p in e["loc"]], "msg": e["msg"]} for e in errors
@@ -4382,7 +4730,15 @@ class MemoryTool(ToolFn):
                     or project_why == "owner_required"
                     or (owner is not None and project_why == "owner_not_granted")
                 ):
-                    return self._preference_denial(refuse, project_why, owner)
+                    return self._preference_denial(
+                        refuse,
+                        project_why,
+                        owner,
+                        root=root,
+                        action=action,
+                        apply=apply,
+                        sources=session_allowlist or (),
+                    )
                 ids = project or overlay
                 assert ids is not None
                 return self._preference_result(
@@ -4414,7 +4770,15 @@ class MemoryTool(ToolFn):
                 task_id=task_id,
             )
             if access is None:
-                return self._preference_denial(refuse, access_why, owner)
+                return self._preference_denial(
+                    refuse,
+                    access_why,
+                    owner,
+                    root=root,
+                    action=action,
+                    apply=apply,
+                    sources=sources,
+                )
             cache_write = granted.cache_write
             if action == "record":
                 result = store.record(
@@ -4472,16 +4836,36 @@ class MemoryTool(ToolFn):
 
     @staticmethod
     def _preference_denial(
-        refuse: Callable[..., ToolResult], reason: str, owner: OwnerScope | None
+        refuse: Callable[..., ToolResult],
+        reason: str,
+        owner: OwnerScope | None,
+        *,
+        root: Path,
+        action: str,
+        apply: bool,
+        sources: Sequence[str],
     ) -> ToolResult:
-        """D2 resolve denial mapping (§3.1)."""
+        """D2 resolve denial mapping (§3.1); a policy denial also names the command
+        that fixes it (73-T02 item 7)."""
         if reason == "source_not_granted":
-            return refuse("E_SCOPE", reason)
-        if reason == "owner_not_granted" and owner is not None:
-            return refuse("E_OWNER", reason)
-        if reason == "owner_required":
-            return refuse("E_INPUT", reason, field="owner_scope")
-        return refuse("E_PERMISSION", reason)
+            denied = refuse("E_SCOPE", reason)
+        elif reason == "owner_not_granted" and owner is not None:
+            denied = refuse("E_OWNER", reason)
+        elif reason == "owner_required":
+            denied = refuse("E_INPUT", reason, field="owner_scope")
+        else:
+            denied = refuse("E_PERMISSION", reason)
+        _attach_policy_next_action(
+            denied,
+            reason=reason,
+            project_root=root,
+            operations=required_operation_set(
+                "preference", action=action, apply=apply and action != "resolve"
+            ),
+            owner_scope=owner,
+            requested_sources=sources,
+        )
+        return denied
 
     def _preference_result(self, started: float, result: dict[str, Any]) -> ToolResult:
         """A `PreferenceStore` answer as the envelope: `code` (default `OK`) plus every
@@ -4729,7 +5113,7 @@ class MemoryTool(ToolFn):
         (more than one granted owner) is an input error on `owner_scope`; any other
         denial is `_denied`."""
         if denial.reason == "owner_required":
-            return self._envelope_result(
+            required = self._envelope_result(
                 started,
                 operation,
                 "E_INPUT",
@@ -4740,6 +5124,16 @@ class MemoryTool(ToolFn):
                     "one owner is granted for this project.",
                 },
             )
+            if isinstance(denial, _PolicyDenial):
+                _attach_policy_next_action(
+                    required,
+                    reason=denial.reason,
+                    project_root=denial.project_root,
+                    operations=denial.operations,
+                    owner_scope=denial.owner_scope,
+                    requested_sources=denial.requested_sources,
+                )
+            return required
         return self._denied(started, operation, denial)
 
     def _denied(
@@ -5035,9 +5429,13 @@ class MemoryTool(ToolFn):
             task_id=_TASK_ID.get(),
         )
         if isinstance(resolved, RouteDenial):
+            if isinstance(resolved, _PolicyDenial):
+                # H4: the candidate's `source` is the request's source (the access
+                # itself resolves every approved source); the grant must cover it.
+                resolved = dataclasses.replace(resolved, requested_sources=(source,))
             return self._denied(started, "promote", resolved)
         if resolved.kind == "policy" and not source_granted(source, resolved.sources):
-            return self._envelope_result(
+            unsourced = self._envelope_result(
                 started,
                 "promote",
                 "E_SCOPE",
@@ -5046,6 +5444,15 @@ class MemoryTool(ToolFn):
                     "message": "memory promote denied: source_not_granted.",
                 },
             )
+            _attach_policy_next_action(
+                unsourced,
+                reason="source_not_granted",
+                project_root=root,
+                operations=required_operation_set("promote", apply=apply),
+                owner_scope=owner,
+                requested_sources=(source,),
+            )
+            return unsourced
         owner = _write_owner(owner, resolved)
         artifact = self._build_artifact(
             subject, content, source, symbol_ref, source_kind, owner
@@ -5378,6 +5785,7 @@ class MemoryTool(ToolFn):
                 owner_scope=legacy_owner,
                 operation="write" if apply else "list",
                 data_root=None,
+                task_id=_TASK_ID.get(),
             )
         else:
             # Policy mode: the grant's approved sources, narrowed to the requested
@@ -5431,6 +5839,11 @@ class MemoryTool(ToolFn):
                 )
             except MaintenanceAccessDenied as exc:
                 return self._maintenance_denied(started, exc)
+            # D1 race rule: a grant revoked while the candidates were read returns the
+            # denial and none of them.
+            revoked = self._revoked(started, "maintain", access)
+            if revoked is not None:
+                return revoked
             ids = [str(c["id"]) for c in candidates]
             effective = grants if grants is not None else ["cache_write"]
             return self._result(
@@ -7097,10 +7510,13 @@ def _attach_policy_next_action(
     operations: Any,
     owner_scope: OwnerScope | None,
     requested_sources: Any,
+    budget: tuple[str, int, int] | None = None,
 ) -> None:
     """D19: a policy denial's `raw.next_action` (`memory_next_action` of the denied
     call's inputs) and the ` Next: <command or text>` summary suffix. An existing
-    `next_action` is never replaced."""
+    `next_action` is never replaced. 72-T02 decisions.md:30: on a budgeted response
+    (`budget` = encoding, max_bytes, max_tokens) both are optional-if-fits, measured
+    on the exact frame the transport emits, and absent when that frame would not fit."""
     from ..memory.authorization import memory_next_action
 
     raw = result.get("raw")
@@ -7121,10 +7537,38 @@ def _attach_policy_next_action(
         owner_scope=owner_scope,
         requested_sources=list(requested_sources),
     )
+    suffix = f" Next: {action['command'] or action['text']}"
+    frame = compact.MEMORY_FRAME.get()
+    if budget is not None and (frame is not None or raw.get("schema_version") == 2):
+        encoding, max_bytes, max_tokens = budget
+        trial = cast(ToolResult, copy.deepcopy(dict(result)))
+        trial_raw = cast(dict[str, Any], trial["raw"])
+        trial_raw["next_action"] = action
+        trial["summary"] = f"{trial['summary']}{suffix}"
+        if frame is None:
+            # Outside a transport frame a v2 cap measures the canonical v2 raw
+            # (`_v2_budget_floor`); inside one it measures the emitted frame (D35).
+            used_bytes, used_tokens = _v2_measure(trial_raw, encoding)
+        else:
+            framed = compact.frame_bytes(
+                frame,
+                attach_memory_attribution(
+                    trial,
+                    _memory_attribution(
+                        project_root, str(raw.get("operation")), trial, []
+                    ),
+                ),
+            )
+            used_bytes = len(framed)
+            used_tokens = (
+                used_bytes
+                if used_bytes <= max_tokens
+                else _frame_tokens(framed, encoding)
+            )
+        if used_bytes > max_bytes or used_tokens > max_tokens:
+            return
     raw["next_action"] = action
-    result["summary"] = (
-        f"{result['summary']} Next: {action['command'] or action['text']}"
-    )
+    result["summary"] = f"{result['summary']}{suffix}"
 
 
 def _personal_layer_guidance(result: Any, root: Path) -> None:
@@ -7144,17 +7588,20 @@ def _personal_layer_guidance(result: Any, root: Path) -> None:
     try:
         overlay = user_overlay_owner_scope()
     except Exception:  # noqa: BLE001 - no overlay owner: text-only guidance
-        personal["next_action"] = {
-            "text": f"memory access denied ({reason})",
-            "command": None,
-        }
+        personal.setdefault(
+            "next_action",
+            {"text": f"memory access denied ({reason})", "command": None},
+        )
         return
-    personal["next_action"] = memory_next_action(
+    guided = memory_next_action(
         reason=reason,
         project_root=root,
         operations=("list", "overlay_read"),
         owner_scope=overlay,
     )
+    # A reason with no command (e.g. `revoked`) keeps 72-T05's truthful layer text.
+    if guided["command"] is not None or "next_action" not in personal:
+        personal["next_action"] = guided
 
 
 # --- 72-T01 D1 mutation guard ------------------------------------------------
@@ -7705,6 +8152,18 @@ def _v2_request_digest(operation: str, access: MemoryAccess, req: Any) -> str:
     # ASCII escapes: content may legally hold a lone surrogate.
     text = json.dumps(body, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
+def _v2_task_binding(
+    access: MemoryAccess, task_id: str | None
+) -> tuple[str, str, str] | None:
+    """72-T06 D31: the `(project_id, worktree_id, task_id)` a v2 write or edit stamps on
+    the version it commits, or `None` outside a task context (the new version then
+    copies the stored row's binding)."""
+    ids = (access.project_id, access.worktree_id, task_id)
+    if access.kind != "policy" or not all(isinstance(i, str) and i for i in ids):
+        return None
+    return cast(tuple[str, str, str], ids)
 
 
 def _v2_binding(access: MemoryAccess, sources: set[str]) -> dict[str, Any]:

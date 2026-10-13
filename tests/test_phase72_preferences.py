@@ -391,6 +391,15 @@ class Res:
 def _res(out: Any) -> Res:
     payload = dict(out) if isinstance(out, dict) else {}
     raw = payload.get("raw")
+    if isinstance(raw, list):
+        # The legacy (schema-1) `list` form: its rows are the whole raw.
+        ok = payload.get("status") == "ok"
+        return Res(
+            code="OK" if ok else None,
+            data={"items": raw},
+            status=payload.get("status"),
+            raw={"items": raw},
+        )
     raw = raw if isinstance(raw, dict) else {}
     data = raw.get("data")
     return Res(
@@ -6011,8 +6020,9 @@ def _sc_row_state(tmp_path: Path, via: str, action: str, state: str) -> None:
     elif state == "tampered":
         with contextlib.closing(sqlite3.connect(db)) as conn:
             conn.execute(
-                "UPDATE memory_artifacts SET content = ? WHERE id = ?",
-                (json.dumps({"key": FMT, "value": "forged"}), target),
+                "UPDATE memory_artifacts SET content = json_set(content, '$.value', ?) "
+                "WHERE id = ?",
+                ("forged", target),
             )
             conn.commit()
     elif state == "rejected":
@@ -6198,8 +6208,8 @@ def _matrix_cells() -> list[Any]:
                     lambda t, v=via, a=action, s=state: _sc_policy_state(t, v, a, s),
                 )
             for key, value, dimension, producer in (
-                ("archive_mode", "inspect", "mode-inspect", "72-T06"),
-                ("archive_mode", "historical", "mode-historical", "72-T06"),
+                ("archive_mode", "inspect", "mode-inspect", None),
+                ("archive_mode", "historical", "mode-historical", None),
                 ("representation", "utf8", "representation-utf8", None),
                 ("retrieval", "hybrid", "retrieval-hybrid", None),
                 (
@@ -6438,7 +6448,12 @@ def test_t05_overlay_route_results(name: str, tmp_path: Path) -> None:
     if name == "related":
         assert result.data["items"] == []
         return
-    assert "ov1-marker" in result.dump(), name
+    text = result.dump()
+    if name == "expand":  # the legacy expand page carries base64 content
+        import base64
+
+        text += base64.b64decode(result.data["content_base64"]).decode("utf-8")
+    assert "ov1-marker" in text, name
     if name in {"ask", "recall", "list"}:
         assert [i["id"] for i in result.data["items"]] == ["ov1"]
 

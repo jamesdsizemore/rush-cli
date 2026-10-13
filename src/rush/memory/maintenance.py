@@ -339,6 +339,9 @@ def _prepare(task: MaintenanceTask, row: sqlite3.Row, root: Path) -> _Prepared:
 def _current_hash(root: Path, symbol_ref: str) -> str | None:
     """SHA-256 of the anchor file read through the contained-source reader; any
     refused, unreadable or non-UTF-8 source is `None` (the row reads stale)."""
+    if not isinstance(symbol_ref, str):
+        # `sqlite_text` hands back the raw bytes of a stored path that is not valid UTF-8.
+        return None
     try:
         text = trust.read_contained_source(root, symbol_ref.split("::", 1)[0])
     except (OSError, UnicodeError, ValueError):

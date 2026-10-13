@@ -651,6 +651,7 @@ class Kit:
         self, base: Path, mp: pytest.MonkeyPatch, plan: dict[str, Any]
     ) -> None:
         self.base = base
+        self.caller_home = os.environ.get("HOME")
         base.mkdir(parents=True, exist_ok=True)
         self.exe = base / "fake-provider"
         self.exe.write_text(
@@ -684,7 +685,13 @@ class Kit:
                         "stdin_devnull": kwargs.get("stdin") is subprocess.DEVNULL,
                         "shell": bool(kwargs.get("shell", False)),
                         "timeout": kwargs.get("timeout"),
-                        "env_inherited": kwargs.get("env") is None,
+                        # 72-T08 (D14): the harness redirects its own in-process Rush
+                        # calls, so a provider process takes the caller's environment
+                        # explicitly; its HOME is the caller's, never the redirected one.
+                        "env_is_caller_environment": (
+                            kwargs.get("env") or os.environ
+                        ).get("HOME")
+                        == kit.caller_home,
                         "capture_output": kwargs.get("capture_output") is True,
                         "text": kwargs.get("text") is True,
                         "check": kwargs.get("check"),
@@ -752,11 +759,11 @@ def _parse_request(prompt: str) -> dict[str, Any]:
 
 def _assert_spawn_contract(spawn: dict[str, Any]) -> None:
     """The decision subprocess contract (D13a, Phase 75 line 153): an argv
-    array without a shell, no stdin, captured text output, the inherited
-    environment, a timeout, and no `check`."""
+    array without a shell, no stdin, captured text output, the caller's
+    environment (72-T08 D14), a timeout, and no `check`."""
     assert spawn["shell"] is False
     assert spawn["stdin_devnull"] is True
-    assert spawn["env_inherited"] is True
+    assert spawn["env_is_caller_environment"] is True
     assert spawn["capture_output"] is True
     assert spawn["text"] is True
     assert spawn["check"] is False
@@ -2001,18 +2008,23 @@ def _load(path: Path) -> dict[str, Any]:
 
 def test_shipped_task_manifest_baseline_frozen() -> None:
     manifest = _load(_SHIPPED_MANIFEST)
+    # 72-T08 appends the frozen `p72-` cases and the two `phase72_` keys; the five
+    # baseline cases stay byte-for-byte what 75-T02 shipped.
     assert set(manifest) == {
         "schema_version",
         "cases",
         "declared",
         "phase75_family_coverage",
+        "phase72_cases_sha256",
+        "phase72_embedding",
     }
-    assert not any(key.startswith("phase72_") for key in manifest)
     assert manifest["schema_version"] == 1
-    assert sorted(manifest["cases"], key=lambda c: c["id"]) == sorted(
+    baseline = [c for c in manifest["cases"] if not c["id"].startswith("p72-")]
+    assert len(manifest["cases"]) - len(baseline) == 24
+    assert sorted(baseline, key=lambda c: c["id"]) == sorted(
         _baseline_cases(), key=lambda c: c["id"]
     )
-    assert _digest(manifest["cases"]) == _BASELINE_DIGEST
+    assert _digest(baseline) == _BASELINE_DIGEST
     assert bm.BASELINE_CASES_SHA256 == _BASELINE_DIGEST
     assert manifest["declared"] == [
         {"family": f, "case_family": c} for f, c in _PHASE75_DECLARED

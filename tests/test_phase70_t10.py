@@ -1134,6 +1134,8 @@ def _stray_rush(checkout: Path) -> Path:
             created_at=1.0,
         )
     )
+    # 72-T04 R11: opening a store no longer creates `.rush/cache`; the fixture does.
+    (stray_root / ".rush" / "cache").mkdir(exist_ok=True)
     (stray_root / ".rush" / "cache" / "blob.bin").write_bytes(b"\x00\x01payload")
     _close_writers()
     return stray_root / ".rush"

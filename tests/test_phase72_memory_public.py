@@ -2329,21 +2329,49 @@ def test_t06_import_foreign_event_identity(tmp_path: Path) -> None:
 # =============================================================================
 
 
+def _writer_access(
+    env: Env, owner: OwnerScope = ALICE, task_id: str | None = None
+) -> Any:
+    """72-T03 D3: the writer access a policy project gives `owner` (a relation helper
+    called with `access=None` there is `policy_grant_required`); a legacy project keeps
+    the `access=None` form. `task_id` is the task context of the rows it must see."""
+    if env.mode != "policy":
+        return None
+    from rush.memory.retrieval import MemoryAccess
+
+    access = MemoryAccess.resolve(
+        env.root,
+        operation="write",
+        apply=True,
+        owner_scope=owner,
+        data_root=env.data_root,
+        task_id=task_id,
+    )
+    assert access is not None
+    return access
+
+
 def _link_rows(env: Env, edges: list[tuple[str, str, str]]) -> None:
-    from rush.memory.relations import add_relation
+    """Plant the edges `explain` reads. The relation table is written directly: the
+    link authorization (72-T03: both endpoints visible and usable as current) is not
+    what these tests exercise, and an episodic seed row is not usable as current."""
+    from rush.memory.relations import insert_relation_tx
 
     assert env.store is not None
-    for source, kind, target in edges:
-        out = add_relation(
-            env.store,
-            source_id=source,
-            source_version=1,
-            target_id=target,
-            target_version=1,
-            kind=kind,
-            origin_ref="t06-test",
-        )
-        assert out["code"] == "OK", (source, kind, target, out)
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        for source, kind, target in edges:
+            conn.execute("BEGIN IMMEDIATE")
+            out = insert_relation_tx(
+                conn,
+                source_id=source,
+                source_version=1,
+                target_id=target,
+                target_version=1,
+                kind=kind,
+                origin_ref="t06-test",
+            )
+            conn.commit()
+            assert out["code"] == "OK", (source, kind, target, out)
 
 
 def _bucket_ids(body: dict[str, Any], bucket: str) -> list[str]:
@@ -2441,7 +2469,13 @@ def test_t06_history_and_explain(tmp_path: Path) -> None:
             ("r1", "implements", "a-skill_pattern"),
         ],
     )
-    ex = assert_v2_envelope(call(gx, "explain", r_explain()), "explain", "OK")
+    # Seven edges give fourteen full references; each carries the project, worktree and
+    # payload identifiers (72-T01/T05), which the default 2048-token cap cannot hold.
+    ex = assert_v2_envelope(
+        call(gx, "explain", r_explain(max_bytes=16384, max_tokens=4096)),
+        "explain",
+        "OK",
+    )
     assert _bucket_ids(ex, "supporting") == ["a-skill_pattern", "r2"]
     skill = next(
         e
@@ -2490,6 +2524,8 @@ def test_t06_history_and_explain(tmp_path: Path) -> None:
                 artifact_id=None,
                 query="needle domain_knowledge",
                 subjects=["domain_knowledge"],
+                max_bytes=16384,
+                max_tokens=4096,
             ),
         ),
         "explain",
@@ -2532,21 +2568,27 @@ def test_t06_explain_affected_requires_edge(tmp_path: Path) -> None:
             target_id=rows["target"],
             target_version=1,
             kind="depends_on",
+            access=_writer_access(env, task_id="task-shared"),
         )["code"]
         == "OK"
     )
-    # An edge from an invisible (Bob-owned) row adds nothing to any bucket.
-    assert (
-        add_relation(
-            env.store,
+    # An edge from an invisible (Bob-owned) row adds nothing to any bucket. Alice's
+    # writer access cannot see that endpoint (72-T03), so the edge is planted in the
+    # relation table directly, as a stale or foreign edge would be.
+    from rush.memory.relations import insert_relation_tx
+
+    with contextlib.closing(sqlite3.connect(env.db)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        planted = insert_relation_tx(
+            conn,
             source_id=BOB_IDS["domain_knowledge"],
             source_version=1,
             target_id=rows["target"],
             target_version=1,
             kind="contradicts",
-        )["code"]
-        == "OK"
-    )
+        )
+        conn.commit()
+    assert planted["code"] == "OK"
     ex = assert_v2_envelope(
         call(env, "explain", r_explain(artifact_id=rows["target"]), **shared),
         "explain",
@@ -4455,43 +4497,80 @@ def _assert_clean_after_swap(swap: _Swap, env: Env) -> None:
     assert not os.path.lexists(env.root / ".rush" / "memory.db")
 
 
-def _containment_cases() -> list[Any]:
-    posix = pytest.mark.posix_only
-    windows = pytest.mark.windows_only
-    cases: list[Any] = [
-        pytest.param("rush_symlink", id="posix_rush_symlink", marks=posix),
-        pytest.param("after_dir_open", id="posix_swap_after_dir_open", marks=posix),
+@pytest.mark.parametrize(
+    "case",
+    [
         pytest.param(
-            "after_temp_written", id="posix_swap_after_temp_written", marks=posix
+            "rush_symlink", id="posix_rush_symlink", marks=pytest.mark.posix_only
         ),
-        pytest.param("before_link", id="posix_swap_before_link", marks=posix),
-        pytest.param("after_link", id="posix_swap_after_link", marks=posix),
         pytest.param(
-            "orphan_symlink", id="posix_orphan_symlink_never_followed", marks=posix
+            "after_dir_open",
+            id="posix_swap_after_dir_open",
+            marks=pytest.mark.posix_only,
         ),
-        pytest.param("windows_junction", id="windows_junction_rush", marks=windows),
-    ]
-    for index, point in enumerate(
-        ("after_dir_open", "after_temp_written", "before_link", "after_link"), start=1
-    ):
-        cases.append(
-            pytest.param(
-                f"windows_rename_rush:{point}",
-                id=f"windows_rename_rush_injection_{index}",
-                marks=windows,
-            )
-        )
-        cases.append(
-            pytest.param(
-                f"windows_rename_root:{point}",
-                id=f"windows_rename_root_injection_{index}",
-                marks=windows,
-            )
-        )
-    return cases
-
-
-@pytest.mark.parametrize("case", _containment_cases())
+        pytest.param(
+            "after_temp_written",
+            id="posix_swap_after_temp_written",
+            marks=pytest.mark.posix_only,
+        ),
+        pytest.param(
+            "before_link", id="posix_swap_before_link", marks=pytest.mark.posix_only
+        ),
+        pytest.param(
+            "after_link", id="posix_swap_after_link", marks=pytest.mark.posix_only
+        ),
+        pytest.param(
+            "orphan_symlink",
+            id="posix_orphan_symlink_never_followed",
+            marks=pytest.mark.posix_only,
+        ),
+        pytest.param(
+            "windows_junction",
+            id="windows_junction_rush",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_rush:after_dir_open",
+            id="windows_rename_rush_injection_1",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_root:after_dir_open",
+            id="windows_rename_root_injection_1",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_rush:after_temp_written",
+            id="windows_rename_rush_injection_2",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_root:after_temp_written",
+            id="windows_rename_root_injection_2",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_rush:before_link",
+            id="windows_rename_rush_injection_3",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_root:before_link",
+            id="windows_rename_root_injection_3",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_rush:after_link",
+            id="windows_rename_rush_injection_4",
+            marks=pytest.mark.windows_only,
+        ),
+        pytest.param(
+            "windows_rename_root:after_link",
+            id="windows_rename_root_injection_4",
+            marks=pytest.mark.windows_only,
+        ),
+    ],
+)
 def test_t06_import_path_containment(
     case: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5115,8 +5194,16 @@ def _plan(route: str, dim: str, value: str, tmp_path: Path, transport: str) -> P
             if value == "lexical":
                 return Plan(env, route, base(retrieval="lexical"), perms, top, "OK")
             if value == "hybrid_no_network":
+                # 72-T08 G2a: a missing network grant is a labelled lexical page.
                 return Plan(
-                    env, route, base(retrieval="hybrid"), PERM_NONE, top, "E_PERMISSION"
+                    env,
+                    route,
+                    base(retrieval="hybrid"),
+                    PERM_NONE,
+                    top,
+                    "OK",
+                    # brief 3.1: an empty `list` query (F2) outranks the missing grant (F3)
+                    check="empty_query" if route == "list" else "network_not_granted",
                 )
             assert value == "hybrid_network_no_engine"
             return Plan(
@@ -5519,6 +5606,11 @@ def _check_success(
         other = "content_utf8" if check == "repr_base64" else "content_base64"
         assert key in item or key in dump(item), dump(item)
         assert other not in item
+        return
+    if check in {"network_not_granted", "empty_query"}:
+        assert body["items"], "the lexical page is still authorized"
+        assert body["data"]["retrieval"] == "lexical"
+        assert body["data"]["embedding_fallback_code"] == check
         return
     if check == "hybrid_lexical":
         assert body["items"], (
@@ -6190,7 +6282,9 @@ def test_t06_event_identity_immutable_every_site(site: str, tmp_path: Path) -> N
         TypedArtifactStore(env.root)  # the constructor recreates trigger and index
         before_content = table_rows(env, "memory_artifacts", "id = 'ev'")[0]["content"]
         with pytest.raises(MemoryPolicyError) as caught:
-            store.promote("ev", user_stated=True, owner_scope=ALICE)
+            store.promote(
+                "ev", user_stated=True, owner_scope=ALICE, access=_writer_access(env)
+            )
         assert (caught.value.code, caught.value.reason) == (
             "E_INPUT",
             "event_identity_immutable",
@@ -6409,14 +6503,15 @@ def test_t06_identity_invariants(case: str, tmp_path: Path) -> None:
         )
         assert current_version(env, rid) == 2
     elif case == "promote":
-        env.store.promote(rid, user_stated=True, owner_scope=ALICE)
+        env.store.promote(
+            rid, user_stated=True, owner_scope=ALICE, access=_writer_access(env)
+        )
         assert (
             table_rows(env, "memory_artifacts", "id = ?", (rid,))[0]["trust_tier"]
             == "STATED"
         )
     elif case in {"maintenance_corroboration", "maintenance_stale"}:
         from rush.memory.maintenance import run_maintenance_cycle
-        from rush.memory.retrieval import MemoryAccess
 
         if case == "maintenance_corroboration":
             _set_sql(
@@ -6428,9 +6523,7 @@ def test_t06_identity_invariants(case: str, tmp_path: Path) -> None:
             "promotion_sweep"
             if case == "maintenance_corroboration"
             else "staleness_sweep",
-            access=MemoryAccess.legacy(
-                env.root, [SRC], owner_scope=ALICE, operation="write"
-            ),
+            access=_writer_access(env),
             project_root=env.root,
             candidate_ids=[rid],
             expected_revisions={rid: 1},
@@ -6442,13 +6535,10 @@ def test_t06_identity_invariants(case: str, tmp_path: Path) -> None:
             assert row["stale"] == 1
     else:
         from rush.memory.maintenance import run_maintenance_cycle
-        from rush.memory.retrieval import MemoryAccess
 
         swept = run_maintenance_cycle(
             "expiry_sweep",
-            access=MemoryAccess.legacy(
-                env.root, [SRC], owner_scope=ALICE, operation="write"
-            ),
+            access=_writer_access(env),
             project_root=env.root,
             candidate_ids=[rid],
         )
@@ -6963,7 +7053,14 @@ def test_t06_g4_path_and_input_rows(
         variant, operation="list", request=r_list(), permissions=PERM_NONE
     )
     assert code(respelled) == "E_PERMISSION"
-    assert reason(respelled) in {"relinked", "project_missing", "worktree_mismatch"}
+    # 72-T01: the registered root is compared by its exact spelling, so on a
+    # case-folding file system the variant is simply not the registered project.
+    assert reason(respelled) in {
+        "relinked",
+        "project_missing",
+        "worktree_mismatch",
+        "project_not_registered",
+    }
 
     # A lone surrogate inside stored content is the JSON escape and returned identically.
     sur = apply_call(
@@ -7019,6 +7116,7 @@ def test_t06_explain_over_cap_is_budget_error(tmp_path: Path) -> None:
                 target_id=rid,
                 target_version=1,
                 kind="depends_on",
+                access=_writer_access(env),
             )["code"]
             == "OK"
         )
@@ -7779,7 +7877,7 @@ def test_t06_v2_maintenance_lock_and_revision_contract(
         refused = apply_call(env, "maintain", request)
         assert_v2_envelope(refused, "maintain", "E_INPUT")
         assert dump(raw(refused)) == dump(
-            mcp_call(env, "maintain", request, cache_write=True)
+            raw(mcp_call(env, "maintain", request, cache_write=True))
         ), label
     only_zero_effects(env, before, "maintain validation")
 

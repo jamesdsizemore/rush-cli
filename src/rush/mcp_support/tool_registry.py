@@ -244,7 +244,9 @@ def _memory_frame(
     rid = compact.current_request_id()
 
     def converted(value: Mapping[str, Any]) -> Any:
-        return compact._call_tool_result(convert()(payload(value)))
+        return compact.compact_memory_text(
+            compact._call_tool_result(convert()(payload(value)))
+        )
 
     if rid is None:
 
@@ -377,6 +379,18 @@ def _callable_signature(sig: inspect.Signature, tool: Any) -> inspect.Signature:
     )
 
 
+def _declared_project_value(
+    call_args: dict[str, Any], real_sig: inspect.Signature, inject: bool
+) -> Any:
+    """The call's declared project: the injected `project` argument (popped), else the
+    tool's own `project_id` / `project` parameter."""
+    if inject:
+        return call_args.pop("project", None)
+    return call_args.get(
+        "project_id" if "project_id" in real_sig.parameters else "project"
+    )
+
+
 def make_tool_wrapper(
     tool: Any,
     executor: InvocationExecutor | None = None,
@@ -406,12 +420,7 @@ def make_tool_wrapper(
         # T8: build_server's server-start snapshot stays fixed regardless of a
         # later chdir; a wrapper built without one uses the live cwd per call.
         server_anchor = anchor_cwd if anchor_cwd is not None else Path.cwd()
-        if inject:
-            value = call_args.pop("project", None)
-        else:
-            value = call_args.get(
-                "project_id" if "project_id" in real_sig.parameters else "project"
-            )
+        value = _declared_project_value(call_args, real_sig, inject)
         index = registered_root_index(strict=value is not None)
         declared = _declared_root(value, server_anchor, index)
         requested = dict(call_args)  # `_standard_context` pops `path`
@@ -425,8 +434,20 @@ def make_tool_wrapper(
                 index=index,
             )
         except InvalidTargetError as exc:
-            # T9/R9.2: malformed input is a result, never a traceback.
-            return invalid_target_result(tool.name, exc)
+            # T9/R9.2: malformed input is a result, never a traceback. A NUL path stays
+            # that transport error (72-T03 G4); 72-T04 G4: a `rush_memory` lone-
+            # surrogate path (its error text cannot even be serialized) answers with
+            # the shared `MemoryTool.run` path guard instead.
+            invalid = (
+                None
+                if "\x00" in str(requested.get("path", ""))
+                else _memory_unresolvable_path(tool, requested)
+            )
+            return (
+                invalid
+                if invalid is not None
+                else invalid_target_result(tool.name, exc)
+            )
         except ScopeWideningError:
             invalid = _memory_unresolvable_path(tool, requested)
             if invalid is None:

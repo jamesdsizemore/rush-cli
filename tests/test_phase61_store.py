@@ -237,12 +237,21 @@ def _embedding_count(store: TypedArtifactStore) -> int:
 def test_put_embedding_commit_check_failure_persists_nothing(tmp_path: Path):
     """72-T01 brief §2.2: `put_embedding` takes keyword-only `commit_check`, called
     after the effect immediately before commit; a failure rolls back and raises
-    `MemoryAccessChanged(code, reason)`."""
+    `MemoryAccessChanged(code, reason)`. 72-T08 D39: the vector is only inserted for a
+    current row, a source granted by `write_sources` and its embedding-text hash."""
+    import hashlib
+
+    from rush.memory.store import embedding_text
+
     store = TypedArtifactStore(project_root=tmp_path)
+    content = {"note": "embed me"}
+    store.write(_artifact(id="A1", content=content, source="test"))
     key: dict[str, Any] = {
         "artifact_id": "A1",
         "artifact_version": 1,
-        "content_hash": "h",
+        "content_hash": hashlib.sha256(
+            embedding_text(content).encode("utf-8")
+        ).hexdigest(),
         "model_digest": "d",
         "chunking_version": "c",
     }
@@ -250,13 +259,16 @@ def test_put_embedding_commit_check_failure_persists_nothing(tmp_path: Path):
         store.put_embedding(
             **key,
             vector=[1.0, 0.0],
+            write_sources=["test"],
             commit_check=lambda: ("E_PERMISSION", "grant_revoked"),
         )
     assert (exc.value.code, exc.value.reason) == ("E_PERMISSION", "grant_revoked")
     assert store.get_embedding(**key) is None
     assert _embedding_count(store) == 0
 
-    store.put_embedding(**key, vector=[1.0, 0.0], commit_check=lambda: None)
+    assert store.put_embedding(
+        **key, vector=[1.0, 0.0], write_sources=["test"], commit_check=lambda: None
+    )
     assert store.get_embedding(**key) == [1.0, 0.0]
 
 

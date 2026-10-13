@@ -3832,6 +3832,7 @@
     },
     "side_effects": {
       "allowed_paths": [
+        "<fixture>/.rush/locks/_<fixture-flat>_example.py.claim",
         "<fixture>/.rush/locks/_<fixture-flat>_example.py.lock"
       ]
     },
@@ -5037,6 +5038,55 @@
     "blocker": null
   },
   {
+    "id": "memory.explain",
+    "argv": [
+      "memory",
+      "explain",
+      "phase70-missing-artifact",
+      "--json"
+    ],
+    "canonical": "rush memory explain",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
+      },
+      "human_contains": [
+        "memory fail",
+        "state: denied",
+        "action:"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "explain",
+        "--query"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Option '--query' requires an argument"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_explain_cmd",
+    "blocker": null
+  },
+  {
     "id": "memory.grant",
     "argv": [
       "memory",
@@ -5166,6 +5216,54 @@
       "allowed_paths": []
     },
     "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.history",
+    "argv": [
+      "memory",
+      "history",
+      "phase70-missing-artifact",
+      "--json"
+    ],
+    "canonical": "rush memory history",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {
+        "tool": "memory",
+        "status": "fail",
+        "raw.code": "E_PERMISSION",
+        "raw.data.reason": "policy_missing"
+      },
+      "human_contains": [
+        "memory fail",
+        "state: denied",
+        "action:"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "not_applicable": "route declares no --allow-cache-write/--allow-artifact-write grant"
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "history"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Missing argument 'ARTIFACT_ID'"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.cli:memory_history_cmd",
     "blocker": null
   },
   {
@@ -5443,8 +5541,10 @@
     "failure": {"argv": ["memory", "maintain", "--task", "nonsense", "--allow-cache-write"], "json_paths": {}, "human_contains": ["Invalid value for '--task': 'nonsense' is not one of"], "exit": 2},
     "side_effects": {
       "allowed_paths": [
+        "<cwd>/.rush/.gitignore",
         "<cwd>/.rush/cache",
         "<cwd>/.rush/locks",
+        "<cwd>/.rush/locks/.rush_memory-maintenance.lock.claim",
         "<cwd>/.rush/memory.db",
         "<data-root>/user/.rush/memory_store.key"
       ]
@@ -5551,6 +5651,64 @@
       "argv": [
         "memory",
         "prepare",
+        "--input",
+        "<missing-target>",
+        "--allow-cache-write",
+        "--allow-artifact-write"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Usage: cli memory"
+      ],
+      "exit": 2
+    },
+    "side_effects": {
+      "allowed_paths": []
+    },
+    "producer": "rush.tools.memory:MemoryTool",
+    "blocker": null
+  },
+  {
+    "id": "memory.preference",
+    "argv": [
+      "memory",
+      "preference",
+      "--input",
+      "<fixture-file>",
+      "--allow-cache-write",
+      "--allow-artifact-write",
+      "--json"
+    ],
+    "canonical": "rush memory preference",
+    "family": "service",
+    "fixture": "isolated-home+fixture-project(example.py,example.json)",
+    "expect": {
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "empty": {
+      "not_applicable": "service route: not a record collection"
+    },
+    "denied": {
+      "argv": [
+        "memory",
+        "preference",
+        "--input",
+        "<fixture-file>"
+      ],
+      "json_paths": {},
+      "human_contains": [
+        "Error: --input must"
+      ],
+      "exit": 1
+    },
+    "failure": {
+      "argv": [
+        "memory",
+        "preference",
         "--input",
         "<missing-target>",
         "--allow-cache-write",

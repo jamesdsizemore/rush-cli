@@ -683,7 +683,8 @@ def test_dashboard_refresh_list_only_grant_adds_no_rush_paths(
     fx = policy_fx
     root = fx["root"]
     _list_grant(fx)
-    assert (root / ".rush" / "cache").is_dir()
+    # 72-T04 R11: opening a store no longer creates `.rush/cache`; the fixture does.
+    (root / ".rush" / "cache").mkdir(exist_ok=True)
     shutil.rmtree(root / ".rush" / "cache")
     before = sorted(p.relative_to(root) for p in (root / ".rush").rglob("*"))
 

@@ -27,6 +27,7 @@ import http.server
 import importlib
 import json
 import os
+import shutil
 import socketserver
 import sqlite3
 import subprocess
@@ -4690,7 +4691,9 @@ def _drive_dashboard(env: Env, route: str) -> None:
 
     project_id = resolve_project(env.root, data_root=env.data_root)["project_id"]
     if route == "dashboard_browse":
-        _build_memory_section(project_id, {})
+        # A search, not a bare browse: an empty query is `empty_query` (brief 3.1 F2),
+        # which outranks the missing network grant this route is asserted to report.
+        _build_memory_section(project_id, {"query": ["needle"]})
         return
     with contextlib.suppress(Exception):
         _dispatch_memory_query(
@@ -5086,6 +5089,10 @@ def _no_field_pairs() -> list[Any]:
         key = (pair["module"], pair["function"])
         if key in RETRIEVAL_ROUTE_FUNCTIONS:
             continue
+        if pair["function"] == "<module>":
+            # An inventoried module-level node (the 72-T07 UI state and 73-T09 capsule
+            # routes) is a statement, not a function body this check can inspect.
+            continue
         ident = f"{pair['route']}-{pair['module'].removesuffix('.py').replace('/', '.')}.{pair['function']}"
         pairs.append(pytest.param(pair["module"], pair["function"], id=ident))
     return pairs
@@ -5261,6 +5268,14 @@ def test_t08_overlay_fill_follows_the_write_grant(
         ("read-only", ("ask", "list", "expand", "overlay_read"), False),
     ):
         env = make_env(tmp_path, monkeypatch, name=name, ops=ops, owner=overlay)
+        # 72-T05: an overlay owner's rows live in the overlay's own storage root, a fresh
+        # store per case.
+        overlay_root = Path(overlay.id)
+        shutil.rmtree(overlay_root / ".rush", ignore_errors=True)
+        overlay_store = TypedArtifactStore(overlay_root)
+        for artifact_id, text in F8_ROWS:
+            write_row(overlay_store, artifact_id, text, owner=overlay)
+        overlay_store.close()
         twin = tool_call(
             env, "recall", request=lex(retrieval="lexical"), cache_write=True
         )

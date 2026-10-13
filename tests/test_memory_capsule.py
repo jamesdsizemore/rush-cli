@@ -1371,7 +1371,9 @@ def test_secret_or_private_required_body_rejects(tmp_path: Path) -> None:
         ("ev1", {"note": f"token {secret}"}),
         (
             "cp1",
-            cp_content(env, next_action=f"use token {secret} to deploy"),
+            cp_content(
+                env, event_id="ev-cp1", next_action=f"use token {secret} to deploy"
+            ),
         ),
     ):
         plant_content(env, target, content)
@@ -4029,7 +4031,10 @@ def test_capsule_permission_flags(tmp_path: Path) -> None:
         assert "--allow-artifact-write" in json.dumps(skipped.result)
         assert not out.exists() and env.effects() == before
 
-        in_base = {"input": str(cap), "invocation_id": new_uuid()}
+        # over MCP the input must sit under the project root
+        src = out_for(env, transport, f"perm-in-{transport}.json")
+        src.write_bytes(cap.read_bytes())
+        in_base = {"input": str(src), "invocation_id": new_uuid()}
         prev_i = call(
             transport,
             env.root,
@@ -4410,7 +4415,10 @@ def set_state(env: CapEnv, artifact_id: str, subject: str, state: str) -> None:
     elif state in ("rejected", "pending"):
         set_applicability(env, artifact_id, state)
     elif state == "tampered":
-        text = json.dumps({"tampered": True})
+        # keep the event-identity keys: the T06 `memory_event_identity_immutable` trigger
+        # aborts any content update that changes them, and the payload hash stays stale.
+        body = json.loads(row_of(env, artifact_id)["content"])
+        text = json.dumps({**body, "tampered": True})
         raw_sql(
             env,
             "UPDATE memory_artifacts SET content = ? WHERE id = ?",
@@ -5455,11 +5463,39 @@ def _h_tui(c: Cell, tmp_path: Path) -> None:
     import rush.tui as tui_module
 
     tree = ast.parse(Path(tui_module.__file__).read_text(encoding="utf-8"))
-    offenders = []
+    # 72-T07 R13: the TUI import review is the only capsule consumer. It names the
+    # `capsule` operation solely as `memory_run(operation="capsule", request={"action":
+    # "preview_import" | "import", ...})`; it never names `memory_capsule`, an export,
+    # bridge, mapping or grant action, or the operation anywhere else.
+    allowed_actions = {"preview_import", "import"}
+    sanctioned: set[int] = set()
+    offenders: list[int] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Constant) and node.value in (
-            "capsule",
-            "memory_capsule",
+        if not isinstance(node, ast.Call):
+            continue
+        kwargs = {kw.arg: kw.value for kw in node.keywords}
+        operation = kwargs.get("operation")
+        if not (isinstance(operation, ast.Constant) and operation.value == "capsule"):
+            continue
+        request = kwargs.get("request")
+        action = None
+        if isinstance(request, ast.Dict):
+            for key, value in zip(request.keys, request.values, strict=True):
+                if (
+                    isinstance(key, ast.Constant)
+                    and key.value == "action"
+                    and isinstance(value, ast.Constant)
+                ):
+                    action = value.value
+        if action in allowed_actions:
+            sanctioned.add(operation.lineno)
+        else:
+            offenders.append(operation.lineno)
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and node.value in ("capsule", "memory_capsule")
+            and node.lineno not in sanctioned
         ):
             offenders.append(node.lineno)
     assert offenders == [], f"tui.py names a capsule route at lines {offenders}"
@@ -6345,7 +6381,9 @@ def _run_portable_paths(tmp_path: Path) -> None:
     text = raw.decode("utf-8")
     assert '"source_path":"src_mod.py"' in text
     target.write_bytes(
-        text.replace('"source_path":"src_mod.py"', '"source_path":"\ud800.py"').encode()
+        text.replace(
+            '"source_path":"src_mod.py"', '"source_path":"\\ud800.py"'
+        ).encode()
     )
     before = env.effects()
     res = call_inproc(env.root, {**request, "invocation_id": new_uuid()})

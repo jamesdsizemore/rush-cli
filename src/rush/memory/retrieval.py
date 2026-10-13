@@ -448,7 +448,9 @@ def _required_operations(
             "preference",
         }:
             return ("write",)
-        if not apply:
+        # D2: capsule routes keep their own sets (`preview_import` {list}, `import`
+        # {write}, export {expand}) on an overlay-owner grant too.
+        if not apply and operation != "capsule":
             return ("overlay_read", "list")
     if (
         operation in _ASK_OPERATIONS
@@ -1239,8 +1241,12 @@ def _integrity(
     if (
         not reasons
         and verifier is not None
-        and row["trust_tier"] == "STATED"
-        and verifier.row(row) == "unbound"
+        and (
+            (row["trust_tier"] == "STATED" and verifier.row(row) == "unbound")
+            # D41/72-T05: a covered column (including applicability and the task
+            # binding) changed outside the store, whatever the row's tier.
+            or verifier.row_tampered(row)
+        )
     ):
         reasons.append("store_unbound")
     return reasons, label
@@ -1940,11 +1946,44 @@ def _frame_tokens(raw: bytes, encoding: str) -> int:
     return len(_encoder(encoding).encode(raw.decode("utf-8"), disallowed_special=()))
 
 
+class MixedFrame:
+    """72-T06 D35: a `FrameBytes` for a call that supplied only one cap. A caller-
+    supplied cap is measured on the transport `frame`; the defaulted one on the
+    transport-independent `payload`. `on_frame` is `(bytes, tokens)`."""
+
+    def __init__(
+        self,
+        frame: FrameBytes,
+        payload: FrameBytes,
+        on_frame: tuple[bool, bool],
+    ) -> None:
+        self.frame = frame
+        self.payload = payload
+        self.on_frame = on_frame
+
+    def __call__(self, code: str, data: dict[str, Any]) -> bytes:
+        return self.frame(code, data)
+
+
+def _measured(
+    frame_bytes: FrameBytes, code: str, data: dict[str, Any]
+) -> tuple[bytes, bytes]:
+    """The bytes each cap (bytes, tokens) is measured on."""
+    raw = frame_bytes(code, data)
+    if isinstance(frame_bytes, MixedFrame):
+        payload = frame_bytes.payload(code, data)
+        return (
+            raw if frame_bytes.on_frame[0] else payload,
+            raw if frame_bytes.on_frame[1] else payload,
+        )
+    return raw, raw
+
+
 def _frame_size(
     frame_bytes: FrameBytes, code: str, data: dict[str, Any], encoding: str
 ) -> tuple[int, int]:
-    raw = frame_bytes(code, data)
-    return len(raw), _frame_tokens(raw, encoding)
+    for_bytes, for_tokens = _measured(frame_bytes, code, data)
+    return len(for_bytes), _frame_tokens(for_tokens, encoding)
 
 
 def _frame_fits(
@@ -1957,10 +1996,13 @@ def _frame_fits(
 ) -> bool:
     """Whether the framed response fits both caps. Tiktoken encodings are byte-level
     (tokens <= bytes), so a frame within `max_tokens` bytes is not tokenized."""
-    raw = frame_bytes(code, data)
-    if len(raw) > max_bytes:
+    for_bytes, for_tokens = _measured(frame_bytes, code, data)
+    if len(for_bytes) > max_bytes:
         return False
-    return len(raw) <= max_tokens or _frame_tokens(raw, encoding) <= max_tokens
+    return (
+        len(for_tokens) <= max_tokens
+        or _frame_tokens(for_tokens, encoding) <= max_tokens
+    )
 
 
 def _fit_optional(
@@ -2852,7 +2894,7 @@ def recall_page(
         failure = recheck_failure(access)
         if failure is not None:
             return refusal(_recheck_page(failure, encoding))
-        if not _emit_current(store, generation, page["items"], access, now):
+        if not _emit_current(store, generation, page["items"], access, now, mode=mode):
             return _page("E_RESTART", encoding=encoding)
         if page["code"] == "OK" and _records(telemetry, page):
             _record_memory_event(
@@ -4117,10 +4159,9 @@ def hybrid_page(
             max_bytes=max_bytes,
             encoding=encoding,
             cursor=cursor,
-            # A read-only view (a store that needs a write to open) records nothing.
-            telemetry=telemetry
-            if getattr(store, "_readonly_conn", None) is None
-            else None,
+            # The token-economy store is a separate file, so a read-only memory view
+            # still records its delivered lexical page.
+            telemetry=telemetry,
             request_id=request_id,
             event_id=event_id,
             invocation_id=real_invocation_id,

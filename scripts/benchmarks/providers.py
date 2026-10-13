@@ -556,6 +556,7 @@ DECISION_PROMPT_PREAMBLE = (
     "request below holds the task, your actual history so far and the "
     "response_schema. Reply with exactly one JSON object that matches "
     "response_schema and nothing else.\n"
+    "REQUEST:\n"
 )
 CODEX_EVENT_TYPES = frozenset(
     {
@@ -879,9 +880,11 @@ def run_memory_decision(
     workspace_root: Path,
     budget: DecisionBudget,
     timeout_s: float,
+    env: Mapping[str, str] | None = None,
 ) -> DecisionInvocation:
     """One hermetic provider decision: contained cwd, argv without a shell,
-    budget admitted before and charged after the call, strict parsing."""
+    budget admitted before and charged after the call, strict parsing. `env` is the
+    provider subprocess environment (`None` inherits this process's)."""
     from .memory import _count_tokens, _get_encoder
 
     def done(reason: str | None, **fields: Any) -> DecisionInvocation:
@@ -918,6 +921,7 @@ def run_memory_decision(
             errors="replace",
             timeout=timeout_s,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         base["duration_ms"] = int((time.perf_counter() - t0) * 1000)
@@ -1019,7 +1023,10 @@ def _instruction_files(decision_route: DecisionRoute) -> list[dict[str, Any]]:
 
 
 def _probe_output(
-    argv: list[str], cwd: Path, timeout_s: float
+    argv: list[str],
+    cwd: Path,
+    timeout_s: float,
+    env: Mapping[str, str] | None = None,
 ) -> tuple[str, str] | None:
     try:
         proc = subprocess.run(
@@ -1032,6 +1039,7 @@ def _probe_output(
             errors="replace",
             timeout=timeout_s,
             check=False,
+            env=env,
         )
     except (subprocess.TimeoutExpired, OSError):
         return None
@@ -1044,6 +1052,7 @@ def preflight_decision_route(
     workspace_root: Path,
     case_budgets: list[tuple[int, int]],
     max_total_tokens: int | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Route preflight before any case: hermetic flags on the route's own
     help, `--version`, one parsed preflight decision with usage, and the
@@ -1062,7 +1071,7 @@ def preflight_decision_route(
     }
     workspace_root = Path(workspace_root)
     help_out = _probe_output(
-        [exe, *protocol["help_args"]], workspace_root, decision_route.timeout_s
+        [exe, *protocol["help_args"]], workspace_root, decision_route.timeout_s, env
     )
     flags = sorted(
         {
@@ -1080,7 +1089,7 @@ def preflight_decision_route(
         report["reason"] = "hermetic_flags_unsupported"
         return report
     version_out = _probe_output(
-        [exe, "--version"], workspace_root, decision_route.timeout_s
+        [exe, "--version"], workspace_root, decision_route.timeout_s, env
     )
     if version_out is not None:
         lines = version_out[0].splitlines()
@@ -1095,6 +1104,7 @@ def preflight_decision_route(
         workspace_root=workspace_root,
         budget=DecisionBudget(sys.maxsize, 0, 0),
         timeout_s=decision_route.timeout_s,
+        env=env,
     )
     report["preflight"] = invocation_record(
         result, step=0, route_id=decision_route.route_id

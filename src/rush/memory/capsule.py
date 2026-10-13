@@ -15,6 +15,7 @@ import json
 import math
 import os
 import re
+import sqlite3
 import stat
 import sys
 import time
@@ -2861,6 +2862,14 @@ def _seam_apply(
         )
     except _SEAM_ERRORS as exc:
         raise _seam_failure(exc) from exc
+    except sqlite3.Error as exc:
+        # The one transaction rolled back every row and the receipt: a database fault
+        # is a result, never a traceback.
+        raise _Fail(
+            "E_UNAVAILABLE",
+            "import_write_failed",
+            message=f"the import was rolled back: {exc}",
+        ) from exc
     return cast(dict[str, Any], result)
 
 

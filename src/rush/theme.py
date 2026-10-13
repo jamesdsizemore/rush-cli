@@ -451,6 +451,21 @@ def _memory_decode(value: str) -> str:
         return value
 
 
+def memory_hostile_text(body: str) -> str | None:
+    """The decoded `text` of a JSON-object payload when it holds characters the
+    terminal projection escapes. The payload spells them JSON-escaped (`\\u001b`),
+    so the exact bytes never show what the record says; this is that text, escaped
+    for display by the caller's `_text`/`_safe`."""
+    try:
+        decoded = json.loads(body)
+    except ValueError:
+        return None
+    text = decoded.get("text") if isinstance(decoded, dict) else None
+    if isinstance(text, str) and safe_terminal_text(text) != text:
+        return text
+    return None
+
+
 def _memory_excerpt(item: Mapping[str, Any]) -> str | None:
     content = item.get("content")
     if isinstance(item.get("excerpt"), str):
@@ -538,7 +553,11 @@ def _memory_collection(result: Mapping[str, Any], c: Console) -> None:
         if marks:
             c.print(_text(f"    badges: {', '.join(marks)}"))
         digest = _memory_field(row, "payload_hash") or "unknown"
-        c.print(_text(f"    cite {_plain(ident)}@v{_plain(version)} sha256:{digest}"))
+        # A citation is copied whole: it never folds at the console width.
+        c.print(
+            _text(f"    cite {_plain(ident)}@v{_plain(version)} sha256:{digest}"),
+            soft_wrap=True,
+        )
         excerpt = _memory_excerpt(row)
         if excerpt is not None:
             c.print(_text(f"    {excerpt}"))
@@ -619,6 +638,9 @@ def _memory_inspection(result: Mapping[str, Any], c: Console) -> None:
         return
     for segment in body.split("\n"):
         c.print(_text(segment))
+    hostile = memory_hostile_text(body)
+    if hostile is not None:
+        c.print(_text(f"  text: {hostile}"))
     if next_offset is not None:
         follow = {
             "schema_version": 2,
@@ -663,6 +685,9 @@ def _memory_history(result: Mapping[str, Any], c: Console) -> None:
         excerpt = _memory_excerpt(version)
         if excerpt is not None:
             c.print(_text(f"    {excerpt}"))
+            hostile = memory_hostile_text(excerpt)
+            if hostile is not None:
+                c.print(_text(f"    text: {hostile}"))
     shown = min(len(versions), ROW_CAP)
     if shown < len(versions):
         _truncation(c, shown, len(versions), "versions", str(result.get("tool")))

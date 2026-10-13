@@ -220,7 +220,12 @@ def _replay_list(
     root.mkdir(parents=True, exist_ok=True)
     root = root.resolve()
     register_project(root, data_root=data_root)
-    alice = OwnerScope("user", "alice")
+    # 72-T01: a list naming an owner needs a grant for exactly that owner, so the
+    # world's row and grant belong to the owner the first request names.
+    named = requests[0].get("owner_scope") if requests else None
+    alice = (
+        OwnerScope(**named) if isinstance(named, dict) else OwnerScope("user", "alice")
+    )
     TypedArtifactStore(root).write(
         MemoryArtifact(
             id="a1",
@@ -309,7 +314,7 @@ def _run(
     monkeypatch.setattr(
         tui_mod,
         "_memory_sources_and_state",
-        lambda project: (list(fixture_sources or []), None),
+        lambda project, **_kwargs: (list(fixture_sources or []), None),
     )
     dispatch = tui_mod._dispatch_key
 
@@ -393,6 +398,8 @@ def test_t28d_browse_on_entry_shows_items_without_a_query(
         "subjects": ["domain_knowledge"],
         "query": "",
         "limit": 20,
+        "max_bytes": tui_mod._MEMORY_PAGE_MAX_BYTES,
+        "max_tokens": tui_mod._MEMORY_PAGE_MAX_TOKENS,
         "sources": ["fixture-source"],
     }
     assert "subject" not in first and "session_allowlist" not in first
@@ -527,7 +534,8 @@ def test_t28d_query_includes_owner_source_freshness_archived_filters(
             **{k: v for k, v in request.items() if k != "archive_mode"},
             "query": "",
             "sources": ["fixture-source"],
-            "freshness": ["current"],
+            # 72-T01: a row with no symbol anchor reports `not_applicable` freshness.
+            "freshness": ["not_applicable"],
         },
     )
     assert narrowed["items"] == [], narrowed
@@ -1584,14 +1592,22 @@ def test_memory_second_page_status_visible_at_small_terminal_sizes(
     state.memory_subject = "domain_knowledge"
     actions = tui.default_scan_actions()
     tui._memory_refresh(state, project, actions)
-    assert len(state.memory_items) == 35
+    # 72-T07: the TUI holds one backend page (20 rows); `]` follows its cursor.
+    assert len(state.memory_items) == 20
     for width, height in ((80, 24), (60, 20)):
+        # Back to the backend's first page.
+        tui._memory_reset_cursor(state)
+        tui._memory_refresh(state, project, actions)
+        assert len(state.memory_items) == 20, (width, height)
         state.terminal_size = (width, height)
         state.memory_selected_index = 0
         tui._handle_memory_key(state, "]", actions)
-        assert state.memory_selected_index == 20
+        _drain(state, actions)
+        assert len(state.memory_items) == 15 and state.memory_selected_index == 0
         screen = _screen(state, width, height)
-        assert "page 2/2" in screen, (width, height, screen)
+        # The header wraps at small sizes: compare it with the box edges removed.
+        flat = " ".join(screen.replace("\u2502", " ").split())
+        assert "page 2" in flat, (width, height, screen)
         tui._handle_memory_key(state, " ", actions)
         assert state.memory_selected_ids == {"native-page-20"}
         checked_screen = _screen(state, width, height)

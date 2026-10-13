@@ -4041,6 +4041,207 @@ def _stated_rows(conn: Any) -> int:
     return int(row[0])
 
 
+def _consent_preview_validate(
+    project: Path,
+    owner: OwnerScope,
+    overlay: bool,
+    operations: list[str],
+    sources: list[str],
+    all_current_sources: bool,
+    expires_at: float | None,
+    expected: int,
+) -> tuple[Path, OwnerScope | None]:
+    """The grant preview's pure validators, in the writer's order: `(root,
+    overlay_owner)`, or `MemoryPolicyError`."""
+    from .memory import authorization as auth
+
+    auth._require_revision(expected)
+    if auth._owner_tuple(owner) is None:
+        raise auth.MemoryPolicyError("E_INPUT", "owner_scope")
+    if not all_current_sources:
+        auth._require_sources(sources)
+    auth._require_operations(operations)
+    auth._require_expiry(expires_at)
+    overlay_owner = (
+        auth.user_overlay_owner_scope()
+        if overlay or "overlay_read" in operations
+        else None
+    )
+    if (
+        "overlay_read" in operations
+        and overlay_owner is not None
+        and auth._owner_tuple(owner) != (overlay_owner.kind, overlay_owner.id)
+    ):
+        raise auth.MemoryPolicyError("E_INPUT", "overlay_read_requires_overlay_owner")
+    return auth._canonical_project(project), overlay_owner
+
+
+def _consent_open_views(
+    root: Path, overlay_root: Path | None
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """`(view, overlay_view, failure)`: the read-only views of the project store and
+    (when `overlay_root`) the overlay store; an unusable state is the `failure`."""
+    from .memory.store import TypedArtifactStore
+
+    view, state = TypedArtifactStore.open_readonly_view(root)
+    if state is not None:
+        code, data, upgrade = _consent_store_error("store_", state)
+        return None, None, _consent_result("grant", code, data, upgrade)
+    overlay_view = None
+    if overlay_root is not None:
+        overlay_view, state = TypedArtifactStore.open_readonly_view(overlay_root)
+        if state is not None:
+            if view is not None:
+                view.close()
+            code, data, upgrade = _consent_store_error("overlay_store_", state)
+            return None, None, _consent_result("grant", code, data, upgrade)
+    return view, overlay_view, None
+
+
+def _consent_preview_read(
+    root: Path, overlay_root: Path | None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """`(reads, None)` or `(None, failure)`: the only reads of the project and overlay
+    stores. A `DatabaseError` is `store_corrupt` (H8); a cleanup failure never hides
+    the primary one, and both are named when both happen."""
+    import sqlite3
+
+    from .memory.store import readonly_view_reason, store_binding
+
+    view, overlay_view, failed = _consent_open_views(root, overlay_root)
+    if failed is not None:
+        return None, failed
+    primary: str | None = None
+    cleanup: list[str] = []
+    reads: dict[str, Any] = {}
+    conn = view._readonly_conn if view is not None else None
+    overlay_conn = overlay_view._readonly_conn if overlay_view is not None else None
+    try:
+        reads["groups"] = view.consent_inventory() if view is not None else []
+        reads["binding"] = store_binding(conn, root) if conn is not None else None
+        reads["stated"] = _stated_rows(conn) if conn is not None else 0
+        reads["overlay_binding"] = (
+            store_binding(overlay_conn, overlay_root)
+            if overlay_conn is not None and overlay_root is not None
+            else None
+        )
+        reads["overlay_stated"] = (
+            _stated_rows(overlay_conn) if overlay_conn is not None else 0
+        )
+    except sqlite3.DatabaseError as exc:
+        primary = str(exc)
+    finally:
+        for opened in (view, overlay_view):
+            if opened is None:
+                continue
+            try:
+                opened.close()
+            except sqlite3.DatabaseError as exc:
+                cleanup.append(str(exc))
+    if primary is None and not cleanup:
+        return reads, None
+    failure: dict[str, Any] = {
+        "reason": "store_corrupt",
+        "message": readonly_view_reason("corrupt"),
+    }
+    if cleanup:
+        failure["errors"] = [*([primary] if primary else []), *cleanup]
+    return None, _consent_result("grant", "E_STORE_CORRUPT", failure)
+
+
+def _consent_source_views(
+    groups: list[dict[str, Any]], catalog_items: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """The preview's `catalog`, `other_sources` and per-owner row totals."""
+    from .memory import authorization as auth
+
+    def granted_by_catalog(group: dict[str, Any]) -> bool:
+        return any(auth.source_granted(group["source"], [i]) for i in catalog_items)
+
+    def owner_of(group: dict[str, Any]) -> dict[str, Any] | None:
+        kind, ident = group["owner_scope_kind"], group["owner_scope_id"]
+        return None if kind is None and ident is None else {"kind": kind, "id": ident}
+
+    catalog = [
+        {
+            "source": item,
+            "rows": sum(
+                g["rows"] for g in groups if auth.source_granted(g["source"], [item])
+            ),
+        }
+        for item in catalog_items
+    ]
+    other_sources = [
+        {"owner_scope": owner_of(g), "source": g["source"], "rows": g["rows"]}
+        for g in groups
+        if not granted_by_catalog(g)
+    ]
+    owners: list[dict[str, Any]] = []
+    for g in groups:
+        scope = owner_of(g)
+        found = next((o for o in owners if o["owner_scope"] == scope), None)
+        if found is None:
+            owners.append({"owner_scope": scope, "rows": g["rows"]})
+        else:
+            found["rows"] += g["rows"]
+    return catalog, other_sources, owners
+
+
+def _consent_all_current_sources(
+    root: Path,
+    owner: OwnerScope,
+    groups: list[dict[str, Any]],
+    catalog_items: list[str],
+) -> list[str]:
+    """`--all-current-sources`: the writer catalog plus the owner's stored sources."""
+    from .memory import authorization as auth
+
+    legacy = owner == legacy_owner_scope(root)
+
+    def owned(group: dict[str, Any]) -> bool:
+        pair = (group["owner_scope_kind"], group["owner_scope_id"])
+        return pair == (owner.kind, owner.id) or (legacy and not all(pair))
+
+    extra = {
+        g["source"]
+        for g in groups
+        if owned(g)
+        and not any(auth.source_granted(g["source"], [i]) for i in catalog_items)
+    }
+    return sorted({*catalog_items, *extra})
+
+
+def _consent_grant_argv(
+    root_text: str,
+    owner: OwnerScope,
+    owner_given: bool,
+    overlay: bool,
+    operations: list[str],
+    command_sources: list[str],
+    expires_at: float | None,
+    policy_revision: int,
+) -> list[str]:
+    """The `rush memory grant ... --approve` argv a preview prints."""
+    argv = ["rush", "memory", "grant", "--project", root_text]
+    if overlay:
+        argv.append("--overlay")
+    elif owner_given:
+        argv += ["--owner", f"{owner.kind}:{owner.id}"]
+    for op in sorted(operations):
+        argv += ["--operation", op]
+    for source in sorted(command_sources):
+        argv += ["--source", source]
+    if expires_at is not None:
+        argv += ["--expires-at", repr(expires_at)]
+    argv += [
+        "--expected-policy-revision",
+        str(policy_revision),
+        "--approve",
+        "--allow-cache-write",
+    ]
+    return argv
+
+
 def _memory_consent_preview(
     *,
     project: Path,
@@ -4057,34 +4258,19 @@ def _memory_consent_preview(
     in the writer's order; then the policy, then one read-only view per store (the
     only reads of the project and overlay stores). Writes, locks and directories:
     none."""
-    import sqlite3
-
     from .memory import authorization as auth
-    from .memory.store import TypedArtifactStore, readonly_view_reason, store_binding
 
-    root = project.resolve()
     try:
-        auth._require_revision(expected)
-        if auth._owner_tuple(owner) is None:
-            raise auth.MemoryPolicyError("E_INPUT", "owner_scope")
-        if not all_current_sources:
-            auth._require_sources(sources)
-        auth._require_operations(operations)
-        auth._require_expiry(expires_at)
-        overlay_owner = (
-            auth.user_overlay_owner_scope()
-            if overlay or "overlay_read" in operations
-            else None
+        root, overlay_owner = _consent_preview_validate(
+            project,
+            owner,
+            overlay,
+            operations,
+            sources,
+            all_current_sources,
+            expires_at,
+            expected,
         )
-        if (
-            "overlay_read" in operations
-            and overlay_owner is not None
-            and auth._owner_tuple(owner) != (overlay_owner.kind, overlay_owner.id)
-        ):
-            raise auth.MemoryPolicyError(
-                "E_INPUT", "overlay_read_requires_overlay_owner"
-            )
-        root = auth._canonical_project(project)
     except auth.MemoryPolicyError as exc:
         return _consent_error("grant", exc)
     policy = auth.load_policy_readonly()
@@ -4093,118 +4279,35 @@ def _memory_consent_preview(
             "grant", auth.MemoryPolicyError("E_POLICY_INVALID", policy["reason"])
         )
     root_text = str(root)
-
-    view, state = TypedArtifactStore.open_readonly_view(root)
-    if state is not None:
-        code, data, upgrade = _consent_store_error("store_", state)
-        return _consent_result("grant", code, data, upgrade)
-    overlay_view = None
     overlay_root = Path(overlay_owner.id) if overlay and overlay_owner else None
-    if overlay_root is not None:
-        overlay_view, state = TypedArtifactStore.open_readonly_view(overlay_root)
-        if state is not None:
-            if view is not None:
-                view.close()
-            code, data, upgrade = _consent_store_error("overlay_store_", state)
-            return _consent_result("grant", code, data, upgrade)
-    primary: str | None = None
-    cleanup: list[str] = []
-    conn = view._readonly_conn if view is not None else None
-    overlay_conn = overlay_view._readonly_conn if overlay_view is not None else None
-    try:
-        groups = view.consent_inventory() if view is not None else []
-        binding = store_binding(conn, root) if conn is not None else None
-        stated = _stated_rows(conn) if conn is not None else 0
-        overlay_binding = (
-            store_binding(overlay_conn, overlay_root)
-            if overlay_conn is not None and overlay_root is not None
-            else None
-        )
-        overlay_stated = _stated_rows(overlay_conn) if overlay_conn is not None else 0
-    except sqlite3.DatabaseError as exc:
-        primary = str(exc)
-    finally:
-        for opened in (view, overlay_view):
-            if opened is None:
-                continue
-            try:
-                opened.close()
-            except sqlite3.DatabaseError as exc:
-                cleanup.append(str(exc))
-    if primary is not None or cleanup:
-        # H8: a DatabaseError is `store_corrupt`; a cleanup failure never hides
-        # the primary one, and both are named when both happen.
-        failure: dict[str, Any] = {
-            "reason": "store_corrupt",
-            "message": readonly_view_reason("corrupt"),
-        }
-        if cleanup:
-            failure["errors"] = [*([primary] if primary else []), *cleanup]
-        return _consent_result("grant", "E_STORE_CORRUPT", failure)
+    reads, failed = _consent_preview_read(root, overlay_root)
+    if failed is not None:
+        return failed
+    assert reads is not None
+    groups = reads["groups"]
+    binding, stated = reads["binding"], reads["stated"]
+    overlay_binding, overlay_stated = (
+        reads["overlay_binding"],
+        reads["overlay_stated"],
+    )
 
     catalog_items = auth.writer_source_catalog(root)
-    catalog = [
-        {
-            "source": item,
-            "rows": sum(
-                g["rows"] for g in groups if auth.source_granted(g["source"], [item])
-            ),
-        }
-        for item in catalog_items
-    ]
-
-    def owner_of(group: dict[str, Any]) -> dict[str, Any] | None:
-        kind, ident = group["owner_scope_kind"], group["owner_scope_id"]
-        return None if kind is None and ident is None else {"kind": kind, "id": ident}
-
-    other_sources = [
-        {"owner_scope": owner_of(g), "source": g["source"], "rows": g["rows"]}
-        for g in groups
-        if not any(auth.source_granted(g["source"], [item]) for item in catalog_items)
-    ]
-    owners: list[dict[str, Any]] = []
-    for g in groups:
-        scope = owner_of(g)
-        found = next((o for o in owners if o["owner_scope"] == scope), None)
-        if found is None:
-            owners.append({"owner_scope": scope, "rows": g["rows"]})
-        else:
-            found["rows"] += g["rows"]
-
-    if all_current_sources:
-        legacy = owner == legacy_owner_scope(root)
-        extra = {
-            g["source"]
-            for g in groups
-            if (
-                (g["owner_scope_kind"], g["owner_scope_id"]) == (owner.kind, owner.id)
-                or (legacy and not (g["owner_scope_kind"] and g["owner_scope_id"]))
-            )
-            and not any(
-                auth.source_granted(g["source"], [item]) for item in catalog_items
-            )
-        }
-        command_sources = sorted({*catalog_items, *extra})
-    else:
-        command_sources = list(sources)
-
-    argv = ["rush", "memory", "grant", "--project", root_text]
-    if overlay:
-        argv.append("--overlay")
-    elif owner_given:
-        argv += ["--owner", f"{owner.kind}:{owner.id}"]
-    for op in sorted(operations):
-        argv += ["--operation", op]
-    for source in sorted(command_sources):
-        argv += ["--source", source]
-    if expires_at is not None:
-        argv += ["--expires-at", repr(expires_at)]
-    argv += [
-        "--expected-policy-revision",
-        str(policy["policy_revision"]),
-        "--approve",
-        "--allow-cache-write",
-    ]
+    catalog, other_sources, owners = _consent_source_views(groups, catalog_items)
+    command_sources = (
+        _consent_all_current_sources(root, owner, groups, catalog_items)
+        if all_current_sources
+        else list(sources)
+    )
+    argv = _consent_grant_argv(
+        root_text,
+        owner,
+        owner_given,
+        overlay,
+        operations,
+        command_sources,
+        expires_at,
+        policy["policy_revision"],
+    )
     command, refused = _consent_command(argv)
     identity = auth.project_identity(root)  # type: ignore[attr-defined]  # 73-T09/CODEC
     data = {
@@ -4243,6 +4346,26 @@ def _memory_consent_preview(
                 "command": _consent_command([*bind_argv, "--overlay"])[0],
             }
     return _consent_result("grant", "OK", data, next_action)
+
+
+def _grant_check_usage(
+    owner: OwnerScope | None,
+    overlay: bool,
+    sources: tuple[str, ...],
+    all_current_sources: bool,
+    approve: bool,
+) -> None:
+    """`rush memory grant`'s Click usage rules, before any permission or read."""
+    if owner is not None and overlay:
+        raise click.UsageError("--owner and --overlay are mutually exclusive")
+    if sources and all_current_sources:
+        raise click.UsageError(
+            "--source and --all-current-sources are mutually exclusive"
+        )
+    if not sources and not all_current_sources:
+        raise click.UsageError("--source or --all-current-sources is required")
+    if approve and all_current_sources:
+        raise click.UsageError("--all-current-sources is preview-only")
 
 
 @memory_group.command(name="grant")
@@ -4315,16 +4438,7 @@ def memory_grant_cmd(
     """Preview, or with --approve write, one memory authorization grant."""
     from .memory import authorization as auth
 
-    if owner is not None and overlay:
-        raise click.UsageError("--owner and --overlay are mutually exclusive")
-    if sources and all_current_sources:
-        raise click.UsageError(
-            "--source and --all-current-sources are mutually exclusive"
-        )
-    if not sources and not all_current_sources:
-        raise click.UsageError("--source or --all-current-sources is required")
-    if approve and all_current_sources:
-        raise click.UsageError("--all-current-sources is preview-only")
+    _grant_check_usage(owner, overlay, sources, all_current_sources, approve)
     if approve and not _extract_permissions(**grants).cache_write:
         _render_session_result(_consent_skipped("grant", "grant"), as_json)
     ops = sorted(operations) if operations else list(_CONSENT_DEFAULT_OPS)
@@ -4446,6 +4560,116 @@ def memory_revoke_cmd(
     _render_session_result(_consent_result("revoke", "OK", data), as_json)
 
 
+def _bind_store_usage(approve: bool, expected_digest: str | None) -> None:
+    """`rush memory bind-store`'s Click usage rules (A9.1)."""
+    if approve and expected_digest is None:
+        raise click.UsageError("--approve requires --expected-digest")
+    if expected_digest is not None and not approve:
+        raise click.UsageError("--expected-digest requires --approve")
+
+
+def _bind_store_overlay_owner(
+    root: Path, overlay: bool, approve: bool, deny: Callable[..., None]
+) -> OwnerScope | None:
+    """The overlay owner, or a denial: no data root (when it is needed) or a project
+    root under the overlay storage root (A9.3)."""
+    from .memory import authorization as auth
+
+    try:
+        overlay_owner: OwnerScope | None = auth.user_overlay_owner_scope()
+    except auth.MemoryPolicyError:
+        overlay_owner = None
+    if overlay_owner is None:
+        if overlay or approve:
+            deny("E_PERMISSION", "data_root_unavailable")
+    else:
+        storage = Path(overlay_owner.id)
+        if root == storage or storage in root.parents:
+            deny("E_PERMISSION", "overlay_storage_root")
+    return overlay_owner
+
+
+def _bind_store_access(
+    root: Path,
+    overlay: bool,
+    approve: bool,
+    overlay_owner: OwnerScope | None,
+    deny: Callable[..., None],
+) -> Any:
+    """The `MemoryAccess` an overlay or approve bind runs under (H7), or a denial."""
+    from .memory import authorization as auth
+    from .memory.retrieval import (
+        MemoryAccess,
+        memory_policy_decision,
+        required_operation_set,
+    )
+
+    access: Any = None
+    if not (overlay or approve):
+        return access
+    mode, mode_reason = ("policy", None) if overlay else memory_policy_decision(root)
+    owner = overlay_owner if overlay else legacy_owner_scope(root)
+    operation = "write" if approve else "list"
+    required = required_operation_set(operation, apply=approve, overlay=overlay)
+    if mode == "unavailable":
+        why: str = mode_reason or "policy_invalid"
+    elif mode == "policy":
+        access, why = MemoryAccess.resolve_with_reason(
+            root,
+            operation=operation,
+            apply=approve,
+            overlay=overlay,
+            owner_scope=owner,
+        )
+    if mode != "legacy" and access is None:
+        deny(
+            _CONSENT_REASON_CODES.get(why, "E_PERMISSION"),
+            why,
+            auth.memory_next_action(
+                reason=why,
+                project_root=root,
+                operations=required,
+                owner_scope=owner,
+            ),
+        )
+    return access
+
+
+def _bind_store_target(
+    root: Path,
+    overlay: bool,
+    approve: bool,
+    overlay_owner: OwnerScope | None,
+    deny: Callable[..., None],
+    as_json: bool,
+) -> None:
+    """Target existence (A9.4), read-only: an absent store binds nothing and an
+    unusable one keeps its readonly code and reason (A2.6)."""
+    from .memory.store import TypedArtifactStore
+
+    store_root = Path(overlay_owner.id) if overlay and overlay_owner else root
+    view, state = TypedArtifactStore.open_readonly_view(store_root)
+    if view is not None:
+        view.close()
+    if state is not None:
+        code, failure, upgrade = _consent_store_error(
+            "overlay_store_" if overlay else "store_", state
+        )
+        _render_session_result(
+            _consent_result("bind_store", code, failure, upgrade), as_json
+        )
+    if view is None:
+        if approve:
+            deny("E_VERSION", "store_changed")
+        data = {
+            "project_root": str(root),
+            "overlay": overlay,
+            "store": "absent",
+            "approve_command": None,
+        }
+        _render_session_result(_consent_result("bind_store", "OK", data), as_json)
+
+
 @memory_group.command(name="bind-store")
 @click.option(
     "--project",
@@ -4472,18 +4696,9 @@ def memory_bind_store_cmd(
 ) -> None:
     """Preview, or with --approve bind, this project's (or the overlay) memory store
     to this root under the local key (D41)."""
-    from .memory import authorization as auth
-    from .memory.retrieval import (
-        MemoryAccess,
-        memory_policy_decision,
-        required_operation_set,
-    )
     from .memory.store import TypedArtifactStore
 
-    if approve and expected_digest is None:
-        raise click.UsageError("--approve requires --expected-digest")
-    if expected_digest is not None and not approve:
-        raise click.UsageError("--expected-digest requires --approve")
+    _bind_store_usage(approve, expected_digest)
     if approve and not _extract_permissions(**grants).cache_write:
         _render_session_result(_consent_skipped("bind-store", "bind_store"), as_json)
     root = project.resolve()
@@ -4498,71 +4713,9 @@ def memory_bind_store_cmd(
         )
         _render_session_result(result, as_json)
 
-    try:
-        overlay_owner: OwnerScope | None = auth.user_overlay_owner_scope()
-    except auth.MemoryPolicyError:
-        overlay_owner = None
-    if overlay_owner is None:
-        if overlay or approve:
-            deny("E_PERMISSION", "data_root_unavailable")
-    else:
-        storage = Path(overlay_owner.id)
-        if root == storage or storage in root.parents:
-            deny("E_PERMISSION", "overlay_storage_root")
-
-    access: Any = None
-    if overlay or approve:
-        mode, mode_reason = (
-            ("policy", None) if overlay else memory_policy_decision(root)
-        )
-        owner = overlay_owner if overlay else legacy_owner_scope(root)
-        operation = "write" if approve else "list"
-        required = required_operation_set(operation, apply=approve, overlay=overlay)
-        if mode == "unavailable":
-            why: str = mode_reason or "policy_invalid"
-        elif mode == "policy":
-            access, why = MemoryAccess.resolve_with_reason(
-                root,
-                operation=operation,
-                apply=approve,
-                overlay=overlay,
-                owner_scope=owner,
-            )
-        if mode != "legacy" and access is None:
-            deny(
-                _CONSENT_REASON_CODES.get(why, "E_PERMISSION"),
-                why,
-                auth.memory_next_action(
-                    reason=why,
-                    project_root=root,
-                    operations=required,
-                    owner_scope=owner,
-                ),
-            )
-
-    # Target existence (A9.4), read-only: an absent store binds nothing and an
-    # unusable one keeps its readonly code and reason (A2.6).
-    store_root = Path(overlay_owner.id) if overlay and overlay_owner else root
-    view, state = TypedArtifactStore.open_readonly_view(store_root)
-    if view is not None:
-        view.close()
-    if state is not None:
-        code, failure, upgrade = _consent_store_error(
-            "overlay_store_" if overlay else "store_", state
-        )
-        _render_session_result(
-            _consent_result("bind_store", code, failure, upgrade), as_json
-        )
-    if view is None:
-        if approve:
-            deny("E_VERSION", "store_changed")
-        data = {
-            "project_root": root_text,
-            "overlay": overlay,
-            "store": "absent",
-            "approve_command": None,
-        }
-        _render_session_result(_consent_result("bind_store", "OK", data), as_json)
+    overlay_owner = _bind_store_overlay_owner(root, overlay, approve, deny)
+    access = _bind_store_access(root, overlay, approve, overlay_owner, deny)
+    _bind_store_target(root, overlay, approve, overlay_owner, deny, as_json)
 
     result = dict(
         TypedArtifactStore.bind_store(
@@ -4890,6 +5043,25 @@ _CAPSULE_LEAVES: dict[str, tuple[str, str]] = {
 }
 
 
+def _capsule_selectors(
+    task_ref: dict[str, Any] | None,
+    owner: dict[str, str] | None,
+    sources: tuple[str, ...],
+    include_personal: bool,
+) -> dict[str, Any]:
+    """The capsule `selectors` request object; omitted options stay absent."""
+    selectors: dict[str, Any] = {}
+    if task_ref is not None:
+        selectors["task_ref"] = task_ref
+    if owner is not None:
+        selectors["owner_scope"] = owner
+    if sources:
+        selectors["sources"] = list(sources)
+    if include_personal:
+        selectors["include_personal"] = True
+    return selectors
+
+
 def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
     """One `rush memory capsule <leaf>`: builds the same `request` an MCP call sends
     (omitted options stay absent) and runs `MemoryTool` operation `capsule`."""
@@ -4940,15 +5112,7 @@ def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
             request["confirm_constraint_ids"] = list(confirm_constraint_ids)
         if apply:
             request["apply"] = True
-        selectors: dict[str, Any] = {}
-        if task_ref is not None:
-            selectors["task_ref"] = task_ref
-        if owner is not None:
-            selectors["owner_scope"] = owner
-        if sources:
-            selectors["sources"] = list(sources)
-        if include_personal:
-            selectors["include_personal"] = True
+        selectors = _capsule_selectors(task_ref, owner, sources, include_personal)
         if selectors:
             request["selectors"] = selectors
         result = MemoryTool().run(
@@ -6341,44 +6505,16 @@ def agent_connect_cmd(
         raise click.UsageError(
             "--enable-agent-hooks and --disable-agent-hooks are mutually exclusive"
         )
-    binding: dict[str, Any] | None = None
-    if memory_binding:
-        if (
-            memory_grant_id is None
-            or expected_policy_revision is None
-            or project_path is None
-        ):
-            raise click.UsageError(
-                "--memory-binding requires --memory-grant-id, "
-                "--expected-policy-revision and --project"
-            )
-        refusal = _memory_binding_precheck(
-            project_path,
-            memory_grant_id,
-            session_id,
-            agent_id,
-            expected_policy_revision,
-        )
-        if refusal is not None:
-            refused = _memory_binding_refusal(*refusal)
-            if not as_json:
-                echo(_memory_binding_line(refused["raw"]["memory_binding"]))
-            _render_session_result(refused, as_json)
-        binding = {
-            "state": "preview",
-            "grant_id": memory_grant_id,
-            "session_id": session_id,
-            "host_id": agent_id,
-            "expected_policy_revision": expected_policy_revision,
-        }
-    else:
-        for flag, given in (
-            ("--memory-grant-id", memory_grant_id is not None),
-            ("--expected-policy-revision", expected_policy_revision is not None),
-            ("--approve-memory-binding", approve_memory_binding),
-        ):
-            if given:
-                raise click.UsageError(f"{flag} requires --memory-binding")
+    binding = _connect_binding_preview(
+        memory_binding,
+        memory_grant_id,
+        expected_policy_revision,
+        approve_memory_binding,
+        project_path,
+        session_id,
+        agent_id,
+        as_json,
+    )
     interactive = not as_json and os.isatty(0) and _is_terminal(sys.stdout)
     hook_only_native = (
         (enable_hooks or disable_hooks)
@@ -6417,25 +6553,73 @@ def agent_connect_cmd(
     )
     if binding is not None:
         binding = _memory_binding_step(result, binding, approve=approve_memory_binding)
-    raw = result.get("raw") or {}
-    migration = raw.get("migration")
+    if not as_json:
+        _echo_connect_state(result.get("raw") or {}, binding)
+    _render_session_result(dict(result), as_json)
+
+
+def _connect_binding_preview(
+    memory_binding: bool,
+    memory_grant_id: str | None,
+    expected_policy_revision: int | None,
+    approve_memory_binding: bool,
+    project_path: Path | None,
+    session_id: str,
+    agent_id: str,
+    as_json: bool,
+) -> dict[str, Any] | None:
+    """`agent connect`'s memory-binding options: the `preview` binding (or a
+    pre-connect refusal, which ends the command), `None` without --memory-binding."""
+    if not memory_binding:
+        for flag, given in (
+            ("--memory-grant-id", memory_grant_id is not None),
+            ("--expected-policy-revision", expected_policy_revision is not None),
+            ("--approve-memory-binding", approve_memory_binding),
+        ):
+            if given:
+                raise click.UsageError(f"{flag} requires --memory-binding")
+        return None
     if (
-        not as_json
-        and isinstance(migration, dict)
-        and migration.get("state") == "pending"
+        memory_grant_id is None
+        or expected_policy_revision is None
+        or project_path is None
     ):
+        raise click.UsageError(
+            "--memory-binding requires --memory-grant-id, "
+            "--expected-policy-revision and --project"
+        )
+    refusal = _memory_binding_precheck(
+        project_path, memory_grant_id, session_id, agent_id, expected_policy_revision
+    )
+    if refusal is not None:
+        refused = _memory_binding_refusal(*refusal)
+        if not as_json:
+            echo(_memory_binding_line(refused["raw"]["memory_binding"]))
+        _render_session_result(refused, as_json)
+    return {
+        "state": "preview",
+        "grant_id": memory_grant_id,
+        "session_id": session_id,
+        "host_id": agent_id,
+        "expected_policy_revision": expected_policy_revision,
+    }
+
+
+def _echo_connect_state(raw: dict[str, Any], binding: dict[str, Any] | None) -> None:
+    """The text-mode lines `agent connect` prints before its result."""
+    migration = raw.get("migration")
+    if isinstance(migration, dict) and migration.get("state") == "pending":
         _echo_migration_preview(migration)  # not shown by a consent prompt
     guidance = raw.get("guidance")
-    if not as_json and isinstance(guidance, dict):
+    if isinstance(guidance, dict):
         echo(f"guidance: {guidance['state']}")
     hooks = raw.get("hooks")
-    if not as_json and isinstance(hooks, dict):
+    if isinstance(hooks, dict):
         echo(f"agent hooks: {hooks['state']}")
         if hooks.get("note"):
             echo(f"  {hooks['note']}")
-    if not as_json and binding is not None:
+    if binding is not None:
         echo(_memory_binding_line(binding))
-    _render_session_result(dict(result), as_json)
 
 
 def _memory_binding_step(
@@ -6472,6 +6656,59 @@ def _memory_binding_step(
     return binding
 
 
+def _binding_precheck_grant_state(grant: dict[str, Any]) -> tuple[str, str] | None:
+    """The precheck's principal, revoked and expiry checks on one grant."""
+    from .memory import authorization as auth
+
+    try:
+        principal = auth._writer_principal()
+    except auth.MemoryPolicyError:
+        return "E_PERMISSION", "principal_unavailable"
+    if grant["principal"] != principal:
+        return "E_PERMISSION", "principal_mismatch"
+    if grant["revoked"]:
+        return "E_PERMISSION", "revoked"
+    if grant["expires_at"] is not None and not auth._now() < grant["expires_at"]:
+        return "E_PERMISSION", "expired"
+    return None
+
+
+def _binding_precheck_inputs(
+    grant_id: str, session_id: str, agent_id: str
+) -> tuple[str, str] | None:
+    """The precheck's grant ID, session label and host label (the writer's own
+    validators), in the writer's order."""
+    from .memory import authorization as auth
+
+    try:
+        if not grant_id:
+            raise auth.MemoryPolicyError("E_INPUT", "grant_id")
+        auth._require_label(session_id, "session_id")
+        auth._require_label(agent_id, "host_id")
+    except auth.MemoryPolicyError as exc:
+        return exc.code, str(exc.reason)
+    return None
+
+
+def _binding_precheck_identity_matches(
+    project_path: Path, grant: dict[str, Any]
+) -> bool:
+    """True when the project's complete identity is the grant's scope."""
+    from .memory import authorization as auth
+
+    try:
+        identity = auth.project_identity(project_path)  # type: ignore[attr-defined]  # 73-T09/CODEC
+    except Exception:  # noqa: BLE001 - no identity never matches a grant
+        return False
+    return not (
+        identity["project_id"] is None
+        or identity["worktree_id"] is None
+        or grant["project_id"] != identity["project_id"]
+        or grant["worktree_id"] != identity["worktree_id"]
+        or grant["project_root"] != identity["canonical_root"]
+    )
+
+
 def _memory_binding_precheck(
     project_path: Path, grant_id: str, session_id: str, agent_id: str, expected: int
 ) -> tuple[str, str] | None:
@@ -6482,13 +6719,9 @@ def _memory_binding_precheck(
     then resolve."""
     from .memory import authorization as auth
 
-    try:
-        if not grant_id:
-            raise auth.MemoryPolicyError("E_INPUT", "grant_id")
-        auth._require_label(session_id, "session_id")
-        auth._require_label(agent_id, "host_id")
-    except auth.MemoryPolicyError as exc:
-        return exc.code, str(exc.reason)
+    refusal = _binding_precheck_inputs(grant_id, session_id, agent_id)
+    if refusal is not None:
+        return refusal
     loaded = auth.load_policy_readonly()
     if loaded["state"] == "missing":
         return "E_PERMISSION", "policy_missing"
@@ -6500,27 +6733,10 @@ def _memory_binding_precheck(
     grant = loaded["grants"].get(grant_id)
     if grant is None:
         return "E_PERMISSION", "no_grant"
-    try:
-        principal = auth._writer_principal()
-    except auth.MemoryPolicyError:
-        return "E_PERMISSION", "principal_unavailable"
-    if grant["principal"] != principal:
-        return "E_PERMISSION", "principal_mismatch"
-    if grant["revoked"]:
-        return "E_PERMISSION", "revoked"
-    if grant["expires_at"] is not None and not auth._now() < grant["expires_at"]:
-        return "E_PERMISSION", "expired"
-    try:
-        identity = auth.project_identity(project_path)  # type: ignore[attr-defined]  # 73-T09/CODEC
-    except Exception:  # noqa: BLE001 - no identity never matches a grant
-        return "E_PERMISSION", "binding_scope_mismatch"
-    if (
-        identity["project_id"] is None
-        or identity["worktree_id"] is None
-        or grant["project_id"] != identity["project_id"]
-        or grant["worktree_id"] != identity["worktree_id"]
-        or grant["project_root"] != identity["canonical_root"]
-    ):
+    refusal = _binding_precheck_grant_state(grant)
+    if refusal is not None:
+        return refusal
+    if not _binding_precheck_identity_matches(project_path, grant):
         return "E_PERMISSION", "binding_scope_mismatch"
     resolved = auth.resolve_memory_scope(
         project_root=project_path,

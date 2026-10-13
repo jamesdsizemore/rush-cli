@@ -444,8 +444,18 @@ def test_plus_minus_expand_and_collapse_detail_in_git_and_memory(
     assert calls[1] == calls[0]
     # The request names the selected exact version in the schema-2 identity fields.
     expand_requests = [request for op, request in calls[0] if op == "expand"]
-    assert len(expand_requests) == 1, calls[0]
-    request = expand_requests[0]
+    # 72-T02 C05: the TUI's 256-byte page cap is below the smallest response, so the
+    # first request is refused `E_INPUT` naming the floor and exactly one retry at the
+    # floor plus the page follows; `related` is requested once.
+    assert len(expand_requests) == 2, calls[0]
+    assert (expand_requests[0]["max_bytes"], expand_requests[0]["max_tokens"]) == (
+        256,
+        256,
+    )
+    assert expand_requests[1]["max_bytes"] > 256
+    assert expand_requests[1]["max_tokens"] > 256
+    assert [op for op, _ in calls[0]].count("related") == 1, calls[0]
+    request = expand_requests[1]
     assert request["schema_version"] == 2
     assert (request["artifact_id"], request["artifact_version"]) == ("m2", 3)
     assert "id" not in request and "version" not in request

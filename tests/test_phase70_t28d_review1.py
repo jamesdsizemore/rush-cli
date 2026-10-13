@@ -431,7 +431,8 @@ def test_r1_restore_round_trip_commits_versions(tmp_path: Path) -> None:
 
     _set_filter(state, actions, "archived", "true")
     assert state.mode == "memory"
-    assert _ids(state) == ["zq01"], state.memory_message
+    assert sorted(_ids(state)) == ["zq01", "zq02"], state.memory_message
+    _cursor_to(state, actions, "zq01")
     _keys(state, actions, "a")
     assert "restore preview" in state.memory_message
     _keys(state, actions, "y")
@@ -448,7 +449,8 @@ def test_r1_restore_round_trip_commits_versions(tmp_path: Path) -> None:
         ("trust", "EXTERNAL_WRITE", ["zq01"]),
         ("source", "s2", ["zq03"]),
         ("freshness", "stale", ["zq04"]),
-        ("archived", "true", ["zq05"]),
+        # 72-T07: the archived filter is `historical`: active rows plus archived ones.
+        ("archived", "true", ["zq01", "zq02", "zq03", "zq04", "zq05", "zq06"]),
         ("owner", "user:alice", ["zq06"]),
     ],
 )
@@ -460,7 +462,9 @@ def test_r1_filter_form_sets_every_filter(
     _seed(root, "zq01", trust_tier="EXTERNAL_WRITE")
     _seed(root, "zq02")
     _seed(root, "zq03", source="s2")
-    _seed(root, "zq04", stale=True)
+    # 72-T01: freshness is derived from the anchor, not the `stale` flag.
+    (root / "stale_src.py").write_text("VALUE = 1\n")
+    _seed(root, "zq04", symbol_ref="stale_src.py::", content_hash="deadbeef")
     zq05 = _seed(root, "zq05")
     _seed(root, "zq06", owner=OwnerScope("user", "alice"))
     store = TypedArtifactStore(root)
@@ -482,6 +486,22 @@ def test_r1_filter_form_sets_every_filter(
     assert state.mode == "memory"
     assert sorted(_ids(state)) == expected, state.memory_message
     assert f"{field}={value}" in _screen(state)
+    if field == "archived":
+        # Archived rows are badged by `reason_codes`; active rows are not.
+        badged = [
+            i["id"]
+            for i in state.memory_items
+            if "archived" in (i.get("reason_codes") or ())
+        ]
+        assert badged == ["zq05"], badged
+        assert {i["id"] for i in state.memory_items} == {
+            "zq01",
+            "zq02",
+            "zq03",
+            "zq04",
+            "zq05",
+            "zq06",
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -592,22 +612,49 @@ def test_r1_paging_shows_twenty_rows_per_page(tmp_path: Path) -> None:
     actions = _actions()
     _enter_memory(state, actions)
     _browse(state, actions)
-    order = _ids(state)
-    assert len(order) == 45
+    # 72-T07: one backend page of 20 rows is loaded; `]` follows its cursor.
+    first = _ids(state)
+    assert len(first) == 20
 
     screen = _screen(state)
-    assert set(_ROW_ID.findall(screen)) == set(order[:20])
-    assert "page 1/3" in screen
+    assert set(_ROW_ID.findall(screen)) == set(first)
+    assert "page 1" in screen
 
     _keys(state, actions, "]")
+    second = _ids(state)
     screen = _screen(state)
-    assert set(_ROW_ID.findall(screen)) == set(order[20:40])
-    assert "page 2/3" in screen
+    assert len(second) == 20 and not set(second) & set(first)
+    assert set(_ROW_ID.findall(screen)) == set(second)
+    assert "page 2" in screen
+
+    _keys(state, actions, "]")
+    third = _ids(state)
+    assert len(third) == 5 and not set(third) & (set(first) | set(second))
+    assert "page 3" in _screen(state)
 
     _keys(state, actions, "[")
-    screen = _screen(state)
-    assert set(_ROW_ID.findall(screen)) == set(order[:20])
-    assert "page 1/3" in screen
+    assert _ids(state) == second
+    assert "page 2" in _screen(state)
+    _keys(state, actions, "[")
+    assert _ids(state) == first
+    assert "page 1" in _screen(state)
+
+
+def test_r1_pager_line_shows_the_backend_page_number(tmp_path: Path) -> None:
+    """RED: the pager line counted only the 20 loaded rows ("page 1/1" on every
+    backend page); it must agree with the header's backend page number."""
+    root = _root(tmp_path, "a")
+    for i in range(45):
+        _seed(root, f"zq{i:02d}", note=f"alpha {i}")
+    state = _state(tmp_path, root)
+    actions = _actions()
+    _enter_memory(state, actions)
+    _browse(state, actions)
+    for expected in (1, 2, 3):
+        pager = _lines_with(_screen(state), "] next page")
+        assert len(pager) == 1, pager
+        assert f"page {expected}" in pager[0] and "page 1/1" not in pager[0], pager
+        _keys(state, actions, "]")
 
 
 # ---------------------------------------------------------------------------
@@ -782,10 +829,13 @@ def test_r1_maintenance_never_creates_rows_or_enables_learning(tmp_path: Path) -
             assert changed <= _MAINTENANCE_STATUS_COLUMNS, (artifact_id, changed)
         else:
             assert not changed, (artifact_id, changed)
+    # 72-T04 D26: a maintenance cycle holds its lease on an empty `.claim` file under
+    # `.rush/locks`; that is lock infrastructure, not data.
     files_after = {
         path: digest
         for path, digest in _files(tmp_path).items()
         if not Path(path).name.startswith("memory.db")
+        and not (Path(path).parent.name == "locks" and path.endswith(".claim"))
     }
     assert files_after == files_before
 

@@ -841,10 +841,12 @@ class PreferenceStore:
                 if len(batch) < _SCAN:
                     break
                 offset += _SCAN
+        # A requested `key` always gets its entry (`status "none"` with no applicable
+        # row); a `query` lists only the keys it found rows for.
         return [
             self._select(row_key, rows[row_key])
             for row_key in sorted(rows)
-            if rows[row_key]
+            if rows[row_key] or key is not None
         ]
 
     @staticmethod

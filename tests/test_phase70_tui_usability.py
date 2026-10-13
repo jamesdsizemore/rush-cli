@@ -35,6 +35,9 @@ from rush.tools.base import ToolResult
 from rush.tools.memory import MemoryOperation, MemoryTool
 from rush.tools.review import ReviewTool
 from rush.tui import (
+    _MEMORY_PAGE_MAX_BYTES,
+    _MEMORY_PAGE_MAX_TOKENS,
+    _MEMORY_PAGE_ROWS,
     SECTION_LABELS,
     SECTIONS,
     ProjectSeed,
@@ -242,6 +245,10 @@ def test_t28d_memory_workflows(
                 "schema_version": 2,
                 "subjects": [subject],
                 "query": query,
+                # The TUI's own page request: 20 rows under the page budget.
+                "limit": _MEMORY_PAGE_ROWS,
+                "max_bytes": _MEMORY_PAGE_MAX_BYTES,
+                "max_tokens": _MEMORY_PAGE_MAX_TOKENS,
                 **extra,
             },
         )
@@ -394,6 +401,14 @@ def test_t28d_memory_workflows(
     )
     assert "conflict" in state2.memory_message.lower(), state2.memory_message
     assert second_id in state2.memory_message
+    # `r` is the documented recovery: the stale row is replaced by the committed one,
+    # so the later edit previews run against the current version, not the conflicted one.
+    _keys(state2, actions2, "r")
+    assert state2.mode == "memory_edit", state2.memory_message
+    assert (
+        dict(tui_pairs())[second_id]
+        == _current_row(policy_store, second_id)["artifact_version"]
+    )
 
     # Escape in every memory form: no apply call, memory.db untouched, focus returns.
     _keys(state2, actions2, "escape")
@@ -411,7 +426,7 @@ def test_t28d_memory_workflows(
         assert len(recorder.applies()) == applies_before, key
         assert db_sha() == sha_before, key
     _keys(state2, actions2, "e", *"typed", "enter")
-    assert state2.memory_pending_mutation is not None
+    assert state2.memory_pending_mutation is not None, state2.memory_message
     _keys(state2, actions2, "escape")
     assert state2.memory_pending_mutation is None
     assert len(recorder.applies()) == applies_before and db_sha() == sha_before

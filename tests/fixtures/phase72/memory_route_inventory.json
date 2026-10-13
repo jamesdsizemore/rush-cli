@@ -3,7 +3,19 @@
   "pairs": [
     {
       "module": "cli.py",
-      "function": "_memory_consent_preview",
+      "function": "_bind_store_target",
+      "route": "memory bind-store",
+      "task": "73-T02/BOOTSTRAP-CONSENT"
+    },
+    {
+      "module": "cli.py",
+      "function": "_consent_open_views",
+      "route": "memory grant preview",
+      "task": "73-T02/BOOTSTRAP-CONSENT"
+    },
+    {
+      "module": "cli.py",
+      "function": "_consent_preview_read",
       "route": "memory grant preview",
       "task": "73-T02/BOOTSTRAP-CONSENT"
     },

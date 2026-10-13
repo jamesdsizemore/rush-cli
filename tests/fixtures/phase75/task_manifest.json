@@ -203,6 +203,822 @@
           "content_contains": "deploy-pipeline"
         }
       }
+    },
+    {
+      "id": "p72-q01",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q01",
+        "query": "invoice retry limit"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q02",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q02",
+        "query": "session cookie name"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q03",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q03",
+        "query": "nightly backup window"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q04",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q04",
+        "query": "webhook signing header"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q05",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q05",
+        "query": "export batch size"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q06",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q06",
+        "query": "staging database host"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q07",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q07",
+        "query": "audit log retention"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q08",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q08",
+        "query": "feature flag for bulk refunds"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q09",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q09",
+        "query": "release branch prefix"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q10",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q10",
+        "query": "rate limiter bucket size"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q11",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q11",
+        "query": "search index alias"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q12",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q12",
+        "query": "worker queue name"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q13",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q13",
+        "query": "how long is the free cancellation period"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q14",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q14",
+        "query": "how long until a credential recovery email stops working"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q15",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q15",
+        "query": "what dimensions are profile pictures scaled to"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q16",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q16",
+        "query": "when does someone get woken up by monitoring alerts"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q17",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q17",
+        "query": "grace period before a removed workspace is gone for good"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q18",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q18",
+        "query": "how often are service credentials replaced"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q19",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q19",
+        "query": "when do clients receive their monthly bills"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q20",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q20",
+        "query": "storage quota on the no-cost tier"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q21",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q21",
+        "query": "which signing identity do phone app releases use"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q22",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q22",
+        "query": "response time target for high priority customer requests"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q23",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q23",
+        "query": "what weekday do localized strings get imported"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
+    },
+    {
+      "id": "p72-q24",
+      "kind": "dataset_answer",
+      "family": "phase72_retrieval",
+      "variant": "base",
+      "retrieval_required": true,
+      "inputs": {
+        "section": "phase72_hybrid_queries",
+        "corpus_section": "phase72_hybrid_corpus",
+        "record_id": "p72-q24",
+        "query": "how big is the performance testing environment relative to live"
+      },
+      "fixture_revision": "6639c7806c3a5180621074c5746491e52833aa241578a9e1f16c78729c5938ed",
+      "grants": [
+        "cache_write",
+        "network"
+      ],
+      "permitted_actions": [
+        "answer"
+      ],
+      "editable_paths": [],
+      "budget": {
+        "max_total_tokens": 16000,
+        "output_reserve_tokens": 1024,
+        "max_steps": 12,
+        "timeout_s": 600
+      },
+      "acceptance": {
+        "evaluator": "normalized_contains",
+        "behavior_ids": [],
+        "required_commands": [],
+        "handoff": null
+      }
     }
   ],
   "declared": [
@@ -283,5 +1099,11 @@
         "long handoff"
       ]
     }
+  },
+  "phase72_cases_sha256": "235854622857c3a5a5149101cfd32113f554fa491825d1df2275722c562a32ff",
+  "phase72_embedding": {
+    "endpoint": "http://127.0.0.1:11434",
+    "model": "nomic-embed-text",
+    "model_digest": "0a109f422b47"
   }
 }

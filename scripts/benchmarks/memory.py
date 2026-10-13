@@ -1371,7 +1371,13 @@ def _check_acceptance(value: Any, kind: str, where: str) -> None:
         raise _manifest_error("invalid_value", f"{where} does not fit {evaluator}")
 
 
-def _check_case(case: Any, index: int, longmemeval_ids: Callable[[], set[str]]) -> None:
+_DATASET_CORPUS_SECTIONS: dict[str, str | None] = {
+    "longmemeval": None,
+    "phase72_hybrid_queries": "phase72_hybrid_corpus",
+}
+
+
+def _check_case(case: Any, index: int, section_ids: Callable[[str], set[str]]) -> None:
     where = f"cases[{index}]"
     c = _exact_keys(case, _CASE_KEYS, where)
     case_id = _typed(c["id"], str, f"{where}.id")
@@ -1390,13 +1396,14 @@ def _check_case(case: Any, index: int, longmemeval_ids: Callable[[], set[str]]) 
         inputs = _exact_keys(
             c["inputs"], {"section", "corpus_section", "record_id", "query"}, where
         )
-        if _typed(inputs["section"], str, f"{where}.section") != "longmemeval":
+        section = _typed(inputs["section"], str, f"{where}.section")
+        if section not in _DATASET_CORPUS_SECTIONS:
             raise _manifest_error("invalid_value", f"{where}.section")
-        if inputs["corpus_section"] is not None:
+        if inputs["corpus_section"] != _DATASET_CORPUS_SECTIONS[section]:
             raise _manifest_error("invalid_value", f"{where}.corpus_section")
         record_id = _text(inputs["record_id"], f"{where}.record_id")
         _text(inputs["query"], f"{where}.query")
-        if record_id not in longmemeval_ids():
+        if record_id not in section_ids(section):
             raise _manifest_error("invalid_value", f"{where}.record_id")
     else:
         inputs = _exact_keys(c["inputs"], {"builder", "task"}, where)
@@ -1502,19 +1509,16 @@ def load_task_manifest(path: Path) -> dict[str, Any]:
     cases = _typed(top["cases"], list, "cases")
     ids: set[str] = set()
 
-    def longmemeval_ids() -> set[str]:
-        if not ids_cache:
-            ids_cache.append(
-                {
-                    str(r.get("question_id"))
-                    for r in load_dataset_section("longmemeval")[1]
-                }
-            )
-        return ids_cache[0]
+    def section_ids(section: str) -> set[str]:
+        if section not in ids_cache:
+            ids_cache[section] = {
+                str(r.get("question_id")) for r in load_dataset_section(section)[1]
+            }
+        return ids_cache[section]
 
-    ids_cache: list[set[str]] = []
+    ids_cache: dict[str, set[str]] = {}
     for index, case in enumerate(cases):
-        _check_case(case, index, longmemeval_ids)
+        _check_case(case, index, section_ids)
         if case["id"] in ids:
             raise _manifest_error("invalid_value", f"duplicate case id {case['id']}")
         ids.add(case["id"])

@@ -306,7 +306,7 @@ def _selected(node: ast.AST) -> bool:
     return name is not None and ("assert" in name or name in _SELECTED_NAMES)
 
 
-def _guard_lists(fn: ast.AST) -> dict[str, list[str]]:
+def _guard_lists(fn: ast.AST, mod: str) -> dict[str, list[str]]:
     nodes = sorted(
         ast.walk(fn),
         key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)),
@@ -317,7 +317,9 @@ def _guard_lists(fn: ast.AST) -> dict[str, list[str]]:
             return [ast.dump(n, include_attributes=False) for n in nodes if keep(n)]
         except RecursionError as exc:
             name = getattr(fn, "name", "<anonymous>")
-            raise GateError(f"protected function {name} is too deeply nested") from exc
+            raise GateError(
+                f"protected function {name} in {_q(mod)} is too deeply nested"
+            ) from exc
 
     return {
         "asserts": dumps(lambda n: isinstance(n, ast.Assert)),
@@ -404,7 +406,7 @@ def _record(task: str, out: str) -> None:
                     f"protected function {name} in {_q(mod)} is defined "
                     f"{len(found)} times at module level, expected once"
                 )
-            guards[mod][name] = _guard_lists(found[0])
+            guards[mod][name] = _guard_lists(found[0], mod)
     doc = {
         "task": task,
         "repository": root,
@@ -647,7 +649,7 @@ def _guard_violations(
                 f"{len(found)} times at module level, expected once"
             )
             continue
-        lists = _guard_lists(found[0])
+        lists = _guard_lists(found[0], mod)
         for key in LISTS:
             if lists[key] != doc["guards"][mod][name][key]:
                 violations.append(

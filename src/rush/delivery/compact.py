@@ -262,6 +262,28 @@ def _call_tool_result(converted: Any) -> CallToolResult:
     return CallToolResult(content=list(converted), isError=False)
 
 
+def compact_memory_text(result: CallToolResult) -> CallToolResult:
+    """72-T06 D35 (decision 2): a memory result's JSON text block re-serialized
+    compactly (no indent), `structuredContent` untouched. The frame measurement and
+    the emitted result both go through here, so measured == emitted."""
+    from mcp.types import TextContent
+
+    content: list[Any] = []
+    for block in result.content:
+        if isinstance(block, TextContent):
+            try:
+                parsed = json.loads(block.text)
+            except ValueError:
+                parsed = None
+            if isinstance(parsed, dict):
+                block = TextContent(
+                    type="text",
+                    text=json.dumps(parsed, separators=(",", ":"), ensure_ascii=False),
+                )
+        content.append(block)
+    return result.model_copy(update={"content": content})
+
+
 def mcp_frame_bytes(result: CallToolResult, request_id: int | str) -> bytes:
     """The exact stdio line the MCP server writes for `result`."""
     from mcp.types import JSONRPCResponse

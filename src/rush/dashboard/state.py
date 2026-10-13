@@ -254,7 +254,7 @@ def _acquire_cross_process_project_lock(
         _INFINITE = 0xFFFFFFFF
         wait_ms = _INFINITE if timeout_s is None else int(max(timeout_s, 0.0) * 1000)
         wait_result = kernel32.WaitForSingleObject(handle, wait_ms)
-        if wait_result == 0x00000102:  # WAIT_TIMEOUT
+        if wait_result == 0x00000102 and timeout_s is not None:  # WAIT_TIMEOUT
             kernel32.CloseHandle(handle)
             raise TimeoutError(f"project lock {project_id!r} busy")
         if wait_result not in (0x00000000, 0x00000080):

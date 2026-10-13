@@ -577,6 +577,8 @@ def test_t08_overrides_only_retrieval_requests(
     """The override never touches write/handoff/receive/expand/verify_attempt kwargs; the
     named episodes pass identically; a retrieval action with no `request` passes unchanged
     and is recorded as skipped."""
+    import re
+
     from rush.permissions import ExecutionPermissions
     from scripts.benchmarks import memory as bench_memory
     from scripts.benchmarks.memory import (
@@ -609,9 +611,23 @@ def test_t08_overrides_only_retrieval_requests(
                 permissions=permissions,
                 request_override=request_override,
             )
+            # Each root mints its own artifact uuids, handoff session ids, capability
+            # secrets and git commit/tree ids; every other kwarg (the receiver's digest
+            # included) must be equal between the arms.
             kwargs_by_step = [
-                json.dumps(
-                    {"op": e.operation, "kwargs": e.kwargs}, sort_keys=True, default=str
+                re.sub(
+                    r'("(?:capability|session_id)": )"[^"]*"',
+                    r'\1"<generated>"',
+                    re.sub(
+                        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+                        r'|(?<=")[0-9a-f]{40}(?=")',
+                        "<generated>",
+                        json.dumps(
+                            {"op": e.operation, "kwargs": e.kwargs},
+                            sort_keys=True,
+                            default=str,
+                        ),
+                    ),
                 )
                 for e in result.events
             ]

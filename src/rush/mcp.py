@@ -18,7 +18,7 @@ from mcp.types import CallToolResult, TextContent
 
 from .catalog import TOOL_SPECS
 from .contracts.results import ToolResultV1
-from .delivery.compact import LimitParam, MaxBytesParam
+from .delivery.compact import LimitParam, MaxBytesParam, compact_memory_text
 from .logging import get_logger
 from .permissions import ExecutionPermissions
 from .tools import ALL_TOOLS
@@ -247,7 +247,7 @@ def build_server_instructions(profile: str | None = None) -> str:
             ),
             (
                 "Memory scope: in policy mode, rush_memory reads only the approved "
-                "owner and sources; session_allowlist narrows them. Legacy reads "
+                "owner and sources; session_allowlist only narrows them. Legacy reads "
                 "need a non-empty session_allowlist; without one a read is skipped "
                 "and nothing is read. Invalid or unavailable policy denies access. "
                 "Writes and other mutations need allow_cache_write. "
@@ -285,6 +285,14 @@ class RushFastMCP(FastMCP):
         return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        result = await self._call_tool(name, arguments)
+        if name == "rush_memory" and isinstance(result, CallToolResult):
+            # 72-T06 D35: the memory text block is compact JSON; the frame
+            # measurement (`tool_registry._memory_frame`) serializes the same way.
+            return compact_memory_text(result)
+        return result
+
+    async def _call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         from .mcp_support.request_models import (
             REQUEST_MODEL_TOOLS,
             validate_and_normalize,

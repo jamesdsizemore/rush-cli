@@ -1013,13 +1013,23 @@ def test_write_edit_promote_archive_delete_reject_omitted_or_incomplete_owner_be
     _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
     arguments = {"owner_scope": bad_owner}
 
-    with pytest.raises(_ActionDenied):
+    if operation == "memory_maintain" and bad_owner is None:
+        # 72-T04 (D3): an omitted maintain owner is decided by the memory grant (policy
+        # mode) or the project's legacy owner, never refused here.
         _validate_memory_owner_scope(
             operation,
             arguments,
             project_id=project_id,
             session_owner_scope_id="sess-1",
         )
+    else:
+        with pytest.raises(_ActionDenied):
+            _validate_memory_owner_scope(
+                operation,
+                arguments,
+                project_id=project_id,
+                session_owner_scope_id="sess-1",
+            )
     assert not (root / ".rush" / "memory.db").exists()
 
 
@@ -1164,6 +1174,21 @@ def _mcp_dedicated(root: Path, operation: str, **kwargs: Any) -> dict[str, Any]:
     executor = InvocationExecutor()
     executor.register("memory", tool.__call__)
     wrapper = make_tool_wrapper(tool, executor)
+    if operation == "list":
+        # 72-T07: `rush memory list SUBJECT QUERY` sends the schema-2 query, so its MCP
+        # twin is the same schema-2 request (the legacy `subject`/`query` form is gone).
+        return dict(
+            wrapper(
+                path=root,
+                operation=operation,
+                request={
+                    "schema_version": 2,
+                    "subjects": ["domain_knowledge"],
+                    "query": "seed",
+                },
+                **kwargs,
+            )
+        )
     return dict(
         wrapper(
             path=root,
@@ -1178,7 +1203,13 @@ def _mcp_dedicated(root: Path, operation: str, **kwargs: Any) -> dict[str, Any]:
 # `_policy_task_roots` seeds the two transports' projects separately, so these differ by
 # construction: row timestamps, the root path in `owner_scope.id`, the project and
 # worktree ids on a task-bound row, and the MCP-only `metadata.scope`.
-_SEEDED_ROOT_FIELDS = ("created_at", "task_project_id", "task_worktree_id")
+_SEEDED_ROOT_FIELDS = (
+    "created_at",
+    "task_project_id",
+    "task_worktree_id",
+    "project_id",
+    "worktree_id",
+)
 
 
 def _seeded_root_view(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1189,6 +1220,9 @@ def _seeded_root_view(operation: str, payload: dict[str, Any]) -> dict[str, Any]
             out = {
                 k: scrub(v) for k, v in value.items() if k not in _SEEDED_ROOT_FIELDS
             }
+            if {"bytes", "tokens", "encoding"} <= out.keys():
+                # A schema-2 page's size meter counts the root path and the ids above.
+                del out["bytes"], out["tokens"]
             owner = out.get("owner_scope")
             if isinstance(owner, dict):
                 out["owner_scope"] = {k: v for k, v in owner.items() if k != "id"}
@@ -1208,8 +1242,15 @@ def _delivered_ids(payload: dict[str, Any]) -> set[str]:
     """Item ids of a dedicated-leaf result: `raw` is a list for the legacy `ask` and a
     page dict (`raw.data.items`) for the others."""
     raw = payload["raw"]
-    items = raw if isinstance(raw, list) else raw["data"]["items"]
-    return {i["id"] for i in items}
+    if isinstance(raw, list):
+        items = raw
+    elif "items" in raw:
+        # A schema-2 page names a row by its reference and also lists the rows it
+        # does not deliver as current (`usable_as_current: false`, `task_mismatch`).
+        items = [i for i in raw["items"] if i.get("usable_as_current", True)]
+    else:
+        items = raw["data"]["items"]
+    return {i["id"] if "id" in i else i["reference"]["artifact_id"] for i in items}
 
 
 def test_cli_mcp_task_id_parity(tmp_path: Path) -> None:

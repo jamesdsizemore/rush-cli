@@ -205,7 +205,18 @@ def _world(
     for subject in SUBJECTS:
         for label, owner in (("alice", ALICE), ("bob", BOB)):
             artifact_id = f"{label}-{subject}"
-            _write(store, artifact_id, owner, subject, f"needle {subject} {label}")
+            # 72-T01 D33: an unanchored `episodic` row with no `kind` is `unknown`, not
+            # usable as current (so not expandable); `observation` is `not_applicable`.
+            _write(
+                store,
+                artifact_id,
+                owner,
+                subject,
+                f"needle {subject} {label}",
+                content={"kind": "observation", "text": f"needle {subject} {label}"}
+                if subject == "episodic"
+                else None,
+            )
             world.ids[(label, subject)] = artifact_id
     for index in range(extra_domain):
         _write(store, f"alice-dk-{index:02d}", ALICE, SUBJECT, f"needle extra {index}")
@@ -1460,9 +1471,21 @@ def _check_dashboard_denials(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             raw = body["data"]["raw"]
             assert body["data"]["ui_state"]["state"] == label, (label, body)
             assert raw["items"] == [] and raw["code"] == "E_PERMISSION", raw
-            assert str(raw["next_action"]["command"]).startswith("rush memory grant"), (
-                raw
-            )
+            # 73-T02 H3: `memory_next_action` has a command only for the grant
+            # reasons, so a revoked or expired grant keeps `command: None` in
+            # `raw.next_action` (equal to `MemoryTool.run`'s raw, 72-T07 R3); the
+            # `ui_state` action is the one that names the `rush memory grant` preview.
+            if label == "denied":
+                assert str(raw["next_action"]["command"]).startswith(
+                    "rush memory grant"
+                ), raw
+            else:
+                assert raw["next_action"]["command"] is None, raw
+                assert raw["next_action"]["text"] == (
+                    f"memory access denied ({label})"
+                ), raw
+            action = body["data"]["ui_state"]["next_action"]
+            assert str(action["command"]).startswith("rush memory grant"), body["data"]
             assert "alice-" not in json.dumps(body["data"]), "a denial disclosed a row"
             assert _reason(body["data"]) == (
                 "operation_not_granted" if label == "denied" else label
@@ -1598,7 +1621,12 @@ def test_t07_dashboard_authority_revalidated_and_stamped(
             identity = key["request_identity"]
             if target in ("browse", "query", "section_expand"):
                 assert list(identity) == sorted(identity), identity
-                assert identity["subject"] == [SUBJECT]
+                if target == "section_expand":
+                    # The request names the exact record, not a subject.
+                    assert identity["expand_id"] == [world.alice("failure")]
+                    assert identity["expand_version"] == ["1"]
+                else:
+                    assert identity["subject"] == [SUBJECT]
                 if target == "query":
                     assert identity["query"] == ["needle"]
             else:
@@ -1629,7 +1657,11 @@ def test_t07_dashboard_authority_revalidated_and_stamped(
                 _status, body = _make_target(world, target)(dash)
                 hook.event = None
                 data = _payload(body)
-                text = json.dumps(data)
+                # A refusal echoes the request: the id the caller itself named
+                # (`expand_id`, `artifact_id`) is not a row the store disclosed.
+                text = json.dumps(
+                    {k: v for k, v in data.items() if k != "memory_view_key"}
+                ).replace(world.alice("failure"), "")
                 state = data["ui_state"]["state"]
                 want = {"revoke": "revoked", "expire": "expired", "replace": "restart"}[
                     event
@@ -1660,8 +1692,10 @@ def test_t07_dashboard_authority_revalidated_and_stamped(
                     new_grant = auth.load_policy_readonly(data_root=world.data_root)
                     active = [
                         g
-                        for g in new_grant["grants"]
-                        if not g.get("revoked") and not g.get("superseded_by")
+                        for g in new_grant["grants"].values()
+                        if g.get("project_id") == world.project_id
+                        and not g.get("revoked")
+                        and not g.get("superseded_by")
                     ]
                     assert len(active) == 1
                     _status, body = _make_target(world, target)(dash)
@@ -2058,7 +2092,9 @@ def test_t07_cache_keyed_by_grant(
     tui_mod._load_map_snapshot(project, world.data_root)
     tui_mod._load_map_snapshot(project, world.data_root)
     assert len(calls) == 1, "unchanged state is served from the cache"
-    _regrant(world, ops=(*GRANT_OPS, "bootstrap"))
+    # An identical grant is returned unchanged (no new authority), so the replacement
+    # must differ from Site 4's: the default `_regrant` adds "bootstrap".
+    _regrant(world, ops=GRANT_OPS)
     tui_mod._load_map_snapshot(project, world.data_root)
     assert len(calls) == 2, "a new authority reloads the map snapshot"
 
@@ -2492,7 +2528,12 @@ def test_t07_cli_human_hostile_terminal_text(
 
     world = _world(tmp_path, hostile=True)
     hostile = world.ids[("alice", "hostile")]
-    listed = _cli(world, monkeypatch, "memory", "list", "--subject", SUBJECT)
+    # 72-T01: a row holding a bidi override is integrity-blocked from ordinary and
+    # inspect reads; the historical view is where it is visible, and where it must
+    # be shown as text.
+    listed = _cli(
+        world, monkeypatch, "memory", "list", "--subject", SUBJECT, "--include-archived"
+    )
     assert listed.exit_code == 0, listed.output
     expand_form = _input_file(
         tmp_path,
@@ -2502,11 +2543,12 @@ def test_t07_cli_human_hostile_terminal_text(
             "artifact_id": hostile,
             "artifact_version": 1,
             "representation": "utf8",
+            "archive_mode": "historical",
         },
     )
     expanded = _cli(world, monkeypatch, "memory", "expand", "--input", str(expand_form))
     assert expanded.exit_code == 0, expanded.output
-    history = _cli(world, monkeypatch, "memory", "history", hostile)
+    history = _cli(world, monkeypatch, "memory", "history", hostile, "--historical")
     assert history.exit_code == 0, history.output
     for label, result in (("list", listed), ("expand", expanded), ("history", history)):
         _assert_clean(result.output, where=label)
@@ -2519,7 +2561,14 @@ def test_t07_cli_human_hostile_terminal_text(
     assert history.output.count("trust EXTERNAL_WRITE") == 1, history.output
     # --json is the exact ToolResult: the raw bytes survive as JSON text, untouched.
     machine = _cli(
-        world, monkeypatch, "memory", "list", "--subject", SUBJECT, json_mode=True
+        world,
+        monkeypatch,
+        "memory",
+        "list",
+        "--subject",
+        SUBJECT,
+        "--include-archived",
+        json_mode=True,
     )
     assert machine.json is not None
     texts = json.dumps(machine.json["raw"]["items"], ensure_ascii=False)
@@ -2534,6 +2583,10 @@ def test_t07_tui_hostile_terminal_text(
     hostile = world.ids[("alice", "hostile")]
     state, actions, _ = _tui(world)
     _open_memory(state, actions)
+    # 72-T01: a row holding a bidi override is integrity-blocked from ordinary and
+    # inspect reads; it is visible only in the historical view (`f`, tab to the
+    # `archived` field, `true`, Enter), where the screen must show it as text.
+    _keys(state, actions, "f", "tab", "tab", "tab", *"true", "enter")
     ids = [i for i, _v in _tui_ids(state)]
     state.memory_selected_index = ids.index(hostile)
 
@@ -3633,7 +3686,8 @@ def test_t07_g4_trust_boundary_inputs(
             "max_tokens": 1,
         }
         status, body = dash.action("memory_query", small)
-        assert status == 200 and body["data"]["raw"]["code"] == "E_BUDGET", body
+        # 72-T02 D35: caps below the smallest response are `E_INPUT` naming the floor.
+        assert status == 200 and body["data"]["raw"]["code"] == "E_INPUT", body
         required = body["data"]["raw"]["data"]["required"]
         smallest_bytes = required.get("max_bytes", required.get("bytes"))
         smallest_tokens = required.get("max_tokens", required.get("tokens"))
@@ -3641,6 +3695,14 @@ def test_t07_g4_trust_boundary_inputs(
         status, body = dash.action(
             "memory_query",
             {**small, "max_bytes": smallest_bytes, "max_tokens": smallest_tokens},
+        )
+        # Exactly the floor admits the smallest frame (the stamped `E_BUDGET` refusal:
+        # no row fits yet), and that frame carries the stamps.
+        assert body["data"]["raw"]["code"] == "E_BUDGET", body["data"]["raw"]
+        assert "ui_state" in body["data"] and "memory_view_key" in body["data"]
+        # Ample caps return the page with the same stamps.
+        status, body = dash.action(
+            "memory_query", {**small, "max_bytes": 65536, "max_tokens": 16384}
         )
         assert body["data"]["raw"]["code"] == "OK", body["data"]["raw"]
         assert "ui_state" in body["data"] and "memory_view_key" in body["data"]
@@ -3995,6 +4057,14 @@ def _version_ids(raw: dict[str, Any], obs: Obs) -> None:
 
 def _expand_raw(raw: dict[str, Any], obs: Obs) -> None:
     items = raw.get("items") or []
+    legacy = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    if raw.get("code") == "OK" and not items and "id" in legacy and "version" in legacy:
+        # The dashboard section reads the exact version with the legacy request
+        # (`{"id", "version"}`), whose page names the same record and bytes.
+        if "content_base64" in legacy:
+            obs.content = base64.b64decode(legacy["content_base64"])
+        obs.ids = [(legacy["id"], legacy["version"])]
+        return
     if items:
         item = items[0]
         if "content_base64" in item:
@@ -4060,10 +4130,17 @@ def _cli_explain(env: Env) -> Obs:
 def _cli_read_leaf(leaf: str) -> Callable[[Env], Obs]:
     def drive(env: Env) -> Obs:
         before = _footprint(env.world)
+        version = 1
+        if leaf == "related":
+            # A traversal starts from the seed's current version; an archived seed
+            # is already at its archive version (72-T03: a stale seed is not visible).
+            store = env.world.store
+            row = store.get_current_row(env.target) if store is not None else None
+            version = int(row["artifact_version"]) if row is not None else 1
         request = {
             "schema_version": 2,
             "artifact_id": env.target,
-            "artifact_version": 1,
+            "artifact_version": version,
             **_owner_field(env),
             **env.fields,
         }
@@ -4165,7 +4242,13 @@ def _cli_mutation(leaf: str, action: str) -> Callable[[Env], Obs]:
 def _tui_open(env: Env, *, pages: bool = False) -> tuple[TuiState, Any, Recorder]:
     owner = (env.owner.kind, env.owner.id) if env.owner else ("user", "alice")
     state, actions, recorder = _tui(env.world, owner=owner)
-    if env.fields.get("archive_mode") == "historical":
+    if (
+        env.fields.get("archive_mode") == "historical"
+        and env.plan.expect != "identical"
+    ):
+        # Only a route that takes `archive_mode` views the archived rows (its plan
+        # expects the historical view or, without the grant, a denial); for any
+        # other the field is refused input (`identical`) and the view stays ordinary.
         state.memory_filter_archived = True
     if env.owner is not None:
         state.memory_filter_owner = f"{env.owner.kind}:{env.owner.id}"
@@ -4187,6 +4270,10 @@ def _message_state(message: str) -> str:
     """The state a TUI status line names, for an outcome that has no list refresh of
     its own (an expansion, a panel or an apply refused after the list loaded)."""
     text = message.lower()
+    if "promotion denied: insufficient_corroboration" in text:
+        # 72-T04: the corroboration rule declining a candidate is the promotion's
+        # own answer (a candidate is written), not an access denial.
+        return "server_error"
     for needle, state in (
         ("revoked", "revoked"),
         ("expired", "expired"),
@@ -4515,6 +4602,8 @@ def _dash_post(
                     _expand_raw(raw, obs)
                 else:
                     obs.ids = [_identity(i) for i in raw["items"]]
+            elif action == "memory_query" and raw.get("code") == "OK":
+                obs.ids = []  # a page with no rows is an empty page, not an unread one
             if "versions" in raw:
                 _version_ids(raw, obs)
             return obs
@@ -5031,7 +5120,15 @@ ROWS: list[MRow] = [
 
 def _legacy_plan(row: MRow) -> Plan:
     if row.legacy == "denied":
-        return Plan(policy="legacy", expect="denied", reason="policy_missing")
+        # A `write` names its own source, so in D1 `legacy` mode (no grant to name an
+        # owner) the owner it names is what is refused; every other route has no source
+        # to read with and is refused for the missing policy (72-T06 §3.3).
+        reason = (
+            "owner_not_granted"
+            if row.transport == "dashboard" and _action_of(row) == "write"
+            else "policy_missing"
+        )
+        return Plan(policy="legacy", expect="denied", reason=reason)
     if row.legacy == "stateful":
         return Plan(policy="legacy", expect="stateful")
     return Plan(policy="legacy", expect="healthy")
@@ -5047,6 +5144,10 @@ def _plan_for(row: MRow, dim: str, val: str) -> Plan | None:
             return Plan()
         if val == "legacy_allowlist":
             return _legacy_plan(row)
+        if row.transport == "cli" and row.route in ("history", "explain"):
+            # These leaves take no owner: the transport has no overlay field, so the
+            # request is byte-identical to the non-overlay one.
+            return Plan(overlay=True, expect="identical")
         refused = (
             mutation
             and row.transport != "tui"
@@ -5207,6 +5308,15 @@ def _oracle_ids(row: MRow, env: Env) -> list[tuple[str, int]] | None:
     if kind in ("list_all", "list_query", "list_plain"):
         subjects = list(SUBJECTS) if kind == "list_all" else [SUBJECT]
         query = "needle" if kind == "list_query" else ""
+        if row.transport == "tui":
+            # The terminal asks for a screenful: its own page size and byte/token budget.
+            from rush import tui as tui_mod
+
+            extras.update(
+                limit=tui_mod._MEMORY_PAGE_ROWS,
+                max_bytes=tui_mod._MEMORY_PAGE_MAX_BYTES,
+                max_tokens=tui_mod._MEMORY_PAGE_MAX_TOKENS,
+            )
         raw = _raw(_oracle_list(world, subjects, query, **extras))
         return _pairs(raw["items"]) if raw.get("code") == "OK" else None
     if kind == "expand":
@@ -5280,10 +5390,16 @@ def _check_effect(row: MRow, env: Env, obs: Obs) -> None:
         marker = "needle matrix create" if tui else "needle matrix write"
         assert _count_rows(world, marker) >= 1, (row.ident(), obs)
     elif action == "promote" and not tui:
-        assert current is not None and current["trust_tier"] == "STATED", (
-            row.ident(),
-            obs,
-        )
+        # 72-T04: a promotion writes a STATED candidate beside the reviewed row; the
+        # reviewed row itself keeps its tier.
+        db = world.root / ".rush" / "memory.db"
+        with contextlib.closing(sqlite3.connect(db)) as conn:
+            (stated,) = conn.execute(
+                "SELECT COUNT(*) FROM memory_artifacts "
+                "WHERE subject = ? AND trust_tier = 'STATED'",
+                (current["subject"] if current is not None else "failure",),
+            ).fetchone()
+        assert current is not None and stated >= 1, (row.ident(), obs)
 
 
 def _healthy(
@@ -5458,12 +5574,25 @@ def test_t07_route_mode_matrix(
     if plan.store != "present":
         oracle_ids = None
     base: Obs | None = None
+    issued = [0]
     if plan.expect == "identical":
+        # Two runs that must be identical cannot differ by the random id a write
+        # mints: pin new ids to a counter restarted for each run.
+        original = MemoryTool._build_artifact
+
+        def pinned(*args: Any, **kwargs: Any) -> Any:
+            issued[0] += 1
+            return dataclasses.replace(
+                original(*args, **kwargs), id=f"minted-{issued[0]:04d}"
+            )
+
+        monkeypatch.setattr(MemoryTool, "_build_artifact", staticmethod(pinned))
         base_plan = Plan()
         base_world = _build_world(
             tmp_path, base_plan, row.extra_domain, name="baseline"
         )
         base = row.drive(Env(base_world, monkeypatch, tmp_path, base_plan))
+        issued[0] = 0
     obs = row.drive(env)
     _check(row, env, obs, base, oracle_ids)
 
@@ -5798,7 +5927,14 @@ def test_t07_pty_walkthrough(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
                 assert literal in text, (literal, text[-800:])
             return "hostile row rendered as escaped text"
 
-        step("hostile row", "/", *"hostilemarker", "enter", "x", expect=hostile)
+        # 72-T01: a row holding a bidi override is integrity-blocked from ordinary and
+        # inspect reads; it is visible only in the historical view (`f`, tab to the
+        # `archived` field, `true`, Enter), where the screen must show it as text.
+        step("historical view", "f", "tab", "tab", "tab", *"true", "enter")
+        # (Two steps: one step's 16 key bytes would print as a 32-hex run, which the
+        # report check below rejects as a secret-shaped token.)
+        step("hostile search", "/", *"hostilemarker", "enter")
+        step("hostile row", "x", expect=hostile)
         _revoke(world)
 
         def revoked(text: str, raw: bytes) -> str:

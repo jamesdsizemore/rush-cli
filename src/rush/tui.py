@@ -3226,7 +3226,22 @@ def _memory_refresh(
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
         return
-    legacy = memory_policy_mode(project.root, data_root=state.data_root) == "legacy"
+    mode, mode_reason = memory_policy_mode(
+        project.root, data_root=state.data_root, with_reason=True
+    )
+    legacy = mode == "legacy"
+    if mode == "unavailable" and mode_reason == "data_root_unavailable":
+        # D1: `actions.memory_run` never sees `state.data_root`, so a data root this
+        # view cannot use is refused here (`denied`), not answered from another one.
+        ui = memory_ui_state(
+            {"status": "fail", "raw": {"code": "E_PERMISSION", "reason": mode_reason}}
+        )
+        state.memory_items = []
+        state.memory_view_state = ui
+        state.memory_cursor_next = None
+        if announce:
+            state.memory_message = f"{ui['state']}: {ui['reason']} -- {ui['action']}"
+        return
     sources, store_state = _memory_sources_and_state(project)
     if store_state is not None or (legacy and not sources):
         if store_state is None:
@@ -3263,6 +3278,12 @@ def _memory_refresh(
         state.memory_message = f"memory search failed: {exc}"
         return
     ui = memory_ui_state(result)
+    if (
+        ui["state"] == "empty"
+        and not (Path(project.root) / ".rush" / "memory.db").exists()
+    ):
+        # D19: an empty answer with no store on disk is `absent`, not an empty store.
+        ui = memory_ui_state(result, store_state="absent")
     state.memory_view_state = ui
     raw = result.get("raw") if isinstance(result, Mapping) else None
     raw = raw if isinstance(raw, dict) else {}
@@ -3437,6 +3458,8 @@ def _memory_cancel_request(state: TuiState) -> None:
 
 _MEMORY_FILTER_FIELDS = ("trust", "source", "freshness", "archived", "owner")
 _MEMORY_PAGE_ROWS = 20
+_MEMORY_PAGE_MAX_BYTES = 65536
+_MEMORY_PAGE_MAX_TOKENS = 16384
 
 
 def _memory_filter_values(state: TuiState) -> dict[str, str]:
@@ -3461,6 +3484,10 @@ def _memory_list_request(
         "subjects": [state.memory_subject],
         "query": state.memory_query_buffer.strip(),
         "limit": _MEMORY_PAGE_ROWS,
+        # A schema-2 row carries its full reference, so the default 2048-token cap
+        # holds about eight; the budget is sized for a full page of rows.
+        "max_bytes": _MEMORY_PAGE_MAX_BYTES,
+        "max_tokens": _MEMORY_PAGE_MAX_TOKENS,
     }
     if cursor is not None:
         request["cursor"] = cursor
@@ -3570,7 +3597,40 @@ def _memory_state_text(result: Any) -> str:
     from rush.tools.memory import memory_ui_state
 
     ui = memory_ui_state(result)
-    return f"{ui['state']}: {ui['reason']} -- {ui['action']}"
+    text = f"{ui['state']}: {ui['reason']} -- {ui['action']}"
+    # D19: a policy denial names the command that fixes it.
+    guidance = ui.get("next_action")
+    command = guidance.get("command") if isinstance(guidance, dict) else None
+    return f"{text} -- {command}" if isinstance(command, str) and command else text
+
+
+def _memory_legacy_sources(state: TuiState, project: ProjectState) -> list[str] | None:
+    """The sources a D1 `legacy` project's schema-2 read must name (it has no grant
+    to supply them); `None` under a policy, which decides them itself."""
+    from rush.memory.retrieval import memory_policy_mode
+
+    if memory_policy_mode(project.root, data_root=state.data_root) != "legacy":
+        return None
+    sources, _store_state = _memory_sources_and_state(project)
+    return list(sources) or None
+
+
+def _memory_denial_note(raw: Any) -> str:
+    """` (reason) -- command` for a policy denial in `raw` (D19), else `""`."""
+    if not isinstance(raw, dict) or raw.get("code") not in (
+        "E_PERMISSION",
+        "E_OWNER",
+        "E_SCOPE",
+    ):
+        return ""
+    data = raw.get("data")
+    reason = data.get("reason") if isinstance(data, dict) else None
+    guidance = raw.get("next_action")
+    command = guidance.get("command") if isinstance(guidance, dict) else None
+    parts = [f"({reason})"] if reason else []
+    if isinstance(command, str) and command:
+        parts.append(f"-- {command}")
+    return f" {' '.join(parts)}" if parts else ""
 
 
 def _memory_targets(state: TuiState) -> list[dict[str, Any]]:
@@ -3743,8 +3803,24 @@ def _memory_expand_selected(
     }
     if representation == "utf8":
         request["representation"] = "utf8"
+    if state.memory_filter_archived:
+        request["archive_mode"] = "historical"
     try:
         result = actions.memory_run(project.root, operation="expand", request=request)
+        # 72-T02 C05: caps below the smallest response are `E_INPUT` naming that
+        # floor; one retry asks for the floor plus the page this view wants.
+        floor = ((result.get("raw") or {}).get("data") or {}).get("required")
+        if (
+            (result.get("raw") or {}).get("code") == "E_INPUT"
+            and isinstance(floor, dict)
+            and isinstance(floor.get("max_bytes"), int)
+            and isinstance(floor.get("max_tokens"), int)
+        ):
+            request["max_bytes"] = floor["max_bytes"] + 256
+            request["max_tokens"] = floor["max_tokens"] + 256
+            result = actions.memory_run(
+                project.root, operation="expand", request=request
+            )
     except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
         state.memory_message = f"expand failed: {exc}"
         return
@@ -3798,15 +3874,16 @@ def _memory_expand_selected(
             "content": content[len(earlier) :],
         }
     )
+    related_request: dict[str, Any] = {
+        "schema_version": 2,
+        "artifact_id": item["id"],
+        "artifact_version": item["artifact_version"],
+        "sources": sources,
+    }
+    if state.memory_filter_archived:
+        related_request["archive_mode"] = "historical"
     related = actions.memory_run(
-        project.root,
-        operation="related",
-        request={
-            "schema_version": 2,
-            "artifact_id": item["id"],
-            "artifact_version": item["artifact_version"],
-            "sources": sources,
-        },
+        project.root, operation="related", request=related_request
     )
     related_raw = related.get("raw") or {}
     if related_raw.get("code") != "OK":
@@ -3845,6 +3922,13 @@ def _memory_expand_selected(
     reference = reference_value if isinstance(reference_value, dict) else {}
     state.memory_expanded = {
         **data,
+        # The base64 view keeps its page as base64 even when the tool answered the
+        # omitted `representation` with UTF-8 text.
+        **(
+            {"content_base64": base64.b64encode(page_bytes).decode("ascii")}
+            if representation == "base64" and "content_base64" not in data
+            else {}
+        ),
         "id": item["id"],
         "version": item["artifact_version"],
         "payload_hash": data.get("payload_hash", reference.get("payload_hash")),
@@ -4015,6 +4099,7 @@ def _memory_write_preview(
         state.memory_message = (
             f"{operation} preview refused: "
             f"{praw.get('message') or praw.get('missing_grants')}"
+            f"{_memory_denial_note(praw)}"
         )
         return
     reviewed = list(praw.get("required_grants") or requested)
@@ -4149,6 +4234,7 @@ def _memory_delete_preview(
         state.memory_message = (
             f"delete refused: {code or result.get('status')}: "
             f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+            f"{_memory_denial_note(raw)}"
         )
         return
     state.memory_pending_delete = {
@@ -4219,6 +4305,7 @@ def _memory_delete_apply(
         state.memory_message = (
             f"delete refused: {code or result.get('status')}: "
             f"{(data or {}).get('message') or result.get('summary') or 'no result'}"
+            f"{_memory_denial_note(raw)}"
         )
     _memory_refresh(state, project, actions, announce=False)
 
@@ -4242,7 +4329,10 @@ def _memory_archive_selected(
     owner_scope = _memory_owner_scope(state, project)
     calls: list[dict[str, Any]] = []
     for item in items:
-        archived = not item.get("archived_at")
+        # A schema-2 row marks an archived version in `reason_codes` (72-T06).
+        archived = not (
+            item.get("archived_at") or "archived" in (item.get("reason_codes") or ())
+        )
         verb = "archive" if archived else "restore"
         request: dict[str, Any] = {
             "scope": state.memory_subject,
@@ -4265,6 +4355,7 @@ def _memory_archive_selected(
             state.memory_message = (
                 f"{verb} preview refused: {item['id']}: "
                 f"{(raw.get('data') or {}).get('message') or raw.get('code') or 'no result'}"
+                f"{_memory_denial_note(raw)}"
             )
             return
         calls.append({"operation": "archive", "request": {**request, "apply": True}})
@@ -4389,7 +4480,8 @@ def _memory_maintain_apply(
         outcome = (
             f"changed {raw.get('changed', 0)}"
             if refused
-            else result.get("summary") or result.get("status")
+            else f"{result.get('summary') or result.get('status')}"
+            f"{_memory_denial_note(raw)}"
         )
         summaries.append("; ".join([f"{entry['task']}: {outcome}", *refused]))
     state.memory_message = "; ".join(summaries) or "maintenance: nothing to apply"
@@ -4416,6 +4508,7 @@ def _memory_edit_outcome(
     actions: ScanActions,
     item: dict[str, Any],
     code: Any,
+    raw: Any = None,
 ) -> None:
     """Shared by the edit preview (non-OK) and the confirmed apply. OK clears
     the buffer and refreshes; E_VERSION records `memory_edit_conflict` for
@@ -4438,7 +4531,7 @@ def _memory_edit_outcome(
             "[r] refresh and re-review"
         )
         return
-    state.memory_message = f"edit denied: {code}"
+    state.memory_message = f"edit denied: {code}{_memory_denial_note(raw)}"
 
 
 def _memory_mutation_apply(
@@ -4468,7 +4561,7 @@ def _memory_mutation_apply(
         raw = result.get("raw") or {}
         if operation == "edit":
             _memory_edit_outcome(
-                state, project, actions, pending["items"][0], raw.get("code")
+                state, project, actions, pending["items"][0], raw.get("code"), raw
             )
             return
         if operation == "archive":
@@ -4484,6 +4577,7 @@ def _memory_mutation_apply(
                 messages.append(
                     f"{row_verb} refused: {item_id}: "
                     f"{data.get('message') or raw.get('code') or 'no result'}"
+                    f"{_memory_denial_note(raw)}"
                 )
         elif operation == "promote":
             item_id = pending["items"][index]["id"]
@@ -4523,6 +4617,7 @@ def _memory_mutation_apply(
             else:
                 messages.append(
                     f"{item_id} promotion denied: {raw.get('denial_reason')}{candidate}"
+                    f"{_memory_denial_note(raw)}"
                 )
                 refresh = bool(candidate) or refresh
         elif result.get("status", "ok") == "ok":
@@ -4533,6 +4628,7 @@ def _memory_mutation_apply(
         else:
             messages.append(
                 f"write refused: {raw.get('message') or result.get('summary')}"
+                f"{_memory_denial_note(raw)}"
             )
     state.memory_message = "; ".join(messages)
     if refresh:
@@ -4571,7 +4667,7 @@ def _memory_edit_commit(
         return
     code = (preview.get("raw") or {}).get("code")
     if code != "OK":
-        _memory_edit_outcome(state, project, actions, item, code)
+        _memory_edit_outcome(state, project, actions, item, code, preview.get("raw"))
         return
     state.memory_pending_mutation = {
         "operation": "edit",
@@ -5061,6 +5157,9 @@ def _memory_history_selected(
         state.memory_message = "no row selected"
         return
     request: dict[str, Any] = {"schema_version": 2, "artifact_id": item["id"]}
+    legacy_sources = _memory_legacy_sources(state, project)
+    if legacy_sources is not None:
+        request["sources"] = legacy_sources
     if state.memory_filter_archived:
         request["archive_mode"] = "historical"
     result = actions.memory_run(project.root, operation="history", request=request)
@@ -5096,6 +5195,9 @@ def _memory_explain_selected(
         request["artifact_id"] = item["id"]
     else:
         request["query"] = query
+    legacy_sources = _memory_legacy_sources(state, project)
+    if legacy_sources is not None:
+        request["sources"] = legacy_sources
     result = actions.memory_run(project.root, operation="explain", request=request)
     state.memory_explained = {
         "id": item["id"] if item is not None else None,
@@ -8180,6 +8282,13 @@ def _memory_detail_lines(expanded: dict[str, Any], width: int) -> list[Text]:
     )
     add("Content:")
     add(page["content"], "white")
+    from rush.theme import memory_hostile_text
+
+    hostile = memory_hostile_text(
+        "".join(p["content"] for p in pages) or page["content"]
+    )
+    if hostile is not None:
+        add(f"Text: {hostile}", "white")
     relations = expanded.get("relationships") or []
     add("Relationships:" + (" none recorded" if not relations else ""))
     for row in relations:
@@ -8324,9 +8433,19 @@ def _render_memory_admin(state: TuiState) -> Panel:
             style=_state_selection_style(state) if cursor == ">" else None,
         )
     lines.append(
-        _safe(f"page {page + 1}/{pages}  ] next page  [ previous page", "cyan")
+        _safe(
+            f"page {len(state.memory_cursor_stack) + 1}"
+            + (f" ({page + 1}/{pages})" if pages > 1 else "")
+            + "  ] next page  [ previous page",
+            "cyan",
+        )
     )
     lines.append(table)
+    if 0 <= state.memory_selected_index < len(state.memory_items):
+        # The selected record's own text, escaped like every other dynamic field.
+        excerpt = state.memory_items[state.memory_selected_index].get("excerpt")
+        if isinstance(excerpt, str) and excerpt:
+            lines.append(_safe(f"  excerpt: {excerpt}", "white"))
 
     if state.memory_pending_mutation is not None:
         pending_mutation = state.memory_pending_mutation

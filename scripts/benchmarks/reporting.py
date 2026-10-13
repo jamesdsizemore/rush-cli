@@ -478,6 +478,7 @@ def redact_report(
     *,
     redaction_patterns: Any = (),
     provider_id_values: Any = (),
+    home: str | None = None,
 ) -> tuple[Any, int]:
     """D15: redacts every string of a report payload -- dictionary keys,
     values and list entries -- and returns `(redacted, redaction_count)`.
@@ -487,7 +488,9 @@ def redact_report(
     characters under a `session_id`/`uuid`/`thread_id` key, plus
     `provider_id_values`), pass 2 maps each string: secrets, route patterns,
     provider ids (`redacted:<sha256[:12]>`) and the HOME prefix (`~`). An
-    already redacted id marker is left unchanged, so the pass is idempotent."""
+    already redacted id marker is left unchanged, so the pass is idempotent. `home`
+    is the HOME prefix to replace (default: this process's, which a run that redirects
+    its own HOME passes explicitly as the caller's)."""
     _check_depth(value)
     try:
         normalized = json.loads(json.dumps(value, default=str))
@@ -499,7 +502,7 @@ def redact_report(
     _collect_ids(normalized, ids)
     ordered_ids = sorted(ids, key=len, reverse=True)
     patterns = list(redaction_patterns)
-    home_path = Path.home()
+    home_path = Path(home) if home else Path.home()
     home = str(home_path) if len(home_path.parts) > 1 else None
     count = 0
 
@@ -543,6 +546,7 @@ def write_memory_suite_report(
     *,
     redaction_patterns: Any = (),
     provider_id_values: Any = (),
+    home: str | None = None,
 ) -> Path:
     """Atomically writes the MC13 memory-suite run's full JSON report
     (dataset case results, named-episode results, variant comparisons,
@@ -554,6 +558,7 @@ def write_memory_suite_report(
         payload,
         redaction_patterns=redaction_patterns,
         provider_id_values=provider_id_values,
+        home=home,
     )
     if isinstance(redacted, dict):
         redacted["redaction_count"] = count

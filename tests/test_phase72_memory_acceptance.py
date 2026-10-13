@@ -762,6 +762,22 @@ def _run_cleanups(exc: Sequence[object], *steps: Callable[[], None]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _positional_cli_args(operation: str, request: Mapping[str, Any]) -> list[str]:
+    """72-T06: `history` and `explain` are positional CLI leaves (`history ARTIFACT_ID
+    [--historical]`, `explain (ARTIFACT_ID | --query Q)`), not `--input` leaves."""
+    fields = set(request) - {"schema_version"}
+    if operation == "history":
+        assert fields <= {"artifact_id", "archive_mode"}, fields
+        args = ["history", str(request["artifact_id"])]
+        if request.get("archive_mode") == "historical":
+            args.append("--historical")
+        return args
+    assert fields in ({"artifact_id"}, {"query"}), fields
+    if "artifact_id" in request:
+        return ["explain", str(request["artifact_id"])]
+    return ["explain", "--query", str(request["query"])]
+
+
 def _run_cli(
     exe: Sequence[str],
     cwd: Path,
@@ -1202,7 +1218,14 @@ class _Ctx:
             )
             return _raw(result)
         if transport == "cli":
-            args = [operation.replace("_", "-"), "--input", self._input_file(request)]
+            if operation in ("history", "explain"):
+                args = _positional_cli_args(operation, request)
+            else:
+                args = [
+                    operation.replace("_", "-"),
+                    "--input",
+                    self._input_file(request),
+                ]
             args.append("--json")
             if cache_write:
                 args.append("--allow-cache-write")
@@ -1720,6 +1743,17 @@ def _step_j_revocation(ctx: _Ctx, w: _World) -> None:
         ui = _ui_state(body)
         assert ui is not None and ui["state"] == "revoked", body
         assert not (_dash_result(body).get("raw", {}).get("items") or []), body
+        denied = _dash_result(body).get("raw", {})
+        ctx.trace.append(  # the dashboard read is a recorded call of step j
+            {
+                "step": ctx.current,
+                "transport": "dashboard",
+                "operation": "list",
+                "request_sha256": _sha("dashboard memory_query list"),
+                "code": denied.get("code"),
+                "result_sha256": _sha(json.dumps(denied, sort_keys=True, default=str)),
+            }
+        )
     if "tui" in ctx.transports:
         state, items = _tui_items(w.p1, SUBJECT)
         assert state.memory_view_state["state"] == "revoked", state.memory_view_state
@@ -1764,6 +1798,27 @@ def _step_i_pas_import(
         ).fetchall()
     assert len(local_before) == 1, local_before
 
+    # 73-T09/CODEC: the sidecar names the PAS session's origin, a project and worktree
+    # that are not P2's, so the import runs under an approved capsule mapping (the
+    # arrangement is the consent step `rush memory capsule mapping create` records).
+    from rush.memory import authorization as auth
+
+    origin = json.loads(sidecar.read_text(encoding="utf-8"))["capsule"]["origin"]
+    mapping_id = str(
+        auth.approve_capsule_mapping(
+            capsule_origin={
+                "project_id": origin["project_id"],
+                "worktree_id": origin["worktree_id"],
+            },
+            project_root=w.p2,
+            owner_scope=None,
+            expected_policy_revision=int(
+                auth.load_policy_readonly(data_root=w.data_root)["policy_revision"] or 0
+            ),
+            consent=True,
+            data_root=w.data_root,
+        )["mapping_id"]
+    )
     before = _capsule_tree(w)
     preview = _run_cli(
         ctx.exe,
@@ -1777,6 +1832,8 @@ def _step_i_pas_import(
             str(fixture),
             "--format",
             "pas_v1",
+            "--mapping-id",
+            mapping_id,
             "--json",
         ],
         ctx.env,
@@ -1791,8 +1848,11 @@ def _step_i_pas_import(
     forged = [
         r
         for r in constraints
+        # The CODEC fixture's verification-style claim is "Keep the suite green".
         if re.search(
-            r"verif|passed|tests? pass", str(r["content"]["text"]), re.IGNORECASE
+            r"verif|passed|tests? pass|green",
+            str(r["content"]["text"]),
+            re.IGNORECASE,
         )
     ]
     intended = [r for r in constraints if r not in forged]
@@ -1802,6 +1862,32 @@ def _step_i_pas_import(
     confirm = intended[0]["content"]["constraint_id"]
     if review is not None:
         review(records)
+
+    # The confirmation is part of the preview's digest, so the reviewed preview that
+    # the apply binds to carries the same `--confirm-constraint-id`.
+    reviewed = _run_cli(
+        ctx.exe,
+        w.p2,
+        [
+            "capsule",
+            "preview-import",
+            "--project",
+            str(w.p2),
+            "--input",
+            str(fixture),
+            "--format",
+            "pas_v1",
+            "--mapping-id",
+            mapping_id,
+            "--confirm-constraint-id",
+            confirm,
+            "--json",
+        ],
+        ctx.env,
+    )["raw"]
+    assert reviewed.get("code") == "OK", reviewed
+    assert _capsule_tree(w) == before, "preview-import created or changed a file"
+    data = reviewed["data"]
 
     applied = _run_cli(
         ctx.exe,
@@ -1815,6 +1901,8 @@ def _step_i_pas_import(
             str(fixture),
             "--format",
             "pas_v1",
+            "--mapping-id",
+            mapping_id,
             "--apply",
             "--confirm-constraint-id",
             confirm,
@@ -1971,6 +2059,25 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
     constraint = next(
         r for r in data["records"] if r["foreign_origin_id"].startswith("constraint:")
     )
+    # The confirmation is part of the preview's digest: preview again with it.
+    reviewed = _run_cli(
+        ctx.exe,
+        w.p2,
+        [
+            "capsule",
+            "preview-import",
+            "--project",
+            str(w.p2),
+            "--input",
+            str(out),
+            "--confirm-constraint-id",
+            constraint["content"]["constraint_id"],
+            "--json",
+        ],
+        ctx.env,
+    )["raw"]
+    assert reviewed.get("code") == "OK", reviewed
+    data = reviewed["data"]
     applied = _run_cli(
         ctx.exe,
         w.p2,

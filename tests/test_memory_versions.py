@@ -510,8 +510,12 @@ def test_delete_batch_legacy_scalar_receipt_id_still_writes_one_whole_batch_rece
 def _promoted_stated_row(store: TypedArtifactStore, root: Path, **kwargs) -> None:
     (root / "mod.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
     stored = store.write(_artifact(symbol_ref="mod.py::helper", **kwargs))
+    # 72-T04: promotion is owner-isolated, so the row's own owner promotes it.
     _, decision = store.promote(
-        stored.id, user_stated=True, expected_version=stored.artifact_version
+        stored.id,
+        user_stated=True,
+        expected_version=stored.artifact_version,
+        owner_scope=kwargs.get("owner_scope"),
     )
     assert decision.promoted is True
 

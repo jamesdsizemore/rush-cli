@@ -40,10 +40,18 @@ from typing import TYPE_CHECKING, Any, Self
 from rush.io.physical_paths import ContainmentError, PhysicalRoot
 from rush.memory.transactions import CASConflictError, CASMapTransaction, StoreError
 from rush.safety.redactor import SecretRedactor, sanitize_value
-from rush.setup.provision import DataRootUnavailableError, default_data_root
+from rush.setup import provision as _provision
+from rush.setup.provision import DataRootUnavailableError
 
 if TYPE_CHECKING:
     from rush.memory.store import OwnerScope
+
+
+def default_data_root() -> Path:
+    """The OS data root, resolved at call time so a caller that isolates
+    `rush.setup.provision.default_data_root` reaches every policy read and write."""
+    return _provision.default_data_root()
+
 
 GRANT_OPERATIONS = frozenset(
     {"ask", "bootstrap", "expand", "list", "write", "history", "overlay_read"}
@@ -2145,6 +2153,22 @@ def _resolve(
         ("expired", lambda g: g["expires_at"] is None or now < g["expires_at"]),
     ]
     owned = [g for g in candidates if _owner_of(g) == target] if target else []
+    if target is None:
+        # An overlay grant never serves an ordinary read, so with the owner omitted
+        # the checks below judge the ordinary grants: a revoked project grant is
+        # `revoked`, not `owner_not_granted` behind a still-active overlay grant.
+        ordinary_owner = _overlay_owner_key(root)
+        ordinary = [
+            g
+            for g in candidates
+            if _owner_of(g) != ordinary_owner
+            and not (
+                g["owner_scope"]["kind"] == "user"
+                and "overlay_read" in g["allowed_operations"]
+            )
+        ]
+        if ordinary:
+            candidates = ordinary
     for reason, passes in checks:
         candidates = [g for g in candidates if passes(g)]
         if not candidates:

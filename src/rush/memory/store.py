@@ -383,10 +383,12 @@ class MemoryArtifact:
     freshness: str | None = None
     # 72-T05: the row's applicability (`active`, `rejected`, `superseded`, `pending`;
     # `None` = a pre-T05 row, no gate) and its task binding (all three set, or none).
-    applicability: str | None = None
-    task_project_id: str | None = None
-    task_worktree_id: str | None = None
-    task_id: str | None = None
+    # The four fields stay out of `repr`: internal routes return the pre-T05
+    # `MemoryArtifact(...)` text and the G2 exact bodies pin it.
+    applicability: str | None = dataclasses.field(default=None, repr=False)
+    task_project_id: str | None = dataclasses.field(default=None, repr=False)
+    task_worktree_id: str | None = dataclasses.field(default=None, repr=False)
+    task_id: str | None = dataclasses.field(default=None, repr=False)
 
 
 @dataclass(frozen=True)
@@ -703,6 +705,9 @@ _EVENT_INDEX_SQL = (
 _EVENT_TRIGGER_SQL = (
     "CREATE TRIGGER IF NOT EXISTS memory_event_identity_immutable "
     "BEFORE UPDATE OF content ON memory_artifacts WHEN "
+    # D30: only an event-bearing row (a top-level `event_id` key) has an identity to
+    # keep; any other row may gain or change `project_id`, `worktree_id` or `task_id`.
+    f"{_event_type_sql('event_id', 'old.content')} IS NOT NULL AND ("
     + " OR ".join(
         f"{_event_type_sql(key, 'new.content')} IS NOT "
         f"{_event_type_sql(key, 'old.content')} OR "
@@ -710,7 +715,7 @@ _EVENT_TRIGGER_SQL = (
         f"{_event_value_sql(key, 'old.content')}"
         for key in EVENT_IDENTITY_KEYS
     )
-    + " BEGIN SELECT RAISE(ABORT, 'event_identity_immutable'); END"
+    + ") BEGIN SELECT RAISE(ABORT, 'event_identity_immutable'); END"
 )
 
 
@@ -1580,6 +1585,35 @@ class BindingVerifier:
         expected = row_mac(self.key, self.store_id, row)
         return "bound" if hmac.compare_digest(mac, expected) else "unbound"
 
+    def row_tampered(self, row: Mapping[str, Any] | sqlite3.Row) -> bool:
+        """72-T05: True when a bound store's row has a MAC that verifies over the
+        pre-T05 columns but not over all of them: `applicability` or the task binding
+        was set outside the store, so the row carries a binding it was never given. A
+        row with no MAC, or one that fails for another column, is only unbound."""
+        if self.store != "bound" or self.key is None or self.store_id is None:
+            return False
+        keys = row.keys()
+        mac = row["row_mac"] if "row_mac" in keys else None
+        if not _is_mac(mac) or self.row(row) == "bound":
+            return False
+        legacy = {column: row[column] for column in keys}
+        for column in ROW_MAC_COLUMNS[-4:]:
+            legacy[column] = None
+        if not hmac.compare_digest(mac, row_mac(self.key, self.store_id, legacy)):
+            return False
+        # A bare `rejected`/`pending` mark only narrows what a read returns and
+        # carries no task binding, so it is not a tamper: the `edit` re-review path
+        # still reaches the row (72-T06 row_state matrix) and re-stamps its MAC.
+        task_unbound = all(
+            (row[column] if column in keys else None) is None
+            for column in ROW_MAC_COLUMNS[-3:]
+        )
+        narrowed = (row["applicability"] if "applicability" in keys else None) in (
+            "rejected",
+            "pending",
+        )
+        return not (narrowed and task_unbound)
+
     def version_bytes(
         self, row: Mapping[str, Any] | sqlite3.Row, version: int, content: Any
     ) -> StoreBinding:
@@ -2236,6 +2270,11 @@ _MIGRATION_COLUMNS: tuple[tuple[str, str], ...] = (
         (table, name)
         for table in ("memory_artifacts", "memory_artifact_versions")
         for name in PAYLOAD_HASH_COLUMNS
+    ),
+    *(
+        (table, name)
+        for table, columns in APPLICABILITY_MIGRATION_COLUMNS
+        for name, _type in columns
     ),
 )
 _DDL_NAME_RE = re.compile(
@@ -3451,9 +3490,12 @@ class TypedArtifactStore:
         receipt_operation_id: str | None = None,
         commit_check: CommitCheck | None = None,
         receipt_writer: ReceiptWriter | None = None,
+        task_binding: tuple[str, str, str] | None = None,
     ) -> dict[str, Any]:
         """Single-artifact content edit under compare-and-swap (P65-07.3, plan §6.4).
         72-T06 D29: `receipt_writer` records the v2 receipt before commit.
+        72-T06 D31: `task_binding` `(project_id, worktree_id, task_id)` is stamped on the
+        new version and the row; omitted, the new version copies the row's binding.
 
         Mirrors `delete_batch()`'s validate-then-write shape but for one id: verifies
         existence, declared `scope` match, declared `owner_scope` match (P69-07
@@ -3500,6 +3542,16 @@ class TypedArtifactStore:
             new_trust_tier = (
                 "DERIVED" if row["trust_tier"] == "STATED" else row["trust_tier"]
             )
+            stamp = (
+                VersionBinding(
+                    _row_value(row, "applicability"),
+                    task_binding[0],
+                    task_binding[1],
+                    task_binding[2],
+                )
+                if task_binding is not None
+                else None
+            )
             new_version = _write_version(
                 conn,
                 artifact_id,
@@ -3508,21 +3560,43 @@ class TypedArtifactStore:
                 trust_tier=new_trust_tier,
                 expected_version=expected_version,
                 subject=scope,
+                binding=stamp,
             )
             new_text = _persisted_text(row["content"], sanitized_content)
-            mac = next_row_mac(
-                conn,
-                self.project_root,
-                artifact_id,
-                {"content": new_text, "trust_tier": new_trust_tier},
-            )
-            try:
-                conn.execute(
-                    "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
-                    "trust_tier = ?, signature = NULL, promoted_at = NULL, row_mac = ? "
-                    "WHERE id = ?",
-                    (new_text, new_version, new_trust_tier, mac, artifact_id),
+            changes: dict[str, Any] = {
+                "content": new_text,
+                "trust_tier": new_trust_tier,
+            }
+            if task_binding is not None:
+                changes.update(
+                    task_project_id=task_binding[0],
+                    task_worktree_id=task_binding[1],
+                    task_id=task_binding[2],
                 )
+            mac = next_row_mac(conn, self.project_root, artifact_id, changes)
+            try:
+                if task_binding is None:
+                    conn.execute(
+                        "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
+                        "trust_tier = ?, signature = NULL, promoted_at = NULL, "
+                        "row_mac = ? WHERE id = ?",
+                        (new_text, new_version, new_trust_tier, mac, artifact_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE memory_artifacts SET content = ?, artifact_version = ?, "
+                        "trust_tier = ?, signature = NULL, promoted_at = NULL, "
+                        "task_project_id = ?, task_worktree_id = ?, task_id = ?, "
+                        "row_mac = ? WHERE id = ?",
+                        (
+                            new_text,
+                            new_version,
+                            new_trust_tier,
+                            *task_binding,
+                            mac,
+                            artifact_id,
+                        ),
+                    )
             except sqlite3.IntegrityError as exc:
                 _raise_event_identity_immutable(exc, conn)
                 raise
@@ -4051,6 +4125,8 @@ class TypedArtifactStore:
                 }
             if column not in columns[table]:
                 return False
+        if not v2_schema_current(conn):  # 72-T06 D29: receipt columns, index, trigger
+            return False
         return (
             conn.execute("SELECT 1 FROM memory_cursor_key WHERE id = 1").fetchone()
             is not None
@@ -6589,7 +6665,7 @@ def _import_existing_versions(
     (`preference` records)."""
     if view is None:
         return {}
-    from rush.memory.retrieval import evaluate_artifact_visibility
+    from rush.memory.retrieval import NOT_CURRENT_REASONS, evaluate_artifact_visibility
 
     access = _grant_wide_access(access)
     conn = view._connect()
@@ -6611,7 +6687,11 @@ def _import_existing_versions(
             (record["subject"], value),
         ).fetchall()
         for row in rows:
-            if evaluate_artifact_visibility(view, row, access=access).visible:
+            decision = evaluate_artifact_visibility(view, row, access=access)
+            # a rejected, superseded or pending local row is not a current copy
+            if decision.visible and not NOT_CURRENT_REASONS.intersection(
+                decision.reason_codes
+            ):
                 existing[row["id"]] = row["artifact_version"]
     return dict(sorted(existing.items()))
 

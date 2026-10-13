@@ -202,10 +202,11 @@ def preview_pas(env: CapEnv, path: Path, **extra: Any) -> R:
 
 def assert_pas_invalid(env: CapEnv, path: Path, label: str, **extra: Any) -> None:
     before = env.effects()
+    rows_before = imported_rows(env)
     res = preview_pas(env, path, **extra)
     assert res.code == "E_INPUT" and res.reason == "capsule_invalid", (label, res)
     assert env.effects() == before, label
-    assert not imported_rows(env), label
+    assert imported_rows(env) == rows_before, label
 
 
 def pas_env(tmp_path: Path, name: str = "project") -> CapEnv:
