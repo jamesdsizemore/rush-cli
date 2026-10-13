@@ -38725,9 +38725,23 @@ def test_t04_tui_maintain_sources_and_owner_modes(case: str, tmp_path: Path) -> 
     # The held tasks apply in preview order: promotion_sweep selects the TTL-elapsed
     # row (its predicate keys on `expires_at`, still NULL) and its first sweep rewrites
     # `corroboration_count` 0 -> 1 (v1 -> v2); the held expiry_sweep, reviewed at v1,
-    # is then refused. D9: held candidate ids and expected revisions are preserved.
+    # then applies v2 -> v3: the reviewed batch forwards only the revision its own
+    # earlier task committed, and an outside change is still refused
+    # (tests/test_windows_import_safety.py::
+    # test_tui_maintenance_batch_keeps_rows_its_own_earlier_task_rewrote). 72-T04:
+    # only the selected owner's row changes, at exact versions.
+    applied = [
+        (c.get("task"), c["request"].get("expected_revisions"))
+        for c in maintain
+        if c["request"].get("apply")
+    ]
     if case == "legacy_path_owner":
-        assert selected["artifact_version"] == 2 and selected["expired_at"] is None
+        assert applied == [
+            ("promotion_sweep", {"zq01": 1}),
+            ("expiry_sweep", {"zq01": 2}),
+        ], applied
+        assert selected["artifact_version"] == 3
+        assert selected["expired_by"] == "expiry_sweep"
         assert other["artifact_version"] == 1
     elif case == "legacy_registered_owner_refused":
         assert selected["artifact_version"] == 1 and selected["expired_at"] is None
@@ -38736,7 +38750,12 @@ def test_t04_tui_maintain_sources_and_owner_modes(case: str, tmp_path: Path) -> 
             not entry["candidate_ids"] for entry in state.memory_pending_maintain
         )
     else:
-        assert selected["artifact_version"] == 2 and selected["expired_at"] is None
+        assert applied == [
+            ("promotion_sweep", {"zq01": 1}),
+            ("expiry_sweep", {"zq01": 2}),
+        ], applied
+        assert selected["artifact_version"] == 3
+        assert selected["expired_by"] == "expiry_sweep"
         assert other["artifact_version"] == 1 and other["expired_at"] is None
 
 
