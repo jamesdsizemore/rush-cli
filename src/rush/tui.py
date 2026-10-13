@@ -2669,6 +2669,11 @@ def _handle_artifact_search_key(state: TuiState, key: str) -> None:
         if query:
             view.filters["query"] = query
         view.selection = 0
+        if isinstance(view.data, dict):
+            # Row 0 of the list is selected again; an open detail would keep
+            # showing a different artifact than the one `e` exports.
+            view.data.pop("_detail", None)
+        view.scroll = 0
         state.artifact_query_buffer = ""
         state.mode = "list"
     elif key == "backspace":
