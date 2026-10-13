@@ -1,0 +1,189 @@
+{
+  "decision_mode": "live",
+  "variant": "current",
+  "seeds": [
+    1,
+    2,
+    3
+  ],
+  "seed_semantics": "repetition_labels",
+  "max_total_tokens": 16000,
+  "python": {
+    "executable": "~/Developer/rush-cli-worktrees/phase-72/.venv/bin/python",
+    "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+  },
+  "task_manifest": {
+    "path": "tests/fixtures/phase75/task_manifest.json",
+    "schema_version": 1,
+    "cases_sha256": "b43e71bd763877ac497bdee15e1f35b1662e438962b0b770e77a27ea48e359d1",
+    "baseline_cases_sha256": "d3cfc6e4ba1083097089bcdf0f6029f3ceef22d128340637ceefd3c118584ad6",
+    "phase72_cases_sha256": "235854622857c3a5a5149101cfd32113f554fa491825d1df2275722c562a32ff",
+    "phase72_embedding": {
+      "endpoint": "http://127.0.0.1:11434",
+      "model": "nomic-embed-text",
+      "model_digest": "0a109f422b47"
+    },
+    "case_count": 29,
+    "declared": [
+      {
+        "family": "bug repair",
+        "case_family": "bug_repair"
+      },
+      {
+        "family": "critical late finding",
+        "case_family": null
+      },
+      {
+        "family": "repeated failure",
+        "case_family": null
+      },
+      {
+        "family": "changed dependency",
+        "case_family": null
+      },
+      {
+        "family": "explicit UI requirement",
+        "case_family": null
+      },
+      {
+        "family": "architecture seam",
+        "case_family": null
+      },
+      {
+        "family": "stale memory",
+        "case_family": null
+      },
+      {
+        "family": "contradictory correction",
+        "case_family": null
+      },
+      {
+        "family": "Unicode recovery",
+        "case_family": null
+      },
+      {
+        "family": "large log",
+        "case_family": null
+      },
+      {
+        "family": "agent handoff",
+        "case_family": "agent_handoff"
+      },
+      {
+        "family": "reuse",
+        "case_family": null
+      }
+    ],
+    "phase75_family_coverage": {
+      "open": {
+        "families": [
+          "critical late finding",
+          "repeated failure",
+          "changed dependency",
+          "explicit UI requirement",
+          "architecture seam",
+          "stale memory",
+          "contradictory correction",
+          "Unicode recovery",
+          "large log",
+          "reuse"
+        ],
+        "variants": [
+          "no reuse",
+          "misleading memory",
+          "search miss",
+          "initially irrelevant evidence later required",
+          "unsupported language",
+          "duplicate symbols",
+          "branch/worktree switch",
+          "rename",
+          "suppression",
+          "expired snapshot",
+          "long handoff"
+        ]
+      }
+    }
+  },
+  "decision_route": {
+    "route_id": "openai-codex-oauth-cli-live",
+    "format": "codex_exec_jsonl",
+    "executable": "~/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex",
+    "version": "codex-cli 0.162.1",
+    "status": "unavailable",
+    "reason": "route_overhead_exceeds_budget",
+    "route_overhead_tokens": 32745,
+    "instruction_files": [
+      {
+        "path": "~/.codex/AGENTS.md",
+        "present": true,
+        "sha256": "6c8fad69196b7ecb18514be7c28b53589716102373b4ad04eb048788dfacea89",
+        "cl100k_tokens": 4844
+      }
+    ],
+    "preflight": {
+      "step": 0,
+      "route_id": "openai-codex-oauth-cli-live",
+      "argv": [
+        "~/.codex/packages/standalone/releases/0.162.1-aarch64-apple-darwin/bin/codex",
+        "exec",
+        "--ephemeral",
+        "--json",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "<prompt sha256=c741f7e11cae03ab14b03fbd9b086ce186e61974e531116e033a9b26ca8dbe36 chars=425>"
+      ],
+      "cwd": "/private/var/folders/j5/lj1y2c4j5dxgrzs4x2j2n1bc0000gn/T/memory-suite-bphcxo1u/preflight/decision-cwd",
+      "exit_code": 0,
+      "duration_ms": 8628,
+      "reason": null,
+      "model_tokens": 32745,
+      "usage": {
+        "input_tokens": 32732,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 13,
+        "reasoning_output_tokens": 0
+      },
+      "model": [],
+      "tool_items": 0,
+      "stdout_excerpt": "{\"type\":\"thread.started\",\"thread_id\":\"01a13311-102c-7cf2-89ef-f4d6dff91c35\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Exceeded skills context budget. All skill descriptions were removed and 577 additional skills were not included in the model-visible skills list.\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\"{\\\"kind\\\":\\\"answer\\\",\\\"text\\\":\\\"ok\\\"}\"}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":32732,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":13,\"reasoning_output_tokens\":0}}\n",
+      "stderr_excerpt": "Reading additional input from stdin...\n",
+      "decision_sha256": "126b6be162b1e4c7e28f4776f8eeb74847d8b6048a0d23d654098ffc20fc436d"
+    }
+  },
+  "case_results": [],
+  "aggregate": {
+    "total": 0,
+    "passed": 0,
+    "failed_by_reason": {}
+  },
+  "usage_accounting": {
+    "budget_basis": "provider_model_tokens"
+  },
+  "blockers": [
+    "decision route openai-codex-oauth-cli-live unavailable: route_overhead_exceeds_budget"
+  ],
+  "verdict_rows": [
+    {
+      "provider": "openai-codex-oauth-cli-live",
+      "arm": "current",
+      "case_id": "route",
+      "seed": 0,
+      "fixture_revision": null,
+      "grants": null,
+      "budgets": null,
+      "split": null,
+      "route_available": false
+    }
+  ],
+  "phase72_summary": {
+    "retrieval_ms_p95": 0.0,
+    "hybrid_pages": 0,
+    "fallback_pages": 0,
+    "embedded_texts": 0
+  },
+  "redaction_count": 4
+}
