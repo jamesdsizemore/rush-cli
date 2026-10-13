@@ -166,10 +166,14 @@ REDACTION_PATTERNS = (
 )
 
 # Producer pins (empty until integration derives them; see the module docstring).
-_T07_COMMIT = ""
-_T07_WALKTHROUGH_SHA256 = ""
-_T08_COMMIT = ""
-_T08_EVALUATION_SHA256 = ""
+_T07_COMMIT = "88bfc2115e8108d2fd2d8ebc8480e9e252cf6600"
+_T07_WALKTHROUGH_SHA256 = (
+    "7ee194b960dda0699cb89e0aa23383a9fb20cd1e74480afeaf2ea19808c1960c"
+)
+_T08_COMMIT = "66b17b550a3128e1003b8b2fc6993661b9496f62"
+_T08_EVALUATION_SHA256 = (
+    "89cf27bf39d413c9f3fc51415b131d835bc776e137116c58019d2e490f07ba18"
+)
 
 # --- R3: leaf set -----------------------------------------------------------
 
