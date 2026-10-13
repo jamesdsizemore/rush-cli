@@ -17160,9 +17160,11 @@ def test_t01_store_binding_key_windows_native(
         assert key.stat().st_size == 32
         first = key.read_bytes()
         sid = auth._windows_sid_principal().removeprefix("sid:")
+        # icacls echoes the key path, which sits under `C:\Users\...`: only the
+        # ACE text after it is checked.
         acl = subprocess.run(
             ["icacls", str(key)], capture_output=True, text=True, check=True
-        ).stdout
+        ).stdout.replace(str(key), "")
         assert sid in acl and "S-1-5-18" in acl or "SYSTEM" in acl
         assert "Everyone" not in acl and "Users" not in acl
         TypedArtifactStore(root)
@@ -17191,6 +17193,7 @@ def test_t01_store_binding_key_windows_native(
         outside = tmp_path / "outside"
         outside.mkdir()
         (outside / "memory_store.key").write_bytes(os.urandom(32))
+        key_dir.mkdir(parents=True)  # the fresh data root has no `.rush` to replace yet
         shutil.rmtree(key_dir)
         _winapi.CreateJunction(str(outside), str(key_dir))  # type: ignore[attr-defined]  # Windows-only API, absent from non-Windows stubs
         root = make()

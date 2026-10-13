@@ -852,6 +852,9 @@ class _McpSession:
             stdout=subprocess.PIPE,
             stderr=self._stderr_file,
             text=True,
+            # MCP stdio is UTF-8 on both pipes; the locale default (cp1252 on
+            # Windows) turns the section sign in a tool description into mojibake.
+            encoding="utf-8",
             bufsize=1,
         )
         threading.Thread(target=self._pump, daemon=True).start()

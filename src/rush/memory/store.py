@@ -1251,6 +1251,11 @@ def _windows_key_io_unchecked(  # pragma: no cover - native Windows lane
     pinned: list[Any] = []
     try:
         root = key_dir.parent.parent
+        if create:
+            # D41 creates every missing ancestor (`os.makedirs`); only the ancestors
+            # above the data root are created here, so `<data root>`, `user` and
+            # `.rush` are still each created only after its parent is pinned.
+            os.makedirs(root.parent, exist_ok=True)
         for directory_path in (root, root / "user", key_dir):
             if create and not os.path.lexists(directory_path):
                 os.mkdir(directory_path)

@@ -873,7 +873,33 @@ def _windows_console_child(result: str) -> None:
         ctypes.c_uint32,
         ctypes.POINTER(ctypes.c_uint32),
     )
-    input_handle, output_handle = kernel.GetStdHandle(-10), kernel.GetStdHandle(-11)
+    # AllocConsole keeps any valid inherited standard handle, and this child
+    # inherits pytest's NUL/temp-file capture handles, so GetStdHandle would
+    # return non-console handles. Bind the standard handles to the new
+    # console's CONIN$/CONOUT$ so the child (and the product's GetStdHandle
+    # calls) see a real console, as an interactive process does.
+    kernel.CreateFileW.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    )
+    kernel.CreateFileW.restype = ctypes.c_void_p
+    kernel.SetStdHandle.argtypes = (ctypes.c_int32, ctypes.c_void_p)
+
+    def bind_console_handle(name, std_handle):
+        # GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        # OPEN_EXISTING.
+        handle = kernel.CreateFileW(name, 0xC0000000, 3, None, 3, 0, None)
+        assert handle not in (None, ctypes.c_void_p(-1).value), name
+        assert kernel.SetStdHandle(std_handle, handle)
+        return handle
+
+    input_handle = bind_console_handle("CONIN$", -10)
+    output_handle = bind_console_handle("CONOUT$", -11)
 
     def modes():
         values = []
@@ -2327,7 +2353,8 @@ def test_windows_installed_tui_real_console_journey(tmp_path, windows_kernel) ->
             )
         assert file_name in snapshots
         attempt = root / ".rush" / "runs" / f"run-{name}" / "attempts" / "1"
-        attempt.mkdir(parents=True)
+        # _capture_artifact_snapshots already created attempts/1/artifacts/...
+        attempt.mkdir(parents=True, exist_ok=True)
         (attempt / "attempt.json").write_text(
             json.dumps(
                 {
