@@ -84,20 +84,7 @@ jobs:
           ./osv-scanner --version
           echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
 
-      # Every needs_* marker deselected here (conftest.py also deselects, never
-      # skips, a needs_* test whose binary is not on PATH) is installed and run
-      # by the static-tool-acceptance job below.
-      - name: Run tests
-        env:
-          TERM: xterm-256color
-          RUSH_G8_NATIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-linux-x86_64.tar.gz
-          RUSH_G8_NATIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
-          RUSH_G8_NATIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-native-terminal
-        run: |
-          mkdir -p "$RUSH_G8_NATIVE_RECEIPT_DIR"
-          uv run --no-sync env -u PYTHONPATH -u NO_COLOR python -m pytest tests/ -q -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc"
-          uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'posix-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
-
+      # The full test suite runs in the `tests` job below, sharded.
       - name: Verify T09 live installed-artifact acceptance (Linux)
         if: ${{ !cancelled() }}
         env:
@@ -125,6 +112,118 @@ jobs:
       - name: Check whitespace
         if: ${{ !cancelled() }}
         run: git diff --check
+
+  # The suite is ~32k tests; one process hit the 360-minute job limit. Eight
+  # shards (tests/conftest.py keeps the tests whose collection position is
+  # RUSH_CI_SHARD's index modulo 8) run in parallel, each with its own timeout.
+  # Each shard rebuilds the archive instead of downloading one from `quality`,
+  # so the shards neither wait for lint, mypy and the live acceptance step nor
+  # are skipped when one of them fails.
+  tests:
+    name: Tests (shard ${{ matrix.shard }} of 8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --all-extras --frozen
+
+      - name: Warm aislop's npm runtime for offline test runs
+        shell: bash
+        env:
+          AISLOP_NO_TELEMETRY: "1"
+          DO_NOT_TRACK: "1"
+        run: |
+          echo "npm_config_cache=$RUNNER_TEMP/npm-cache" >> "$GITHUB_ENV"
+          # aislop's Python launcher os.execve()s npx, which crashes on Windows
+          # (npx is a .cmd there); warm the same pinned package through npm.
+          version="$(uv run --no-sync python -c 'import aislop_py; print(aislop_py.__version__)')"
+          npm_config_cache="$RUNNER_TEMP/npm-cache" npm exec --yes --package "aislop@$version" -- aislop --version
+
+      - name: Build distribution artifacts
+        run: uv build
+
+      - name: Build native release archive for installed-artifact probes
+        run: |
+          uv pip install pyinstaller
+          cat > rush_entry.py <<'PYEOF'
+          from rush.entry import main
+
+          if __name__ == "__main__":
+              main()
+          PYEOF
+          uv run --no-sync pyinstaller --onefile --name rush --paths src --collect-data license_expression --collect-data rush.integrations --collect-data rush.dashboard --collect-submodules tiktoken_ext rush_entry.py
+          uv run --no-sync python -c "
+          from pathlib import Path
+          from scripts.probe_installed_artifacts import build_release_archive, write_sha256sums
+          import rush
+          archive = build_release_archive(Path('dist/rush'), Path('dist'), 'rush-linux-x86_64.tar.gz', rush.__version__)
+          write_sha256sums([archive], Path('dist/SHA256SUMS'))
+          "
+
+      - name: Install pinned engines the test suite executes
+        run: uv pip install vulture==2.16
+
+      - name: Install verified osv-scanner release
+        run: |
+          mkdir -p "$RUNNER_TEMP/osv-scanner"
+          cd "$RUNNER_TEMP/osv-scanner"
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          curl --fail --silent --show-error --location --remote-name https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_SHA256SUMS
+          sha256sum --check --ignore-missing osv-scanner_SHA256SUMS
+          mv osv-scanner_linux_amd64 osv-scanner
+          chmod +x osv-scanner
+          ./osv-scanner --version
+          echo "$RUNNER_TEMP/osv-scanner" >> "$GITHUB_PATH"
+
+      # Every needs_* marker deselected here (conftest.py also deselects, never
+      # skips, a needs_* test whose binary is not on PATH) is installed and run
+      # by the static-tool-acceptance job below.
+      # -v prints each test id as it starts, so a hang names its test; -rfE ends
+      # the log with every failure and error; faulthandler_timeout dumps every
+      # thread's stack when one test runs over 15 minutes.
+      - name: Run tests
+        shell: bash
+        env:
+          TERM: xterm-256color
+          RUSH_CI_SHARD: ${{ matrix.shard }}/8
+          RUSH_G8_NATIVE_ARCHIVE: ${{ github.workspace }}/dist/rush-linux-x86_64.tar.gz
+          RUSH_G8_NATIVE_SUMS: ${{ github.workspace }}/dist/SHA256SUMS
+          RUSH_G8_NATIVE_RECEIPT_DIR: ${{ runner.temp }}/rush-native-terminal
+        run: |
+          mkdir -p "$RUSH_G8_NATIVE_RECEIPT_DIR"
+          log="$RUNNER_TEMP/pytest-shard.log"
+          uv run --no-sync env -u PYTHONPATH -u NO_COLOR python -m pytest tests/ -v -rfE --durations=25 -o faulthandler_timeout=900 -k "not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc" 2>&1 | tee "$log"
+          # test_installed_native_tui_real_terminal runs in exactly one shard.
+          # Collected unsharded (RUSH_CI_SHARD unset), it must still be exactly
+          # one test, so a test that stops being collected fails every shard.
+          expected="tests/test_tui_terminal.py::test_installed_native_tui_real_terminal"
+          collected="$(uv run --no-sync env -u PYTHONPATH -u NO_COLOR -u RUSH_CI_SHARD python -m pytest tests/test_tui_terminal.py --collect-only -q -k "test_installed_native_tui_real_terminal and not real_workload" -m "not needs_vulture and not needs_knip and not needs_radon and not needs_jscpd and not needs_sloppylint and not needs_prettier and not needs_promptfoo and not needs_tsc" | grep '::' || true)"
+          if [ "$collected" != "$expected" ]; then
+            echo "expected exactly one collected test, $expected; collected: ${collected:-nothing}"
+            exit 1
+          fi
+          # The shard that ran it must have written its receipt.
+          if grep -Eq 'test_installed_native_tui_real_terminal.* PASSED' "$log"; then
+            uv run --no-sync python -c "import json, os; from pathlib import Path; path = Path(os.environ['RUSH_G8_NATIVE_RECEIPT_DIR']) / 'posix-installed-tui.json'; assert path.is_file(), path; receipt = json.loads(path.read_text()); print('RUSH_G8_NATIVE_RECEIPT=' + json.dumps(receipt, sort_keys=True))"
+          fi
 
   static-tool-acceptance:
     name: Static tool acceptance (real binaries)

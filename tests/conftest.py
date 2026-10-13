@@ -82,9 +82,30 @@ _DESELECT_REASONS = {
 }
 
 
+def _ci_shard() -> tuple[int, int] | None:
+    """`(index, total)` from `RUSH_CI_SHARD=index/total`, or None when unset.
+
+    The variable is removed once read so subprocesses that run pytest do not
+    inherit it and shard themselves."""
+    raw = os.environ.pop("RUSH_CI_SHARD", None)
+    if raw is None:
+        return None
+    try:
+        index, total = (int(part) for part in raw.split("/"))
+    except ValueError:
+        index = total = -1
+    if not 0 <= index < total:
+        raise pytest.UsageError(f"RUSH_CI_SHARD={raw!r} is not 'i/N' with 0 <= i < N")
+    return index, total
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     """Markers that cannot run here are deselected (never skipped), with a
     count per marker printed: the owner rule is zero SKIPPED tests anywhere.
+
+    `RUSH_CI_SHARD=i/N` (CI's `tests` matrix) then keeps the tests whose
+    position in the remaining collection order is `i` modulo `N` and
+    deselects the rest: the N shards are disjoint and together run everything.
 
     `windows_only`: only Windows can run it; the Windows CI job still
     collects and runs it (`os.name == "nt"` there).
@@ -121,6 +142,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
         else:
             deselected.append(item)
             counts[name] = counts.get(name, 0) + 1
+    lines = []
+    shard = _ci_shard()
+    if shard is not None:
+        index, total = shard
+        mine = keep[index::total]
+        kept_ids = {id(item) for item in mine}
+        other = [item for item in keep if id(item) not in kept_ids]
+        deselected.extend(other)
+        keep = mine
+        lines.append(f"shard {index}/{total}: {len(other)} deselected")
     if not deselected:
         return
     config.hook.pytest_deselected(items=deselected)
@@ -128,7 +159,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list) -> None:
     reporter = config.pluginmanager.get_plugin("terminalreporter")
     for name, count in sorted(counts.items()):
         reason = _DESELECT_REASONS.get(name) or f"{_marker_binary(name)} not on PATH"
-        line = f"{name}: {count} deselected ({reason})"
+        lines.append(f"{name}: {count} deselected ({reason})")
+    for line in lines:
         if reporter is None:
             print(line, file=sys.stderr)
         else:

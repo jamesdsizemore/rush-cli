@@ -184,6 +184,7 @@ def classify_path(rel_path: str) -> CoverageRecord:
             ".git",
             "pyproject.toml",
             "uv.lock",
+            ".gitattributes",
             ".gitignore",
             ".ignore",
             ".python-version",
