@@ -3742,14 +3742,16 @@ class MemoryTool(ToolFn):
         resolved engine; a `fallback` code is a labelled lexical page (`OK` reported as
         `E_EMBEDDING_UNAVAILABLE`, every other code kept)."""
         root = store.project_root
-        # 72-T02 R2: a hybrid read over a read-only view (a store whose writable open
-        # would run DDL) creates nothing, the labelled lexical fallback included.
+        # 72-T02 R2: a hybrid read over a read-only view of a store whose writable
+        # open would run DDL creates nothing, the labelled lexical fallback included.
+        # A current store read through its view still records the delivery (R5a).
         telemetry = (
             cast(TelemetryStore, _LazyTelemetry(lambda: TelemetryStore(root)))
             if granted.cache_write
             and not (
                 retrieval == "hybrid"
                 and getattr(store, "_readonly_conn", None) is not None
+                and not store.writable_open_ddl_free()
             )
             else None
         )

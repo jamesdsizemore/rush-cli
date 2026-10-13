@@ -3136,7 +3136,8 @@ def test_t06_restricted_bridge_readonly(
         assert denied["code"] == "E_PERMISSION"
         assert "needle b1" not in dump(denied)
         related = handler("related", {"id": "a1", "version": 1, "depth": 2})
-        assert "b1" not in dump(related) and "c1" not in dump(related)
+        # ids as JSON strings: a bare "b1"/"c1" also occurs inside random hex digests
+        assert '"b1"' not in dump(related) and '"c1"' not in dump(related)
         missing = handler("related", {"id": "zz-none", "version": 1})
         unselected_seed = handler("related", {"id": "b1", "version": 1})
         assert unselected_seed["code"] == missing["code"]
@@ -3144,7 +3145,7 @@ def test_t06_restricted_bridge_readonly(
         for op, req in (("resume", {"task": "t", "conditions": {}}), ("receive", {})):
             out = handler(op, req)
             assert out["code"] == "OK", (op, dump(out))
-            assert "b1" not in dump(out) and "c1" not in dump(out), op
+            assert '"b1"' not in dump(out) and '"c1"' not in dump(out), op
             assert "needle b1" not in dump(out) and "needle c1" not in dump(out)
         assert digest_tree(root) == before
         return
