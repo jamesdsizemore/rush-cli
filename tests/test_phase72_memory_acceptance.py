@@ -178,9 +178,9 @@ REDACTION_PATTERNS = (
 )
 
 # Producer pins (empty until integration derives them; see the module docstring).
-_T07_COMMIT = "e369b06d99de9e44cf843dbb7d0c726983947dc0"
+_T07_COMMIT = "d2a6decc823c7517affafd0bee1fa2df6252d0dc"
 _T07_WALKTHROUGH_SHA256 = (
-    "bc722a8ec582da01913e71b597daa1224d97b6a4c7cfaefa7d9a16cafbb5f4e3"
+    "2df2eb625ccd847ab39834568067bdae6f4bb14a675b3a2760c0c7744cea9560"
 )
 _T08_COMMIT = "66b17b550a3128e1003b8b2fc6993661b9496f62"
 _T08_EVALUATION_SHA256 = (
