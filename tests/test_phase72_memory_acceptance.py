@@ -77,6 +77,18 @@ CLI_REFERENCE = REPO / "docs/reference/cli-reference.md"
 # it only for host CLIs (`claude`, `codex`) and to refuse a receipt directory
 # under it.
 _HOST_HOME = os.environ.get("HOME", "")
+# The per-user directories the host CLIs read their login and config from, as
+# they were before the autouse isolation fixture moved them into a temp dir.
+_HOST_USER_DIRS = {
+    name: os.environ.get(name)
+    for name in (
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_CACHE_HOME",
+        "APPDATA",
+        "LOCALAPPDATA",
+    )
+}
 
 SUBJECT = "architectural_decision"
 SEVEN_SUBJECTS = (
@@ -6499,7 +6511,9 @@ if _LIVE:
             corrects; B (`codex exec`) recalls the exact revision, rejects the
             stale one, treats a denied source as denied, and honors an explicit
             rejection and its later reversal only where it applies."""
-            host_home = os.environ["HOME"]
+            # conftest's autouse fixture has already moved HOME into tmp_path,
+            # so the host CLIs get the HOME captured at import.
+            host_home = _HOST_HOME
             _require_agents(os.environ)
             inputs = _live_inputs(os.environ, workdir=tmp_path / "installed")
             w = _world(tmp_path, monkeypatch)
@@ -6510,6 +6524,11 @@ if _LIVE:
                 "LOCALAPPDATA": os.environ["LOCALAPPDATA"],
             }
             host_env = {**os.environ, "HOME": host_home, "USERPROFILE": host_home}
+            for name, value in _HOST_USER_DIRS.items():
+                if value is None:
+                    host_env.pop(name, None)
+                else:
+                    host_env[name] = value
             host_env.pop("PYTHONPATH", None)
             exe = [str(inputs.binary)]
             cli_env = _installed_env()
@@ -6573,6 +6592,11 @@ if _LIVE:
                         f"mcp_servers.rush.args={json.dumps(mcp_args(project))}",
                         "-c",
                         f"mcp_servers.rush.env={{{env_table}}}",
+                        # `codex exec` runs with approval policy `never`, which
+                        # refuses an MCP call that needs approval; approve this
+                        # one tool only, as `~/.codex/config.toml` does.
+                        "-c",
+                        'mcp_servers.rush.tools.rush_memory.approval_mode="approve"',
                         prompt,
                     ],
                     cwd=project,
@@ -6684,8 +6708,11 @@ if _LIVE:
                 w.p2,
             )
             assert other["cited_refs"] == [], other
-            reverse = ctx_call_cli(exe, cli_env, w.p1, w.tmp, "reverse")
-            reversal_ref = f"{reverse['artifact_id']}@{reverse['artifact_version']}"
+            reverse = ctx_call_cli(exe, cli_env, w.p1, w.tmp, "reverse", target=reject)
+            replacement = reverse["replacement"]
+            reversal_ref = (
+                f"{replacement['artifact_id']}@{replacement['artifact_version']}"
+            )
             honored = decide(
                 "We need a synchronous HTTP GET helper for the sync job. May we use the popular "
                 "third-party HTTP package everyone installs first?",
@@ -6704,20 +6731,47 @@ if _LIVE:
             _write_receipt(inputs, "e06-e25-rejection-reversal", steps[2:])
 
         def ctx_call_cli(
-            exe: Sequence[str], env: Mapping[str, str], root: Path, tmp: Path, mode: str
+            exe: Sequence[str],
+            env: Mapping[str, str],
+            root: Path,
+            tmp: Path,
+            mode: str,
+            target: Mapping[str, Any] | None = None,
         ) -> dict[str, Any]:
             """The driver records the user's explicit rejection (or its reversal)
-            through the installed CLI, project scope."""
+            through the installed CLI, project scope. A second `record` of the
+            same key would be a same-scope conflict (72-T05 R12), so the reversal
+            supersedes the rejection row (72-T05 §3.6.1 `supersede`)."""
             ctx = _Ctx(tmp=tmp, exe=list(exe), env=dict(env), installed=True)
-            value = (
-                {
-                    "rejected": True,
-                    "use_instead": "httpx",
-                    "reason": "owner banned requests",
-                }
-                if mode == "reject"
-                else {"rejected": False, "reason": "owner reversed the ban"}
-            )
+            if mode == "reverse":
+                assert target is not None
+                raw = ctx.call(
+                    "cli",
+                    root,
+                    "preference",
+                    {
+                        "action": "correct",
+                        "artifact_id": target["artifact_id"],
+                        "layer": "project",
+                        "kind": "supersede",
+                        "reason": "owner reversed the ban",
+                        "expected_version": target["artifact_version"],
+                        "value": {
+                            "rejected": False,
+                            "reason": "owner reversed the ban",
+                        },
+                        "user_stated": True,
+                        "apply": True,
+                    },
+                    cache_write=True,
+                )
+                assert raw.get("code") == "OK", raw
+                return dict(raw["data"])
+            value = {
+                "rejected": True,
+                "use_instead": "httpx",
+                "reason": "owner banned requests",
+            }
             raw = ctx.call(
                 "cli",
                 root,
