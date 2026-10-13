@@ -1803,3 +1803,28 @@ def test_t08_suite_restores_environment_and_names_every_failure(
     for key, value in originals.items():
         assert os.environ[key] == value, key
     assert list(scratch.iterdir()) == [], "the temporary root was removed"
+
+
+def test_t08_instruction_files_follow_the_provider_env(tmp_path: Path) -> None:
+    """The recorded Codex instruction file is the one the provider process
+    loads (its env's HOME/CODEX_HOME), not the harness's temporary HOME."""
+    from scripts.benchmarks.providers import DecisionRoute, _instruction_files
+
+    route = DecisionRoute(
+        route_id="openai-codex-oauth-cli-live",
+        format="codex_exec_jsonl",
+        executable=tmp_path / "codex",
+        protocol={"instruction_files": ["$CODEX_HOME/AGENTS.md"]},
+        timeout_s=1.0,
+    )
+    real_home = tmp_path / "real"
+    (real_home / ".codex").mkdir(parents=True)
+    (real_home / ".codex" / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+    [entry] = _instruction_files(route, {"HOME": str(real_home)})
+    assert entry["path"] == str(real_home / ".codex" / "AGENTS.md")
+    assert entry["present"] is True
+    other = tmp_path / "codex-home"
+    [entry] = _instruction_files(
+        route, {"HOME": str(real_home), "CODEX_HOME": str(other)}
+    )
+    assert entry["path"] == str(other / "AGENTS.md") and entry["present"] is False

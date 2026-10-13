@@ -996,14 +996,20 @@ def invocation_record(
     }
 
 
-def _instruction_files(decision_route: DecisionRoute) -> list[dict[str, Any]]:
+def _instruction_files(
+    decision_route: DecisionRoute, env: Mapping[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """The instruction files the route's own process loads, resolved from the
+    environment that process receives (`env`), never the harness's temporary HOME."""
     from .memory import _count_tokens, _get_encoder
 
     entries: list[dict[str, Any]] = []
     for name in decision_route.protocol.get("instruction_files", []):
         if name != "$CODEX_HOME/AGENTS.md":
             continue
-        codex_home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+        source = os.environ if env is None else env
+        home = source.get("HOME") or str(Path.home())
+        codex_home = source.get("CODEX_HOME") or str(Path(home) / ".codex")
         path = Path(codex_home) / "AGENTS.md"
         present = path.is_file()
         data = path.read_bytes() if present else b""
@@ -1066,7 +1072,7 @@ def preflight_decision_route(
         "reason": None,
         "version": None,
         "route_overhead_tokens": None,
-        "instruction_files": _instruction_files(decision_route),
+        "instruction_files": _instruction_files(decision_route, env),
         "preflight": None,
     }
     workspace_root = Path(workspace_root)

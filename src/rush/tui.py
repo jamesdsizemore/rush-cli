@@ -8646,10 +8646,15 @@ def _memory_panels(state: TuiState) -> list[Any]:
             marker = "x" if record.get("id") in state.memory_import_selected else " "
             lines.append(
                 _safe(
-                    f"  [{marker}] {record.get('id')}  {record.get('subject', '')}  "
+                    f"  [{marker}] {record.get('id') or record.get('foreign_origin_id')}"
+                    f"  {record.get('subject', '')}  "
                     f"applicability {record.get('applicability', '?')}"
                 )
             )
+            content = record.get("content")
+            text = content.get("text") if isinstance(content, dict) else None
+            if isinstance(text, str):
+                lines.append(_safe(f"      {text[:200]}"))
         lines.append(_safe("[y] import  [esc] cancel", "bold yellow"))
         panels.append(
             Panel(Group(*lines), title="Memory import review", style="magenta")
@@ -9132,6 +9137,8 @@ def _render_body(state: TuiState, project: ProjectState) -> Any:
         "memory_owner",
         "memory_create",
         "memory_filter",
+        "memory_correct",
+        "memory_import",
     ):
         return _with_view_state(state, project, "memory", _render_memory_admin(state))
     if state.mode == "git":

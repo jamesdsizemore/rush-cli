@@ -1168,6 +1168,22 @@ class _Ctx:
         path.write_text(json.dumps(request), encoding="utf-8")
         return str(path)
 
+    def run_cli(self, root: Path, args: Sequence[str]) -> dict[str, Any]:
+        """One installed `rush memory <args>` run; its ToolResult `raw` mapping,
+        recorded in `trace` like `call`."""
+        raw = _run_cli(self.exe, root, args, self.env)["raw"]
+        self.trace.append(
+            {
+                "step": self.current,
+                "transport": "cli",
+                "operation": " ".join(args[:2]),
+                "request_sha256": _sha(json.dumps(list(args))),
+                "code": raw.get("code"),
+                "result_sha256": _sha(json.dumps(raw, sort_keys=True, default=str)),
+            }
+        )
+        return raw
+
     def call(
         self,
         transport: str,
@@ -1775,11 +1791,7 @@ def _capsule_tree(w: _World) -> tuple[list[tuple[str, str]], list[tuple[str, str
     return _tree_digest(w.p2), data
 
 
-def _step_i_pas_import(
-    ctx: _Ctx,
-    w: _World,
-    review: Callable[[list[dict[str, Any]]], None] | None = None,
-) -> None:
+def _step_i_pas_import(ctx: _Ctx, w: _World) -> None:
     """Step i: the PAS session (forged verification) imports as IMPORTED /
     imported_unverified / pending; only the explicitly confirmed constraint
     becomes active; the local choice is preserved."""
@@ -1820,8 +1832,7 @@ def _step_i_pas_import(
         )["mapping_id"]
     )
     before = _capsule_tree(w)
-    preview = _run_cli(
-        ctx.exe,
+    preview = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -1836,8 +1847,7 @@ def _step_i_pas_import(
             mapping_id,
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert preview.get("code") == "OK", preview
     assert _capsule_tree(w) == before, "preview-import created or changed a file"
     data = preview["data"]
@@ -1860,13 +1870,10 @@ def _step_i_pas_import(
         f"fixture lacks the intended or forged constraint: {constraints}"
     )
     confirm = intended[0]["content"]["constraint_id"]
-    if review is not None:
-        review(records)
 
     # The confirmation is part of the preview's digest, so the reviewed preview that
     # the apply binds to carries the same `--confirm-constraint-id`.
-    reviewed = _run_cli(
-        ctx.exe,
+    reviewed = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -1883,14 +1890,12 @@ def _step_i_pas_import(
             confirm,
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert reviewed.get("code") == "OK", reviewed
     assert _capsule_tree(w) == before, "preview-import created or changed a file"
     data = reviewed["data"]
 
-    applied = _run_cli(
-        ctx.exe,
+    applied = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -1915,8 +1920,7 @@ def _step_i_pas_import(
             "--allow-cache-write",
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert applied.get("code") == "OK", applied
     mappings = {m["foreign_origin_id"]: m for m in applied["data"]["mappings"]}
     assert mappings[intended[0]["foreign_origin_id"]]["applicability"] == "active"
@@ -1982,9 +1986,15 @@ def _checkpoint_content(w: _World) -> dict[str, Any]:
     }
 
 
-def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
+def _step_i2_rush_capsule(
+    ctx: _Ctx,
+    w: _World,
+    review: Callable[[Path, list[dict[str, Any]]], None] | None = None,
+) -> None:
     """Step i (Rush capsule): export a task from P2 and re-import it into P2
-    through the codec route (origin equals destination: `claimed`)."""
+    through the codec route (origin equals destination: `claimed`). The TUI
+    `I` form reads `rush_v1` from a path with no mapping, so this capsule, not the
+    mapped `pas_v1` session, is what the terminal reviews."""
     ctx.current = "i2"
     _seed_row(
         w.p2, "t09-evidence", "evidence body", source="s1", subject="domain_knowledge"
@@ -1999,8 +2009,7 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
         content=_checkpoint_content(w),
     )
     out = w.tmp / "t09-task.rush-capsule.json"
-    preview = _run_cli(
-        ctx.exe,
+    preview = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -2011,12 +2020,10 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
             str(out),
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert preview.get("code") == "OK", preview
     assert not out.exists(), "preview-export wrote the output"
-    exported = _run_cli(
-        ctx.exe,
+    exported = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -2032,15 +2039,13 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
             "--allow-artifact-write",
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert exported.get("code") == "OK", exported
     capsule = json.loads(out.read_text(encoding="utf-8"))
     assert capsule["format"] == "rush_v1"
     assert str(w.p2) not in out.read_text(encoding="utf-8")
 
-    imported_preview = _run_cli(
-        ctx.exe,
+    imported_preview = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -2051,17 +2056,17 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
             str(out),
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert imported_preview.get("code") == "OK", imported_preview
     assert imported_preview["data"].get("origin_match") == "claimed"
     data = imported_preview["data"]
     constraint = next(
         r for r in data["records"] if r["foreign_origin_id"].startswith("constraint:")
     )
+    if review is not None:
+        review(out, data["records"])
     # The confirmation is part of the preview's digest: preview again with it.
-    reviewed = _run_cli(
-        ctx.exe,
+    reviewed = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -2074,12 +2079,10 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
             constraint["content"]["constraint_id"],
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert reviewed.get("code") == "OK", reviewed
     data = reviewed["data"]
-    applied = _run_cli(
-        ctx.exe,
+    applied = ctx.run_cli(
         w.p2,
         [
             "capsule",
@@ -2100,8 +2103,7 @@ def _step_i2_rush_capsule(ctx: _Ctx, w: _World) -> None:
             "--allow-cache-write",
             "--json",
         ],
-        ctx.env,
-    )["raw"]
+    )
     assert applied.get("code") == "OK", applied
     db = w.p2 / ".rush" / "memory.db"
     with contextlib.closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
@@ -5771,10 +5773,18 @@ def _run_terminal_script(
                 term, receipts, "hostile-row", "failure rows list", "S"
             )
         assert hostile[:8] in text, "hostile row never listed"
+        # The list shows the selected row's own text; move the selection onto the
+        # hostile row (the list wraps, so one lap reaches every row on the page).
+        for _ in range(25):
+            if "HOSTILEMARK" in text:
+                break
+            text = _terminal_step(
+                term, receipts, "hostile-select", "hostile row selected", "j"
+            )
         raw = getattr(term, "last_raw", text)
         assert HOSTILE_TEXT not in raw, "hostile control bytes reached the terminal"
         assert "\x07" not in text and "\u202e" not in raw, "raw control text rendered"
-        assert "HOSTILEMARK" in text
+        assert "HOSTILEMARK" in text, text[-1500:]
         assert re.search(r"\\x1b|\\u001b|\\033|\\e|\u241b", text), text[-800:]
         assert seeded["bidi"][:8] not in text and "BIDIMARK" not in text, (
             "a bidi-override row must stay out of ordinary reads"
@@ -5816,24 +5826,27 @@ def _run_terminal_script(
             "version n+1 persisted",
             "c",
             "tab",
+            *"terminal correction",
             "tab",
-            "corrected by terminal",
+            *"needle corrected by terminal",
             "enter",
-            "y",
         )
+        # the preview is a background call: `y` only applies once it is shown
+        _terminal_step(term, receipts, "correct-apply", "version n+2 persisted", "y")
         after = _row_versions(db)
-        bumped = [
-            rid for rid, version in after.items() if version == before.get(rid, 0) + 1
-        ]
+        # `correct` writes the corrected version and promotes it to STATED
+        # (72-T05 §3.6.2 step 4; step 5 `reject` is the no-promotion n+1 case).
+        bumped = [rid for rid, version in after.items() if version != before.get(rid)]
         assert len(bumped) == 1, (before, after)
         corrected = bumped[0]
+        assert after[corrected] == before[corrected] + 2, (before, after)
         assert "corrected by terminal" in _version_content(
             db, corrected, after[corrected]
         )
 
         # concurrent edit between opening the form and applying it: conflict,
         # the typed input stays
-        term.press("c", "tab", "tab", "typed after conflict")
+        term.press("c", "tab", *"conflict reason", "tab", *"typed after conflict")
         term.observe()
         concurrent = _raw(
             MemoryTool().run(
@@ -5854,7 +5867,7 @@ def _run_terminal_script(
         )
         assert concurrent.get("code") == "OK", concurrent
         text = _terminal_step(
-            term, receipts, "correct-conflict", "conflict keeps input", "enter", "y"
+            term, receipts, "correct-conflict", "conflict keeps input", "enter"
         )
         assert "conflict" in text.lower(), text[-800:]
         assert "typed after conflict" in text, text[-800:]
@@ -6175,8 +6188,9 @@ _NATIVE_LANE = {
 def _import_review(
     term: Any, fixture: Path, snippets: Sequence[str], receipts: list[dict[str, Any]]
 ) -> None:
-    """TUI import review: the PAS records show as pending until locally
+    """TUI import review: the imported records show as pending until locally
     confirmed; nothing is applied from the terminal."""
+    term.observe(quiet=2.0, limit=60.0)  # first frame, as in _run_terminal_script
     _terminal_step(term, receipts, "memory-section", "Memory section opens", "M")
     _terminal_step(term, receipts, "import-open", "import prompt opens", "I")
     text = _terminal_step(
@@ -6347,7 +6361,7 @@ if _LIVE:
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """R6: the installed CLI previews and imports the pinned PAS session and
-        one Rush capsule; the terminal review shows the records pending; the
+        one Rush capsule; the terminal review of that capsule shows its records pending; the
         preserved local choice and the forged verification stay as in R1 step i."""
         inputs = _live_inputs(os.environ, workdir=tmp_path / "installed")
         w = _world(tmp_path, monkeypatch)
@@ -6372,10 +6386,9 @@ if _LIVE:
             cache_write=True,
         )
         assert local.get("code") == "OK", local
-        fixture = REPO / "tests/fixtures/memory_capsule/pas_session_schema1.json"
         receipts: list[dict[str, Any]] = []
 
-        def review(records: list[dict[str, Any]]) -> None:
+        def review(capsule: Path, records: list[dict[str, Any]]) -> None:
             constraints = [
                 r for r in records if r["foreign_origin_id"].startswith("constraint:")
             ]
@@ -6390,7 +6403,7 @@ if _LIVE:
                     [
                         str(inputs.binary),
                         str(w.p2),
-                        str(fixture),
+                        str(capsule),
                         snippets,
                         str(receipt),
                     ],
@@ -6401,12 +6414,12 @@ if _LIVE:
                 receipts.extend(json.loads(receipt.read_text(encoding="utf-8")))
             else:
                 with _PtyTerminal([*exe, "ui", str(w.p2)], env, w.p2) as term:
-                    _import_review(term, fixture, snippets, receipts)
+                    _import_review(term, capsule, snippets, receipts)
 
         ctx.current = "i"
-        _step_i_pas_import(ctx, w, review=review)
+        _step_i_pas_import(ctx, w)
         ctx.current = "i2"
-        _step_i2_rush_capsule(ctx, w)
+        _step_i2_rush_capsule(ctx, w, review=review)
         steps = _trace_steps(
             ctx,
             tmp_path,
