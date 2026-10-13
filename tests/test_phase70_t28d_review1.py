@@ -1087,7 +1087,12 @@ def test_memory_key_path_never_calls_memory_run(tmp_path: Path) -> None:
     _keys(state, actions, "w")
     assert "expiry_sweep 1" in state.memory_message
     _keys(state, actions, "y")
-    assert _row(root, "zq03")["artifact_version"] == 2
+    # 72-T04 persists corroboration counts, so promotion_sweep (earlier in the same
+    # reviewed batch) also rewrites zq03; the reviewed expiry still applies to it.
+    zq03 = _row(root, "zq03")
+    assert zq03["expired_at"] is not None, state.memory_message
+    assert zq03["artifact_version"] == 3, state.memory_message
+    assert " -> v" not in state.memory_message, state.memory_message
     assert {"list", "expand", "archive", "delete", "maintain"} <= set(run.operations)
 
 

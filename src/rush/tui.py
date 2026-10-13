@@ -38,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast, get_args
 
+from rich import box
 from rich.console import Console, Group
 from rich.layout import Layout
 from rich.panel import Panel
@@ -4449,10 +4450,19 @@ def _memory_maintain_apply(
     if actions.memory_run is None:
         state.memory_message = "memory operations unavailable"
         return
+    from rush.tools.routing import memory_attribution_of
+
     summaries: list[str] = []
+    # Revisions this reviewed batch itself committed: a row an earlier task
+    # rewrote is still the reviewed row for the tasks after it.
+    committed: dict[str, int] = {}
     for entry in pending:
         if not entry["candidate_ids"]:
             continue  # nothing previewed for this task: nothing to apply
+        expected = {
+            artifact_id: committed.get(artifact_id, version)
+            for artifact_id, version in entry["expected_revisions"].items()
+        }
         try:
             result = actions.memory_run(
                 project.root,
@@ -4465,16 +4475,15 @@ def _memory_maintain_apply(
                     "apply": True,
                     "required_grants": entry["required_grants"],
                     "candidate_ids": entry["candidate_ids"],
-                    **(
-                        {"expected_revisions": entry["expected_revisions"]}
-                        if entry["expected_revisions"]
-                        else {}
-                    ),
+                    **({"expected_revisions": expected} if expected else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001 -- see _memory_refresh
             summaries.append(f"{entry['task']} failed: {exc}")
             continue
+        for write in (memory_attribution_of(result) or {}).get("written") or []:
+            if isinstance(write, dict) and isinstance(write.get("revision"), int):
+                committed[str(write.get("id"))] = write["revision"]
         raw = result.get("raw") or {}
         refused = [
             f"{c.get('id')} changed v{c.get('expected')} -> "
@@ -8402,55 +8411,24 @@ def _render_memory_admin(state: TuiState) -> Panel:
         )
         lines.append(_safe(f"action: {view.get('action')}", "yellow"))
 
-    table = Table(expand=True)
-    table.add_column("", width=4)
-    table.add_column("id", style="cyan")
-    table.add_column("v", width=4)
-    table.add_column("owner")
-    table.add_column("trust", width=14)
-    table.add_column("freshness", width=10)
-    table.add_column("source")
-    page = state.memory_selected_index // _MEMORY_PAGE_ROWS
-    pages = max(1, -(-len(state.memory_items) // _MEMORY_PAGE_ROWS))
-    start = page * _MEMORY_PAGE_ROWS
-    for idx, item in enumerate(
-        state.memory_items[start : start + _MEMORY_PAGE_ROWS], start
-    ):
-        cursor = ">" if idx == state.memory_selected_index else " "
-        checked = "x" if item.get("id") in state.memory_selected_ids else " "
-        row_owner = item.get("owner_scope")
-        reference = item.get("reference")
-        freshness = (
-            reference.get("freshness") if isinstance(reference, dict) else None
-        ) or ("stale" if item.get("stale") else "")
-        table.add_row(
-            _safe(f"{cursor}[{checked}]"),
-            _safe(item.get("id", "")),
-            _safe(item.get("artifact_version", "")),
-            _safe(
-                f"{row_owner.get('kind')}:{row_owner.get('id')}"
-                if isinstance(row_owner, dict)
-                else ""
-            ),
-            _safe(item.get("trust_tier", "")),
-            _safe(freshness),
-            _safe(item.get("source", "")),
-            style=_state_selection_style(state) if cursor == ">" else None,
-        )
-    lines.append(
-        _safe(
-            f"page {len(state.memory_cursor_stack) + 1}"
-            + (f" ({page + 1}/{pages})" if pages > 1 else "")
-            + "  ] next page  [ previous page",
-            "cyan",
-        )
-    )
-    lines.append(table)
+    # The page line and table go here once the lines below them are known.
+    table_at = len(lines)
     if 0 <= state.memory_selected_index < len(state.memory_items):
-        # The selected record's own text, escaped like every other dynamic field.
-        excerpt = state.memory_items[state.memory_selected_index].get("excerpt")
-        if isinstance(excerpt, str) and excerpt:
-            lines.append(_safe(f"  excerpt: {excerpt}", "white"))
+        # The cursor record's full id (the id column truncates at narrow
+        # widths) and its own text, escaped like every other dynamic field.
+        selected = state.memory_items[state.memory_selected_index]
+        excerpt = selected.get("excerpt")
+        lines.append(
+            _safe(
+                f"  > {selected.get('id', '')}"
+                + (
+                    f"  excerpt: {excerpt}"
+                    if isinstance(excerpt, str) and excerpt
+                    else ""
+                ),
+                "white",
+            )
+        )
 
     if state.memory_pending_mutation is not None:
         pending_mutation = state.memory_pending_mutation
@@ -8545,7 +8523,107 @@ def _render_memory_admin(state: TuiState) -> Panel:
     lines.extend(_memory_panels(state))
     if state.memory_message:
         lines.append(_safe(state.memory_message, "bold magenta"))
+    lines[:table_at] = _memory_list_layout(state, lines[:table_at], lines[table_at:])
     return Panel(Group(*lines), title="Memory Administration", style="magenta")
+
+
+def _rendered_rows(renderables: list[Any], width: int) -> int:
+    """The terminal rows `renderables` take at `width` columns."""
+    console = Console(width=max(1, width), file=io.StringIO())
+    return len(console.render_lines(Group(*renderables), pad=False))
+
+
+def _memory_list_layout(state: TuiState, head: list[Any], tail: list[Any]) -> list[Any]:
+    """`head` plus the page line and the table, sized to what the terminal
+    leaves after the header, footer, panel borders, `head` and `tail` (the
+    cursor record, previews and outcomes), so the table never pushes `tail`
+    off screen. The cursor row always shows: when `head` leaves it no room,
+    each head line shrinks to one row and the table drops its outer frame."""
+    columns, rows = state.terminal_size
+    project = state.active_project
+    status = _footer_status_line(state, project)
+    if state.memory_message and status.plain == tail[-1].plain:
+        tail = tail[:-1]  # the footer already shows the outcome
+    view = _view_state_lines(
+        SECTION_LABELS["memory"], state.views.get((project_key(project), "memory"))
+    )
+    inner = columns - 4
+    room = (
+        rows
+        - 3
+        - _footer_height(state, status)
+        - 2
+        - _rendered_rows(list(view), columns)
+        - _rendered_rows(tail, inner)
+    )
+    page = state.memory_selected_index // _MEMORY_PAGE_ROWS
+    pages = max(1, -(-len(state.memory_items) // _MEMORY_PAGE_ROWS))
+    start = page * _MEMORY_PAGE_ROWS
+    items = state.memory_items[start : start + _MEMORY_PAGE_ROWS]
+
+    def page_line(first: int, count: int) -> Text:
+        return _safe(
+            f"page {len(state.memory_cursor_stack) + 1}"
+            + (f" ({page + 1}/{pages})" if pages > 1 else "")
+            + "  ] next page  [ previous page"
+            + (
+                f"  showing {start + first + 1}-{start + first + count} "
+                f"of {len(state.memory_items)}"
+                if count < len(items)
+                else ""
+            ),
+            "cyan",
+        )
+
+    compact = False
+    free = room - _rendered_rows([*head, page_line(0, 0)], inner) - 4
+    if free < min(1, len(items)):
+        compact = True
+        head = [line.copy() for line in head]
+        for line in head:
+            line.no_wrap, line.overflow = True, "ellipsis"
+        free = room - len(head) - 1 - 2
+    count = min(len(items), max(1, free))
+    cursor_at = state.memory_selected_index - start
+    first = max(0, min(cursor_at - count // 2, len(items) - count))
+    table = (
+        Table(expand=True, box=box.SIMPLE_HEAD, show_edge=False)
+        if compact
+        else Table(expand=True)
+    )
+    table.add_column("", width=4)
+    table.add_column("id", style="cyan")
+    table.add_column("v", width=4)
+    table.add_column("owner")
+    table.add_column("trust", width=14)
+    table.add_column("freshness", width=10)
+    table.add_column("source")
+    for idx, item in enumerate(items[first : first + count], start + first):
+        cursor = ">" if idx == state.memory_selected_index else " "
+        checked = "x" if item.get("id") in state.memory_selected_ids else " "
+        row_owner = item.get("owner_scope")
+        reference = item.get("reference")
+        freshness = (
+            reference.get("freshness") if isinstance(reference, dict) else None
+        ) or ("stale" if item.get("stale") else "")
+        table.add_row(
+            _safe(f"{cursor}[{checked}]"),
+            _safe(item.get("id", "")),
+            _safe(item.get("artifact_version", "")),
+            _safe(
+                f"{row_owner.get('kind')}:{row_owner.get('id')}"
+                if isinstance(row_owner, dict)
+                else ""
+            ),
+            _safe(item.get("trust_tier", "")),
+            _safe(freshness),
+            _safe(item.get("source", "")),
+            style=_state_selection_style(state) if cursor == ">" else None,
+        )
+    line = page_line(first, count)
+    if compact:
+        line.no_wrap, line.overflow = True, "ellipsis"
+    return [*head, line, table]
 
 
 def _memory_text_of(entry: Mapping[str, Any]) -> str:
@@ -8983,7 +9061,7 @@ def _footer_status_line(state: TuiState, project: ProjectState) -> Text:
         return _render_progress_bar(project.progress)
     if state.message:
         return _safe(state.message, "bold magenta")
-    if state.mode == "memory":
+    if state.mode.startswith("memory"):
         return _safe(
             state.memory_message
             or ("Memory detail" if state.memory_expanded is not None else "Memory"),

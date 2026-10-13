@@ -1291,6 +1291,9 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
         import subprocess
         import tarfile
 
+        from test_windows_import_safety import _screen_has
+
+        from rush.setup.provision import default_data_root
         from rush.workflows import projects
         from rush.workflows.project_run import load_run_manifest, load_scan_events
         from scripts.probe_installed_artifacts import (
@@ -1369,6 +1372,9 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
                             capture_output=True,
                         )
                     ids.append(projects.register_project(root).project_id)
+                # The installed TUI's data root under this HOME: its registry
+                # and the memory grant the journey runs under.
+                data_root = default_data_root()
             seen = {}
             keys_seen = []
             resizes = []
@@ -1414,7 +1420,9 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
                         start = len(child.output())
                         last_frame_start = start
                         child.send(keys)
-                        child.wait_for(marker, lambda: marker in child.text(start))
+                        child.wait_for(
+                            marker, lambda: _screen_has(marker, child.text(start))
+                        )
                         shown = child.text(start)
                         keys_seen.append(
                             {"keys_hex": keys.hex(), "marker": marker, "output": shown}
@@ -1640,7 +1648,9 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
                     )
 
                     artifact_entries = _seed_native_artifact_actions(roots[0], ids[0])
-                    memory_entries = _seed_native_memory_actions(roots[0], ids[0])
+                    memory_entries = _seed_native_memory_actions(
+                        roots[0], ids[0], data_root
+                    )
                     press(b"\x1bOQ", roots[0].name)
                     press(b"\x1b[A\r", "[1/2]")
                     memory_actions = _exercise_native_memory_actions(

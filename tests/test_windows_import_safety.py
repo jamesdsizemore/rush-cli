@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -28,6 +29,16 @@ from test_subprocess_contract import _wait_until
 def _nn[T](value: T | None) -> T:
     assert value is not None
     return value
+
+
+def _screen_has(marker: str, text: str) -> bool:
+    """A marker match that survives soft-wrap: at 60 columns the footer wraps
+    `owner scope = project:<id>` after `=` and the panel border lands in between."""
+
+    def squash(value: str) -> str:
+        return re.sub(r"[\s│]+", " ", value)
+
+    return squash(marker) in squash(text)
 
 
 POSIX_ONLY = ("fcntl", "termios", "tty", "pwd", "grp", "resource")
@@ -1049,9 +1060,17 @@ def _seed_native_artifact_actions(root: Path, project_id: str) -> dict:
     return entries
 
 
-def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
-    import hashlib
+def _seed_native_memory_actions(root: Path, project_id: str, data_root: Path) -> dict:
+    """Seed the memory journey under the project's memory grant in `data_root`.
 
+    72-T04 (D3/D9): the installed TUI sends the registered project UUID as the
+    owner, which legacy `maintain` refuses, so the journey runs in `policy` mode.
+    72-T01 §3.9: policy mode shows only the grant's own expansion receipts, so the
+    expansions the detail view must list are recorded under that grant too."""
+    import hashlib
+    from unittest import mock
+
+    from rush.memory import authorization as auth
     from rush.memory.maintenance import run_maintenance_cycle
     from rush.memory.retrieval import MemoryAccess
     from rush.memory.store import (
@@ -1125,25 +1144,6 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
             permissions=ExecutionPermissions(cache_write=True),
         )
         assert _nn(linked["raw"])["code"] == "OK"
-    for index in range(6):
-        expanded = MemoryTool().run(
-            root,
-            operation="expand",
-            request={"id": first.id, "version": first.artifact_version},
-            session_allowlist=[first.source],
-            permissions=ExecutionPermissions(cache_write=True),
-            invocation_id=f"native-use-{index:02d}",
-            project_id=project_id,
-        )
-        assert _nn(expanded["raw"])["code"] == "OK"
-    from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
-
-    receipts = read_artifact_expansion_receipts_readonly(
-        root, first.id, first.artifact_version
-    )
-    assert {receipt["id"] for receipt in receipts} == {
-        f"native-use-{index:02d}" for index in range(6)
-    }
     stale_source = root / "native-missing-source.py"
     stale_source.write_text("def symbol():\n    return 1\n", encoding="utf-8")
     stale_source_hash = hashlib.sha256(stale_source.read_bytes()).hexdigest()
@@ -1189,6 +1189,55 @@ def _seed_native_memory_actions(root: Path, project_id: str) -> dict:
     )
     assert sweep.processed == 3 and sweep.changed == 3 and sweep.errors == ()
     stale_source.unlink()
+    from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
+    from rush.workflows.projects import memory_list_access
+
+    auth.grant_memory_scope(
+        project_root=root,
+        owner_scope=owner,
+        approved_sources=sorted(
+            {source for _identifier, _note, source in fixtures}
+            | {"native-stale", "native-expiry", "native-skill"}
+            # The TUI's create form proposes under its default source `tui`.
+            | {"tui"}
+        ),
+        # `history`: the journey lists archived rows (a historical read).
+        allowed_operations=["ask", "expand", "history", "list", "write"],
+        expected_policy_revision=int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        ),
+        consent=True,
+        data_root=data_root,
+    )
+    # MemoryTool and the policy reader resolve the OS data root; point it at the
+    # installed TUI's.
+    with mock.patch("rush.setup.provision.default_data_root", return_value=data_root):
+        for index in range(6):
+            expanded = MemoryTool().run(
+                root,
+                operation="expand",
+                request={
+                    "schema_version": 2,
+                    "artifact_id": first.id,
+                    "artifact_version": first.artifact_version,
+                    "offset": 0,
+                    "max_bytes": 4096,
+                    "max_tokens": 4096,
+                    "sources": [first.source],
+                },
+                permissions=ExecutionPermissions(cache_write=True),
+                invocation_id=f"native-use-{index:02d}",
+                project_id=project_id,
+            )
+            assert _nn(expanded["raw"])["code"] == "OK", expanded
+        access = memory_list_access(root)
+        assert getattr(access, "kind", None) == "policy", access
+        receipts = read_artifact_expansion_receipts_readonly(
+            root, first.id, first.artifact_version, access=access
+        )
+    assert {receipt["id"] for receipt in receipts} == {
+        f"native-use-{index:02d}" for index in range(6)
+    }
     return entries
 
 
@@ -1198,12 +1247,17 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     store = TypedArtifactStore(root)
     observations: dict[str, Any] = {}
     press(b"\x1bOR", "[1-8] go")
-    press(b"4", "owner=project:")
-    press(b"]", "page 2/2")
-    press(b"[", "page 1/2")
+    # 72-T07: the list pages by backend cursor (20 rows, then the rest), so the
+    # outcome line, not the header, names which page has loaded.
+    domain_rows = sum(
+        1 for entry in entries.values() if entry.subject == "domain_knowledge"
+    )
+    press(b"4", "20 result(s)")
+    press(b"]", f"{domain_rows - 20} result(s)")
+    press(b"[", "20 result(s)")
     press(b" ", ">[x]")
     press(b" ", ">[ ]")
-    skill_filter = press(b"S", "page 1/1")
+    skill_filter = press(b"S", "1 result(s)")
     assert "subject=skill_pattern" in skill_filter
     skill = store.get_current("native-skill")
     assert _nn(skill).artifact_version == entries[_nn(skill).id].artifact_version + 1
@@ -1227,21 +1281,21 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     press(b"\t", "owner agent id>")
     press(b"\t\r", "owner scope = project:")
     press(b"f", "> trust:")
-    press(b"DERIVED\tnative-lone-source\tfresh\tfalse\t", "> owner:")
+    press(b"DERIVED\tnative-lone-source\tnot_applicable\tfalse\t", "> owner:")
     owner = entries["native-lone"].owner_scope
-    press(f"{owner.kind}:{owner.id}".encode() + b"\r", "native-lone")
+    press(f"{owner.kind}:{owner.id}".encode() + b"\r", "> native-lone")
     press(b"f", "> trust:")
     # Clear each reviewed filter using its exact previously supplied value.
     for value in (
         "DERIVED",
         "native-lone-source",
-        "fresh",
+        "not_applicable",
         "false",
         f"{owner.kind}:{owner.id}",
     ):
         press(b"\x7f" * len(value) + b"\t", "[tab] field")
-    press(b"\r", "page 1/2")
-    press(b"/NATIVELONE\r", "native-lone")
+    press(b"\r", "20 result(s)")
+    press(b"/NATIVELONE\r", "> native-lone")
     import re
 
     expanded = press(b"x", "Content:")
@@ -1258,7 +1312,10 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     seen: set[str] = set()
     detail_frames = []
     while required - seen:
-        seen.update(marker for marker in required if marker in expanded)
+        # The detail view hard-wraps each line at a fixed chunk (24 columns at
+        # 60x20), so an id can span two rows: compare with row breaks removed.
+        joined = re.sub(r"[\s│]", "", expanded)
+        seen.update(marker for marker in required if marker in joined)
         detail_frames.append(expanded)
         if required <= seen:
             break
@@ -1278,14 +1335,14 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
         returned = press(b"[", f"rows {previous_start}-")
         assert "rows " in returned
         observations["detail_scroll_previous"] = returned
-    press(b"-", "native-lone")
+    press(b"-", "> native-lone")
     press(b"p", "promote preview:")
     press(b"n", "promote cancelled")
     assert _nn(store.get_current("native-lone")).artifact_version == 1
     press(b"p", "promote preview:")
     press(b"y", "promotion denied:")
     assert _nn(store.get_current("native-lone")).trust_tier == "DERIVED"
-    press(b"/NATIVECORROBORATED\r", "native-primary")
+    press(b"/NATIVECORROBORATED\r", "> native-primary")
     press(b"p", "promote preview:")
     observations["promotion"] = press(b"y", "promoted to STATED")
     # Promotion creates canonical reviewed candidate; original evidence retained.
@@ -1295,7 +1352,11 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
         and _nn(row).content == {"note": "NATIVECORROBORATED"}
         for row in promoted
     )
-    press(b"/NATIVELONE\r", "native-lone")
+    press(b"/NATIVELONE\r", '"note": "NATIVELONE"')
+    # The denied promotion above left a candidate row with the same text; its UUID id
+    # sorts before `native-lone` in the cursor-ordered list, so step down to the row
+    # under test.
+    press(b"j", "> native-lone")
     press(b"e", "edit note>")
     press(b"NATIVEEDITED\r", "edit preview:")
     press(b"n", "edit cancelled")
@@ -1310,18 +1371,18 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     press(b"y", "edit applied")
     assert _nn(store.get_current("native-lone")).artifact_version == 3
     assert _nn(store.get_current("native-lone")).content == {"note": "NATIVEEDITED"}
-    press(b"/NATIVEEDITED\r", "native-lone")
+    press(b"/NATIVEEDITED\r", "> native-lone")
     press(b"a", "archive preview:")
     press(b"n", "archive cancelled")
     assert _nn(store.get_current("native-lone")).archived_at is None
     press(b"a", "archive preview:")
     press(b"y", "archived native-lone")
     assert _nn(store.get_current("native-lone")).archived_at is not None
-    press(b"f\t\t\ttrue\r", "native-lone")
+    press(b"f\t\t\ttrue\r", "> native-lone")
     press(b"a", "restore preview:")
     press(b"y", "restored native-lone")
     assert _nn(store.get_current("native-lone")).archived_at is None
-    press(b"f\t\t\t" + b"\x7f" * 4 + b"\r", "native-lone")
+    press(b"f\t\t\t" + b"\x7f" * 4 + b"\r", "> native-lone")
     press(b"d", "preview: 1 record(s) selected")
     press(b"n", "delete cancelled")
     assert store.get_current("native-lone") is not None
@@ -1344,7 +1405,7 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
         if row["id"] not in before
     ]
     assert len(created) == 1 and _nn(created[0]).content == {"note": "NATIVECREATED"}
-    press(b"/NATIVELONG\r", "native-long")
+    press(b"/NATIVELONG\r", "> native-long")
     payload = _nn(store.get_version_content("native-long", 1)).encode()
     page_ranges: list[Any] = []
     visible_contents: list[Any] = []
@@ -1365,8 +1426,10 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
                 break
             header_rows.append(rendered[:chunk_width])
         header = "".join(header_rows).rstrip()
+        # 72-T07: the byte-range line is followed by the integrity line.
         bounds = re.fullmatch(
-            r"native-long v1 bytes (\d+)\.\.(\d+) (complete|\[x\] next page)",
+            r"native-long v1 bytes (\d+)\.\.(\d+) (complete|\[x\] next page)\s*"
+            r"representation (?:base64|utf8)\s+integrity \S+\s+sha256:[0-9a-f]{64}",
             header,
         )
         assert bounds is not None, frame
@@ -1448,7 +1511,7 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     previous = press(b"[", f"bytes {page_ranges[previous_index][0]}")
     observations["cached_previous_chunks"] = visible_page(previous, previous_index)
     observations["continuation"] = frames
-    press(b"-", "native-long")
+    press(b"-", "> native-long")
     versions = {
         row["id"]: row["artifact_version"] for row in store.list_artifact_refs()
     }
@@ -1534,7 +1597,7 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         preview_maintenance_candidates,
         run_maintenance_cycle,
     )
-    from rush.memory.retrieval import MemoryAccess
+    from rush.memory.retrieval import MemoryAccess, route_access
     from rush.memory.store import TypedArtifactStore
     from rush.tui import _artifact_cursor
     from rush.workflows.projects import read_project_artifact_page, register_project
@@ -1544,7 +1607,7 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
     data_root = tmp_path / "registry"
     project_id = register_project(root, data_root=data_root).project_id
     artifacts = _seed_native_artifact_actions(root, project_id)
-    memory = _seed_native_memory_actions(root, project_id)
+    memory = _seed_native_memory_actions(root, project_id, data_root)
     for rel in ("native-report-00.txt", "native-report-01.txt", "native-binary.bin"):
         entry = artifacts[rel]
         cursor = _artifact_cursor(
@@ -1567,8 +1630,14 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         ]
         == "native-create-native-lone"
     )
-    owner = memory["native-lone"].owner_scope
-    sources = sorted({entry.source for entry in memory.values()})
+
+    # The seed leaves the project under its memory grant (policy mode).
+    def policy_access(operation: str, *, apply: bool = False) -> MemoryAccess:
+        access = route_access(root, operation, apply=apply, data_root=data_root)
+        assert isinstance(access, MemoryAccess) and access.kind == "policy", access
+        assert access.owner_scope == memory["native-lone"].owner_scope
+        return access
+
     for task, identifier in (
         ("staleness_sweep", "native-stale"),
         ("skill_admission_check", "native-skill"),
@@ -1577,21 +1646,59 @@ def test_native_action_fixtures_use_real_snapshot_and_memory_producers(tmp_path:
         candidates = preview_maintenance_candidates(
             task,  # type: ignore[arg-type]
             project_root=root,
-            access=MemoryAccess.legacy(
-                root, sources, owner_scope=owner, operation="list"
-            ),
+            access=policy_access("list"),
         )
         assert candidates == [{"id": identifier, "artifact_version": 2}]
     stale_sweep = run_maintenance_cycle(
         "staleness_sweep",
         project_root=root,
-        access=MemoryAccess.legacy(root, sources, owner_scope=owner, operation="write"),
+        access=policy_access("maintain", apply=True),
         candidate_ids=["native-stale"],
         expected_revisions={"native-stale": 2},
     )
     assert stale_sweep.processed == 1 and stale_sweep.changed == 1
     assert stale_sweep.errors == () and stale_sweep.refused == ()
     assert _nn(TypedArtifactStore(root).get_current("native-stale")).stale is True
+
+
+def test_tui_maintenance_batch_keeps_rows_its_own_earlier_task_rewrote(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One reviewed `w` batch applies its tasks in order. `promotion_sweep`
+    rewrites native-stale (its symbol source is gone, so its corroboration count
+    drops); that row is still the reviewed row for `staleness_sweep`, never a
+    concurrent change that refuses the reviewed stale marking."""
+    from rush import tui
+    from rush.memory.store import TypedArtifactStore
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import register_project
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    root = tmp_path / "project"
+    root.mkdir()
+    data_root = default_data_root()
+    project_id = register_project(root, data_root=data_root).project_id
+    _seed_native_memory_actions(root, project_id, data_root)
+    project = tui.ProjectState(name="project", root=root, project_id=project_id)
+    state = tui.TuiState(projects=[project], data_root=data_root)
+    actions = tui.default_scan_actions()
+    for key in ("f3", "4", "w", "y"):
+        tui._dispatch_key(state, key, actions)
+        deadline = time.monotonic() + 30
+        tui._pump(state, actions)
+        while state.memory_request is not None:
+            assert time.monotonic() < deadline, state.memory_request
+            time.sleep(0.01)
+            tui._pump(state, actions)
+    assert "staleness_sweep: changed 0" not in state.memory_message
+    assert " -> v" not in state.memory_message, state.memory_message
+    store = TypedArtifactStore(root)
+    assert _nn(store.get_current("native-stale")).stale is True
+    assert _nn(store.get_current("native-expiry")).expired is True
 
 
 def _windows_installed_tui_child(
@@ -1861,7 +1968,7 @@ def _windows_installed_tui_child(
                         break
                     time.sleep(0.05)
                     continue
-                if marker in frame and (not absent or absent not in frame):
+                if _screen_has(marker, frame) and (not absent or absent not in frame):
                     transcript["frames"][label] = SecretRedactor.redact_text(frame)
                     return
                 if proc is not None and proc.poll() is not None:
@@ -2169,28 +2276,9 @@ def _windows_installed_tui_child(
                 artifact_root, artifact_project.project_id
             )
             memory_entries = _seed_native_memory_actions(
-                artifact_root, artifact_project.project_id
-            )
-            # 72-T04 (D3/D9): the installed TUI sends the registered project UUID as
-            # the owner, which legacy `maintain` refuses; the flow runs in `policy`
-            # mode under this grant (the TUI supplies the source list).
-            from rush.memory import authorization as auth
-            from rush.memory.store import OwnerScope
-
-            policy_root = Path(local_app_data) / "Rush"
-            auth.grant_memory_scope(
-                project_root=artifact_root,
-                owner_scope=OwnerScope("project", artifact_project.project_id),
-                approved_sources=sorted(
-                    {entry.source for entry in memory_entries.values()}
-                ),
-                allowed_operations=["ask", "expand", "list", "write"],
-                expected_policy_revision=int(
-                    auth.load_policy_readonly(data_root=policy_root)["policy_revision"]
-                    or 0
-                ),
-                consent=True,
-                data_root=policy_root,
+                artifact_root,
+                artifact_project.project_id,
+                Path(local_app_data) / "Rush",
             )
             resize(columns, rows)
             proc = subprocess.Popen(
