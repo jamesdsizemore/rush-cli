@@ -212,11 +212,11 @@ Rush keeps one memory store per project (`.rush/memory.db`). Every connected age
 
 ### Give an agent access
 
-A memory grant names the operations, sources and owner an agent may use. Only the user creates one, from the CLI. `rush memory grant --project PATH --source SOURCE` previews: it prints the operations, sources and owner the grant would approve, how many rows each source holds today, and the exact approve command. Run the printed approve command to apply it; it carries `--approve`, the policy revision the preview read, and `--allow-cache-write`. A preview writes nothing.
+A memory grant names the operations, sources and owner an agent may use. Only the user creates one, from the CLI. `rush memory grant --project PATH --source SOURCE --expected-policy-revision N` previews, where `N` is the current policy revision (`0` before the first grant is written): it prints the operations, sources and owner the grant would approve, how many rows each source holds today, and the exact approve command. Run the printed approve command to apply it; it carries `--approve`, the policy revision the preview read, and `--allow-cache-write`. A preview writes nothing.
 
 <!-- t09-example: agents-grant-preview -->
 ```bash
-rush memory grant --project . --source session_memory:record_turn --json
+rush memory grant --project . --source session_memory:record_turn --expected-policy-revision 0 --json
 ```
 
 `rush memory revoke --grant-id ID` previews a revocation and prints its approve command the same way. `rush memory bind-store --project PATH` previews binding the project's memory store and prints an approve command that carries `--expected-digest`; if the store changed after the preview, applying it is refused and a fresh preview prints a new command.
