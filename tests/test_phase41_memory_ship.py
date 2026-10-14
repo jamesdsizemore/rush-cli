@@ -47,7 +47,7 @@ def test_checkpoint_journal(tmp_path: Path):
     dest = journal.save_checkpoint(
         "session-1", {"author": "agent"}, ["src/main.py", "tests/test.py"]
     )
-    assert dest.exists()
+    assert dest is not None and dest.exists()
 
     data = journal.restore_checkpoint("session-1")
     assert data is not None

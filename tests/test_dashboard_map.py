@@ -3370,7 +3370,7 @@ def _child_crash_after_artifact_receipt(
     def _crash(*_a: object, **_k: object) -> None:
         os._exit(0)
 
-    project_run_module.prepare_handoff = _crash
+    project_run_module.prepare_handoff = _crash  # type: ignore[assignment]  # crash stub replaces the real signature on purpose
     project_run_module.build_handoff(
         project_id,
         "run-dead",

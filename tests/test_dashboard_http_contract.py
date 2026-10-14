@@ -3334,7 +3334,8 @@ def test_windows_owner_mutex_wait_results_fail_closed(
     try:
         if owned:
             lock._acquire_windows_mutex()
-            assert lock._windows_mutex_handle == 41
+            # set only on the win32 path, so mypy on POSIX does not see it
+            assert vars(lock)["_windows_mutex_handle"] == 41
         else:
             with pytest.raises(dashboard_state.OwnerLockError):
                 lock._acquire_windows_mutex()
