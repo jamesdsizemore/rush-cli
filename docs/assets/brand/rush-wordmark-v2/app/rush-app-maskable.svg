@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-labelledby="title"><title id="title">Rush application icon</title><rect width="1024" height="1024" fill="#080b18"/><g transform="translate(252.952 172) scale(8.09524)"><ns0:defs xmlns:ns0="http://www.w3.org/2000/svg">
+    <ns0:linearGradient id="rush-glass" x1="13" y1="26" x2="52" y2="75" gradientUnits="userSpaceOnUse">
+      <ns0:stop stop-color="#072F40" /><ns0:stop offset="1" stop-color="#130F2D" />
+    </ns0:linearGradient>
+    <ns0:linearGradient id="rush-charge" x1="18" y1="27" x2="45" y2="65" gradientUnits="userSpaceOnUse">
+      <ns0:stop stop-color="#FFA4DE" /><ns0:stop offset=".32" stop-color="#FF38B8" /><ns0:stop offset="1" stop-color="#F5008A" />
+    </ns0:linearGradient>
+  </ns0:defs>
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M24 17V23L14 34C12.7 35.5 12 37.4 12 39.4V68C12 73 15.8 77 21 77H43C48.2 77 52 73 52 68V39.4C52 37.4 51.3 35.5 50 34L40 23V17" fill="url(#rush-glass)" stroke="#18EFFF" stroke-width="3" stroke-linejoin="round" />
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M44 28L52 37V68C52 73 48.2 77 43 77H29" stroke="#B75CFF" stroke-width="3" stroke-linecap="round" />
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M16 69C16 71.5 17.8 73 21 73H29" stroke="#FF3CAD" stroke-width="2.5" stroke-linecap="round" />
+  <ns0:rect xmlns:ns0="http://www.w3.org/2000/svg" x="22" y="7" width="20" height="11" rx="2" fill="#16EDFF" />
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M25 10H39M24 22H40" stroke="#03111D" stroke-width="2" stroke-linecap="round" />
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M35 27L18 49H29L23 70L49 40H36L43 27H35Z" fill="#B75CFF" transform="translate(1.5 1.5)" />
+  <ns0:path xmlns:ns0="http://www.w3.org/2000/svg" d="M35 27L18 49H29L23 70L49 40H36L43 27H35Z" fill="url(#rush-charge)" stroke="#06111F" stroke-width="1.2" stroke-linejoin="round" />
+</g></svg>

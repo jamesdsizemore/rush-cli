@@ -1,6 +1,6 @@
 # Correct Workflow Design: Phase 72 failure register
 
-Every orchestration failure from the Phase 72 development run (2026-10-07 17:26 UTC to 2026-10-12 18:18 UTC), and the workflow configuration that prevents each one.
+Every orchestration failure from the Phase 72 development run (2026-10-07 17:26 UTC to 2026-10-12 18:18 UTC), and the workflow configuration that prevents each one. Section 3.16 adds the failures of the remediation run that followed (2026-10-13 18:14 UTC to 2026-10-14 13:08 UTC, session `b1219fd6`), which ended with PR #3 merged as `1f770e4`.
 
 ## 1. Scope, method and cost
 
@@ -91,6 +91,11 @@ The configuration below replaces the Phase 72 run. It is assembled from the corr
 - **Relaunch, never resume:** never resume a parallel workflow to change prompts (the resume cache is positional). Relaunch fresh with args marking finished steps done, after a mock run lists the exact agent calls.
 - **Workflow agents:** never SendMessage a workflow-owned agent, because it starts a second copy.
 - **Classifier denials:** retry once with the narrowest equivalent action, then surface it.
+- **Power:** before any run longer than 10 minutes, check `pmset -g batt`; on battery, say so and get AC first. `caffeinate -i` does not stop a low-battery sleep.
+- **Wait loops:** every `until <marker>` loop runs under `rtk proxy timeout N`; no unbounded sleep loops.
+- **Kill orders:** "kill unused shells/agents" means one OS-level sweep (`pgrep -fl` on the session id, scratchpad and worktree paths, plus ListAgents) and ending every idle one in that same turn. A wait loop can be ended by writing its marker.
+- **"Finish now":** ship what is verified (commit, push, merge) in that turn; list what is not done in one line. Never answer with an ETA plan, a new agent or new tooling.
+- **Cleanup before removal:** archive gate logs and records into `.git/phase<id>-archive/`, verify counts, then remove the worktree, without asking.
 
 ### 2.7 Reporting
 
@@ -317,3 +322,33 @@ One row per distinct fail point. "James said" quotes his words verbatim; "not ca
 |---|---|---|---|---|
 | F137 | Ran settings greps and told James the session was running at medium reasoning effort and to add an Opus effort setting, then conceded 'I don't know what the fix is' when he said it was not an effort issue. | "THIS ISN'T AN EFFORT ISSUE" | msg 48, 49; 0a2340ec L7989 | Diagnose from the work product: compare plan vs failure analysis, count rounds, check where review scope was set. Propose a settings change only when evidence ties the failure to it. |
 | F138 | Issued a worktree-creation loop with a mistyped commit id (a1378f4bd) and a stray $(echo), immediately after stopping 5 agents, and James interrupted it. | "THAT'S JUST FUCKING GREAT" | msg 208; c5bbc55b L28761 | Take the full sha from `git rev-parse` into a variable and assert it resolves before the loop. Create the pre-merge worktrees from a script already tested on one copy, not an inline for-loop. |
+
+### 3.16 Remediation run, 2026-10-13 to 2026-10-14 (22)
+
+Evidence cites lines of session `b1219fd6` (L line) or the named record.
+
+| # | What I did | James said | Evidence | Correct configuration |
+|---|---|---|---|---|
+| F139 | Reported the remediation scope one issue at a time instead of one researched pass. | "Your response is nothing more than progressive revelation which is forbidden by rule." | L1031 | One exhaustive sweep of every failing gate before the first reply. |
+| F140 | Planned native Windows and Linux lanes for the remediation run. | "FUCK THe windows and linux - you are not burning out my tokens" | L355 | Darwin-only local run; native lanes only when James asks. |
+| F141 | Ran a temp-cleaner script he had not asked for. | "kill that fucking cleanup script" | L438 | Delete only my own named temp paths, inline, once. |
+| F142 | Drafted the first fix plan with the last workflow's design (suite per task, no Codex, no token tools) and as prose. | "don't fucking run the full-test suite after every fucking task" / "do not give me 400 pages of fucking prose" | L2261, L2294, L2363, L2474 | Plan from section 2: cards, one suite in integration, Codex CLI reviews, rtk/context-mode/headroom. |
+| F143 | Started fixing issues while the plan he asked for was still being written, then asked about plan cards. | "If you are fixing all of this shit, then why in the fuck are we writing a fucking plan?" | L2949, L3049, L3076 | Plan first, approval, then fixes. |
+| F144 | Let tests write the worktree's `.rush/` (sessions, memory.db, tracked `cache.db`) and leaked temp dirs; a product defect (`_v2_maintain` ran on `Path.cwd()`) hid behind it until round 2. | "YOU NEED TO ADDRESS YOUR TMP AND TEST DIRECTORIES" | L3528; fix `e6ab3e3`, `e309bf4` | Run the `.rush` teardown watcher in round 1 of every suite. |
+| F145 | Ran R8 (20,499 matrix cells) as one process; it hit its 3600 s timeout. | not called out | `pytest/r8-combined-1.log` | Chunk large matrices across 8 concurrent processes from the start. |
+| F146 | Used pytest `--deselect` on matrix names; it matches prefixes, so 230 sibling tests silently did not run in round 1. | not called out | `pytest/c8-suite-1.log` | Deselect `<matrix>[` only; compare collected count with expected count. |
+| F147 | Left two shard-only failures (t28d drain, t5 stdio race) that had failed in earlier runs unfixed until after the F6 freeze, which forced freeze F7 and another full round. | not called out | `pytest/c8-suite-2.log` | Fix every known flake before the freeze. |
+| F148 | Kept 7 superseded runs (3 suite processes, the 4-process G6 M8b chain) going until James typed a stop. | "YES STOP" | L6625 | Stop superseded runs the turn they are superseded, with the stop asked in that message. |
+| F149 | Sent status lines with unverified numbers ("7 of 8 shards") that the stop hook flagged twice. | "THIS IS RIDICULOUS" | L5446; hook feedback before L5369 | Every number in a status line read from its log in that turn. |
+| F150 | Started the F7 suite, 4 live drivers and the G6 agent at 20:21 local on battery; the Mac hit 1 % and slept 20:29 to 05:28, losing 9 hours. I never checked power. | not called out | `pmset -g log`: "Low Power Sleep ... Charge:1%", "Wake from Hibernate ... 05:28:58" | `pmset -g batt` before long runs; AC required. |
+| F151 | Ran the closing steps one after another (suite, then drivers, then receipts, then report, then plan) instead of preparing every doc edit while the suite ran. | "why in the fuck are you doing these one at a fuckoing time?" | L8831 | Prepare all post-run edits in parallel with the run; only counts wait for it. |
+| F152 | Answered "how much is left" with tool calls before any text. | "ANSWER MY FUCKING QUESTION" | L8992 | Answer in text first. |
+| F153 | Answered "finished, committed, merged and pushed right now" with a 07:15 ETA, a new drafting agent and a new history-rewrite tool (C11 rewrite, rebuild, driver rerun). He repeated the order 3 times. | "I WANT THIS SHIT FINISHED, COMMITTED, MERGED, AND PUSHED RIGHT FUCKING NOW" | L9020, L9127, L9252 | Ship the verified state in that turn: commit, push, merge. |
+| F154 | Stopped and waited after an interrupted tool call while he was ordering completion. | "I TOLD YOU TO FUCKING GET THIS SHIT DONE - I DID NOT USE THE WORD WAIT" | mid-turn message after L9252 | An interruption plus a completion order means continue the completion. |
+| F155 | Merged PR #3 without first checking it was a draft; the first merge failed. | not called out | `gh pr merge 3`: "Pull Request is still a draft" | Check `isDraft` and run `gh pr ready` before merging. |
+| F156 | On "kill unused shells/agents" checked only the harness task list, answered "nothing of mine is idle", and missed 2 orphan 15-hour `until grep DONE` loops with no timeout that kept 2 finished agents listed. About ten orders. | "IT ONLY TOOK ME TEN FUCKING TIMES TO TELL YOU TO DO SOMEHTING BEFORE YOU FUCKING DID IT" | L9814, L9895, L9955 | OS-level sweep in one call; wait loops under a timeout. |
+| F157 | My own no-unapproved-stop hook (F132) reads only the last submitted prompt, so his mid-turn kill orders never unlocked it; I asked him to retype "stop"/"kill" turn after turn instead of saying so once. | "I TOLD YOU TO DO THAT ALREADY CUNT" | L9601, L9664; hook `no-unapproved-stop.js` | Hook reads mid-turn messages too (proposed, needs James's go); explain a block once. |
+| F158 | Asked whether to remove the merged worktree because its gate records lived inside it, instead of archiving them and removing it. | "CAN YOU FUCKING NOT PULL THOSE LOGS AND RECORDS, SAVE THEM, AND THEN REMOVE THE FUCKING WORKTREE" | L9766; archive `.git/phase72-archive/` (603 gate files, 18 scope files, ledger) | Archive, verify counts, remove, in one turn. |
+| F159 | Said the run took "three days"; the first Phase 72 commit `15c4fe7` is dated 2026-10-05 and the merge 2026-10-14: nine days. | "THREE DAYS?????? THREE FUCKING DAYS????" | L9562; `git log 15c4fe7` | Read the date from git before stating a duration. |
+| F160 | Closed the phase with work left undone: the F7 full suite was killed unfinished, the 16 G16 commit-message records (C11) were never written into history, and the 19 red-control G6 rows were never rerun. | not called out | report `docs/reports/phase-72-memory-acceptance.md` (F6 suite result only); `refs/wip/phase72-g6-ledger` | Run the final suite and the record steps before the freeze, so "finish now" ships a complete state. |
+

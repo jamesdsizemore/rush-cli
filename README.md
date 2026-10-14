@@ -1,6 +1,12 @@
 # Rush
 
-**Agentic code-quality tools for coding agents.** Rush is a Python CLI and MCP server that gives AI coding agents (and you) a fast, local way to review, lint, format, test, and secure a codebase — plus token-saving context tools built for how agents actually work.
+<p align="center">
+  <img src="docs/assets/brand/rush-wordmark-v2/hero/github-hero-1280.png" alt="Rush — give your agents more than a prompt. Project memory, relevant context, and control over what happens next." width="1280" />
+</p>
+
+**Give your agents more than a prompt.** Rush is local-first infrastructure for coding agents: project memory they can query, code context they can use, and controls for how they act. Available through a Python CLI and stdio MCP server.
+
+Keep decisions across sessions. Bring relevant code into the next task. Put permissions and isolation around supported operations. Review, lint, tests, and security checks supply feedback along the way.
 
 [![Release](https://img.shields.io/github/v/release/jamesdsizemore/rush-cli?style=flat-square&color=00ffff&label=release)](https://github.com/jamesdsizemore/rush-cli/releases)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB.svg?style=flat-square&logo=python&logoColor=white)](https://python.org)
@@ -18,15 +24,14 @@
 
 ## Why Rush
 
-AI coding agents move fast and occasionally make a mess: hallucinated imports, empty placeholder functions, huge test-failure traces that blow your context budget, and the occasional overconfident `rm -rf`. Rush sits between you and that mess — a local-first toolbelt an agent (or you, from the terminal) can call before anything ships:
+Your project has a history. Your agent needs a way to use it. Rush gives coding agents the tools to retrieve prior decisions, find relevant code, and execute within explicit boundaries:
 
-- **Catch it before it ships** — deterministic AST review, linting, formatting, and test running across Python and JS/TS, dispatched to real engines (Ruff, ESLint, Biome, pytest, and more).
-- **Keep agents on a leash** — a command-safety firewall that blocks destructive shell commands, isolated git worktrees for patch attempts, and a failure ledger so agents stop repeating the same broken fix.
-- **Give agents a real memory** — a typed, queryable store per project (not a stuffed context window) that survives across sessions and agents, with a trust gate so nothing gets treated as fact until it's corroborated.
-- **Stop burning tokens** — context packing, AST skeletons, and compact result formats so you're not pasting whole files and 10,000-line stack traces into a chat window.
-- **Talk to your agent directly** — a stdio MCP server so Claude Code, Windsurf, Zed, and other MCP-capable agents can call Rush's tools natively, not just from a shell.
+- **Remember the work** — store and retrieve typed project memories and session checkpoints instead of relying on a chat transcript.
+- **Find the signal** — pack context, inspect AST outlines, and consume compact results within a working context budget.
+- **Act with boundaries** — permission checks, command guards, and isolated Git worktrees bound supported operations.
+- **Close the loop** — review, lint, format, test, and security tools return structured findings agents can act on.
 
-Rush runs entirely on your machine. It doesn't upload your code anywhere, and it doesn't install anything in the background — it drives quality/security engines that are already on your `PATH`.
+Rush discovers optional quality/security engines from your environment. Use `rush capabilities .` to inspect what's available before running a workflow.
 
 ---
 

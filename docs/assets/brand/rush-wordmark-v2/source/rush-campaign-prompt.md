@@ -1,0 +1,7 @@
+# Rush campaign artwork
+
+Generated with the built-in imagegen tool. Text and refined logo are composed separately by `build.py`; they are not generated pixels.
+
+## Complete prompt
+
+Use case: ads-marketing. Create a premium, striking abstract background artwork for Rush, developer infrastructure for coding agents. No text, no typography, no logos, no watermarks, no interface cards, no icons, no node diagram. Wide landscape composition, approximately 16:9. Background near-black midnight navy #080b18. LEFT 55 PERCENT MUST REMAIN EMPTY DARK NAVY for precise brand typography added separately. Visual concentrated entirely in RIGHT 45 PERCENT: a powerful sculptural lightning-bolt shaped folded ribbon, dark polished obsidian and translucent smoked glass, photographed with macro product precision, suspended in darkness. Razor-thin cyan #30e8ff edges, hot pink #ff45cf internal light, a restrained violet #a66bff reflection. Three fine luminous parallel streams arc into its lower tip, pass through folded translucent layers, and launch diagonally towards the top right, suggesting accumulated knowledge becoming directed action. High contrast, dramatic cropped scale, crisp tangible material, directional momentum, minimal controlled bloom, subtle atmospheric depth. No busy starfield, no clouds, no galaxy, no brain, no circuitry wallpaper, no generic AI orb, no ground grid. Editorial technology campaign, audacious and precise. Keep top-left and bottom-left completely dark and clean. Preserve broad dark margins at bottom for typography. Output polished final artwork.
