@@ -1057,7 +1057,11 @@ def test_t06_query_admin_permissions_and_versions(tmp_path: Path) -> None:
     put(env.store, "dk2", ALICE, text="needle dk2")
     gone = apply_call(env, "archive", m_archive(artifact_id="dk2", expected_version=1))
     assert code(gone) == "OK"
-    assert "dk2" not in ids(call(env, "list", r_list()))
+    # Caps hold every row on one page: the two uuid4 rows above vary the page's
+    # token size, and a default-cap page can end before dk2 (complete=False).
+    hidden = call(env, "list", r_list(max_tokens=8192, max_bytes=65536))
+    assert raw(hidden)["complete"] is True
+    assert "dk2" not in ids(hidden)
     back = apply_call(
         env,
         "archive",
@@ -1070,7 +1074,9 @@ def test_t06_query_admin_permissions_and_versions(tmp_path: Path) -> None:
         ),
     )
     assert code(back) == "OK"
-    assert "dk2" in ids(call(env, "list", r_list()))
+    shown = call(env, "list", r_list(max_tokens=8192, max_bytes=65536))
+    assert raw(shown)["complete"] is True
+    assert "dk2" in ids(shown)
 
     # Delete {r1:2, dk2:1}: dk2 is stale (archive and restore advanced it), so both roll back.
     rows_now = row_count(env)
@@ -7349,13 +7355,48 @@ def _dashboard_cell(tmp_path: Path) -> None:
         server.server_close()
 
 
+# Matrix id grammar (`<transport>.<route>-<dim>-<value>...`, G2): the route is a ROUTE_KEYS entry
+# and the entry point is the paired `function-<name>` / `operation-<name>` token. The cell
+# parameters keep the entry point's own name; only the id is spelled in the grammar.
+_NO_FIELD_ROUTE = {
+    "v1_ask": "ask",
+    "v1_recall": "recall",
+    "v1_list": "list",
+    "v1_expand": "expand",
+    "v1_related": "related",
+    "v1_prepare": "prepare",
+    "v1_plan_checks": "plan_checks",
+    "v1_intent_check": "intent",
+    "v1_recipe_resolve": "recipe",
+    "v1_last_success": "last_success_diagnose",
+    "store_get_current": "expand",
+    "store_search_candidates": "ask",
+    "read_visible": "retrieval_helper",
+    "cli_ask": "ask",
+}
+_SEAM_ROUTE = {
+    "version_history_readonly": "history",
+    "preview_import_records": "import",
+    "apply_import_records": "import",
+    "find_import_effect_readonly": "import",
+    "write_v2_receipt": "mutation_view",
+    "upgrade": "mutation_view",
+}
+
+
 def _all_cells() -> list[Any]:
     cells: list[Any] = list(_matrix_cells())
 
-    def add(transport: str, route: str, dim: str, value: str) -> None:
+    def add(
+        transport: str, route: str, dim: str, value: str, cell_id: str | None = None
+    ) -> None:
         cells.append(
             pytest.param(
-                transport, route, dim, value, id=f"{transport}.{route}-{dim}-{value}"
+                transport,
+                route,
+                dim,
+                value,
+                id=cell_id or f"{transport}.{route}-{dim}-{value}",
             )
         )
 
@@ -7363,17 +7404,42 @@ def _all_cells() -> list[Any]:
         for operation in NON_V2_OPERATIONS:
             add(transport, operation, "schema_version", "2")
     for operation in ("receive", "expand", "related", "resume", *ADMIN_OPS):
-        add("bridge", operation, "access", "restricted")
+        add(
+            "bridge",
+            operation,
+            "access",
+            "restricted",
+            f"bridge.mcp_bridge-operation-{operation}-access-restricted",
+        )
     for name in NO_FIELD:
-        add("inproc", name, "access", "policy_no_field")
+        add(
+            "inproc",
+            name,
+            "access",
+            "policy_no_field",
+            f"inproc.{_NO_FIELD_ROUTE[name]}-function-{name}-access-policy_no_field",
+        )
     for leaf in ("ask", "recall", "list", "write", "promote", "maintain"):
         add("cli", leaf, "access", "policy_no_field")
     for seam in SEAMS:
         for state in STORE_STATES:
             for form in ACCESS_FORMS:
-                add("seam", seam, "store", f"{state}-access-{form}")
+                add(
+                    "seam",
+                    seam,
+                    "store",
+                    f"{state}-access-{form}",
+                    f"internal.{_SEAM_ROUTE[seam]}-function-seam.{seam}"
+                    f"-store-{state}-access-{form}",
+                )
     for route in V2_OPS:
-        add("stdio", route, "access", "policy")
+        add(
+            "stdio",
+            route,
+            "access",
+            "policy",
+            f"mcp.{route}-function-stdio.{route}-access-policy",
+        )
     for leaf in _CLI_LEAVES:
         add("cli", leaf, "access", "policy")
     add("dashboard", "promote", "schema_version", "present")

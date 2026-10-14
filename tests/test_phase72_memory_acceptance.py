@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import concurrent.futures
 import contextlib
 import dataclasses
 import functools
@@ -3525,12 +3526,33 @@ def test_t09_route_mode_matrix_complete(
         problems.append(f"route inventory uses routes outside the 59 keys: {stray}")
     assert not problems, "\n".join(problems)
 
-    run = _pytest_children(["-q", *MATRIX_NODE_IDS], timeout=3600)
-    summary = run.stdout.strip().splitlines()[-1] if run.stdout.strip() else ""
-    passed = re.search(r"(\d+) passed", summary)
-    assert run.returncode == 0, run.stdout[-3000:]
-    assert passed and int(passed.group(1)) == len(all_ids), (summary, len(all_ids))
-    assert not re.search(r"skipped|xfailed|xpassed|error", summary), summary
+    # One process takes over an hour for every cell, so the collected cells run
+    # as concurrent chunks, each from an args file with its own basetemp, and
+    # every chunk must pass all of its cells.
+    node_ids = [
+        f"{path}::{name}[{cell}]" for (path, name), ids in cells.items() for cell in ids
+    ]
+    chunks = 8
+
+    def run_chunk(index: int) -> tuple[int, subprocess.CompletedProcess[str]]:
+        args = tmp_path / f"r8-chunk-{index}.args"
+        args.write_text("\n".join(node_ids[index::chunks]) + "\n", encoding="utf-8")
+        basetemp = f"--basetemp={tmp_path / f'r8-base-{index}'}"
+        return len(node_ids[index::chunks]), _pytest_children(
+            ["-q", basetemp, f"@{args}"], timeout=3600
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(chunks) as pool:
+        runs = list(pool.map(run_chunk, range(chunks)))
+    total = 0
+    for expected, run in runs:
+        summary = run.stdout.strip().splitlines()[-1] if run.stdout.strip() else ""
+        passed = re.search(r"(\d+) passed", summary)
+        assert run.returncode == 0, run.stdout[-3000:]
+        assert passed and int(passed.group(1)) == expected, (summary, expected)
+        assert not re.search(r"skipped|xfailed|xpassed|error", summary), summary
+        total += expected
+    assert total == len(all_ids), (total, len(all_ids))
 
 
 # ---------------------------------------------------------------------------
@@ -5841,8 +5863,8 @@ def _run_terminal_script(
         _terminal_step(
             term,
             receipts,
-            "correct-apply",
-            "version n+1 persisted",
+            "correct-preview",
+            "preview shown, nothing persisted",
             "c",
             "tab",
             *"terminal correction",

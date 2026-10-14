@@ -2624,6 +2624,46 @@ def test_t07_tui_hostile_terminal_text(
     assert "Memory explain" in text
 
 
+def test_t07_tui_table_marks_not_current_rows(tmp_path: Path) -> None:
+    """72-T05 D3 (plan L849): the TUI memory table lists v2 inspect items; a row that
+    is not usable as current carries its state (the applicability or `task_mismatch`
+    reason) in the `state` column, where `freshness` alone reads `current`."""
+    from rich.text import Text
+
+    from rush.tui import _memory_list_layout
+
+    state = TuiState(
+        projects=[ProjectState(name="t07", root=tmp_path, project_id="t07")],
+        data_root=tmp_path,
+    )
+    state.terminal_size = (200, 60)
+    state.memory_items = [
+        {
+            **_item(artifact_id, 1, freshness="current"),
+            "usable_as_current": not reasons,
+            "reason_codes": reasons,
+        }
+        for artifact_id, reasons in (
+            ("act", []),
+            ("rej", ["applicability_rejected"]),
+            ("pen", ["applicability_pending"]),
+            ("tsk", ["task_mismatch"]),
+        )
+    ]
+    console = Console(width=200, file=io.StringIO(), record=True)
+    console.print(*_memory_list_layout(state, [], [Text("")]))
+    text = console.export_text(styles=False)
+    rows = {
+        artifact_id: next(line for line in text.splitlines() if artifact_id in line)
+        for artifact_id in ("act", "rej", "pen", "tsk")
+    }
+    assert "state" in text, text
+    assert re.search(r"\brejected\b", rows["rej"]), text
+    assert re.search(r"\bpending\b", rows["pen"]), text
+    assert re.search(r"\btask_mismatch\b", rows["tsk"]), text
+    assert not re.search(r"rejected|pending|task_mismatch", rows["act"]), text
+
+
 # =============================================================================
 # FAMILIES, projectors, explain and the no-auto-approval contract
 # =============================================================================
@@ -4057,7 +4097,8 @@ def _version_ids(raw: dict[str, Any], obs: Obs) -> None:
 
 def _expand_raw(raw: dict[str, Any], obs: Obs) -> None:
     items = raw.get("items") or []
-    legacy = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    data = raw.get("data")
+    legacy: dict[str, Any] = data if isinstance(data, dict) else {}
     if raw.get("code") == "OK" and not items and "id" in legacy and "version" in legacy:
         # The dashboard section reads the exact version with the legacy request
         # (`{"id", "version"}`), whose page names the same record and bytes.
@@ -5847,7 +5888,15 @@ def test_t07_pty_walkthrough(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             return f"search needle: first hit {first_hit}"
 
         step("search", "/", *"needle", "enter", expect=searched)
-        step("clear search", "/", "enter")
+
+        def cleared(text: str, raw: bytes) -> str:
+            # The clear reruns the list on a worker thread; "]" sent before its
+            # result lands pages the old search rows, so wait for the count line.
+            assert "working: " in text, text[-800:]
+            assert "result(s)" in text.rpartition("working: ")[2], text[-800:]
+            return "search cleared: list reloaded"
+
+        step("clear search", "/", "enter", expect=cleared)
 
         def page_two(text: str, raw: bytes) -> str:
             assert "alice-dk-20" in text, text[-800:]

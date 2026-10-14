@@ -3953,49 +3953,48 @@ BASELINE = {
     "capability_ids": "none",
 }
 
-# (id suffix, dimension overrides, producer task that must land before the cell can pass)
-A_DIMENSIONS: tuple[tuple[str, dict[str, str], str | None], ...] = (
-    ("retrieval-lexical", {"retrieval": "lexical"}, None),
-    ("retrieval-hybrid", {}, None),
-    ("retrieval-implicit_default", {"retrieval": "implicit_default"}, None),
-    ("retrieval-implicit_none", {"retrieval": "implicit_none"}, None),
-    ("retrieval-implicit_malformed", {"retrieval": "implicit_malformed"}, None),
-    ("access-legacy_allowlist", {"access": "legacy_allowlist"}, None),
-    ("access-overlay", {"access": "overlay"}, None),
-    ("policy_state-missing_no_marker", {"policy_state": "missing_no_marker"}, None),
-    ("policy_state-missing_marker", {"policy_state": "missing_marker"}, None),
-    ("policy_state-invalid", {"policy_state": "invalid"}, None),
-    ("mode-historical", {"mode": "historical"}, None),
-    ("representation-utf8", {"representation": "utf8"}, None),
-    ("store-absent", {"store": "absent"}, None),
-    ("store-old_schema", {"store": "old_schema"}, None),
-    ("apply-apply", {"apply": "apply"}, None),
+# (id suffix, dimension overrides)
+A_DIMENSIONS: tuple[tuple[str, dict[str, str]], ...] = (
+    ("retrieval-lexical", {"retrieval": "lexical"}),
+    ("retrieval-hybrid", {}),
+    ("retrieval-implicit_default", {"retrieval": "implicit_default"}),
+    ("retrieval-implicit_none", {"retrieval": "implicit_none"}),
+    ("retrieval-implicit_malformed", {"retrieval": "implicit_malformed"}),
+    ("access-legacy_allowlist", {"access": "legacy_allowlist"}),
+    ("access-overlay", {"access": "overlay"}),
+    ("policy_state-missing_no_marker", {"policy_state": "missing_no_marker"}),
+    ("policy_state-missing_marker", {"policy_state": "missing_marker"}),
+    ("policy_state-invalid", {"policy_state": "invalid"}),
+    ("mode-historical", {"mode": "historical"}),
+    ("representation-utf8", {"representation": "utf8"}),
+    ("store-absent", {"store": "absent"}),
+    ("store-old_schema", {"store": "old_schema"}),
+    ("apply-apply", {"apply": "apply"}),
     (
         "cache_write-on-grant_ops-write",
         {"cache_write": "on", "grant_ops": "write"},
-        None,
     ),
-    ("cache_write-on-grant_ops-exact", {"cache_write": "on"}, None),
-    ("network-off", {"network": "off"}, None),
-    ("grant_ops-missing_one", {"grant_ops": "missing_one"}, None),
-    ("row_state-archived", {"row_state": "archived"}, None),
-    ("row_state-expired", {"row_state": "expired"}, None),
-    ("row_state-tampered", {"row_state": "tampered"}, None),
-    ("row_state-rejected", {"row_state": "rejected"}, "72-T05"),
-    ("row_state-pending", {"row_state": "pending"}, "72-T05"),
-    ("config-non_loopback", {"config": "non_loopback"}, None),
-    ("config-verdict_digest_mismatch", {"config": "verdict_digest_mismatch"}, None),
-    ("config-tags_digest_mismatch", {"config": "tags_digest_mismatch"}, None),
-    ("engine-unreachable", {"engine": "unreachable"}, None),
-    ("engine-timeout", {"engine": "timeout"}, None),
-    ("engine-nan", {"engine": "nan"}, None),
-    ("engine-wrong_dimension", {"engine": "wrong_dimension"}, None),
-    ("engine-wrong_count", {"engine": "wrong_count"}, None),
-    ("cursor-explicit_hybrid", {"cursor": "explicit_hybrid"}, None),
-    ("cursor-implicit_default", {"cursor": "implicit_default"}, None),
-    ("query-empty", {"query": "empty"}, None),
-    ("ack-present", {"ack": "present"}, None),
-    ("capability_ids-selected", {"capability_ids": "selected"}, None),
+    ("cache_write-on-grant_ops-exact", {"cache_write": "on"}),
+    ("network-off", {"network": "off"}),
+    ("grant_ops-missing_one", {"grant_ops": "missing_one"}),
+    ("row_state-archived", {"row_state": "archived"}),
+    ("row_state-expired", {"row_state": "expired"}),
+    ("row_state-tampered", {"row_state": "tampered"}),
+    ("row_state-rejected", {"row_state": "rejected"}),
+    ("row_state-pending", {"row_state": "pending"}),
+    ("config-non_loopback", {"config": "non_loopback"}),
+    ("config-verdict_digest_mismatch", {"config": "verdict_digest_mismatch"}),
+    ("config-tags_digest_mismatch", {"config": "tags_digest_mismatch"}),
+    ("engine-unreachable", {"engine": "unreachable"}),
+    ("engine-timeout", {"engine": "timeout"}),
+    ("engine-nan", {"engine": "nan"}),
+    ("engine-wrong_dimension", {"engine": "wrong_dimension"}),
+    ("engine-wrong_count", {"engine": "wrong_count"}),
+    ("cursor-explicit_hybrid", {"cursor": "explicit_hybrid"}),
+    ("cursor-implicit_default", {"cursor": "implicit_default"}),
+    ("query-empty", {"query": "empty"}),
+    ("ack-present", {"ack": "present"}),
+    ("capability_ids-selected", {"capability_ids": "selected"}),
 )
 A_OPS = ("ask", "recall", "list")
 A_TRANSPORTS = ("inproc", "mcp")
@@ -4007,7 +4006,6 @@ class Cell:
     op: str
     suffix: str
     dims: tuple[tuple[str, str], ...]
-    producer: str | None = None
 
     @property
     def dim(self) -> dict[str, str]:
@@ -4015,20 +4013,17 @@ class Cell:
 
     @property
     def ident(self) -> str:
-        base = f"{self.transport}.{self.op}-{self.suffix}"
-        return f"{base}-producer-{self.producer}" if self.producer else base
+        return f"{self.transport}.{self.op}-{self.suffix}"
 
 
 def a_cells() -> list[Any]:
     cells = []
     for transport in A_TRANSPORTS:
         for op in A_OPS:
-            for suffix, dims, producer in A_DIMENSIONS:
+            for suffix, dims in A_DIMENSIONS:
                 if suffix == "query-empty" and op != "list":
                     continue
-                cell = Cell(
-                    transport, op, suffix, tuple(sorted(dims.items())), producer
-                )
+                cell = Cell(transport, op, suffix, tuple(sorted(dims.items())))
                 cells.append(pytest.param(cell, id=cell.ident))
     return cells
 

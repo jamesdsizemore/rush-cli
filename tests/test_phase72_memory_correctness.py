@@ -7499,6 +7499,18 @@ def _m_caps(res: _MRes) -> tuple[int, int]:
     return int(res.data["bytes"]), int(res.data["tokens"])
 
 
+_M2_ID_ROUTE = {
+    ("dashboard", "memory_query"): "dashboard-operation-memory_query",
+    ("dashboard", "memory_expand"): "dashboard-operation-memory_expand",
+    ("internal", "recall_page"): "recall-function-recall_page",
+    ("internal", "hybrid_page"): "ask-function-hybrid_page",
+    ("internal", "expand_artifact"): "expand-function-expand_artifact",
+    ("bridge", "expand"): "mcp_bridge-operation-expand",
+    ("mcp", "ask-stdio"): "ask-function-stdio",
+    ("mcp", "expand-stdio"): "expand-function-stdio",
+}
+
+
 class _MDriver:
     transport = "inproc"
     route = "ask"
@@ -7517,7 +7529,8 @@ class _MDriver:
 
     @property
     def ident(self) -> str:
-        return f"{self.transport}.{self.route}"
+        route = _M2_ID_ROUTE.get((self.transport, self.route), self.route)
+        return f"{self.transport}.{route}"
 
     def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
         return None
@@ -8284,14 +8297,11 @@ def _m_check(drv: _MDriver, env: _MEnv, col: str, val: str) -> None:
 
 
 def _m_overlay(drv: _MDriver, env: _MEnv) -> None:
-    """Producer 72-T05: the overlay access form has no public route yet, so the
-    strict surfaces refuse the operation; the baseline output is unchanged."""
-    if drv.transport == "dashboard":
-        refused = drv.post(env, "preference", {})  # type: ignore[attr-defined]
-        parsed = json.loads(refused.read())
-        assert refused.status == 400, parsed
-        assert parsed["error"]["code"] == "unknown_operation", parsed
-    elif drv.transport == "internal":
+    """Access form `overlay` for the drivers that are not t01 routes. A read with an
+    owner input is sent the user-overlay owner and refuses `owner_not_granted`; a read
+    with none (the dashboard, MCP `expand`) is pointed at the overlay storage root and
+    refuses `overlay_storage_root`. Either way nothing is shown or written."""
+    if drv.transport == "internal":
         from rush.memory.authorization import user_overlay_owner_scope
         from rush.memory.retrieval import MemoryAccess, expand_artifact, recall_page
 
@@ -8325,32 +8335,54 @@ def _m_overlay(drv: _MDriver, env: _MEnv) -> None:
             )
             assert page["code"] == "E_NOT_VISIBLE", page
         return
-    elif drv.transport == "bridge":
-        denied = drv.handler("preference", {})  # type: ignore[attr-defined]
-        assert denied["code"] == "E_PERMISSION", denied
-    elif drv.transport == "inproc":
-        result = MemoryTool().run(env.root, operation="preference")  # type: ignore[arg-type]
-        assert result["status"] == "error", result
-        # 72-T05 supplies the operation: a request-less call is its `E_INPUT`.
-        assert "memory preference returned E_INPUT." in result["summary"]
-    elif drv.transport == "mcp":
-        from rush.mcp_support.request_models import validate_and_normalize
+    overlay = env.auth.user_overlay_owner_scope(data_root=env.data_root)
+    if drv.transport == "dashboard":
+        from rush.workflows.projects import register_project
+        from tests.test_dashboard_scan_actions import _start_dashboard
 
-        outcome = validate_and_normalize(
-            "rush_memory", {"path": str(env.root), "operation": "preference"}
+        target = Path(overlay.id)
+        target.mkdir(parents=True, exist_ok=True)
+        project_id = register_project(target, data_root=env.data_root).project_id
+        other = _MDashboard("expand" if drv.kind == "expand" else "ask")
+        other.server, other.base, other.cookie, other.csrf = _start_dashboard(
+            project_id, target
         )
-        assert outcome.rejected
+        before = _digest_dir(target)
+        try:
+            res = other.run(
+                dataclasses.replace(env, root=target, project_id=project_id), {}
+            )
+        finally:
+            other.close()
+        assert res.reason == "overlay_storage_root", (drv.ident, res.code, res.data)
+        assert not res.ids and not res.data.get("content_base64"), res.data
+        assert _digest_dir(target) == before
+        return
+    assert drv.transport == "mcp" and isinstance(drv, _MStdio), drv.ident
+    if drv.kind == "compact":
+        target, reason = env.root, "owner_not_granted"
+        arguments: dict[str, Any] = {
+            "path": str(target),
+            "operation": "ask",
+            "subject": SUBJECT,
+            "query": M_QUERY,
+            "owner_scope": overlay.as_dict(),
+            "request": {"view": "compact"},
+        }
     else:
-        assert drv.transport == "cli"
-        from click.testing import CliRunner
-
-        from rush.cli import cli
-
-        outcome_cli = CliRunner().invoke(cli, ["memory", "preference"])
-        assert outcome_cli.exit_code == 2, outcome_cli.output
-        # 72-T05 supplies the leaf: an input-less call is its usage error.
-        assert "Missing option '--input'" in outcome_cli.output
-    _m_expect_ok(drv, env, drv.run(env, {}))
+        target, reason = Path(overlay.id), "overlay_storage_root"
+        target.mkdir(parents=True, exist_ok=True)
+        arguments = {
+            "path": str(target),
+            "operation": "expand",
+            "request": {"id": env.target, "version": 1},
+        }
+    before = _digest_dir(target)
+    _line, parsed = drv.server.tool("rush_memory", arguments)
+    raw = parsed["result"]["structuredContent"]["raw"]
+    assert raw["data"].get("reason") == reason, (drv.ident, raw)
+    assert not raw["data"].get("items") and not raw["data"].get("content_base64"), raw
+    assert _digest_dir(target) == before
 
 
 def _m_drivers() -> list[Any]:
@@ -8382,6 +8414,14 @@ def _m_run_p(
 ) -> None:
     """Class P: a callable route, one column varied from the baseline."""
     drv = factory()
+    if col == "access" and val == "overlay":
+        idents = {drv.ident, f"{drv.transport}.{drv.route}"}
+        routes = [r for r in _G2_ROUTES if r.ident in idents]
+        if routes:
+            test_t01_fix_policy_mode_matrix(
+                routes[0], G2_OVERLAY_ROW, tmp_path, monkeypatch
+            )
+            return
     cols = dict(M_BASE)
     cols[col] = val
     historical = (
@@ -8422,14 +8462,15 @@ def _m_run_p(
 # Class S: operations with no routine of their own in this matrix. `history` and
 # `explain` were producer-staged until 72-T06 landed them: their cells are now the
 # public matrix's real cells. `import` is a store seam, not an operation (72-T06 D18),
-# so its cell stays the strict refusal naming the absent operation; a non-empty
-# producer is a later task that flips the cell.
+# so its cell stays the strict refusal naming the absent operation. `preference` is the
+# preference route's own overlay cell on the in-process, MCP and CLI transports (the
+# dashboard has no such operation: the strict refusal).
 M_S_ROUTES = (
-    ("history", "mode", "historical", ""),
-    ("explain", "mode", "inspect", ""),
-    ("import", "apply", "apply", ""),
-    ("preference", "access", "overlay", "72-T05"),
-    ("capsule", "mode", "inspect", "CODEC"),
+    ("history", "mode", "historical"),
+    ("explain", "mode", "inspect"),
+    ("import", "apply", "apply"),
+    ("preference", "access", "overlay"),
+    ("capsule", "mode", "inspect"),
 )
 
 
@@ -8437,10 +8478,29 @@ M_S_ROUTES = (
 M_S_PRODUCED = frozenset({"history", "explain", "preference", "capsule"})
 
 
+def _m_run_preference_overlay(transport: str, tmp_path: Path) -> None:
+    """The preference route's own `access-overlay` apply cell (t05) on one transport."""
+    prefs = importlib.import_module("tests.test_phase72_preferences")
+    heads = {"inproc": ("tool.", "inproc."), "mcp": ("mcp.",), "cli": ("cli.",)}
+    found = [
+        cell
+        for cell in prefs._MATRIX
+        if cell.ident.startswith(heads[transport])
+        and "record" in cell.ident
+        and cell.ident.endswith("access-overlay-apply-apply")
+    ]
+    assert len(found) == 1, (transport, [cell.ident for cell in found])
+    found[0].run(tmp_path)
+
+
 def _m_run_s(
     operation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transport: str
 ) -> None:
     from rush.mcp_support.request_models import validate_and_normalize
+
+    if operation == "preference" and transport != "dashboard":
+        _m_run_preference_overlay(transport, tmp_path)
+        return
 
     if operation in ("history", "explain") and transport != "dashboard":
         # 72-T06 flipped this cell: `history`/`explain` are real v2 operations, so the
@@ -8692,7 +8752,12 @@ M_G_KEYS = {
 def _m_g_routes() -> list[Any]:
     """Every 72-T01 route cell (`_G2_ROUTES`, the plan's 2.3 inventory) that has no
     dedicated driver above and is not a producer-staged operation (class S)."""
-    covered = {factory().ident for factory in _m_drivers()}
+    covered = {
+        ident
+        for factory in _m_drivers()
+        for drv in (factory(),)
+        for ident in (drv.ident, f"{drv.transport}.{drv.route}")
+    }
     return [
         r
         for r in _G2_ROUTES
@@ -8753,8 +8818,6 @@ def _m_run_g(
         _g2_run_unsupported_row(route, row, env, _g2_parse_row(row))
         return
     row = _m_g_policy_rows().get((col, val)) or f"{col}-{val}"
-    if (col, val) in G2_PRODUCER_VALUES:
-        row += f"-producer-{G2_PRODUCER_VALUES[(col, val)]}"
     test_t01_fix_policy_mode_matrix(route, row, tmp_path, monkeypatch)
 
 
@@ -8796,20 +8859,19 @@ def _t02_matrix_cells() -> list[Any]:
                         id=f"{route.ident}-{col}-{val}-rule-{_m_rule(col)}",
                     )
                 )
-    for operation, dimension, label, producer in M_S_ROUTES:
+    for operation, dimension, label in M_S_ROUTES:
         for transport in ("inproc", "mcp", "cli", "dashboard"):
             cells.append(
                 pytest.param(
                     functools.partial(_m_run_s, operation, transport=transport),
-                    id=f"{transport}.{operation}-{dimension}-{label}"
-                    + (f"-producer-{producer}" if producer else ""),
+                    id=f"{transport}.{operation}-{dimension}-{label}",
                 )
             )
     for name in M_R_READERS:
         cells.append(
             pytest.param(
                 functools.partial(_m_run_r, name),
-                id=f"internal.{name}-store-invalid_utf8_text-rule-C02C05",
+                id=f"internal.migration-function-{name}-store-invalid_utf8_text-rule-C02C05",
             )
         )
     for col, values in M_VALUES.items():
@@ -17239,14 +17301,16 @@ def test_t01_store_binding_key_windows_native(
 #   - the eight policy rows (access x policy_state x grant_ops, plus revoked grants,
 #     ungranted sources and an omitted owner);
 #   - the overlay access row (the existing `owner_scope` input carrying the user-overlay
-#     owner; producer 72-T05);
+#     owner);
 #   - every value of each dimension the route natively varies along (mode, representation,
 #     retrieval, store, apply, cache_write, row_state, ack, capability_ids), each with an
 #     exact expectation, and ONE strictness cell for each dimension it does not (a
 #     strict-model `E_INPUT` where the transport has the field, a byte-identity assertion
 #     where it does not).
-# `rejected`/`pending` rows and the later-producer operations are producer-labelled cells
-# (`...-producer-<task id>`).
+# `rejected`/`pending` rows are fixture rows (`rej`/`pen`) crossed like every other
+# row_state. An operation a later task adds is a refusal-only route (`rows_only`).
+# Cell ids follow `<transport>.<route>-<dimension>-<value>[-<dimension>-<value>...]`: a
+# function or endpoint name is the pair `function-<name>` / `operation-<name>`.
 
 POLICY_REASONS = frozenset(
     {
@@ -17278,11 +17342,6 @@ G2_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "ack": ("ack", "no_ack"),
     "capability_ids": ("selected", "unselected"),
 }
-#: Dimension values whose lifecycle does not exist yet at this HEAD: `value -> producer`.
-G2_PRODUCER_VALUES = {
-    ("row_state", "rejected"): "72-T05",
-    ("row_state", "pending"): "72-T05",
-}
 #: The dimensions crossed by dimension rows (access, policy_state and grant_ops are the
 #: policy rows; a route whose own selector carries `apply` skips that dimension).
 G2_ROW_DIMENSIONS = (
@@ -17306,16 +17365,20 @@ G2_POLICY_ROWS = (
     "access-policy-policy_state-ok-grant_ops-missing_one",
     "access-policy-policy_state-missing_marker",
 )
-G2_OVERLAY_ROW = "access-overlay-producer-72-T05"
+G2_OVERLAY_ROW = "access-overlay"
+#: the rows whose fixture carries the applicability-rejected / -pending rows
+_G2_APPLICABILITY_ROWS = ("row_state-rejected", "row_state-pending")
 _G2_MARKER = re.compile(r"mk-[a-z0-9]+")
 G2_ACTIVE = frozenset({"mk-a1", "mk-a2"})
-G2_EXCLUDED = frozenset({"mk-x1", "mk-arch", "mk-exp", "mk-tam"})
+G2_EXCLUDED = frozenset({"mk-x1", "mk-arch", "mk-exp", "mk-tam", "mk-rej", "mk-pen"})
 #: row_state value -> the fixture row that is in that state
 G2_STATE_ROW = {
     "active": "a1",
     "archived": "arch",
     "expired": "exp",
     "tampered": "tam",
+    "rejected": "rej",
+    "pending": "pen",
 }
 
 
@@ -17560,7 +17623,7 @@ def _g2_parse_row(row: str) -> _G2Cell:
     for dim in G2_ROW_DIMENSIONS:
         prefix = f"{dim}-"
         if row.startswith(prefix):
-            value = row[len(prefix) :].split("-producer-")[0]
+            value = row[len(prefix) :]
             if dim == "cache_write":
                 return dataclasses.replace(base, cache_write=value == "on")
             if dim == "store":
@@ -17571,7 +17634,7 @@ def _g2_parse_row(row: str) -> _G2Cell:
 
 def _g2_split(row: str) -> tuple[str, str]:
     dim, _, value = row.partition("-")
-    return dim, value.split("-producer-")[0]
+    return dim, value
 
 
 def _g2_rows(route: _G2Route) -> list[str]:
@@ -17585,16 +17648,8 @@ def _g2_rows(route: _G2Route) -> list[str]:
         supported = route.supports.get(dim)
         if supported:
             rows.extend(f"{dim}-{value}" for value in supported)
-            if dim == "row_state":
-                rows.extend(
-                    f"{dim}-{value}-producer-{producer}"
-                    for (d, value), producer in G2_PRODUCER_VALUES.items()
-                    if d == dim
-                )
         else:
-            values = [
-                v for v in G2_DIMENSIONS[dim] if (dim, v) not in G2_PRODUCER_VALUES
-            ]
+            values = list(G2_DIMENSIONS[dim])
             rows.append(f"{dim}-{'absent' if dim == 'store' else values[-1]}")
     return rows
 
@@ -17689,6 +17744,20 @@ def _g2_page_supports(
                 if historical
                 else _ex(*codes, hide={"mk-tam"})
             ),
+            # 72-T05: a rejected or pending row is not current, so ordinary reads and
+            # the v1 compact list hide it (a v2 inspect read shows it qualified:
+            # `_g2_cli_list_supports`); historical bypasses both filters
+            # (retrieval.py:1636-1640).
+            "rejected": (
+                _ex(*codes, show={"mk-rej"})
+                if historical
+                else _ex(*codes, hide={"mk-rej"})
+            ),
+            "pending": (
+                _ex(*codes, show={"mk-pen"})
+                if historical
+                else _ex(*codes, hide={"mk-pen"})
+            ),
         },
     }
     if not historical:
@@ -17771,6 +17840,8 @@ def _g2_expand_supports() -> dict[str, dict[str, _G2Expect]]:
             "archived": gone,
             "expired": gone,
             "tampered": gone,
+            "rejected": gone,
+            "pending": gone,
         },
     }
 
@@ -17805,6 +17876,8 @@ def _g2_related_supports() -> dict[str, dict[str, _G2Expect]]:
             # tampered root is not visible, as an archived one is.
             "expired": _ex("E_NOT_VISIBLE", exact=()),
             "tampered": _ex("E_NOT_VISIBLE", exact=()),
+            "rejected": _ex("E_NOT_VISIBLE", exact=()),
+            "pending": _ex("E_NOT_VISIBLE", exact=()),
         },
     }
 
@@ -19090,6 +19163,8 @@ def _g2_receive_spec() -> _G2Spec:
                 "archived": _ex("OK", check=_g2_receive_gone),
                 "expired": _ex("OK", check=_g2_receive_gone),
                 "tampered": _ex("OK", check=_g2_receive_gone),
+                "rejected": _ex("OK", check=_g2_receive_gone),
+                "pending": _ex("OK", check=_g2_receive_gone),
             },
         },
         check_ok=_g2_receive_check,
@@ -19371,7 +19446,7 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
     return _G2Route(
         transport="bridge",
         key=spec.key,
-        cell=spec.cell,
+        cell=f"mcp_bridge-operation-{spec.cell}",
         op=spec.op,
         call=call,
         supports=supports,
@@ -19389,20 +19464,21 @@ def _g2_bridge(spec: _G2Spec) -> _G2Route:
     )
 
 
-#: operations a later task adds, with the producing task: until it lands the operation
-#: is unknown, so a request is refused and creates nothing
-_G2_PRODUCER_OPERATIONS = (
-    ("history", None),
-    ("explain", None),
-    ("import", None),
-    ("preference", "72-T05"),
-    ("capsule", "73-T09"),
-)
+#: operations a bare request refuses, with the row naming why: a request that carries
+#: nothing (`request-empty`) or an operation that is not one (`operation-absent`);
+#: either way the call is refused and creates nothing
+_G2_REFUSED_OPERATIONS = {
+    "history": "request-empty",
+    "explain": "request-empty",
+    "import": "operation-absent",
+    "preference": "request-empty",
+    "capsule": "request-empty",
+}
 
 
 def _g2_producer_routes() -> list[_G2Route]:
     routes: list[_G2Route] = []
-    for operation, producer in _G2_PRODUCER_OPERATIONS:
+    for operation, refused_row in _G2_REFUSED_OPERATIONS.items():
 
         def inproc(env: _G2Env, cell: _G2Cell, operation: str = operation) -> _G2Out:
             return _g2_out_from_tool(
@@ -19419,18 +19495,12 @@ def _g2_producer_routes() -> list[_G2Route]:
                 _G2Route(
                     transport=transport,
                     key=operation,
-                    cell=f"{operation}-producer",
+                    cell=operation,
                     op="ask",
                     call=call,
-                    rows_only=(
-                        f"operation-absent-producer-{producer}"
-                        if producer
-                        # 72-T06 flipped `history`/`explain` (a bare request is
-                        # `E_INPUT`); `import` is a store seam, never an operation.
-                        else "request-empty"
-                        if operation in ("history", "explain")
-                        else "operation-absent",
-                    ),
+                    # a bare `history`/`explain`/`preference`/`capsule` request is
+                    # `E_INPUT`; `import` is a store seam, never an operation.
+                    rows_only=(refused_row,),
                 )
             )
     return routes
@@ -19518,6 +19588,38 @@ def _g2_cli_generic(spec: _G2Spec) -> _G2Route:
     )
 
 
+def _g2_cli_list_qualified(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    """72-T06: `memory list` is a v2 inspect read: it shows a rejected/pending row
+    qualified, `--json` as not usable as current with its reason, the human form
+    with the applicability badge (tools/memory.py `_item_badges`)."""
+    from click.testing import CliRunner
+
+    from rush.cli import cli
+
+    _g2_items_qualified(_rd(out.body)["items"])
+    args = ["memory", "list", SUBJECT, "needle"]
+    for source in cell.allow or ():
+        args.extend(["--session", source])
+    human = CliRunner().invoke(cli, args).output
+    for reason in _G2_NOT_CURRENT.values():
+        assert f"badges: {reason.removeprefix('applicability_')}" in human, human
+
+
+def _g2_cli_list_supports(
+    supports: dict[str, dict[str, _G2Expect]],
+) -> dict[str, dict[str, _G2Expect]]:
+    """`memory list`'s cells: the v1 compact rows, but a v2 inspect read shows the
+    rejected/pending rows qualified (plan L849) instead of hiding them."""
+    row_state = dict(supports["row_state"])
+    for state, artifact_id in (("rejected", "rej"), ("pending", "pen")):
+        row_state[state] = _ex(
+            "OK", None, show={f"mk-{artifact_id}"}, check=_g2_cli_list_qualified
+        )
+    return {**supports, "row_state": row_state}
+
+
 def _g2_cli_explicit_routes() -> list[_G2Route]:
     """The six `rush memory <leaf>` commands with their own argument shape."""
     routes: list[_G2Route] = []
@@ -19549,6 +19651,16 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
                     if historical
                     else _ex(*legacy_codes, hide={"mk-tam"})
                 ),
+                "rejected": (
+                    _ex(*legacy_codes, show={"mk-rej"})
+                    if historical
+                    else _ex(*legacy_codes, hide={"mk-rej"})
+                ),
+                "pending": (
+                    _ex(*legacy_codes, show={"mk-pen"})
+                    if historical
+                    else _ex(*legacy_codes, hide={"mk-pen"})
+                ),
             },
         }
 
@@ -19577,7 +19689,9 @@ def _g2_cli_explicit_routes() -> list[_G2Route]:
                 cell=leaf,
                 op="ask" if leaf != "list" else "list",
                 call=call,
-                supports=page_supports(False),
+                supports=_g2_cli_list_supports(page_supports(False))
+                if leaf == "list"
+                else page_supports(False),
                 takes_allowlist=True,
                 takes_owner=False,
                 ok_codes=frozenset(legacy_codes),
@@ -20064,7 +20178,7 @@ def _g2_writer_routes() -> list[_G2Route]:
     routes = [
         _g2_writer(
             "session_memory",
-            "session_memory-record_turn",
+            "session_memory-function-record_turn",
             "session_memory:record_turn",
             _g2_session_turn,
             covers=(("session_memory.py", "record_turn"),),
@@ -20072,14 +20186,14 @@ def _g2_writer_routes() -> list[_G2Route]:
         ),
         _g2_writer(
             "session_memory",
-            "session_memory-record_fix_attribution",
+            "session_memory-function-record_fix_attribution",
             "provenance_ai:attribution_link",
             _g2_attribution,
             covers=(("session_memory.py", "record_fix_attribution"),),
         ),
         _g2_writer(
             "flight_recorder",
-            "flight_recorder-record_event",
+            "flight_recorder-function-record_event",
             "flight_recorder:record_event",
             _g2_flight,
             covers=(("tools/flight_recorder.py", "record_event"),),
@@ -20087,14 +20201,14 @@ def _g2_writer_routes() -> list[_G2Route]:
         ),
         _g2_writer(
             "skills_generator",
-            "skills_generator-generate_skill_markdown",
+            "skills_generator-function-generate_skill_markdown",
             "skills_generator:generate_skill_markdown",
             _g2_skill,
             covers=(("plugins/skills_generator.py", "generate_skill_markdown"),),
         ),
         _g2_writer(
             "cache_gate",
-            "cache_gate-write_cache_fill",
+            "cache_gate-function-write_cache_fill",
             "context_pack",
             _g2_cache_fill,
             covers=(("token_economy/memory_cache_gate.py", "write_cache_fill"),),
@@ -20102,7 +20216,7 @@ def _g2_writer_routes() -> list[_G2Route]:
         ),
         _g2_writer(
             "checkpoint_journal",
-            "checkpoint_journal-save_checkpoint",
+            "checkpoint_journal-function-save_checkpoint",
             "checkpoint_journal:save_checkpoint",
             _g2_checkpoint,
             covers=(("memory/checkpoint_journal.py", "_write_handoff_artifact"),),
@@ -20118,7 +20232,7 @@ def _g2_writer_routes() -> list[_G2Route]:
         routes.append(
             _g2_writer(
                 "experience",
-                f"experience-{name}",
+                f"experience-function-{name}",
                 family,
                 _g2_experience(name),
                 covers=(("memory/experience.py", name),),
@@ -20140,7 +20254,7 @@ def _g2_writer_routes() -> list[_G2Route]:
         routes.append(
             _g2_writer(
                 "migration",
-                f"migration-{function}",
+                f"migration-function-{function}",
                 f"migration:{source}",
                 call,
                 covers=(("memory/migration.py", function),),
@@ -20216,6 +20330,47 @@ def _g2_shown_exact(expected: frozenset[str], committed: int = 0):
         assert out.committed == committed
 
     return check
+
+
+#: 72-T05: the fixture's not-current rows and the reason a v2 inspect item carries
+_G2_NOT_CURRENT = {"rej": "applicability_rejected", "pen": "applicability_pending"}
+
+
+def _g2_shown_qualified(
+    expected: frozenset[str],
+    extra: frozenset[str],
+    qualify: Any = None,
+    *,
+    exact: frozenset[str] | None = None,
+):
+    """A reader whose view may show a non-current row only qualified (plan L828,
+    L849, L888): its `row_state-rejected|pending` cells (whose store carries both
+    rows) show `extra` too (or exactly `exact`, for a count that cannot be a union),
+    and `qualify(env, out)` checks how they are labeled."""
+
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        # an unsupported dimension is checked as the baseline cell, so the cell the
+        # store was seeded for is the env's own
+        if not env.extra.get("cell", cell).row.startswith(_G2_APPLICABILITY_ROWS):
+            _g2_shown_exact(expected)(env, cell, out, before)
+            return
+        _g2_shown_exact(expected | extra if exact is None else exact)(
+            env, cell, out, before
+        )
+        if qualify is not None:
+            qualify(env, out)
+
+    return check
+
+
+def _g2_items_qualified(items: Any) -> None:
+    """Each not-current fixture row is labeled: not usable as current, with its
+    applicability reason."""
+    by_id = {item["id"]: item for item in items}
+    for artifact_id, reason in _G2_NOT_CURRENT.items():
+        item = by_id[artifact_id]
+        assert item["usable_as_current"] is False, item
+        assert reason in item["reason_codes"], item
 
 
 def _g2_reader(
@@ -20437,7 +20592,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "cache_gate",
-            "cache_gate-check_memory_before_pack",
+            "cache_gate-function-check_memory_before_pack",
             lambda env: check_memory_before_pack(
                 "module.py", "Known", project_root=env.root
             ),
@@ -20465,7 +20620,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "status",
-            "status-memory",
+            "status-function-memory",
             lambda env: status_memory(env.root),
             _g2_status_shows,
             frozenset({"count:3"}),
@@ -20478,7 +20633,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "checkpoint_journal",
-            "checkpoint_journal-list_checkpoints",
+            "checkpoint_journal-function-list_checkpoints",
             lambda env: CheckpointJournal(env.root).list_checkpoints(),
             _g2_names,
             frozenset({"cp:good_ckpt"}),
@@ -20495,7 +20650,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "checkpoint_journal",
-            "checkpoint_journal-restore_checkpoint",
+            "checkpoint_journal-function-restore_checkpoint",
             lambda env: CheckpointJournal(env.root).restore_checkpoint("good_ckpt"),
             _g2_markers_of,
             frozenset({"mk-cp"}),
@@ -20512,7 +20667,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "session_memory",
-            "session_memory-format_for_mcp",
+            "session_memory-function-format_for_mcp",
             lambda env: SessionMemoryManager(
                 env.root / ".rush" / "session_memory.json"
             ).format_for_mcp(),
@@ -20528,7 +20683,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "session_memory",
-            "session_memory-find_attribution_link",
+            "session_memory-function-find_attribution_link",
             lambda env: find_attribution_link(env.root, "f1"),
             _g2_markers_of,
             frozenset({"mk-abc1234"}),
@@ -20542,7 +20697,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "flight_recorder",
-            "flight_recorder-replay_session",
+            "flight_recorder-function-replay_session",
             lambda env: FlightRecorder(env.root, create=False).replay_session("s1"),
             _g2_markers_of,
             frozenset({"mk-flight"}),
@@ -20556,7 +20711,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "patch_memory",
-            "patch_memory-read_records",
+            "patch_memory-function-read_records",
             lambda env: PatchMemoryStore.read_records(env.root),
             _g2_markers_of,
             frozenset({"mk-patch"}),
@@ -20569,7 +20724,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "invariant_graph",
-            "invariant_graph-get_all",
+            "invariant_graph-function-get_all",
             lambda env: InvariantGraph(env.root).get_all(),
             _g2_markers_of,
             frozenset({"mk-inv"}),
@@ -20584,7 +20739,7 @@ def _g2_reader_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "hook_signatures",
-            "hook_signatures-verify_signatures",
+            "hook_signatures-function-verify_signatures",
             lambda env: (
                 __import__("rush.hook.tamper_detector", fromlist=["HookTamperDetector"])
                 .HookTamperDetector(env.root)
@@ -20610,7 +20765,7 @@ def _g2_reader_routes() -> list[_G2Route]:
         routes.append(
             _g2_reader(
                 "preferences",
-                f"preferences-{name}",
+                f"preferences-function-{name}",
                 reader,
                 _g2_markers_of,
                 frozenset({"mk-pref"}),
@@ -20702,7 +20857,7 @@ def _g2_telemetry_routes() -> list[_G2Route]:
         )
 
     telemetry_route(
-        "telemetry_readers-read_memory_event_totals_readonly",
+        "telemetry_readers-function-read_memory_event_totals_readonly",
         lambda env, access: read_memory_event_totals_readonly(
             env.root, kinds, access=access
         ),
@@ -20712,7 +20867,7 @@ def _g2_telemetry_routes() -> list[_G2Route]:
         "read_memory_event_totals_readonly",
     )
     telemetry_route(
-        "telemetry_readers-read_artifact_expansion_receipts_readonly",
+        "telemetry_readers-function-read_artifact_expansion_receipts_readonly",
         lambda env, access: read_artifact_expansion_receipts_readonly(
             env.root, "x", 1, access=access
         ),
@@ -20725,7 +20880,7 @@ def _g2_telemetry_routes() -> list[_G2Route]:
         _G2Route(
             transport="internal",
             key="telemetry_readers",
-            cell="telemetry_readers-read_summary_readonly",
+            cell="telemetry_readers-function-read_summary_readonly",
             op="list",
             call=lambda env, c: _G2Out(
                 None,
@@ -20788,7 +20943,7 @@ def _g2_visible_routes() -> list[_G2Route]:
         _G2Route(
             transport="internal",
             key="retrieval_helper",
-            cell="retrieval_helper-read_visible",
+            cell="retrieval_helper-function-read_visible",
             op="ask",
             call=visible,
             supports=_g2_reader_dims(ok=G2_ACTIVE),
@@ -20803,7 +20958,7 @@ def _g2_visible_routes() -> list[_G2Route]:
         _G2Route(
             transport="internal",
             key="mode_predicate",
-            cell="mode_predicate-memory_policy_mode",
+            cell="retrieval_helper-function-mode_predicate-function-memory_policy_mode",
             op="ask",
             call=mode,
             supports={
@@ -20864,7 +21019,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
         "migration:checkpoint_journal",
     )
     add(
-        "continuity_package-_extract_session_memory",
+        "continuity_package-function-_extract_session_memory",
         lambda env: receipts._extract_session_memory(env.root),
         _g2_markers_of,
         {"mk-turn"},
@@ -20874,7 +21029,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
         covers=(("continuity/receipts.py", "_extract_session_memory"),),
     )
     add(
-        "continuity_package-last_handoff_for_provider",
+        "continuity_package-function-last_handoff_for_provider",
         lambda env: receipts.last_handoff_for_provider(env.root, "codex"),
         _g2_markers_of,
         {"mk-cp"},
@@ -20885,7 +21040,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
         old_schema_reads=True,
     )
     add(
-        "continuity_package-_fetch_replay_events",
+        "continuity_package-function-_fetch_replay_events",
         lambda env: coordination._fetch_replay_events(env.root, "s1"),
         _g2_markers_of,
         {"mk-flight"},
@@ -20896,7 +21051,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
         old_schema_reads=True,
     )
     add(
-        "continuity_package-provider_handoff",
+        "continuity_package-function-provider_handoff",
         lambda env: providers.provider_handoff(env.root, "good_ckpt"),
         _g2_markers_of,
         {"mk-cp"},
@@ -20909,7 +21064,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "continuity_package",
-            "continuity_package-pack_context",
+            "continuity_package-function-pack_context",
             lambda env: continuity_context.pack_context(
                 started, env.root, "module.py", "Known", 4000, ExecutionPermissions()
             ),
@@ -20925,7 +21080,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "continuity_package",
-            "continuity_package-retrieve_context",
+            "continuity_package-function-retrieve_context",
             lambda env: continuity_context.retrieve_context(
                 started, env.root, "nohandle", ExecutionPermissions()
             ),
@@ -20942,7 +21097,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "continuity_tool",
-            "continuity_tool-list",
+            "continuity_tool-function-list",
             lambda env: tool.run(env.root, operation="list"),
             lambda value: (
                 _g2_names(value.get("raw")) if value.get("status") == "ok" else set()
@@ -20958,7 +21113,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
     routes.append(
         _g2_reader(
             "continuity_tool",
-            "continuity_tool-restore",
+            "continuity_tool-function-restore",
             lambda env: tool.run(env.root, operation="restore", name="good_ckpt"),
             lambda value: {"restored"} if value.get("status") == "ok" else set(),
             frozenset({"restored"}),
@@ -20972,7 +21127,7 @@ def _g2_continuity_routes() -> list[_G2Route]:
     routes.append(
         _g2_writer(
             "continuity_tool",
-            "continuity_tool-save",
+            "continuity_tool-function-save",
             "checkpoint_journal:save_checkpoint",
             lambda env, c: tool.run(
                 env.root,
@@ -21042,6 +21197,196 @@ def _g2_tui_refresh(env: _G2Env) -> Any:
     state.memory_subject = SUBJECT
     _memory_refresh(state, project, default_scan_actions())
     return state.memory_items
+
+
+def _g2_tui_table_text(env: _G2Env, items: Any) -> str:
+    """The TUI memory table listing `items`, rendered as plain text."""
+    import io
+
+    from rich.console import Console, Group
+    from rich.text import Text
+
+    from rush.tui import TuiState, _memory_list_layout
+
+    state = TuiState(projects=[_g2_tui_project(env)], data_root=env.data_root)
+    state.memory_items = list(items)
+    state.terminal_size = (200, 60)
+    console = Console(width=200, file=io.StringIO(), record=True)
+    console.print(Group(*_memory_list_layout(state, [], [Text("")])))
+    return console.export_text(styles=False)
+
+
+def _g2_tui_qualified(env: _G2Env, out: _G2Out) -> None:
+    """72-T05: the TUI lists the v2 inspect rows and marks each not-current one."""
+    _g2_items_qualified(out.body)
+    text = _g2_tui_table_text(env, out.body)
+    for artifact_id, reason in _G2_NOT_CURRENT.items():
+        label = reason.removeprefix("applicability_")
+        assert re.search(rf"\b{artifact_id}\b.*\b{label}\b", text), text
+
+
+def _g2_dashboard_qualified(env: _G2Env, out: _G2Out) -> None:
+    """72-T07 policy mode: the v2 inspect items qualify each not-current row."""
+    _g2_items_qualified(out.body["items"])
+
+
+def _t05_not_current_store(tmp_path: Path) -> tuple[Path, TypedArtifactStore]:
+    """One active row `a1` plus rejected, pending, superseded and task-bound rows."""
+    root = _registered(tmp_path / "project", default_data_root())
+    store = TypedArtifactStore(root)
+    _row(store, "a1", ALICE, "mk-a1")
+    for artifact_id, state in (
+        ("rej", "rejected"),
+        ("pen", "pending"),
+        ("sup", "superseded"),
+    ):
+        _t05_row(store, artifact_id, ALICE, f"mk-{artifact_id}", applicability=state)
+    store.write(
+        MemoryArtifact(
+            id="tsk",
+            family="memory",
+            subject=SUBJECT,
+            trust_tier="DERIVED",
+            content={"text": "needle mk-tsk"},
+            source="source-a",
+            created_at=time.time(),
+            owner_scope=ALICE,
+            applicability="active",
+            task_project_id="proj",
+            task_worktree_id="wt",
+            task_id="task-1",
+        )
+    )
+    gc.collect()
+    return root, store
+
+
+def test_t05_overview_lists_and_counts_only_current_rows(tmp_path: Path) -> None:
+    """D1 (plan L51/L55): `memory_overview` names its rows "most recent useful memory
+    rows" and carries no field to qualify one, so a rejected, pending, superseded or
+    task-bound row (omitted task context never matches) is neither listed nor
+    counted."""
+    from rush.tools.memory import memory_overview
+
+    root, _store = _t05_not_current_store(tmp_path)
+    raw = _rd(memory_overview(root))
+    assert _g2_ids("ov")(raw) == {"ov:a1"}, raw
+    assert raw["data"]["total"] == 1, raw
+
+
+def test_t05_useful_memory_count_counts_only_current_rows(tmp_path: Path) -> None:
+    """D6 (plan L51/L55): `useful_memory_count`, the count `status` and T20/T23/T28
+    share, counts only rows usable as current: not a rejected, pending, superseded
+    or task-bound row (an omitted task context never matches one)."""
+    from rush.memory.store import useful_memory_count
+
+    root, _store = _t05_not_current_store(tmp_path)
+    db = root / ".rush" / "memory.db"
+    with contextlib.closing(sqlite3.connect(f"file:{db}?mode=ro", uri=True)) as conn:
+        assert useful_memory_count(conn) == 1
+
+
+def test_t05_dashboard_legacy_browse_hides_not_current_rows(tmp_path: Path) -> None:
+    """D2: the legacy dashboard browse emits rows with no applicability or
+    `usable_as_current`, so it hides a not-current row as legacy query and list do;
+    the historical view (`include_archived`) still shows it."""
+    from rush.dashboard import server
+
+    root, store = _t05_not_current_store(tmp_path)
+    shown = {}
+    for include_archived in (False, True):
+        items, _ = server._fetch_memory_browse_items(
+            store,
+            root=root,
+            all_sources=["source-a"],
+            subjects=[SUBJECT],
+            trust_filter=set(),
+            include_archived=include_archived,
+            query_text="",
+        )
+        shown[include_archived] = {item["id"] for item in items}
+    assert shown[False] == {"a1"}, shown
+    assert shown[True] == {"a1", "rej", "pen", "sup", "tsk"}, shown
+
+
+def test_t05_intent_statement_must_be_usable_as_current(tmp_path: Path) -> None:
+    """D4 (plan L51/L55): an intent is confirmed only by a currently-STATED statement.
+    A STATED statement at its exact version that is rejected, pending, superseded or
+    task-bound (no task context here, so it never matches) resolves to `None`:
+    `record_intent` leaves the intent a `candidate` and `supersede_intent` refuses
+    (`E_PERMISSION`, nothing committed). An active STATED statement still confirms."""
+    from rush.memory.intent import (
+        _resolve_authorized_statement,
+        record_intent,
+        supersede_intent,
+    )
+
+    root = _registered(tmp_path / "project", default_data_root())
+    store = TypedArtifactStore(root)
+    narrowed: dict[str, dict[str, Any]] = {
+        "st-ok": {},
+        "st-rej": {"applicability": "rejected"},
+        "st-pen": {"applicability": "pending"},
+        "st-sup": {"applicability": "superseded"},
+        "st-task": {
+            "applicability": "active",
+            "task_project_id": "proj",
+            "task_worktree_id": "wt",
+            "task_id": "task-1",
+        },
+    }
+    for statement_id, fields in narrowed.items():
+        _row(store, statement_id, None, f"mk-{statement_id}")
+        if fields:
+            current = store.get_current(statement_id)
+            assert current is not None
+            with contextlib.closing(sqlite3.connect(store.db_path)) as conn:
+                for table, column in (
+                    ("memory_artifact_versions", "artifact_id"),
+                    ("memory_artifacts", "id"),
+                ):
+                    conn.execute(
+                        f"DELETE FROM {table} WHERE {column} = ?", (statement_id,)
+                    )
+                conn.commit()
+            store.write(dataclasses.replace(current, **fields))
+        store.promote(statement_id, user_stated=True, expected_version=1)
+        stated = store.get_current(statement_id)
+        assert stated is not None and stated.trust_tier == "STATED", stated
+        assert stated.artifact_version == 2, stated
+        for name, value in fields.items():
+            assert getattr(stated, name) == value, (statement_id, name, stated)
+    gc.collect()
+    created = record_intent(project_root=root, intent_id="w1", behavior_id="b1")
+    assert created.get("code") == "OK", created
+    for statement_id in narrowed:
+        ref = {"id": statement_id, "version": 2}
+        usable = statement_id == "st-ok"
+        resolved = _resolve_authorized_statement(root, ref)
+        assert (resolved is not None) == usable, (statement_id, resolved)
+        recorded = record_intent(
+            project_root=root,
+            intent_id=f"i-{statement_id}",
+            behavior_id="b1",
+            statement_ref=ref,
+        )
+        assert recorded.get("code") == "OK", recorded
+        assert recorded.get("status") == ("confirmed" if usable else "candidate"), (
+            statement_id,
+            recorded,
+        )
+        if usable:
+            continue
+        refused = supersede_intent(
+            project_root=root,
+            intent_id="w1",
+            expected_old_version=1,
+            new_statement_ref=ref,
+        )
+        assert refused.get("code") == "E_PERMISSION", (statement_id, refused)
+        intent = store.get_current("w1")
+        assert intent is not None and intent.artifact_version == 1, intent
+    gc.collect()
 
 
 def _g2_tui_expand(env: _G2Env) -> Any:
@@ -21121,6 +21466,16 @@ def _g2_scope_shows(value: Any) -> set[str]:
     return {f"scope:{value[0]}"} if value and value[0] else set()
 
 
+#: the registry reference-inventory readers' extra shown ids / count in a
+#: `row_state-rejected|pending` cell (`_readonly_memory_counts` also takes `exact` below)
+_G2_INVENTORY_NOT_CURRENT: dict[str, tuple[set[str], Any]] = {
+    "list_project_artifacts": ({"art:rej", "art:pen"}, None),
+    "_readonly_memory_refs": ({"ref:rej", "ref:pen"}, None),
+    "_readonly_memory_counts": (set(), None),
+    "_current_map_memories": ({"map:rej", "map:pen"}, None),
+}
+
+
 def _g2_dashboard_routes() -> list[_G2Route]:
     routes: list[_G2Route] = []
 
@@ -21139,6 +21494,8 @@ def _g2_dashboard_routes() -> list[_G2Route]:
         pre_setup: Any = _g2_pre_events,
         op: str = "list",
         overlay_setup: Any = None,
+        qualified: tuple[set[str], Any] | None = None,
+        qualified_exact: set[str] | None = None,
     ) -> None:
         route = _g2_reader(
             key,
@@ -21153,13 +21510,27 @@ def _g2_dashboard_routes() -> list[_G2Route]:
             old_schema_reads=old_schema_reads,
             independent_of_store=independent_of_store,
         )
+        if qualified is not None:
+            # a view that shows a rejected/pending row qualifies it (plan L849)
+            extra, qualify = qualified
+            route = dataclasses.replace(
+                route,
+                check_ok=_g2_shown_qualified(
+                    frozenset(expected),
+                    frozenset(extra),
+                    qualify,
+                    exact=None
+                    if qualified_exact is None
+                    else frozenset(qualified_exact),
+                ),
+            )
         routes.append(
             dataclasses.replace(route, transport=transport, overlay_setup=overlay_setup)
         )
 
     add(
         "dashboard_readers",
-        "dashboard_readers-memory_section",
+        "dashboard_readers-function-memory_section",
         _g2_dashboard_section,
         _g2_markers_of,
         {"mk-a1", "mk-a2"},
@@ -21168,10 +21539,11 @@ def _g2_dashboard_routes() -> list[_G2Route]:
             ("dashboard/server.py", "_build_memory_section"),
             ("dashboard/server.py", "_fetch_memory_browse_items"),
         ),
+        qualified=({"mk-rej", "mk-pen"}, _g2_dashboard_qualified),
     )
     add(
         "dashboard_readers",
-        "dashboard_readers-tokens_section",
+        "dashboard_readers-function-tokens_section",
         _g2_dashboard_tokens,
         _g2_tokens_shows,
         {"retrieval:1", "expansion:2"},
@@ -21182,7 +21554,7 @@ def _g2_dashboard_routes() -> list[_G2Route]:
     )
     add(
         "tui",
-        "tui-_memory_sources_and_state",
+        "tui-function-_memory_sources_and_state",
         _g2_tui_sources,
         lambda value: {f"src:{s}" for s in value[0]},
         {"src:source-a"},
@@ -21193,7 +21565,7 @@ def _g2_dashboard_routes() -> list[_G2Route]:
     )
     add(
         "tui",
-        "tui-_load_map_snapshot",
+        "tui-function-_load_map_snapshot",
         _g2_tui_map,
         _g2_ids("map"),
         {"map:a1", "map:a2", "map:arch", "map:exp", "map:tam"},
@@ -21201,20 +21573,24 @@ def _g2_dashboard_routes() -> list[_G2Route]:
         (("tui.py", "_load_map_snapshot"),),
         transport="tui",
         old_schema_reads=True,
+        # the map's memory inventory (`_current_map_memories`) lists a rejected or
+        # pending row as it lists an archived or expired one (plan L318)
+        qualified=({"map:rej", "map:pen"}, None),
     )
     add(
         "tui",
-        "tui-_memory_refresh",
+        "tui-function-_memory_refresh",
         _g2_tui_refresh,
         _g2_markers_of,
         {"mk-a1", "mk-a2"},
         {"mk-a1", "mk-a2", "mk-x1"},
         (),
         transport="tui",
+        qualified=({"mk-rej", "mk-pen"}, _g2_tui_qualified),
     )
     add(
         "tui",
-        "tui-_memory_expand_selected",
+        "tui-function-_memory_expand_selected",
         _g2_tui_expand,
         _g2_markers_of,
         {"mk-a1"},
@@ -21274,7 +21650,7 @@ def _g2_dashboard_routes() -> list[_G2Route]:
     ):
         add(
             "project_registry_readers",
-            f"project_registry_readers-{function.lstrip('_')}",
+            f"project_registry_readers-function-{function.lstrip('_')}",
             _g2_registry(function, with_access=with_access),
             shows,
             expected,
@@ -21286,6 +21662,14 @@ def _g2_dashboard_routes() -> list[_G2Route]:
             overlay_setup=_g2_project_id
             if function == "list_project_artifacts"
             else None,
+            # a reference inventory (plan L318) lists or counts a rejected/pending row
+            # as it lists or counts an archived or expired one
+            qualified=_G2_INVENTORY_NOT_CURRENT.get(function),
+            qualified_exact=(
+                {"counts:[('domain_knowledge', 7)]"}
+                if function == "_readonly_memory_counts"
+                else None
+            ),
             **cast("dict[str, Any]", store_dim),
         )
     return routes
@@ -21582,7 +21966,7 @@ def _g2_origin_routes() -> list[_G2Route]:
     routes = [
         _g2_reader(
             "migration",
-            "migration-read_origin",
+            "migration-function-read_origin",
             lambda env: migration.read_origin(env.root, "preference", "editor.theme"),
             _g2_markers_of,
             frozenset({"mk-pref"}),
@@ -21591,7 +21975,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         ),
         _g2_reader(
             "migration",
-            "migration-read_origin_kind",
+            "migration-function-read_origin_kind",
             lambda env: migration.read_origin_kind(env.root, "preference"),
             _g2_markers_of,
             frozenset({"mk-pref"}),
@@ -21600,7 +21984,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         ),
         _g2_reader(
             "migration",
-            "migration-read_origin_kind_readonly",
+            "migration-function-read_origin_kind_readonly",
             lambda env: migration.read_origin_kind_readonly(env.root, "preference"),
             _g2_markers_of,
             frozenset({"mk-pref"}),
@@ -21609,7 +21993,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         ),
         _g2_reader(
             "migration",
-            "migration-read_origin_kind_by_symbol",
+            "migration-function-read_origin_kind_by_symbol",
             lambda env: migration.read_origin_kind_by_symbol(
                 env.root, "flight_event", "s1"
             ),
@@ -21620,7 +22004,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         ),
         _g2_writer(
             "migration",
-            "migration-write_if_new",
+            "migration-function-write_if_new",
             "migration:preference_store",
             _g2_write_if_new,
             covers=((mig, "write_if_new"),),
@@ -21631,7 +22015,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         dataclasses.replace(
             _g2_writer(
                 "preferences",
-                "preferences-set",
+                "preferences-function-set",
                 "migration:preference_store",
                 _g2_pref_set,
                 covers=((prefs, "set"), (prefs, "_update_migrated")),
@@ -21646,7 +22030,7 @@ def _g2_origin_routes() -> list[_G2Route]:
         dataclasses.replace(
             _g2_writer(
                 "preferences",
-                "preferences-delete",
+                "preferences-function-delete",
                 "migration:preference_store",
                 _g2_pref_delete,
                 covers=((prefs, "delete"),),
@@ -21667,7 +22051,7 @@ def _g2_cli_text_routes() -> list[_G2Route]:
             "cli",
             _g2_reader(
                 "cli_other_readers",
-                "cli_other_readers-context_persona_read",
+                "cli_other_readers-function-context_persona_read",
                 lambda env: _g2_cli_output(env, ["context", "persona"]),
                 _g2_persona_shows,
                 frozenset({"persona:default"}),
@@ -21683,7 +22067,7 @@ def _g2_cli_text_routes() -> list[_G2Route]:
             "cli",
             _g2_writer(
                 "cli_other_readers",
-                "cli_other_readers-context_persona_set",
+                "cli_other_readers-function-context_persona_set",
                 "migration:preference_store",
                 lambda env, cell: _g2_cli_output(
                     env, ["context", "persona", "--set", "terse"]
@@ -21698,7 +22082,7 @@ def _g2_cli_text_routes() -> list[_G2Route]:
             "cli",
             _g2_reader(
                 "cli_other_readers",
-                "cli_other_readers-flight_recorder_cmd",
+                "cli_other_readers-function-flight_recorder_cmd",
                 lambda env: _g2_cli_output(
                     env, ["flight-recorder", "--replay", "s1", "--json"]
                 ),
@@ -21759,7 +22143,7 @@ def _g2_tui_routes() -> list[_G2Route]:
             "tui",
             _g2_reader(
                 "tui",
-                "tui-_memory_promote_selected",
+                "tui-function-_memory_promote_selected",
                 _g2_tui_promote,
                 _g2_markers_of,
                 frozenset({"mk-a1"}),
@@ -21771,7 +22155,7 @@ def _g2_tui_routes() -> list[_G2Route]:
         _G2Route(
             transport="tui",
             key="tui",
-            cell="tui-_memory_mutation_apply",
+            cell="tui-function-_memory_mutation_apply",
             op="write",
             call=_g2_tui_apply,
             supports=_g2_reader_dims(ok=frozenset()),
@@ -21895,7 +22279,7 @@ def _g2_dashboard_mutation(spec: _G2Spec) -> _G2Route:
     return _G2Route(
         transport="dashboard",
         key="dashboard_mutations",
-        cell=f"dashboard_mutations-memory_{spec.operation}-{spec.cell.rsplit('-', 1)[1]}",
+        cell=f"dashboard-operation-memory_{spec.operation}-apply-{spec.cell.rsplit('-', 1)[1]}",
         op=spec.op,
         call=call,
         supports=supports,
@@ -21919,7 +22303,7 @@ def _g2_dashboard_post_routes() -> list[_G2Route]:
     promote = dataclasses.replace(
         _g2_writer(
             "dashboard_mutations",
-            "dashboard_mutations-memory_promote",
+            "dashboard-operation-memory_promote",
             "source-a",
             _g2_dashboard_promote,
             covers=(
@@ -21934,7 +22318,7 @@ def _g2_dashboard_post_routes() -> list[_G2Route]:
     )
     sync = _g2_reader(
         "dashboard_readers",
-        "dashboard_readers-sync_current_map",
+        "dashboard_readers-function-sync_current_map",
         _g2_dashboard_sync,
         _g2_ids("mem"),
         frozenset({"mem:a1", "mem:a2", "mem:arch", "mem:exp", "mem:tam"}),
@@ -21946,6 +22330,15 @@ def _g2_dashboard_post_routes() -> list[_G2Route]:
             {"mem:a1", "mem:a2", "mem:x1", "mem:arch", "mem:exp", "mem:tam"}
         ),
         op="list",
+    )
+    # `_refresh_project_memories` reads `snapshot_memories`, a reference inventory
+    # (plan L318): it lists a rejected/pending row as it lists an archived one
+    sync = dataclasses.replace(
+        sync,
+        check_ok=_g2_shown_qualified(
+            frozenset({"mem:a1", "mem:a2", "mem:arch", "mem:exp", "mem:tam"}),
+            frozenset({"mem:rej", "mem:pen"}),
+        ),
     )
     mutations = [
         _g2_dashboard_mutation(spec)
@@ -22089,7 +22482,7 @@ def _g2_scan_routes() -> list[_G2Route]:
     common: dict[str, Any] = {"sources": (_g2_scan_root,)}
     build = _g2_writer(
         "scan_handoff",
-        "scan_handoff-build_handoff",
+        "scan_handoff-function-build_handoff",
         "scan",
         _g2_build_handoff,
         covers=((run_py, "build_handoff"),),
@@ -22099,7 +22492,7 @@ def _g2_scan_routes() -> list[_G2Route]:
     )
     dispatch = _g2_writer(
         "scan_handoff",
-        "scan_handoff-dispatch_handoff",
+        "scan_handoff-function-dispatch_handoff",
         "scan",
         _g2_dispatch_handoff,
         covers=((run_py, "dispatch_handoff"),),
@@ -22111,7 +22504,7 @@ def _g2_scan_routes() -> list[_G2Route]:
     )
     recover = _g2_writer(
         "scan_handoff",
-        "scan_handoff-recover_prepared_handoff",
+        "scan_handoff-function-recover_prepared_handoff",
         "scan",
         _g2_recover_handoff,
         covers=((run_py, "recover_prepared_handoff"),),
@@ -22219,7 +22612,7 @@ def _g2_reconcile_route() -> _G2Route:
     state_py = "dashboard/state.py"
     base = _g2_writer(
         "dashboard_admission_reconcile",
-        "dashboard_admission_reconcile-reconcile_admissions",
+        "dashboard_admission_reconcile-function-reconcile_admissions",
         "scan",
         _g2_reconcile,
         covers=((state_py, "reconcile_admissions"),),
@@ -22254,7 +22647,7 @@ def _g2_extra_routes() -> list[_G2Route]:
 
     overview = _g2_reader(
         "overview",
-        "overview-memory_overview",
+        "overview-function-memory_overview",
         lambda env: memory_overview(env.root),
         _g2_overview_shows,
         frozenset({"ov:a1", "ov:a2", "ov:tam"}),
@@ -22298,6 +22691,1104 @@ def _g2_tool_routes() -> list[_G2Route]:
 
 
 _G2_ROUTES: list[_G2Route] = _g2_tool_routes()
+
+
+# --- R8 (route x mode matrix): the internal-module entry points ------------------------
+#
+# One `_G2Route` per entry point of the mutation view, the intent and recipe modules, the
+# maintenance and expiry sweeps and the D4 gate helpers. Id grammar:
+# `internal.<route>-function-<name>-<dimension>-<value>...`. A dimension an internal
+# function does not vary along is a byte-identical cell (the same result as the baseline
+# call, store and file digests unchanged); the ones it does vary along assert the
+# observed outcome.
+
+_R8_DENY = (
+    "grant-revoked",
+    "owner-omitted",
+    "policy_state-invalid",
+    "missing_one",
+    "missing_marker",
+    "source-ungranted",
+)
+_R8_STATES = ("active", "archived", "expired", "tampered")
+#: the rows 72-T05 marks `rejected` / `pending` (not current, still stored)
+_R8_NARROWED = ("rejected", "pending")
+_R8_ALL_STATES = (*_R8_STATES, *_R8_NARROWED)
+
+
+def _r8_denied_row(cell: _G2Cell) -> bool:
+    return cell.row.endswith(_R8_DENY)
+
+
+def _r8_sql(env: _G2Env, sql: str, *args: Any) -> None:
+    assert env.store is not None
+    with contextlib.closing(sqlite3.connect(env.store.db_path)) as conn:
+        conn.execute(sql, args)
+        conn.commit()
+    gc.collect()
+
+
+def _r8_state(env: _G2Env, artifact_id: str) -> None:
+    """Put one fixture row in the cell's `row_state` (taken in legacy mode)."""
+    state = env.extra["cell"].row_state
+    if env.store is None or state in (None, "active"):
+        return
+    if state == "tampered":
+        _tamper(env.store.db_path, artifact_id)
+        gc.collect()
+    elif state == "archived":
+        _r8_sql(
+            env,
+            "UPDATE memory_artifacts SET archived_at = 1.0 WHERE id = ?",
+            artifact_id,
+        )
+    elif state == "expired":
+        _r8_sql(
+            env,
+            "UPDATE memory_artifacts SET expires_at = 1.0, expired_at = 2.0, "
+            "expired_by = 'sweep' WHERE id = ?",
+            artifact_id,
+        )
+
+
+def _r8_narrow(env: _G2Env, artifact_id: str) -> None:
+    """Mark one fixture row `rejected` / `pending` (a `row_state-rejected` / `-pending`
+    cell), the way `_g2_seed` does: through the store, so the row's MAC covers the
+    applicability. The row keeps the exact content its own writer produced."""
+    state = env.extra["cell"].row_state
+    if env.store is None or state not in _R8_NARROWED:
+        return
+    current = env.store.get_current(artifact_id)
+    assert current is not None, artifact_id
+    _r8_sql(
+        env, "DELETE FROM memory_artifact_versions WHERE artifact_id = ?", artifact_id
+    )
+    _r8_sql(env, "DELETE FROM memory_artifacts WHERE id = ?", artifact_id)
+    written = env.store.write(dataclasses.replace(current, applicability=state))
+    assert written.artifact_version == 1 and written.applicability == state, written
+
+
+def _r8_stored(env: _G2Env, artifact_id: str) -> dict[str, Any]:
+    """The raw current row `artifact_id` as stored (applicability, stale, expiry)."""
+    assert env.store is not None
+    with contextlib.closing(sqlite3.connect(env.store.db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT * FROM memory_artifacts WHERE id = ?", (artifact_id,)
+        ).fetchone()
+    assert row is not None, artifact_id
+    return dict(row)
+
+
+def _r8_live(env: _G2Env, cell: _G2Cell) -> bool:
+    """Whether the reader sees its fixture row as current: a rejected or pending row
+    is stored but not current, so the reader answers "unknown" like an archived one."""
+    return (
+        cell.store == "present"
+        and cell.row_state in (None, "active")
+        and (env.root / ".rush" / "memory.db").exists()
+    )
+
+
+def _r8_expect(env: _G2Env, cell: _G2Cell, value: Any, unknown: Any, ok: Any) -> Any:
+    if _r8_denied_row(cell) or not _r8_live(env, cell):
+        assert value == unknown, (cell.row, value)
+    else:
+        assert ok(value), (cell.row, value)
+    return value
+
+
+def _r8_denial_out(denial: Any) -> _G2Out:
+    return _G2Out("E_PERMISSION", denial.reason, frozenset(), 0, None)
+
+
+def _r8_out(call: Any) -> _G2Out:
+    """An internal call as an outcome: a `RouteDenial` or an access refusal is an
+    `E_PERMISSION`, any other raised exception its class name."""
+    from rush.memory.retrieval import RouteDenial
+
+    try:
+        value = _g2_guarded(call)
+    except AssertionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the exception class is the outcome
+        reason = getattr(exc, "reason", None)
+        if type(exc).__name__ == "MaintenanceAccessDenied":
+            return _G2Out(
+                "E_PERMISSION", reason or "policy_grant_required", frozenset()
+            )
+        return _G2Out(type(exc).__name__, None, frozenset(), 0, repr(exc))
+    if isinstance(value.body, _G2Out):
+        return value.body
+    if isinstance(value.body, RouteDenial):
+        return _r8_denial_out(value.body)
+    return value
+
+
+def _r8_route(key: str, name: str, call: Any, **extra: Any) -> _G2Route:
+    extra.setdefault("op", "ask")
+    extra.setdefault("takes_owner", False)
+    extra.setdefault("coded", False)
+    extra.setdefault("ok_codes", frozenset({None}))
+    extra.setdefault("grant_owner", "project")
+    return _G2Route(
+        transport="internal",
+        key=key,
+        cell=f"{key}-function-{name}",
+        call=lambda env, c: _r8_out(lambda: call(env, c)),
+        **extra,
+    )
+
+
+def _r8_dump(env: _G2Env) -> list[str]:
+    """Every stored row (current and version history) with only the generated ids,
+    timestamps, digests and the project path normalized: what a writer committed."""
+    db = env.root / ".rush" / "memory.db"
+    if not db.exists():
+        return []
+    rows: list[str] = []
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.row_factory = sqlite3.Row
+        for table, order in (
+            ("memory_artifacts", "id"),
+            ("memory_artifact_versions", "artifact_id, artifact_version"),
+        ):
+            rows.extend(
+                _g2_exact_body(env, {"table": table, **dict(row)})
+                for row in conn.execute(f"SELECT * FROM {table} ORDER BY {order}")
+            )
+    gc.collect()
+    return rows
+
+
+def _r8_baseline_dump(route: _G2Route, env: _G2Env, row: str) -> list[str]:
+    """The rows the baseline call commits: the same call over a fresh project with the
+    same fixture and grant, under its own data root (so the row's own policy damage,
+    an invalid policy file, cannot reach it). The overlay row's root is an empty
+    storage root, so its baseline is the same call over a fresh empty root."""
+    cell = _g2_parse_row(G2_POLICY_ROWS[0])
+    base_tmp = env.tmp_path / "r8-baseline"
+    base_tmp.mkdir()
+    with env.monkeypatch.context() as mp:
+        data_root = _fix1_data_root(mp, base_tmp)
+        if row == G2_OVERLAY_ROW:
+            empty = base_tmp / "empty"
+            empty.mkdir()
+            base = dataclasses.replace(
+                env,
+                root=empty.resolve(),
+                data_root=data_root,
+                store=None,
+                tmp_path=base_tmp,
+                monkeypatch=mp,
+                extra={"cell": cell, "transport": route.transport},
+            )
+        else:
+            base = _g2_env(base_tmp, mp, route, G2_POLICY_ROWS[0])
+        route.call(base, cell)
+        return _r8_dump(base)
+
+
+def _r8_same_write(ok: Any):
+    """These writers take no access (denial is `MemoryTool`'s, plan 2.3): every policy
+    row, denial rows included, commits exactly the rows the baseline call commits (the
+    overlay row points the call at an empty storage root, where its rows are those of
+    the same call over a fresh empty root)."""
+
+    def check(
+        route: _G2Route, row: str, env: _G2Env, cell: _G2Cell, out: _G2Out
+    ) -> None:
+        assert out.code is None and isinstance(out.body, dict), (row, out.code)
+        if row != G2_OVERLAY_ROW:
+            assert ok(out.body), (row, out.body)
+        assert _r8_dump(env) == _r8_baseline_dump(route, env, row), row
+
+    return check
+
+
+def _r8_writer(key: str, name: str, source: str, call: Any, **extra: Any) -> _G2Route:
+    """A writer: the grant approves `source`, the route owns the project owner."""
+    extra.setdefault("op", "write")
+    extra.setdefault("idempotent", False)
+    check = extra.pop("check", None) or _g2_committed(extra.pop("committed", 1))
+    dims = extra.pop("supports", None) or _g2_writer_dims(check)
+    extra.setdefault("check_legacy", check)
+    return _r8_route(
+        key,
+        name,
+        call,
+        supports=dims,
+        grant_sources=(source,),
+        owner_fixed=True,
+        check_ok=check,
+        custom_policy=_r8_same_write(
+            extra.pop("ok", lambda body: body.get("code") == "OK")
+        ),
+        ignore=(".rush",),
+        ignore_data=("user",),
+        ignore_db=True,
+        **extra,
+    )
+
+
+_R8_STATES_OK = {s: _ex(None) for s in _R8_ALL_STATES}
+_R8_STORE_NONE = {
+    "absent": _ex(None, absent=(".rush/memory.db",)),
+    "old_schema": _ex(None),
+}
+
+# --- mutation view (tools/memory.py) -------------------------------------------------
+
+
+def _r8_mv_call(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.tools import memory as tools_memory
+
+    preview = cell.apply == "preview"
+    committed = (
+        []
+        if preview
+        else [{"id": cell.target, "revision": 1, "source": "source-a", "kind": "write"}]
+    )
+    result = tools_memory._with_mutation_view(
+        env.root, {"status": "ok", "raw": {"applied": not preview}}, committed
+    )
+    return result["raw"]
+
+
+def _r8_mv_preview(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body == {
+        "applied": False,
+        "unchanged": "preview only (apply=false); nothing committed",
+    }, out.body
+
+
+def _r8_mv_applied(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    body = out.body
+    target = cell.target
+    assert body["applied"] is True and body["changed"][target] == {
+        "revision": 1,
+        "kind": "write",
+    }, body
+    assert target in body["readback"], body
+
+
+def _r8_mv_row(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    _r8_mv_applied(env, cell, out, before)
+    entry = out.body["readback"][cell.target]
+    if cell.row_state in _R8_NARROWED:
+        # the readback lists the stored row; the mark is the row's, it is not current
+        assert _r8_stored(env, cell.target)["applicability"] == cell.row_state
+        assert entry == {
+            "present": True,
+            "archived": False,
+            "revision": 1,
+            "subject": SUBJECT,
+            "trust_tier": "DERIVED",
+            "source": "source-a",
+        }, entry
+        return
+    assert entry["source"] == "source-a" or entry["present"] is False, entry
+    if cell.target == "arch":
+        assert entry["archived"] is True, entry
+
+
+_R8_ATTR_REFS = [{"id": "ghost", "version": 1, "source": "source-a"}]
+
+
+def _r8_mv_attribution(env: _G2Env, cell: _G2Cell) -> Any:
+    """The receipts of one read result: a ref that carries its `source` is kept as is;
+    one without is resolved from the store's version history, else dropped."""
+    from rush.tools import memory as tools_memory
+
+    committed = (
+        []
+        if cell.apply == "preview"
+        else [{"id": cell.target, "revision": 1, "source": "source-a", "kind": "write"}]
+    )
+    # `(target, 99)` has no stored version: it carries no source and resolves to none
+    items = [
+        {"id": cell.target, "version": 1},
+        {"id": cell.target, "version": 99},
+        *_R8_ATTR_REFS,
+    ]
+    return tools_memory._memory_attribution(
+        env.root,
+        "write",
+        {"status": "ok", "raw": {"schema_version": 2, "items": items}},
+        committed,
+    )
+
+
+def _r8_attr_check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """Refs that carry no `source` are resolved from the store's version history; one
+    that resolves to none is dropped. The version history survives `old_schema` (it
+    lacks only the payload columns), so only the absent store resolves nothing."""
+    from rush.memory.store import artifact_version_sources
+
+    refs = [(cell.target, 1), (cell.target, 99)]
+    sources = artifact_version_sources(env.root, refs)
+    if cell.store == "absent":
+        assert sources == {}, sources
+    else:
+        assert sources == {(cell.target, 1): "source-a"}, sources
+    block = out.body
+    assert block is not None and block["version"] == 1, block
+    assert {(r["id"], r["revision"]) for r in block["used"]} == {
+        ("ghost", 1),
+        *((i, v) for (i, v) in sources),
+    }, block
+    assert {r["id"] for r in block["written"]} == (
+        set() if cell.apply == "preview" else {cell.target}
+    ), block
+
+
+def _r8_mutation_routes() -> list[_G2Route]:
+    mv_supports = {
+        "apply": {
+            "preview": _ex(None, check=_r8_mv_preview),
+            "apply": _ex(None, check=_r8_mv_applied),
+        },
+        "store": {
+            "absent": _ex(None, check=_r8_mv_applied, same=False, memory_same=False),
+            "old_schema": _ex(
+                None, check=_r8_mv_applied, same=False, memory_same=False
+            ),
+        },
+        "row_state": {s: _ex(None, check=_r8_mv_row) for s in _R8_ALL_STATES},
+    }
+    attr_supports = {
+        "apply": {s: _ex(None, check=_r8_attr_check) for s in ("preview", "apply")},
+        "store": {s: _ex(None, check=_r8_attr_check) for s in ("absent", "old_schema")},
+        "row_state": {s: _ex(None, check=_r8_attr_check) for s in _R8_ALL_STATES},
+    }
+    return [
+        _r8_route(
+            "mutation_view",
+            "_with_mutation_view",
+            _r8_mv_call,
+            supports=mv_supports,
+            ungated=frozenset(),
+            covers=(("tools/memory.py", "_with_mutation_view"),),
+        ),
+        _r8_route(
+            "mutation_view",
+            "_memory_attribution",
+            _r8_mv_attribution,
+            supports=attr_supports,
+            ungated=frozenset(),
+            covers=(("tools/memory.py", "_memory_attribution"),),
+        ),
+    ]
+
+
+# --- intent module (memory/intent.py) ------------------------------------------------
+
+_R8_UNKNOWN_INTENT = {"code": "E_INPUT", "message": "unknown intent 'i1'"}
+_R8_UNKNOWN_RECIPE = {"code": "E_INPUT", "message": "unknown recipe 'r1'"}
+_R8_HELPER = {"path": "helper.py", "symbol": "helper"}
+
+
+def _r8_seed_intent(env: _G2Env) -> None:
+    if env.extra["cell"].store == "absent":
+        return
+    from rush.memory.intent import record_intent
+
+    result = record_intent(project_root=env.root, intent_id="i1", behavior_id="b1")
+    assert result.get("code") not in ("E_INPUT", "E_VERSION"), result
+    _r8_state(env, "i1")
+    _r8_narrow(env, "i1")
+
+
+def _r8_seed_recipe(env: _G2Env) -> None:
+    if env.extra["cell"].store == "absent":
+        return
+    from rush.memory.recipes import record_recipe
+
+    result = record_recipe(
+        project_root=env.root, recipe_id="r1", purpose="p", helper_ref=_R8_HELPER
+    )
+    assert result.get("code") not in ("E_INPUT", "E_VERSION"), result
+    _r8_state(env, "r1")
+    _r8_narrow(env, "r1")
+
+
+def _r8_seed_superseding(env: _G2Env) -> None:
+    if env.extra["cell"].store == "absent":
+        return
+    from rush.memory.intent import record_intent
+
+    assert env.store is not None
+    _row(env.store, "st1", None, "mk-st1")
+    env.store.promote("st1", user_stated=True, expected_version=1)
+    result = record_intent(project_root=env.root, intent_id="w1", behavior_id="b1")
+    assert result.get("code") not in ("E_INPUT", "E_VERSION"), result
+    _r8_state(env, "w1")
+    _r8_narrow(env, "w1")
+
+
+def _r8_check_intent(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.intent import check_intent
+
+    value = check_intent(project_root=env.root, intent_id="i1")
+    return _r8_expect(
+        env, cell, value, _R8_UNKNOWN_INTENT, lambda v: v.get("code") == "UNRESOLVED"
+    )
+
+
+def _r8_resolve_recipe(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.recipes import resolve_recipe
+
+    value = resolve_recipe(project_root=env.root, recipe_id="r1")
+    return _r8_expect(
+        env, cell, value, _R8_UNKNOWN_RECIPE, lambda v: v.get("code") != "E_INPUT"
+    )
+
+
+def _r8_seed_statement(env: _G2Env) -> None:
+    """`row_state-rejected` / `-pending`: the fixture rows are all DERIVED, so the
+    resolver would answer `None` on trust alone. Add a `STATED` statement `st1` (the
+    way `_r8_seed_superseding` does) and narrow it, so the cell shows what the
+    applicability does to an otherwise-authorizing row."""
+    cell = env.extra["cell"]
+    if cell.store == "absent" or cell.row_state not in _R8_NARROWED:
+        return
+    assert env.store is not None
+    _row(env.store, "st1", None, "mk-st1")
+    _r8_narrow(env, "st1")
+    env.store.promote("st1", user_stated=True, expected_version=1)
+
+
+def _r8_resolve_statement(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.intent import _resolve_authorized_statement
+
+    target, version = ("st1", 2) if cell.row_state in _R8_NARROWED else (cell.target, 1)
+    return _resolve_authorized_statement(env.root, {"id": target, "version": version})
+
+
+def _r8_statement_state(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """`tampered` (a DERIVED fixture row): `None`. `rejected` / `pending` `st1` (STATED,
+    promoted at version 2): not a currently-STATED statement (plan L51/L55: a
+    rejected/pending row is not usable as current), so `None` too, and the row stays
+    stored as it was. A second call gives the same answer, and the effects check
+    proves nothing was written."""
+    assert out.body is None, out.body
+    assert _r8_resolve_statement(env, cell) is None
+    if cell.row_state in _R8_NARROWED:
+        stored = _r8_stored(env, "st1")
+        assert (stored["trust_tier"], stored["artifact_version"]) == ("STATED", 2)
+        assert stored["applicability"] == cell.row_state, stored
+
+
+def _r8_record_intent(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.intent import record_intent
+
+    return record_intent(project_root=env.root, intent_id="w1", behavior_id="b1")
+
+
+def _r8_supersede(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.intent import supersede_intent
+
+    return supersede_intent(
+        project_root=env.root,
+        intent_id="w1",
+        expected_old_version=1,
+        new_statement_ref={"id": "st1", "version": 2},
+    )
+
+
+def _r8_superseded(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    row = _g2_row(env, "w1")
+    assert row is not None and int(row["artifact_version"]) == 2, out.body
+
+
+def _r8_record_recipe(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.recipes import record_recipe
+
+    return record_recipe(
+        project_root=env.root, recipe_id="w1", purpose="p", helper_ref=_R8_HELPER
+    )
+
+
+def _r8_seed_outcome(env: _G2Env) -> None:
+    if env.extra["cell"].store == "absent":
+        return
+    from rush.memory.recipes import record_recipe
+
+    assert env.store is not None
+    _row(
+        env.store,
+        "ev1",
+        None,
+        "mk-ev1",
+        content={"evidence_kind": "sandbox_verification", "outcome": "completed"},
+    )
+    result = record_recipe(
+        project_root=env.root, recipe_id="w1", purpose="p", helper_ref=_R8_HELPER
+    )
+    assert result.get("code") not in ("E_INPUT", "E_VERSION"), result
+    _r8_state(env, "w1")
+    _r8_narrow(env, "w1")
+
+
+def _r8_recipe_outcome(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.recipes import record_recipe_outcome
+
+    return record_recipe_outcome(
+        project_root=env.root,
+        recipe_id="w1",
+        recipe_version=1,
+        patch_hash="a" * 64,
+        verifier_receipt_ref={"id": "ev1", "version": 1},
+    )
+
+
+_R8_OUTCOME_OK = {
+    "code": "OK",
+    "id": "w1",
+    "version": 2,
+    "recipe_id": "w1",
+    "passed": True,
+    "receipt_ref": {"id": "ev1", "version": 1},
+    "outcomes_count": 1,
+}
+
+
+def _r8_outcome_recorded(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """The baseline commits one passing outcome against the `sandbox_verification`
+    receipt `ev1`: the recipe moves to version 2 and carries the outcome."""
+    assert out.body == _R8_OUTCOME_OK, out.body
+    row = _g2_row(env, "w1")
+    assert row is not None and int(row["artifact_version"]) == 2, out.body
+
+
+def _r8_outcome_store(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    if cell.store == "absent":  # no store, so no recipe: nothing to append to
+        assert out.body == {"code": "E_INPUT", "message": "unknown recipe 'w1'"}
+    else:
+        _r8_outcome_recorded(env, cell, out, before)
+
+
+_R8_SUPERSEDED_OK = {
+    "behavior_id": "b1",
+    "code": "OK",
+    "id": "w1",
+    "intent_id": "w1",
+    "statement_ref": {"id": "st1", "version": 2},
+    "status": "confirmed",
+    "supersedes_version": 1,
+    "version": 2,
+}
+
+
+def _r8_narrowed_write(expected: dict[str, Any]) -> Any:
+    """A `rejected` / `pending` `w1` (narrowed in the seed): neither writer reads the
+    row's applicability, so each commits its baseline outcome as version 2 (history
+    `[1, 2]`) and leaves the row in the state it was narrowed to."""
+
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.body == expected, (cell.row_state, out.body)
+        row = _r8_stored(env, "w1")
+        assert (row["artifact_version"], row["applicability"]) == (
+            2,
+            cell.row_state,
+        ), row
+        assert env.store is not None
+        with contextlib.closing(sqlite3.connect(env.store.db_path)) as conn:
+            versions = [
+                v
+                for (v,) in conn.execute(
+                    "SELECT artifact_version FROM memory_artifact_versions "
+                    "WHERE artifact_id = 'w1' ORDER BY artifact_version"
+                )
+            ]
+        gc.collect()
+        assert versions == [1, 2], (cell.row_state, versions)
+
+    return check
+
+
+def _r8_tampered_write(key: str, recorded: Any) -> Any:
+    """A `tampered` `w1`: exactly the baseline outcome (`_R8_EXACT[key]`)."""
+
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert _g2_exact_body(env, out.body) == _R8_EXACT[key].body, out.body
+        recorded(env, cell, out, before)
+
+    return check
+
+
+def _r8_writer_states(
+    key: str, recorded: Any, expected: dict[str, Any]
+) -> dict[str, _G2Expect]:
+    """The `row_state` cells of a writer that reacts to the existing row: `tampered`
+    (the cell every writer has) plus the narrowed ones; nothing beyond the store
+    changes in any of them."""
+    return {
+        "tampered": _ex(None, committed=0, check=_r8_tampered_write(key, recorded)),
+        **{
+            state: _ex(None, committed=0, check=_r8_narrowed_write(expected))
+            for state in _R8_NARROWED
+        },
+        **{
+            state: _ex(None, committed=0, check=_r8_retired_write(expected))
+            for state in ("archived", "expired")
+        },
+    }
+
+
+def _r8_retired_write(expected: dict[str, Any]) -> Any:
+    """An `archived` / `expired` `w1` (set in the seed): observed, neither writer reads
+    the row's archive or expiry, so each commits its baseline outcome as version 2
+    (history `[1, 2]`) and the new version keeps the row archived / expired."""
+
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.body == expected, (cell.row_state, out.body)
+        row = _r8_stored(env, "w1")
+        retired = (1.0, None) if cell.row_state == "archived" else (None, 2.0)
+        assert (
+            row["artifact_version"],
+            (row["archived_at"], row["expired_at"]),
+            row["applicability"],
+        ) == (2, retired, None), row
+        assert env.store is not None
+        with contextlib.closing(sqlite3.connect(env.store.db_path)) as conn:
+            versions = [
+                v
+                for (v,) in conn.execute(
+                    "SELECT artifact_version FROM memory_artifact_versions "
+                    "WHERE artifact_id = 'w1' ORDER BY artifact_version"
+                )
+            ]
+        gc.collect()
+        assert versions == [1, 2], (cell.row_state, versions)
+
+    return check
+
+
+def _r8_module_routes() -> list[_G2Route]:
+    reader_dims = {"store": _R8_STORE_NONE, "row_state": _R8_STATES_OK}
+    version_dims = {
+        "row_state": _r8_writer_states(
+            "internal.intent_module-function-supersede_intent",
+            _r8_superseded,
+            _R8_SUPERSEDED_OK,
+        ),
+        "store": {
+            "absent": _ex(None, committed=0, same=False, memory_same=False),
+            "old_schema": _ex(None, same=False, memory_same=False),
+        },
+    }
+    outcome_dims = {
+        "row_state": _r8_writer_states(
+            "internal.recipes-function-record_recipe_outcome",
+            _r8_outcome_recorded,
+            _R8_OUTCOME_OK,
+        ),
+        "store": {
+            "absent": _ex(
+                None,
+                committed=0,
+                same=False,
+                memory_same=False,
+                check=_r8_outcome_store,
+            ),
+            "old_schema": _ex(
+                None,
+                committed=0,
+                same=False,
+                memory_same=False,
+                check=_r8_outcome_store,
+            ),
+        },
+    }
+    return [
+        _r8_route(
+            "intent_module",
+            "check_intent",
+            _r8_check_intent,
+            supports=reader_dims,
+            grant_sources=("intent:i1",),
+            pre_setup=_r8_seed_intent,
+            covers=(("memory/intent.py", "check_intent"),),
+        ),
+        _r8_route(
+            "intent_module",
+            "_resolve_authorized_statement",
+            _r8_resolve_statement,
+            ungated=frozenset(),
+            pre_setup=_r8_seed_statement,
+            supports={
+                "row_state": {
+                    s: _ex(None, check=_r8_statement_state)
+                    for s in ("tampered", *_R8_NARROWED)
+                },
+                "store": {
+                    "absent": _ex(None, same=False, memory_same=False),
+                    "old_schema": _ex(None, same=False, memory_same=False),
+                },
+            },
+            covers=(("memory/intent.py", "_resolve_authorized_statement"),),
+        ),
+        _r8_writer(
+            "intent_module",
+            "record_intent",
+            "intent:w1",
+            _r8_record_intent,
+            covers=(("memory/intent.py", "record_intent"),),
+        ),
+        _r8_writer(
+            "intent_module",
+            "supersede_intent",
+            "intent:w1",
+            _r8_supersede,
+            check=_r8_superseded,
+            supports=version_dims,
+            pre_setup=_r8_seed_superseding,
+            covers=(("memory/intent.py", "supersede_intent"),),
+        ),
+        _r8_route(
+            "recipes",
+            "resolve_recipe",
+            _r8_resolve_recipe,
+            supports=reader_dims,
+            grant_sources=("recipe:r1",),
+            pre_setup=_r8_seed_recipe,
+            covers=(("memory/recipes.py", "resolve_recipe"),),
+        ),
+        _r8_writer(
+            "recipes",
+            "record_recipe",
+            "recipe:w1",
+            _r8_record_recipe,
+            covers=(("memory/recipes.py", "record_recipe"),),
+        ),
+        _r8_writer(
+            "recipes",
+            "record_recipe_outcome",
+            "recipe:w1",
+            _r8_recipe_outcome,
+            check=_r8_outcome_recorded,
+            supports=outcome_dims,
+            pre_setup=_r8_seed_outcome,
+            covers=(("memory/recipes.py", "record_recipe_outcome"),),
+        ),
+    ]
+
+
+# --- maintenance and expiry (memory/maintenance.py, memory/expiry.py) ----------------
+
+
+def _r8_seed_maint(env: _G2Env) -> None:
+    """A `rejected` / `pending` row that both sweeps would visit: anchored to a symbol
+    whose recorded hash is stale, and past its TTL."""
+    state = env.extra["cell"].row_state
+    if env.store is None or state not in _R8_NARROWED:
+        return
+    written = env.store.write(
+        MemoryArtifact(
+            id="mrow",
+            family="memory",
+            subject=SUBJECT,  # type: ignore[arg-type]
+            trust_tier="DERIVED",
+            content={"text": "needle mk-mrow"},
+            source="source-a",
+            created_at=1.0,
+            symbol_ref="helper.py::helper",
+            content_hash="stale",
+            owner_scope=ALICE,
+            applicability=state,
+        )
+    )
+    assert written.artifact_version == 1 and written.applicability == state, written
+
+
+def _r8_maint_access(env: _G2Env, cell: _G2Cell, *, apply: bool) -> Any:
+    from rush.memory.retrieval import route_access
+
+    return route_access(
+        env.root,
+        "maintain",
+        apply=apply,
+        session_allowlist=cell.allow,
+        owner_scope=cell.owner,
+    )
+
+
+def _r8_preview(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.maintenance import preview_maintenance_candidates
+
+    access = _r8_maint_access(env, cell, apply=False)
+    if not hasattr(access, "project_root"):
+        return _r8_denial_out(access)
+    return preview_maintenance_candidates(
+        "staleness_sweep", access=access, project_root=env.root
+    )
+
+
+def _r8_run(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.maintenance import run_maintenance_cycle
+
+    access = _r8_maint_access(env, cell, apply=True)
+    if not hasattr(access, "project_root"):
+        return _r8_denial_out(access)
+    return run_maintenance_cycle(
+        "staleness_sweep", access=access, project_root=env.root
+    )
+
+
+def _r8_conn_call(env: _G2Env, cell: _G2Cell, fn: Any) -> Any:
+    access = _r8_maint_access(env, cell, apply=True)
+    if not hasattr(access, "project_root"):
+        return _r8_denial_out(access)
+    db = env.root / ".rush" / "memory.db"
+    if not db.exists():
+        return {"store": "absent"}
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.row_factory = sqlite3.Row
+        return fn(conn, access)
+
+
+def _r8_conflicts(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.maintenance import _revision_conflicts
+
+    return _r8_conn_call(
+        env,
+        cell,
+        lambda conn, access: repr(
+            _revision_conflicts(conn, {cell.target: 1}, access=access, root=env.root)
+        ),
+    )
+
+
+def _r8_conflicts_narrowed(
+    env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any
+) -> None:
+    """A conflict is a version or scope mismatch only: the rejected/pending row at its
+    reviewed version is found and reported clean (it is not hidden as "absent")."""
+    assert out.body == "()", out.body
+    assert _r8_stored(env, cell.target)["applicability"] == cell.row_state
+
+
+def _r8_preview_narrowed(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert [dict(c) for c in out.body] == [{"id": "mrow", "artifact_version": 1}]
+    assert _r8_stored(env, "mrow")["applicability"] == cell.row_state
+
+
+def _r8_run_narrowed(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """The sweep visits the stored row and marks it stale; the mark stays: the row is
+    not made current again."""
+    body = out.body
+    assert (body.processed, body.changed, body.errors, body.refused) == (1, 1, (), ())
+    assert body.unprocessed == () and not body.lock_lost, body
+    stored = _r8_stored(env, "mrow")
+    assert (stored["stale"], stored["artifact_version"]) == (1, 2), stored
+    assert stored["applicability"] == cell.row_state, stored
+
+
+def _r8_sweep_narrowed(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.body == "(1, [])", out.body
+    stored = _r8_stored(env, "mrow")
+    assert (stored["expired_by"], stored["artifact_version"]) == ("expiry_sweep", 2)
+    assert stored["applicability"] == cell.row_state, stored
+
+
+def _r8_sweep(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.expiry import _sweep_reviewed_expired
+
+    sweep_id = "mrow" if cell.row_state in _R8_NARROWED else "exp"
+    return _r8_conn_call(
+        env,
+        cell,
+        lambda conn, access: repr(
+            _sweep_reviewed_expired(
+                conn,
+                access=access,
+                renew=lambda ids: None,
+                candidate_ids=[sweep_id],
+                expected_revisions={sweep_id: 1},
+            )
+        ),
+    )
+
+
+def _r8_ran(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    assert out.code is None and out.body is not None, (out.code, out.reason, out.body)
+
+
+def _r8_ran_or_refused(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+    """Legacy access never reaches the sweep: the run is refused before any effect."""
+    assert out.code in (None, "E_PERMISSION"), (out.code, out.reason)
+
+
+def _r8_maintenance_routes() -> list[_G2Route]:
+    maint = {
+        "store": {
+            "absent": _ex(None, "MemoryMigrationRequiredError", "OperationalError"),
+            "old_schema": _ex(None, "MemoryMigrationRequiredError", "OperationalError"),
+        },
+        "row_state": {s: _ex(None, check=_r8_preview_narrowed) for s in _R8_NARROWED},
+    }
+    maint_run = {
+        "store": {
+            "absent": _ex(None, same=False, memory_same=False),
+            "old_schema": _ex(None, same=False, memory_same=False),
+        },
+        "row_state": {
+            s: _ex(None, same=False, memory_same=False, check=_r8_run_narrowed)
+            for s in _R8_NARROWED
+        },
+    }
+    conflicts_dims = {
+        "row_state": {s: _ex(None, check=_r8_conflicts_narrowed) for s in _R8_NARROWED}
+    }
+    sweep_dims = {
+        "row_state": {
+            s: _ex(None, same=False, memory_same=False, check=_r8_sweep_narrowed)
+            for s in _R8_NARROWED
+        }
+    }
+    return [
+        _r8_route(
+            "maintenance_expiry",
+            "preview_maintenance_candidates",
+            _r8_preview,
+            supports=maint,
+            pre_setup=_r8_seed_maint,
+            ok_codes=frozenset({None, "E_PERMISSION"}),
+            takes_allowlist=True,
+            takes_owner=True,
+            grant_owner="alice",
+            check_ok=_r8_ran,
+            covers=(("memory/maintenance.py", "preview_maintenance_candidates"),),
+        ),
+        _r8_route(
+            "maintenance_expiry",
+            "run_maintenance_cycle",
+            _r8_run,
+            op="write",
+            supports=maint_run,
+            pre_setup=_r8_seed_maint,
+            ok_codes=frozenset({None, "E_PERMISSION"}),
+            takes_allowlist=True,
+            takes_owner=True,
+            grant_owner="alice",
+            check_ok=_r8_ran,
+            check_legacy=_r8_ran_or_refused,
+            idempotent=False,
+            covers=(("memory/maintenance.py", "run_maintenance_cycle"),),
+        ),
+        _r8_route(
+            "maintenance_expiry",
+            "_revision_conflicts",
+            _r8_conflicts,
+            op="write",
+            supports=conflicts_dims,
+            pre_setup=_r8_seed_maint,
+            ok_codes=frozenset({None, "E_PERMISSION"}),
+            takes_allowlist=True,
+            takes_owner=True,
+            grant_owner="alice",
+            check_ok=_r8_ran,
+            check_legacy=_r8_ran_or_refused,
+            covers=(("memory/maintenance.py", "_revision_conflicts"),),
+        ),
+        _r8_route(
+            "maintenance_expiry",
+            "_sweep_reviewed_expired",
+            _r8_sweep,
+            op="write",
+            supports=sweep_dims,
+            pre_setup=_r8_seed_maint,
+            ok_codes=frozenset({None, "E_PERMISSION"}),
+            takes_allowlist=True,
+            takes_owner=True,
+            grant_owner="alice",
+            check_ok=_r8_ran,
+            check_legacy=_r8_ran_or_refused,
+            covers=(("memory/expiry.py", "_sweep_reviewed_expired"),),
+        ),
+    ]
+
+
+# --- the D4 gate helpers (memory/retrieval.py) ---------------------------------------
+
+
+def _r8_access_out(access: Any) -> _G2Out:
+    if hasattr(access, "reason"):
+        return _G2Out(
+            "E_INPUT" if access.reason == "source_pattern" else "E_PERMISSION",
+            access.reason,
+            frozenset(),
+            0,
+            {"denied": access.reason},
+        )
+    return _G2Out("OK", None, frozenset(), 0, {"kind": access.kind})
+
+
+def _r8_authorize_writer(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.retrieval import authorize_writer
+
+    with authorize_writer(env.root, _r8_source(cell), owner=cell.owner) as access:
+        return _r8_access_out(access)
+
+
+def _r8_source(cell: _G2Cell) -> str:
+    return "source-x" if cell.row.endswith("source-ungranted") else "source-a"
+
+
+def _r8_reader_route(env: _G2Env, cell: _G2Cell) -> Any:
+    from rush.memory.retrieval import reader_route
+
+    return _r8_access_out(reader_route(env.root, "ask", [_r8_source(cell)]))
+
+
+def _r8_kind(kind: str):
+    def check(env: _G2Env, cell: _G2Cell, out: _G2Out, before: Any) -> None:
+        assert out.body == {"kind": kind}, out.body
+
+    return check
+
+
+def _r8_d4_routes() -> list[_G2Route]:
+    return [
+        _r8_route(
+            "internal_d4",
+            "authorize_writer",
+            _r8_authorize_writer,
+            op="write",
+            takes_owner=True,
+            coded=True,
+            takes_allowlist=True,
+            ok_codes=frozenset({"OK"}),
+            grant_owner="alice",
+            check_ok=_r8_kind("policy"),
+            check_legacy=_r8_kind("legacy_allowlist"),
+            owner_omitted_reason="owner_not_granted",
+            covers=(("memory/retrieval.py", "authorize_writer"),),
+        ),
+        _r8_route(
+            "internal_d4",
+            "reader_route",
+            _r8_reader_route,
+            coded=True,
+            takes_allowlist=True,
+            ok_codes=frozenset({"OK"}),
+            grant_owner="alice",
+            check_ok=_r8_kind("policy"),
+            check_legacy=_r8_kind("legacy_allowlist"),
+            covers=(("memory/retrieval.py", "reader_route"),),
+        ),
+    ]
+
+
+_G2_R8_ROUTES: tuple[_G2Route, ...] = (
+    *_r8_mutation_routes(),
+    *_r8_module_routes(),
+    *_r8_maintenance_routes(),
+    *_r8_d4_routes(),
+)
+
+_G2_ROUTES.extend(_G2_R8_ROUTES)
 # 73-T02/BOOTSTRAP-CONSENT: `bind_store(overlay=True)` cells (D41 (b)), through the CLI.
 _G2_BIND_ROWS = (
     "access-overlay-policy_state-ok-grant_ops-exact-apply-preview",
@@ -22315,9 +23806,12 @@ _G2_BIND_ROWS = (
 )
 
 
-def _g2_seed(root: Path, store: TypedArtifactStore) -> None:
+def _g2_seed(root: Path, store: TypedArtifactStore, *, applicability: bool) -> None:
     """The fixture rows. `a1`/`a2` are Alice's active `source-a` rows, `x1` is hers under
-    `source-x`, `arch` is archived, `exp` is expired and `tam` has tampered bytes."""
+    `source-x`, `arch` is archived, `exp` is expired and `tam` has tampered bytes. With
+    `applicability` (the `row_state-rejected` / `row_state-pending` cells) `rej` is
+    applicability-rejected and `pen` applicability-pending; every other cell's store
+    carries neither, so the browse surfaces' exact row sets are unchanged."""
     for artifact_id, source in (
         ("a1", "source-a"),
         ("a2", "source-a"),
@@ -22327,6 +23821,12 @@ def _g2_seed(root: Path, store: TypedArtifactStore) -> None:
         ("tam", "source-a"),
     ):
         _row(store, artifact_id, ALICE, f"mk-{artifact_id}", source=source)
+    # the store writes (and MACs) the applicability, as the 72-T05 corrections do
+    for artifact_id, state in (("rej", "rejected"), ("pen", "pending")):
+        if applicability:
+            _t05_row(
+                store, artifact_id, ALICE, f"mk-{artifact_id}", applicability=state
+            )
     store.archive(
         "arch", expected_version=1, scope=SUBJECT, owner_scope=ALICE, apply=True
     )
@@ -22367,7 +23867,7 @@ def _g2_env(
     (root / "helper.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
     if cell.store != "absent":
         env.store = TypedArtifactStore(root)
-        _g2_seed(root, env.store)
+        _g2_seed(root, env.store, applicability=row.startswith(_G2_APPLICABILITY_ROWS))
     can_setup = route.setup is not None and cell.store != "absent"
     if route.pre_setup is not None:
         route.pre_setup(env)
@@ -22421,7 +23921,11 @@ def _g2_cells() -> list[Any]:
             cells.append(pytest.param(route, row, id=f"{route.ident}-{row}"))
     for row in _G2_BIND_ROWS:
         cells.append(
-            pytest.param("bind_store_overlay", row, id=f"cli.bind_store-overlay-{row}")
+            pytest.param(
+                "bind_store_overlay",
+                row,
+                id=f"cli.cli_memory-operation-bind_store-function-overlay-{row}",
+            )
         )
     return cells
 
@@ -22586,7 +24090,7 @@ def _g2_run_policy_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) ->
 
 
 def _g2_run_overlay_row(route: _G2Route, row: str, env: _G2Env, cell: _G2Cell) -> None:
-    """Access form `overlay` (producer 72-T05). A route with an `owner_scope` input is
+    """Access form `overlay`. A route with an `owner_scope` input is
     sent the user-overlay owner: no overlay grant exists yet, so it refuses with
     `owner_not_granted`. A route with no owner input is pointed at the overlay storage
     root instead, which is never a project route (`overlay_storage_root`)."""
@@ -22902,7 +24406,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'y"}'
         ),
     ),
-    "internal.session_memory-record_turn": _G2Exact(
+    "internal.session_memory-function-record_turn": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22914,7 +24418,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="null",
     ),
-    "internal.session_memory-record_fix_attribution": _G2Exact(
+    "internal.session_memory-function-record_fix_attribution": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22934,7 +24438,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             "'<root>'), archived_at=None, freshness=None)\""
         ),
     ),
-    "internal.flight_recorder-record_event": _G2Exact(
+    "internal.flight_recorder-function-record_event": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22948,7 +24452,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="null",
     ),
-    "internal.skills_generator-generate_skill_markdown": _G2Exact(
+    "internal.skills_generator-function-generate_skill_markdown": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22959,7 +24463,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="null",
     ),
-    "internal.cache_gate-write_cache_fill": _G2Exact(
+    "internal.cache_gate-function-write_cache_fill": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22981,7 +24485,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'chived_at=None, freshness=None)"'
         ),
     ),
-    "internal.checkpoint_journal-save_checkpoint": _G2Exact(
+    "internal.checkpoint_journal-function-save_checkpoint": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -22994,7 +24498,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="\"PosixPath('<root>/.rush/sessions/cp1.json')\"",
     ),
-    "internal.experience-write_observation": _G2Exact(
+    "internal.experience-function-write_observation": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23015,7 +24519,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'shness=None)"'
         ),
     ),
-    "internal.experience-record_behavior_success": _G2Exact(
+    "internal.experience-function-record_behavior_success": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23036,7 +24540,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'ness=None)"'
         ),
     ),
-    "internal.experience-record_cause_experiment": _G2Exact(
+    "internal.experience-function-record_cause_experiment": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23049,7 +24553,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             '{"artifact_id": "<id>", "artifact_version": 1, "cause_state": "candidate"}'
         ),
     ),
-    "internal.experience-record_attempt": _G2Exact(
+    "internal.experience-function-record_attempt": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23072,7 +24576,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'ne, freshness=None)"'
         ),
     ),
-    "internal.migration-migrate_session_memory": _G2Exact(
+    "internal.migration-function-migrate_session_memory": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23085,7 +24589,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_preference_store": _G2Exact(
+    "internal.migration-function-migrate_preference_store": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23098,7 +24602,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_invariant_graph": _G2Exact(
+    "internal.migration-function-migrate_invariant_graph": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23111,7 +24615,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_checkpoint_journal": _G2Exact(
+    "internal.migration-function-migrate_checkpoint_journal": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23124,7 +24628,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_failure_ledger": _G2Exact(
+    "internal.migration-function-migrate_failure_ledger": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23135,7 +24639,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_patch_memory": _G2Exact(
+    "internal.migration-function-migrate_patch_memory": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23146,7 +24650,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_flight_recorder": _G2Exact(
+    "internal.migration-function-migrate_flight_recorder": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23159,7 +24663,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_hook_signatures": _G2Exact(
+    "internal.migration-function-migrate_hook_signatures": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23172,7 +24676,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.migration-migrate_merkle_invalidator": _G2Exact(
+    "internal.migration-function-migrate_merkle_invalidator": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23183,7 +24687,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body="1",
     ),
-    "internal.continuity_tool-save": _G2Exact(
+    "internal.continuity_tool-function-save": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23241,7 +24745,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             '\'.", "tool": "continuity"}'
         ),
     ),
-    "internal.migration-write_if_new": _G2Exact(
+    "internal.migration-function-write_if_new": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23261,7 +24765,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'one)"'
         ),
     ),
-    "internal.preferences-set": _G2Exact(
+    "internal.preferences-function-set": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23272,7 +24776,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 0),
         body='"set"',
     ),
-    "internal.preferences-delete": _G2Exact(
+    "internal.preferences-function-delete": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23283,7 +24787,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 0),
         body="true",
     ),
-    "cli.cli_other_readers-context_persona_set": _G2Exact(
+    "cli.cli_other_readers-function-context_persona_set": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23295,7 +24799,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 0),
         body='"Persona style set to: terse\\n"',
     ),
-    "tui.tui-_memory_mutation_apply": _G2Exact(
+    "tui.tui-function-_memory_mutation_apply": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23306,7 +24810,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         out=(None, None, None, (), 1),
         body=('"a1 promotion denied: insufficient_corroboration (candidate <id> v1)"'),
     ),
-    "dashboard.dashboard_mutations-memory_promote": _G2Exact(
+    "dashboard.dashboard-operation-memory_promote": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23337,7 +24841,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'tion.", "tool": "memory"}]'
         ),
     ),
-    "dashboard.dashboard_mutations-memory_edit-apply": _G2Exact(
+    "dashboard.dashboard-operation-memory_edit-apply-apply": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23360,7 +24864,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             '": "memory"}'
         ),
     ),
-    "dashboard.dashboard_mutations-memory_archive-apply": _G2Exact(
+    "dashboard.dashboard-operation-memory_archive-apply-apply": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23383,7 +24887,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             ', "tool": "memory"}'
         ),
     ),
-    "dashboard.dashboard_mutations-memory_delete-apply": _G2Exact(
+    "dashboard.dashboard-operation-memory_delete-apply-apply": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23405,7 +24909,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'y"}'
         ),
     ),
-    "dashboard.dashboard_mutations-memory_maintain-apply": _G2Exact(
+    "dashboard.dashboard-operation-memory_maintain-apply-apply": _G2Exact(
         effects=frozenset(
             {
                 "root:.rush/locks",
@@ -23422,7 +24926,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             'y"}'
         ),
     ),
-    "dashboard.scan_handoff-build_handoff": _G2Exact(
+    "dashboard.scan_handoff-function-build_handoff": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23450,7 +24954,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             "owner_instance_id='')\""
         ),
     ),
-    "dashboard.scan_handoff-dispatch_handoff": _G2Exact(
+    "dashboard.scan_handoff-function-dispatch_handoff": _G2Exact(
         effects=frozenset(
             {
                 "counts",
@@ -23477,7 +24981,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             "wner_instance_id='')\""
         ),
     ),
-    "dashboard.scan_handoff-recover_prepared_handoff": _G2Exact(
+    "dashboard.scan_handoff-function-recover_prepared_handoff": _G2Exact(
         effects=frozenset(
             {
                 "root:.rush/handoffs/<id>.json",
@@ -23501,7 +25005,7 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
             "wner_instance_id='')\""
         ),
     ),
-    "dashboard.dashboard_admission_reconcile-reconcile_admissions": _G2Exact(
+    "dashboard.dashboard_admission_reconcile-function-reconcile_admissions": _G2Exact(
         effects=frozenset(
             {
                 "root:.rush/handoffs/<id>.json",
@@ -23511,6 +25015,40 @@ _G2_WRITER_EXACT: dict[str, _G2Exact] = {
         body='[1, "delivered"]',
     ),
 }
+
+
+# `ignore_db`/`ignore` hide `.rush` (the writers' own store), so a declared effect
+# set is what lies outside it.
+_R8_EXACT: dict[str, _G2Exact] = {
+    "internal.intent_module-function-record_intent": _G2Exact(
+        effects=frozenset([]),
+        out=(None, None, None, (), 1),
+        body='{"behavior_id": "b1", "check_refs": [], "code": "OK", "id": "w1", "intent_id": "w1", "statement_ref": null, "status": "candidate", "version": 1}',
+    ),
+    "internal.intent_module-function-supersede_intent": _G2Exact(
+        effects=frozenset([]),
+        out=(None, None, None, (), 0),
+        body='{"behavior_id": "b1", "code": "OK", "id": "w1", "intent_id": "w1", "statement_ref": {"id": "st1", "version": 2}, "status": "confirmed", "supersedes_version": 1, "version": 2}',
+    ),
+    "internal.recipes-function-record_recipe": _G2Exact(
+        effects=frozenset([]),
+        out=(None, None, None, (), 1),
+        body='{"checks": [], "code": "OK", "exceptions": [], "helper_ref": {"path": "helper.py", "symbol": "helper"}, "helper_source_hash": "<sha>", "id": "w1", "purpose": "p", "recipe_id": "w1", "version": 1}',
+    ),
+    "internal.recipes-function-record_recipe_outcome": _G2Exact(
+        effects=frozenset([]),
+        out=(None, None, None, (), 0),
+        body='{"code": "OK", "id": "w1", "outcomes_count": 1, "passed": true, "receipt_ref": {"id": "ev1", "version": 1}, "recipe_id": "w1", "version": 2}',
+    ),
+    "internal.maintenance_expiry-function-run_maintenance_cycle": _G2Exact(
+        effects=frozenset(
+            ["root:.rush/locks", "root:.rush/locks/.rush_memory-maintenance.lock.claim"]
+        ),
+        out=(None, None, None, (), 0),
+        body="\"MaintenanceRunResult(task='staleness_sweep', processed=0, changed=0, errors=(), refused=(), lock_lost=False, unprocessed=())\"",
+    ),
+}
+_G2_WRITER_EXACT.update(_R8_EXACT)
 
 
 def _g2_run_unsupported_row(
@@ -23587,17 +25125,6 @@ def test_t01_fix_policy_mode_matrix(
         _g2_run_policy_row(route, row, env, cell)
     elif row == G2_OVERLAY_ROW:
         _g2_run_overlay_row(route, row, env, cell)
-    elif "-producer-" in row:
-        # rejected/pending lifecycle rows do not exist yet: the strict model refuses a
-        # request that names one.
-        dim, value = _g2_split(row)
-        if route.carry is not None:
-            out = route.carry(env, cell, dim, value)
-            assert out.code == "E_INPUT" or out.status == "error", (route.ident, row)
-        else:
-            # a transport with no field for the dimension (the CLI): the baseline
-            # outcome is byte-identical, as for any dimension it does not vary along
-            _g2_run_unsupported_row(route, row, env, cell)
     else:
         dim, value = _g2_split(row)
         if value in route.supports.get(dim, {}):
@@ -23707,7 +25234,7 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     real_apply = [i for i in preference_ids if "-apply-apply" in i]
     assert real_apply and not any(i.endswith("-72-T06") for i in real_apply)
     assert {i.split("_", 1)[0].split(".")[0] for i in preference_ids} == {
-        "tool",
+        "inproc",
         "mcp",
         "cli",
         "bridge",
@@ -23774,15 +25301,22 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     assert not any("producer" in str(p.id) for p in cells)
 
     # 72-T03 R12 (72-T01 R22): the 72-T03 matrix obeys the same rule and the id grammar
-    # `[<transport>.]<route>-<dimension>-<value>[-...][-producer-<task>]`.
+    # `<transport>.<route>-<dimension>-<value>[-<dimension>-<value>...]`: a route token,
+    # then whole (dimension, value) pairs, so a function or endpoint name is the pair
+    # `function-<name>` / `operation-<name>`.
     m3_ids = [p.id for p in _m3_params()]
     assert len(m3_ids) == len(set(m3_ids))
     grammar = re.compile(
-        r"^(inproc|mcp|bridge|cli|dashboard|tui|internal)\.[a-z0-9_]+-[A-Za-z0-9_-]+$"
+        r"^(inproc|mcp|bridge|cli|dashboard|tui|internal)\."
+        r"[a-z0-9_]+(-[A-Za-z0-9_]+-[A-Za-z0-9_]+)+$"
     )
     assert [i for i in m3_ids if not grammar.match(i) or "=" in i] == []
-    staged = [i for i in m3_ids if "producer" in i]
-    assert all(re.search(r"-producer-\d+-T\d+(_CODEC)?$", i) for i in staged), staged
+    assert [i for i in m3_ids if "-producer-" in i] == []
+    # the t01 matrix itself: no cell id carries a producer label, and every id is a
+    # route token followed by whole pairs
+    t01_ids = [str(p.id) for p in _g2_cells()]
+    assert [i for i in t01_ids if "-producer-" in i] == []
+    assert [i for i in t01_ids if not grammar.match(i)] == []
     # Every apply cell of an existing writer and the historical related cell are real.
     for writer in ("edit", "archive", "delete"):
         assert (
@@ -23800,9 +25334,16 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     # 72-T04 (T01 R22): the maintain and promote apply cells are real cells of
     # `test_t04_route_mode_matrix` -- none is producer-staged.
     t04_ids = {cell.id for cell in _m_cells()}
+    # Bridge cells carry the mcp_bridge operation pair; store cells are internal
+    # function cells.
+    apply_route = {
+        "bridge": "bridge.mcp_bridge-operation-{family}",
+        "store": "internal.{family}-function-store.{family}",
+    }
     for family in ("maintain", "promote"):
         for transport in _M_TRANSPORTS:
-            assert f"{transport}.{family}-apply-apply" in t04_ids
+            route = apply_route.get(transport, f"{transport}.{{family}}")
+            assert f"{route.format(family=family)}-apply-apply" in t04_ids
     assert not [i for i in t04_ids if "-apply-" in i and "producer" in i]
 
     # 73-T02/BOOTSTRAP-CONSENT (R22): the consent approve cells (grant, revoke,
@@ -23811,9 +25352,7 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     # committed effect. A missing command or option is a usage error and fails the
     # cell's own assertions, so it can never satisfy one.
     approve_cells = _consent_approve_cells()
-    assert {
-        ident.split(".", 1)[1].split("-", 1)[0] for ident, *_rest in approve_cells
-    } == {
+    assert {_k_row(ident) for ident, *_rest in approve_cells} == {
         "grant_approve",
         "revoke_approve",
         "bind_approve",
@@ -23849,9 +25388,9 @@ def test_t01_existing_apply_and_historical_are_real_cells(
     for transport in cap.TRANSPORTS:
         for cell in (
             "import-apply-apply",
-            "export-apply-apply",
-            "preview_import-mode-historical",
-            "preview_export-mode-historical",
+            "capsule-action-export-apply-apply",
+            "import-function-preview_import-mode-historical",
+            "capsule-action-preview_export-mode-historical",
         ):
             assert f"{transport}.{cell}" in cell_ids, (transport, cell)
     assert cap.__file__ is not None
@@ -24945,7 +26484,7 @@ def _nx_check(
             else legacy_owner_scope(env.root)
             if (
                 route.key == "maintain"
-                or route.cell.startswith("dashboard_mutations-memory_maintain")
+                or route.cell.startswith("dashboard-operation-memory_maintain")
             )
             and "missing_no_marker" in NX_ROW_FOR_REASON[reason]
             else owner
@@ -25589,7 +27128,9 @@ def test_t01_fix2_unsupported_row_rejects_noop_writer(
     from rush.tools.flight_recorder import FlightRecorder
 
     route = next(
-        r for r in _G2_ROUTES if r.ident == "internal.flight_recorder-record_event"
+        r
+        for r in _G2_ROUTES
+        if r.ident == "internal.flight_recorder-function-record_event"
     )
     row = "mode-historical"
     assert row in _g2_rows(route)
@@ -25638,7 +27179,7 @@ def test_t01_fix2_g2_covers_every_entry_point() -> None:
     reduced = {
         pair
         for route in _G2_ROUTES
-        if "tui-_memory_mutation_apply" not in route.cell
+        if "tui-function-_memory_mutation_apply" not in route.cell
         for pair in route.covers
     }
     assert ("tui.py", "_memory_mutation_apply") in required - reduced
@@ -28005,11 +29546,14 @@ def test_next_action_preserves_owner_and_grant_operations(
 # =============================================================================
 #
 # Ids are `<transport>.<route>-<dimension>-<value>...` with the canonical route keys
-# and dimension tokens of decisions.md (72-T01 critic conflicts[16]). Base fixture F0:
+# and dimension tokens of decisions.md (72-T01 critic conflicts[16]); a consent CLI row
+# is `cli_memory-operation-<leaf>`, a session-memory or store function
+# `<route>-function-<name>`. Base fixture F0:
 # a registered project R, a grant G0 on R (owner `legacy_owner_scope(R)`, sources
 # `["s"]`, operations `["list"]`, revision 1) and a bound store with one active `s`
 # row. "refuse" cells: the consent CLI has no such option, so `--<dimension> <value>`
-# is a Click usage error (exit 2, `No such option`) with zero bytes changed.
+# is a Click usage error (exit 2, `No such option`) with zero bytes changed; the id is
+# `<dimension>-<value>` for the refused value.
 
 K_REFUSED = {
     "mode": "ordinary",
@@ -28017,6 +29561,42 @@ K_REFUSED = {
     "retrieval": "lexical",
     "ack": "ack",
     "capability_ids": "selected",
+}
+# The other values of each refused dimension: a flag the consent CLI never had is a
+# usage error whatever value follows it.
+K_REFUSED_MORE = (
+    ("mode", "inspect"),
+    ("mode", "historical"),
+    ("representation", "base64"),
+    ("retrieval", "hybrid"),
+    ("ack", "no_ack"),
+    ("capability_ids", "unselected"),
+)
+K_CLI_MEMORY_ROWS = frozenset(
+    {
+        "grant_preview",
+        "grant_approve",
+        "revoke_preview",
+        "revoke_approve",
+        "bind_preview",
+        "bind_approve",
+        "bind_overlay_preview",
+        "bind_overlay_apply",
+        "connect_bind_preview",
+        "connect_bind_approve",
+        "disconnect_cli",
+    }
+)
+K_FUNCTION_ROUTES = {
+    "record_turn": "session_memory",
+    "record_fix_attribution": "session_memory",
+    "record_event": "flight_recorder",
+    "write_cache_fill": "cache_gate",
+    "save_checkpoint": "checkpoint_journal",
+    "write_observation": "experience",
+    "write_if_new": "migration",
+    "migrate_session_memory": "migration",
+    "list_checkpoints": "checkpoint_journal",
 }
 K_ROW_STATES = ("active", "archived", "expired", "rejected", "pending", "tampered")
 OVERLAY_PREFERENCE_ROUTES = frozenset(
@@ -28124,11 +29704,19 @@ def _revision_of() -> int:
     )
 
 
-def _k_refuse(args: list[str], dimension: str, env: _KEnv) -> None:
+def _k_refusal(dims: dict[str, str]) -> tuple[str, str]:
+    """The (`--<dimension>` option, value) a `refuse` cell passes."""
+    dimension = dims["refuse"]
+    return "--" + dimension.replace("_", "-"), dims.get(
+        "refuse_value", K_REFUSED[dimension]
+    )
+
+
+def _k_refuse(args: list[str], dims: dict[str, str], env: _KEnv) -> None:
     consent = _k_cli()
     before = _k_state(env)
-    option = "--" + dimension.replace("_", "-")
-    consent._c_exit2([*args, option, K_REFUSED[dimension]], "No such option")
+    option, value = _k_refusal(dims)
+    consent._c_exit2([*args, option, value], "No such option")
     assert _k_state(env) == before
 
 
@@ -28140,7 +29728,7 @@ def _k_grant_preview(tmp_path: Path, dims: dict[str, str]) -> None:
     if "row_state" in dims:
         _k_row_state(env, dims["row_state"])
     if "refuse" in dims:
-        _k_refuse(_k_preview_args(env, "--source", "s"), dims["refuse"], env)
+        _k_refuse(_k_preview_args(env, "--source", "s"), dims, env)
         return
     extra = ["--source", "s"]
     if dims.get("access") == "overlay":
@@ -28201,7 +29789,7 @@ def _k_grant_approve(tmp_path: Path, dims: dict[str, str]) -> None:
     if "refuse" in dims:
         _k_refuse(
             _k_preview_args(env, "--source", "s", "--approve", "--allow-cache-write"),
-            dims["refuse"],
+            dims,
             env,
         )
         return
@@ -28285,7 +29873,7 @@ def _k_revoke(tmp_path: Path, dims: dict[str, str], *, approve: bool) -> None:
     ]
     flags = ["--approve", "--allow-cache-write"] if approve else []
     if "refuse" in dims:
-        _k_refuse([*args, *flags], dims["refuse"], env)
+        _k_refuse([*args, *flags], dims, env)
         return
     before = _k_state(env)
     if approve and dims.get("cache_write") == "off":
@@ -28344,7 +29932,7 @@ def _k_bind_preview(tmp_path: Path, dims: dict[str, str]) -> None:
         _k_row_state(env, dims["row_state"])
     args = ["memory", "bind-store", "--project", str(env.root)]
     if "refuse" in dims:
-        _k_refuse(args, dims["refuse"], env)
+        _k_refuse(args, dims, env)
         return
     before = _k_state(env)
     if dims.get("store") == "old_schema":
@@ -28529,10 +30117,7 @@ def _k_connect(tmp_path: Path, dims: dict[str, str], *, approve: bool) -> None:
         args = conn._connect_args(
             root, fake, *conn._binding_flags(gid, revision, approve=approve)
         )
-        consent._c_exit2(
-            [*args, "--" + dims["refuse"].replace("_", "-"), K_REFUSED[dims["refuse"]]],
-            "No such option",
-        )
+        consent._c_exit2([*args, *_k_refusal(dims)], "No such option")
         assert conn._state(root) == before
         return
     if policy_state == "missing_marker":
@@ -28939,10 +30524,23 @@ def _k_cells() -> list[Any]:
     def add(
         transport: str, row: str, dims: dict[str, str], runner: Any, *rest: Any
     ) -> None:
-        tokens = [f"{k}-{v}" for k, v in dims.items() if k != "variant"]
+        if "refuse" in dims:
+            tokens = [f"{dims['refuse']}-{_k_refusal(dims)[1]}"]
+        else:
+            tokens = [f"{k}-{v}" for k, v in dims.items() if k != "variant"]
         if "variant" in dims:
             tokens.append(dims["variant"])
-        ident = f"{transport}.{row}" + "".join(f"-{t}" for t in tokens)
+        if row.startswith("mcp_bridge-operation-"):
+            route = row  # t01 bridge cells already carry the mcp_bridge operation pair
+        elif transport == "bridge" or row in ("disconnect_mcp", "mcp_connect"):
+            route = f"mcp_bridge-operation-{row}"
+        elif row in K_CLI_MEMORY_ROWS:
+            route = f"cli_memory-operation-{row}"
+        elif row in K_FUNCTION_ROUTES:
+            route = f"{K_FUNCTION_ROUTES[row]}-function-{row}"
+        else:
+            route = row
+        ident = f"{transport}.{route}" + "".join(f"-{t}" for t in tokens)
         cells.append(pytest.param(runner, dims, rest, id=ident))
 
     def refuse(transport: str, row: str, runner: Any, *rest: Any) -> None:
@@ -28974,6 +30572,13 @@ def _k_cells() -> list[Any]:
     for state in K_ROW_STATES:
         add("cli", "grant_preview", {"row_state": state}, _k_grant_preview)
     refuse("cli", "grant_preview", _k_grant_preview)
+    for dimension, value in K_REFUSED_MORE:
+        add(
+            "cli",
+            "grant_preview",
+            {"refuse": dimension, "refuse_value": value},
+            _k_grant_preview,
+        )
     # grant_approve
     add(
         "cli",
@@ -29644,11 +31249,16 @@ def _consent_approve_cells() -> list[tuple[str, Any, dict[str, str], tuple[Any, 
     }
     out = []
     for param in _k_cells():
-        row = param.id.split(".", 1)[1].split("-", 1)[0]
-        if row in approve_rows and "-refuse-" not in param.id:
-            runner, dims, rest = param.values
+        runner, dims, rest = param.values
+        if _k_row(param.id) in approve_rows and "refuse" not in dims:
             out.append((param.id, runner, dims, rest))
     return out
+
+
+def _k_row(ident: str) -> str:
+    """The consent row of a cell id: `cli.cli_memory-operation-<row>-...`."""
+    body = ident.split(".", 1)[1].removeprefix("cli_memory-operation-")
+    return body.split("-", 1)[0]
 
 
 T03_ENCODING = "cl100k_base"
@@ -32769,7 +34379,9 @@ def test_t03_oracle_unreadable_component_is_not_equality(tmp_path: Path) -> None
 
 
 # --- R12 / G2: route x mode matrix (brief 5.2; pre-gate id grammar) ----------------
-# Id grammar: `[<transport>.]<route>-<dimension>-<value>[-...][-producer-<task>]`.
+# Id grammar: `[<transport>.]<route>-<dimension>-<value>[-<dimension>-<value>...]`:
+# a route, then only dimension-value pairs (a helper is `function-<name>`, a bridge
+# call `operation-<op>`).
 # Group A = link / consolidate (T03 mutations), Group B = related and the readers that
 # carry item relations, Group C = derived-summary readers, Group D = writers.
 
@@ -33201,7 +34813,7 @@ def _m3_revoked(m: _M3, route: str, tr: str) -> None:
     _m3_denied(m, out, before, "E_PERMISSION", "revoked")
 
 
-@_m3_cell("access-policy-policy_state-ok-owner-omitted-single_owner", mode="policy_one")
+@_m3_cell("access-policy-policy_state-ok-owner-omitted_single_owner", mode="policy_one")
 def _m3_owner_omitted_single(m: _M3, route: str, tr: str) -> None:
     before_counts, before = m.counts(), m.effects()
     out = m.call(tr, route, owner=None)
@@ -33214,7 +34826,7 @@ def _m3_owner_omitted_single(m: _M3, route: str, tr: str) -> None:
     _m3_ok(m, route, out, before_counts)
 
 
-@_m3_cell("access-policy-policy_state-ok-owner-omitted-two_owners")
+@_m3_cell("access-policy-policy_state-ok-owner-omitted_two_owners")
 def _m3_owner_omitted_two(m: _M3, route: str, tr: str) -> None:
     before = m.effects()
     out = m.call(tr, route, owner=None)
@@ -33698,7 +35310,7 @@ def _m3_cross_project(m: _M3, route: str, tr: str) -> None:
 for _applic in ("rejected", "pending"):
     # 72-T05: a row whose applicability is not `active` is not current, so a route
     # treats it like any other non-current endpoint.
-    _m3_cell(f"row_state-{_applic}-producer-72-T05")(_m3_state_check(_applic))
+    _m3_cell(f"row_state-{_applic}")(_m3_state_check(_applic))
 
 
 # -- Group B: readers that carry item relations / other transports ---------------------
@@ -33829,7 +35441,7 @@ def _m3_dashboard_exact(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "access-policy-policy_state-ok-owner-omitted-two_owners",
+    "access-policy-policy_state-ok-owner-omitted_two_owners",
     pairs=(("dashboard", "dashboard_readers"),),
 )
 def _m3_dashboard_two(m: _M3, route: str, tr: str) -> None:
@@ -33900,7 +35512,7 @@ def _m3_tui_exact(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "access-policy-policy_state-ok-owner-omitted-two_owners", pairs=(("tui", "tui"),)
+    "access-policy-policy_state-ok-owner-omitted_two_owners", pairs=(("tui", "tui"),)
 )
 def _m3_tui_two(m: _M3, route: str, tr: str) -> None:
     from rush.tui import _memory_expand_selected
@@ -33948,7 +35560,7 @@ def _m3_bridge_unselected(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "capability_ids-unselected-neighbor",
+    "capability_ids-unselected_neighbor",
     mode="legacy",
     pairs=(("bridge", "mcp_bridge"),),
 )
@@ -34405,7 +36017,7 @@ def _m3_d_staleness(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "member_mutation-update_content-legacy",
+    "member_mutation-update_content_legacy",
     mode="policy_summary",
     pairs=(("inproc", "update_content"),),
 )
@@ -34416,14 +36028,14 @@ def _m3_d_update_content(m: _M3, route: str, tr: str) -> None:
 
 
 @_m3_cell(
-    "member_mutation-promote-user_stated-producer-72-T04",
+    "member_mutation-promote_user_stated",
     mode="policy_summary",
     pairs=(("internal", "promote"),),
 )
 def _m3_d_promote_producer(m: _M3, route: str, tr: str) -> None:
-    # Promoting an existing member (`request.source_id`) is the 72-T04 producer: today
-    # `promote` writes a new row and never reads the key, so no member changes and the
-    # summary stays current. 72-T04 flips this to a member mutation.
+    # `request.source_id` names the reviewed source row (72-T04 D8): `promote` checks it
+    # is still the live row at `expected_version`, then writes the promoted row. The
+    # named member is not mutated, so the summary stays current.
     out = MemoryTool().run(
         m.root,
         operation="promote",
@@ -34482,12 +36094,12 @@ def _m3_noeffect(cell: str) -> Any:
 
 
 for _wcell in _M3_D_NOEFFECT:
-    _m3_cell("no_member_effect", mode="policy_summary", pairs=(("inproc", _wcell),))(
-        _m3_noeffect(_wcell)
-    )
+    _m3_cell(
+        "function-no_member_effect", mode="policy_summary", pairs=(("inproc", _wcell),)
+    )(_m3_noeffect(_wcell))
 
 
-@_m3_cell("schema_version-2-legacy_fields", transports=_M3_PUBLIC)
+@_m3_cell("schema_version-2_legacy_fields", transports=_M3_PUBLIC)
 def _m3_schema_version_producer(m: _M3, route: str, tr: str) -> None:
     # 72-T06: `schema_version: 2` beside the legacy request keys is refused (a v2
     # request carries none of them).
@@ -34499,12 +36111,22 @@ def _m3_schema_version_producer(m: _M3, route: str, tr: str) -> None:
 # -- parametrised matrix --------------------------------------------------------------
 
 
+# The route a cell drives is not always the inventory route key: a helper is a
+# `function-<name>` of its route, the bridge an `operation-<op>` of `mcp_bridge`.
+_M3_ID_ROUTE = {
+    ("inproc", "expand_helper"): "expand-function-expand_helper",
+    ("inproc", "update_content"): "edit-function-update_content",
+    ("bridge", "resume"): "mcp_bridge-operation-resume",
+}
+
+
 def _m3_params() -> list[Any]:
     params = []
     for cell, mode, combos, fn, build in _M3_CELLS:
         for tr, route in combos:
+            id_route = _M3_ID_ROUTE.get((tr, route), route)
             params.append(
-                pytest.param(fn, mode, build, tr, route, id=f"{tr}.{route}-{cell}")
+                pytest.param(fn, mode, build, tr, route, id=f"{tr}.{id_route}-{cell}")
             )
     return params
 
@@ -38764,7 +40386,9 @@ def test_t04_tui_maintain_sources_and_owner_modes(case: str, tmp_path: Path) -> 
 #
 # Rows are the seven maintain routes M1-M7 and seven promote routes P1-P7
 # (inproc=MemoryTool.run, cli, mcp, bridge, dashboard, tui, store=in-process API).
-# pytest ids are `<route>-<dimension>-<value>`, never containing `=`. A dimension a
+# pytest ids are `<transport>.<route>-<dimension>-<value>`, never containing `=`
+# (`store` ids as `internal.<route>-function-store.<route>`, `bridge` as
+# `bridge.mcp_bridge-operation-<route>`). A dimension a
 # route does not accept is one cell asserting the strict-model refusal (MCP, dashboard,
 # in-process API) or, where the transport has no such field, byte-identical output.
 # =============================================================================
@@ -38790,9 +40414,9 @@ _M_TASKS = (
     "skill_admission_check",
     "expiry_sweep",
 )
-_M_PRODUCER = {
-    ("access", "overlay"): "producer-72-T05",
-    ("row_state", "rejected"): "producer-72-T05",
+_M_ID_ROUTE = {
+    "store": "internal.{family}-function-store.{family}",
+    "bridge": "bridge.mcp_bridge-operation-{family}",
 }
 # G15: persisted source-path spellings (a Windows escape on a POSIX host names an absent
 # in-root file, a refusal on Windows) and untyped JSON discriminators (a list or a dict
@@ -38823,13 +40447,12 @@ def _m_cells() -> list[Any]:
     cells = []
     for family in ("maintain", "promote"):
         for transport in _M_TRANSPORTS:
-            route = f"{transport}.{family}"
+            route = _M_ID_ROUTE.get(transport, "{transport}.{family}").format(
+                transport=transport, family=family
+            )
             for dim, values in _M_DIMS:
                 for value in values:
                     ident = f"{route}-{dim}-{value}"
-                    suffix = _M_PRODUCER.get((dim, value))
-                    if suffix:
-                        ident += f"-{suffix}"
                     cells.append(pytest.param(family, transport, dim, value, id=ident))
             if family == "maintain" and transport in ("inproc", "store"):
                 for task in _M_TASKS:

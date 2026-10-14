@@ -4297,6 +4297,16 @@ INTERSECTIONS = (
 )
 
 
+_ID_ROUTE = {
+    "preview_export": "capsule-action-preview_export",
+    "export": "capsule-action-export",
+    "bridge": "capsule-action-bridge",
+    "mapping_create": "capsule-action-mapping_create",
+    "mapping_revoke": "capsule-action-mapping_revoke",
+    "preview_import": "import-function-preview_import",
+}
+
+
 @dataclasses.dataclass(frozen=True)
 class Cell:
     transport: str
@@ -4306,8 +4316,17 @@ class Cell:
 
     @property
     def id(self) -> str:
-        prefix = "" if self.transport == "-" else f"{self.transport}."
-        return f"{prefix}{self.route}-{self.dim}-{self.val}"
+        # Grammar `<transport>.<route>-<dim>-<value>`: the route is a ROUTE_KEYS entry and
+        # the entry point is a paired `action-` / `function-` token. `route` stays the
+        # entry point's own name; the handlers dispatch on it.
+        transport, route = self.transport, _ID_ROUTE.get(self.route, self.route)
+        if (transport, self.route) == ("mcp_restricted", "capsule"):
+            transport = "bridge"
+            route = "mcp_bridge-operation-capsule-function-mcp_restricted.capsule"
+        elif (transport, self.route) == ("dashboard", "memory_capsule"):
+            route = "capsule-function-memory_capsule"
+        prefix = "" if transport == "-" else f"{transport}."
+        return f"{prefix}{route}-{self.dim}-{self.val}"
 
     @property
     def family(self) -> str:

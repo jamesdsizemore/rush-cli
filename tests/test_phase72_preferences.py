@@ -5907,7 +5907,7 @@ def _sc_policy_state(tmp_path: Path, via: str, action: str, state: str) -> None:
 
     m = _menv(tmp_path)
     policy = auth.policy_path(data_root=m.env.data_root)
-    if state == "missing_with_marker":
+    if state == "missing_marker":
         policy.unlink()
         expected = "policy_missing"
     else:
@@ -6167,14 +6167,23 @@ def _matrix_cells() -> list[Any]:
         seen.add(ident)
         cells.append(_Cell(ident, run))
 
-    def name(via: str, action: str, dims: str, producer: str | None = None) -> str:
-        suffix = f"-{producer}" if producer else ""
-        return f"{via}.preference_{action}-{dims}{suffix}"
+    def name(via: str, action: str, dims: str) -> str:
+        transport = {"tool": "inproc"}.get(via, via)
+        return f"{transport}.preference-action-{action}-{dims}"
 
     for via in TRANSPORTS:
         for action in ACTIONS:
             add(
                 name(via, action, "access-policy-apply-preview-cache_write-off"),
+                lambda t, v=via, a=action: _sc_preview(t, v, a),
+            )
+            add(
+                name(
+                    via,
+                    action,
+                    "access-policy-store-present-grant_ops-exact-row_state-active"
+                    "-apply-preview",
+                ),
                 lambda t, v=via, a=action: _sc_preview(t, v, a),
             )
             add(
@@ -6195,32 +6204,37 @@ def _matrix_cells() -> list[Any]:
             if via != "cli":
                 if action in {"resolve", "record", "correct"}:
                     add(
-                        name(via, action, "access-overlay-revoked-apply-apply"),
+                        name(via, action, "access-overlay-grant-revoked-apply-apply"),
                         lambda t, v=via, a=action: _sc_overlay_revoked(t, v, a),
                     )
                 add(
                     name(via, action, "cache_write-on-grant_ops-ask_only"),
                     lambda t, v=via, a=action: _sc_cache_write_ask_only(t, v, a),
                 )
-            for state in ("missing_with_marker", "invalid"):
+            for state in ("missing_marker", "invalid"):
                 add(
                     name(via, action, f"policy_state-{state}"),
                     lambda t, v=via, a=action, s=state: _sc_policy_state(t, v, a, s),
                 )
-            for key, value, dimension, producer in (
-                ("archive_mode", "inspect", "mode-inspect", None),
-                ("archive_mode", "historical", "mode-historical", None),
-                ("representation", "utf8", "representation-utf8", None),
-                ("retrieval", "hybrid", "retrieval-hybrid", None),
+            for key, value, dimension in (
+                ("archive_mode", "active", "mode-ordinary"),
+                ("archive_mode", "inspect", "mode-inspect"),
+                ("archive_mode", "historical", "mode-historical"),
+                ("representation", "base64", "representation-base64"),
+                ("representation", "utf8", "representation-utf8"),
+                ("retrieval", "lexical", "retrieval-lexical"),
+                ("retrieval", "hybrid", "retrieval-hybrid"),
                 (
                     "ack",
                     [{"id": "x", "version": 1, "digest": "0" * 64}],
                     "ack-ack",
-                    None,
                 ),
+                ("ack", [], "ack-no_ack"),
+                ("capability_ids", ["x"], "capability_ids-selected"),
+                ("capability_ids", [], "capability_ids-unselected"),
             ):
                 add(
-                    name(via, action, dimension, producer),
+                    name(via, action, dimension),
                     lambda t, v=via, a=action, k=key, val=value: _sc_extra_key(
                         t, v, a, k, val
                     ),
@@ -6229,7 +6243,11 @@ def _matrix_cells() -> list[Any]:
                 phase = "apply" if apply else "preview"
                 if action != "resolve" or not apply:
                     add(
-                        name(via, action, f"access-legacy_allowlist-apply-{phase}"),
+                        name(
+                            via,
+                            action,
+                            f"access-legacy_allowlist-policy_state-missing_no_marker-apply-{phase}",
+                        ),
                         lambda t, v=via, a=action, ap=apply: _sc_legacy(t, v, a, ap),
                     )
                     add(
@@ -6264,6 +6282,15 @@ def _matrix_cells() -> list[Any]:
                     name(via, action, "access-policy-apply-apply"),
                     lambda t, v=via, a=action: _sc_apply(t, v, a),
                 )
+                add(
+                    name(
+                        via,
+                        action,
+                        "access-policy-store-present-grant_ops-exact-row_state-active"
+                        "-apply-apply",
+                    ),
+                    lambda t, v=via, a=action: _sc_apply(t, v, a),
+                )
         add(
             name(via, "resolve", "access-overlay_owner_argument"),
             lambda t, v=via: _sc_overlay_owner_argument(t, v, "resolve"),
@@ -6289,7 +6316,7 @@ _MATRIX = _matrix_cells()
 @pytest.mark.parametrize("cell", _MATRIX, ids=[c.ident for c in _MATRIX])
 def test_t05_route_mode_matrix(cell: _Cell, tmp_path: Path) -> None:
     """G2/G2a: every preference action x transport x dimension is one cell asserting the
-    exact code, reason and effects; producer-staged cells name their producer."""
+    exact code, reason and effects."""
     cell.run(tmp_path)
 
 

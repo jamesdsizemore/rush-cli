@@ -4,19 +4,19 @@
     {
       "module": "cli.py",
       "function": "_bind_store_target",
-      "route": "memory bind-store",
+      "route": "cli_memory",
       "task": "73-T02/BOOTSTRAP-CONSENT"
     },
     {
       "module": "cli.py",
       "function": "_consent_open_views",
-      "route": "memory grant preview",
+      "route": "cli_memory",
       "task": "73-T02/BOOTSTRAP-CONSENT"
     },
     {
       "module": "cli.py",
       "function": "_consent_preview_read",
-      "route": "memory grant preview",
+      "route": "cli_memory",
       "task": "73-T02/BOOTSTRAP-CONSENT"
     },
     {
@@ -34,7 +34,7 @@
     {
       "module": "cli.py",
       "function": "memory_bind_store_cmd",
-      "route": "memory bind-store",
+      "route": "cli_memory",
       "task": "73-T02/BOOTSTRAP-CONSENT"
     },
     {
@@ -466,7 +466,7 @@
     {
       "module": "memory/retrieval.py",
       "function": "memory_policy_mode",
-      "route": "mode_predicate",
+      "route": "retrieval_helper",
       "task": "72-T01"
     },
     {
@@ -562,7 +562,7 @@
     {
       "module": "tools/memory.py",
       "function": "<module>",
-      "route": "ui_state",
+      "route": "dashboard",
       "task": "72-T07"
     },
     {
@@ -706,7 +706,7 @@
     {
       "module": "tools/memory.py",
       "function": "_v2_view",
-      "route": "v2_read",
+      "route": "ask",
       "task": "72-T06"
     },
     {
