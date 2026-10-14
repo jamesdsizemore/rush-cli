@@ -15,7 +15,7 @@ C0 → {C1, C2, C3, C4, C5, C6, C7 in parallel, each in its own copy worktree} �
 
 ## Cards
 
-Status 2026-10-13: C0-C5 and C7 done; C6 done except the 72-T09 M8 row (rerun on the chunked R8 test); C8 round 1 done (below); next the F6 freeze, then round 2 (one full suite on F6), C9-C11.
+Status 2026-10-14: C0-C9 done; C8 rounds 1 and 2 done (below); final freeze F7 `b25628e`; C10 report on F7; C11 next.
 - C0: 5-case self-test through `shard-suite.py` — broken import exit 1, zero collected exit 1, failing exit 1, missing file exit 1, slow-marked test `1 passed, 0 deselected` exit 0.
 - C1: 16 concurrent runs of the T06 test → 16 passed.
 - C2: per-file `MYPYPATH=src mypy` shows 0 of the 7 new errors; ruff check/format clean; touched tests running.
@@ -23,7 +23,7 @@ Status 2026-10-13: C0-C5 and C7 done; C6 done except the 72-T09 M8 row (rerun on
 - C4: ledger `72-T01` 123 rows (101 `authorization.py`); the 7 capsule tests pass on `src` and fail on the mutated `src`; Codex round 2: no findings.
 - C5: the 10 matrices collect 20499 ids, 0 `-producer-`, 0 uncovered pairs, 0 routes outside the 59 keys; R8 passes (1288.80 s).
 - C6: ledger `73-T02/BOOTSTRAP-CONSENT` 73 rows, `73-T02/POLICY` 73 rows, ledger file equals `refs/wip/phase72-g6-ledger`; Codex round 2: no findings.
-- C7: 16 scope records in `<git-dir>/phase72-scope/`.
+- C7: 16 scope records in `<git-dir>/phase72-scope/`; each maps every outside path to its approving gate-amendment line or `null`: 40 outside paths, 7 approved, 33 unapproved (listed in the C10 report).
 
 **C0 Shard runner runs slow tests.** Me. File: `<git-dir>/phase72-gates/shard-suite.py`. Change: pass `-m ''` to every shard and the serial re-run. Verify: shard collection count = `pytest --collect-only -q -m '' tests/` (31839 at `0725faf`); a 5-case self-test (broken import, zero collected, missing file, failing test, all green) exits non-zero on the first four. Stop if: count differs.
 
@@ -80,13 +80,16 @@ Each record lists its out-of-scope paths and, where a gate file records an appro
 - Round 1 (8 shards, 1581 s wall; R8 and the 10 matrices deselected because they ran on the same tree): 12944 passed, 2 failed, 1 shard-only. `test_t07_pty_walkthrough` (shard-only): the clear-search step now waits for the list reload, because `]` sent before the reload lands pages the old search rows; with a 3 s reload delay injected, the old step fails and the new one passes. `test_t01_existing_apply_and_historical_are_real_cells`: its in-file asserts now use the renamed bridge, store and consent ids (49 consent approve cells, as before). `test_t09_freeze_source_views` passes once F6 is committed. The standalone R8 run exceeded its 3600 s single-process timeout; R8 now runs the collected cells as 8 concurrent chunks (args files, own basetemps, exact pass count per chunk) and passes.
 - Runner gap: `--deselect` matches node-id prefixes, so 230 sibling tests (`test_t08_route_mode_matrix_*`, `test_t02_route_mode_matrix_registers_every_cell`) did not run; rerun with the 2 fixed tests: 232 passed. Round 2 deselects `<matrix>[` only (R8 itself runs every matrix cell).
 - Test pollution: tests write the worktree's own `.rush/` (`sessions/`, `memory.db`, `cache/ccr.db`, `locks/`). Deleted; round 2 runs with a teardown plugin that names each test after which `.rush/` changed.
+- Round 2 (freeze F6 `511414a`, 8 shards, 3094 s wall, R8 included): 13176 passed, 0 failed, 0 skipped. Two shard-only failures, both seen in earlier runs: `test_r1_maintenance_never_creates_rows_or_enables_learning` (in-flight apply outlived its 2 s drain deadline; deadline now 30 s) and `test_stdio_core_and_full_profile_list_exact_tools_named_in_instructions` (mcp 1.28.1 stdout_reader shutdown race; `anyio.BrokenResourceError` now tolerated only after both answers arrive). Fixed in `e309bf4`.
+- D7 product defect (found by the `.rush` teardown plugin): `_v2_maintain` (`src/rush/tools/memory.py`) called `run_maintenance_cycle` without `project_root`, so v2 maintain swept `Path.cwd()` instead of the request's project. Fixed in `e6ab3e3` with `test_t06_v2_maintain_runs_on_the_request_project_not_the_cwd` (fails before, passes after). The two other polluters (`test_cache::test_cli_cache_commands`, `test_benchmark_runner::test_runner_generates_all_decisions_and_handoff`) now run in `tmp_path`.
+- Final freeze F7 `b25628e` (body `72-T09 freeze`) on those fixes; F6 superseded.
 - Commit grouping (decision): files touched by several cards are committed once per file group, not split per card (per-card hunks cannot be staged non-interactively); each message names its cards.
 
-**C9 Freeze + live.** Me. Freeze commit F6 (body `72-T09 freeze`); build the artifact (`scratchpad/t09/build_artifact.sh`); run the 4 live drivers (`installed_routes`, `pas_import`, `pty_walkthrough`, `two_agent`) under `caffeinate -i`.
+**C9 Freeze + live.** Me. Freeze commit F7 `b25628e` (body `72-T09 freeze`; F6 `511414a` superseded by the round-2 fixes); build the artifact (`scratchpad/t09/build_artifact.sh`); run the 4 live drivers (`installed_routes`, `pas_import`, `pty_walkthrough`, `two_agent`) under `caffeinate -i`.
 
-**C10 Report.** Me. Update `docs/reports/phase-72-memory-acceptance.md` for F6 (trees, artifact hashes, receipts, suite result, C3 bullet), `doc-sha.py`, commit. Verify: `pytest -m '' tests/test_phase72_memory_acceptance.py tests/test_sync_docs.py tests/test_phase70_t25.py -k "not live"` all pass, including `test_t09_freeze_source_views` and R8.
+**C10 Report.** Me. Update `docs/reports/phase-72-memory-acceptance.md` for F7 (trees, artifact hashes, receipts, suite result, C3 bullet), `doc-sha.py`, commit. Verify: `pytest -m '' tests/test_phase72_memory_acceptance.py tests/test_sync_docs.py tests/test_phase70_t25.py -k "not live"` all pass, including `test_t09_freeze_source_views` and R8.
 
-**C11 G16 commit records (D8).** James (2026-10-13): rewrite once after the F6 freeze and every fix commit, remap all hash references in the same pass, rerun the doc tests, one force-push. Scope: rewriting 16 task commit messages rewrites 45 commits (`15c4fe7^..HEAD`), force-pushes PR #3 (remote head `4791925`), and remaps 69 commit-SHA references in docs and tests, including `_T07_COMMIT`/`_T08_COMMIT` (`tests/test_phase72_memory_acceptance.py:181,185`).
+**C11 G16 commit records (D8).** James (2026-10-13): rewrite once after the final freeze (F7) and every fix commit, remap all hash references in the same pass, rerun the doc tests, one force-push. Scope: rewriting 16 task commit messages rewrites 45 commits (`15c4fe7^..HEAD`), force-pushes PR #3 (remote head `4791925`), and remaps 69 commit-SHA references in docs and tests, including `_T07_COMMIT`/`_T08_COMMIT` (`tests/test_phase72_memory_acceptance.py:181,185`).
 
 ## Done when
-R8, R12 and the T06 test pass; the full suite with `-m ''` on F6 has 0 failures and 0 skips; per-file mypy is clean; G6 and G14 records exist for every task; the report on F6 matches observed results.
+R8, R12 and the T06 test pass; the full suite with `-m ''` on F7 has 0 failures and 0 skips; per-file mypy is clean; G6 and G14 records exist for every task; the report on F7 matches observed results.

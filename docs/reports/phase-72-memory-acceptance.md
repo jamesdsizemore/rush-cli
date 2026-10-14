@@ -1,17 +1,17 @@
 # Phase 72 memory acceptance
 
-Status: frozen and live-checked on `8c9503c`. 7 of 15 lanes passed live acceptance against the PyInstaller artifact built from the freeze commit; the other 8 stay `open`, each with one blocker. Every receipt below was machine-recorded by a driver in `tests/test_phase72_memory_acceptance.py`. The sections `## 72-T07 walkthrough` and `## 72-T08 hybrid evaluation` were produced by their own tasks and are pinned byte for byte by `tests/test_phase72_memory_acceptance.py::test_t09_report_schema`.
+Status: frozen and live-checked on `b25628e`. 7 of 15 lanes passed live acceptance against the PyInstaller artifact built from the freeze commit; the other 8 stay `open`, each with one blocker. Every receipt below was machine-recorded by a driver in `tests/test_phase72_memory_acceptance.py`. The sections `## 72-T07 walkthrough` and `## 72-T08 hybrid evaluation` were produced by their own tasks and are pinned byte for byte by `tests/test_phase72_memory_acceptance.py::test_t09_report_schema`.
 
 ## Source hash
 
-The freeze commit carries the body `72-T09 freeze`. After it only documents change: `git diff 8c9503c HEAD -- src tests scripts .github` prints nothing.
+The freeze commit carries the body `72-T09 freeze`. After it only documents change: `git diff b25628e HEAD -- src tests scripts .github` prints nothing.
 
 ```text
-freeze_commit: 8c9503cc5b8e09880379d4cb423672a85f29daa4
-tree.src: 75a72ec522c014121bcdba04de95f21e9b90a4e7
-tree.tests: 2da87a4e3086f5f88ffaf054bf353c1ee9464af1
+freeze_commit: b25628e98f9d1afb16d713e3f0f3549ec4f8b633
+tree.src: 72d931518ebdd5822f1725d083788f75d4a33763
+tree.tests: 7454f4b6b234f6868f27b6dcc44abbc9fd0d36b9
 tree.scripts: c176153adc60cd5ce3f4d5e0082ca358a370e4be
-tree..github: bfe68589b9f2ccb57ac507e779a2fe1c4984b1b4
+tree..github: b2d6c8a12c1b37710ced105c03a7113a6b22cc94
 phase70_ref: phase/70-agent-adoption-and-usability 23d5b45
 phase70_parity: empty
 ```
@@ -21,9 +21,9 @@ phase70_parity: empty
 Built from the freeze commit in a temporary directory with the `ci.yml` macOS recipe (`pyinstaller --onefile` from `rush_entry.py`, then `scripts.probe_installed_artifacts.build_release_archive` and `write_sha256sums`). The temporary directory was deleted after the build.
 
 ```text
-installed_artifact_sha256: 7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f
+installed_artifact_sha256: 2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779
 archive: rush-darwin-arm64.tar.gz
-archive_sha256: 02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8
+archive_sha256: 3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600
 ```
 
 ## Commands
@@ -47,7 +47,7 @@ Each example a user document publishes carries a `t09-example` marker and equals
       "0",
       "--json"
     ],
-    "frozen_commit": "8c9503cc5b8e09880379d4cb423672a85f29daa4",
+    "frozen_commit": "b25628e98f9d1afb16d713e3f0f3549ec4f8b633",
     "exit_code": 0,
     "result_sha256": "afcb57015f06451140a1bfcc02552eac7a83ee866dfc0c7f3a1b3beb5d89580d"
   },
@@ -62,7 +62,7 @@ Each example a user document publishes carries a `t09-example` marker and equals
       ".",
       "--json"
     ],
-    "frozen_commit": "8c9503cc5b8e09880379d4cb423672a85f29daa4",
+    "frozen_commit": "b25628e98f9d1afb16d713e3f0f3549ec4f8b633",
     "exit_code": 0,
     "result_sha256": "4b117b1d84db195b6b500153cfff824cd1ecdd5aabc4ca652819eeb82a02bb52"
   },
@@ -75,9 +75,9 @@ Each example a user document publishes carries a `t09-example` marker and equals
       "needle",
       "enter"
     ],
-    "frozen_commit": "8c9503cc5b8e09880379d4cb423672a85f29daa4",
-    "observed_sha256": "c783db268683a381f560843fd78f830b3af0d0b83746a90981a85e495650bc00",
-    "result_sha256": "c783db268683a381f560843fd78f830b3af0d0b83746a90981a85e495650bc00"
+    "frozen_commit": "b25628e98f9d1afb16d713e3f0f3549ec4f8b633",
+    "observed_sha256": "d72348d7449f831403e3d8060289adbdabf89b4a7deab406f66e829ad5c2824c",
+    "result_sha256": "d72348d7449f831403e3d8060289adbdabf89b4a7deab406f66e829ad5c2824c"
   }
 ]
 ```
@@ -97,13 +97,15 @@ Each example a user document publishes carries a `t09-example` marker and equals
 | Operation documents (R10) | `tests/test_phase72_memory_acceptance.py::test_t09_memory_operation_docs_parity` | passed |
 | Freeze source views (RB-1) | `tests/test_phase72_memory_acceptance.py::test_t09_freeze_source_views` | passed |
 
+Full suite on freeze F6 `511414a` (`-m ''`, 8 shards, 3094 s wall): 13176 passed, 0 failed, 0 skipped. The ten matrices' 20499 cells ran inside R8, which collects them and requires every cell to pass. Two tests failed only under shard load and passed in the serial re-run, as they had in earlier runs: `tests/test_phase70_t28d_review1.py::test_r1_maintenance_never_creates_rows_or_enables_learning` (an in-flight apply outlived its deadline) and `tests/test_phase70_t5.py::test_stdio_core_and_full_profile_list_exact_tools_named_in_instructions` (`anyio.BrokenResourceError` from its stdio child). Both are fixed in `e309bf4` (drain deadline 30 s; `BrokenResourceError` tolerated only after both answers arrive). F7 `b25628e` differs from F6 by `e6ab3e3` (v2 maintain uses the request's project root), `e309bf4` and the regenerated 72-T07 section; the tests those commits touch pass (1100 attributed serially with no `.rush` writes, 91 for the two fixed flakes).
+
 Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_LIVE_SUMS` naming the artifact above, `RUSH_T09_LIVE_AGENTS=1` for the two-agent driver):
 
 ```json
 {
   "dashboard-memory-api": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "dashboard-memory-api",
     "steps": [
       {
@@ -116,7 +118,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "E_VERSION"
         ],
         "step": "a-f",
-        "transcript_sha256": "8c79c3176c4fc4dff1facfd9291b6cc2969c1aa4b1762045fe2c933bbfd9c539"
+        "transcript_sha256": "d9274096a0bff2d28fd6cf4a2b33b1dabd00075808ddfd3d3780fbb9a040b696"
       },
       {
         "argv_redacted": "dashboard list",
@@ -132,8 +134,8 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
     "version": "0.3.0"
   },
   "e06-e25-rejection-reversal": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "e06-e25-rejection-reversal",
     "steps": [
       {
@@ -145,7 +147,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "decision"
         ],
         "step": "agent-b-2",
-        "transcript_sha256": "7167dc8fcbeb2055555f2881002abebad27c94c32991953f4bcc55eff7ea75c7"
+        "transcript_sha256": "6d4d12d06d6c674f9237fbcf13ee46c6c7d725a197d19261cabbaf6cef441938"
       },
       {
         "argv_redacted": "codex exec --json",
@@ -156,7 +158,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "decision"
         ],
         "step": "agent-b-3",
-        "transcript_sha256": "70d14e4fbf6bac43f4472e1b522c5ae1eb52fda78a7b486dd8de1b2c0324ebc4"
+        "transcript_sha256": "a15ef7123ea40706ca119f3593864a832b85b80154ef6d832b551b4c210a0bed"
       },
       {
         "argv_redacted": "codex exec --json",
@@ -167,7 +169,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "decision"
         ],
         "step": "agent-b-4",
-        "transcript_sha256": "784013d3a6b82544b2313efff8363423a36eb06d2476abdfebe9df44876efcd2"
+        "transcript_sha256": "7ce7e65a93a5077701dc6bdaa99a47a33e91c1755589b266f0871153e39154fb"
       },
       {
         "argv_redacted": "codex exec --json",
@@ -178,14 +180,14 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "decision"
         ],
         "step": "agent-b-5",
-        "transcript_sha256": "76ce359ee7b4ce2d2589e70389005e2e42c66e9ea5534887bf39317ed12b4ce8"
+        "transcript_sha256": "f48ea4c379f55b4c00c0494cc8190c608057fe602fc721eb06f29a58db7c90e3"
       }
     ],
     "version": "0.3.0"
   },
   "installed-artifact-cli-mcp": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "installed-artifact-cli-mcp",
     "steps": [
       {
@@ -208,7 +210,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "a-f",
-        "transcript_sha256": "f16dfbcbb86efcad2fe9d2293ab65c5b6446b165893fa4dd3d01e2739c1babcf"
+        "transcript_sha256": "6bfe41410fb625c8048609d7bc6115314d044f33f1cf42066b60b65447d789d1"
       },
       {
         "argv_redacted": "mcp preference; mcp preference; mcp preference; cli preference; cli preference; cli preference; mcp preference; mcp preference; mcp preference; mcp list; mcp list",
@@ -228,7 +230,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "g",
-        "transcript_sha256": "beb50b7d8882fadd036b9309ce1709b0d36b5170505d3e2ca6e7b7f401daaae3"
+        "transcript_sha256": "81a7b44cae738784c1d68682de988e63da01fa92b84a671c3662d9bec9fec593"
       },
       {
         "argv_redacted": "mcp list",
@@ -238,7 +240,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "E_OWNER"
         ],
         "step": "h",
-        "transcript_sha256": "22c537aa8407ff562dfd84570f71c5b22e69fd679b65f353c34d7cabf250e130"
+        "transcript_sha256": "e670592fa1f0acf5d72cc4a7cb683cdf3f3e9ef25cca4bb3967a0857a64c5ab6"
       },
       {
         "argv_redacted": "mcp list; dashboard list",
@@ -255,8 +257,8 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
     "version": "0.3.0"
   },
   "native-macos": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "native-macos",
     "steps": [
       {
@@ -279,7 +281,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "a-f",
-        "transcript_sha256": "f16dfbcbb86efcad2fe9d2293ab65c5b6446b165893fa4dd3d01e2739c1babcf"
+        "transcript_sha256": "6bfe41410fb625c8048609d7bc6115314d044f33f1cf42066b60b65447d789d1"
       },
       {
         "argv_redacted": "mcp preference; mcp preference; mcp preference; cli preference; cli preference; cli preference; mcp preference; mcp preference; mcp preference; mcp list; mcp list",
@@ -299,7 +301,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "g",
-        "transcript_sha256": "beb50b7d8882fadd036b9309ce1709b0d36b5170505d3e2ca6e7b7f401daaae3"
+        "transcript_sha256": "81a7b44cae738784c1d68682de988e63da01fa92b84a671c3662d9bec9fec593"
       },
       {
         "argv_redacted": "mcp list",
@@ -309,7 +311,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "E_OWNER"
         ],
         "step": "h",
-        "transcript_sha256": "22c537aa8407ff562dfd84570f71c5b22e69fd679b65f353c34d7cabf250e130"
+        "transcript_sha256": "e670592fa1f0acf5d72cc4a7cb683cdf3f3e9ef25cca4bb3967a0857a64c5ab6"
       },
       {
         "argv_redacted": "mcp list; dashboard list",
@@ -326,8 +328,8 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
     "version": "0.3.0"
   },
   "pas-import": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "pas-import",
     "steps": [
       {
@@ -340,7 +342,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "i",
-        "transcript_sha256": "9debfd172a5283e710ea85014619dbc0bbacf9fe51a8f3a5fd00cd12621d1b22"
+        "transcript_sha256": "86e0484f047e6c10f6509dca899db5b59590f235db2ddfa8579293fc678cc9d3"
       },
       {
         "argv_redacted": "cli capsule preview-export; cli capsule export; cli capsule preview-import; cli capsule preview-import; cli capsule import",
@@ -354,46 +356,46 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "i2",
-        "transcript_sha256": "b7ac6fb1a156ff569c5c94de56fe0d9b8e44377b799ecfa7274787b7ffbca4a1"
+        "transcript_sha256": "afe74cfd8583bae1866a92095079eca34016398b9fe2fa8b2bf88a390015c299"
       },
       {
         "argv_redacted": "M",
         "expected": "Memory section opens",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "506316 characters",
+        "observed": "533286 characters",
         "step": "memory-section",
-        "transcript_sha256": "14bab65c699be6bf85429f1d07c77b5f0cd777c33e2e814b31d35cedabffe0eb"
+        "transcript_sha256": "d58c414926066d50c4756fa506f0636c381b68bfa61a63da11c6eecb5424bc72"
       },
       {
         "argv_redacted": "I",
         "expected": "import prompt opens",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "533287 characters",
+        "observed": "526902 characters",
         "step": "import-open",
-        "transcript_sha256": "bfb4cbc37a52ab362049e52574fe31cff4d1e397db1378c7ba89934d0a6cf4c1"
+        "transcript_sha256": "ce4a87219e2ea16aac1f5c24c8be84fb54b0023b9099a45887114b5c027108b0"
       },
       {
-        "argv_redacted": "text(144) enter",
+        "argv_redacted": "text(145) enter",
         "expected": "records show as pending",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519235 characters",
+        "observed": "519237 characters",
         "step": "import-preview",
-        "transcript_sha256": "ae45a62e6677ee46f1130ab309302d297571c84ee341ef41b6d7d693561011c7"
+        "transcript_sha256": "09eccace5fb27c0352a86fa8a017afdabb785f63aab2f89088685dd85083396b"
       },
       {
         "argv_redacted": "escape",
         "expected": "review closes",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "533286 characters",
+        "observed": "526449 characters",
         "step": "import-leave",
-        "transcript_sha256": "5d467cda57ca9d148f1d1ef102eb8ca00644864ad7508627776f4d90cdcc627b"
+        "transcript_sha256": "5b64a679d2c223d7411f328d5ed59d85e77cbe6fcdac0c4148b87251779eb06a"
       }
     ],
     "version": "0.3.0"
   },
   "personal-overlay-two-projects": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "personal-overlay-two-projects",
     "steps": [
       {
@@ -414,23 +416,23 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "OK"
         ],
         "step": "g",
-        "transcript_sha256": "beb50b7d8882fadd036b9309ce1709b0d36b5170505d3e2ca6e7b7f401daaae3"
+        "transcript_sha256": "81a7b44cae738784c1d68682de988e63da01fa92b84a671c3662d9bec9fec593"
       }
     ],
     "version": "0.3.0"
   },
   "pty-terminal": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "pty-terminal",
     "steps": [
       {
         "argv_redacted": "M",
         "expected": "Memory section opens",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "493760 characters",
+        "observed": "499101 characters",
         "step": "memory-section",
-        "transcript_sha256": "f96f7e54302cfacd85c22250cb6dec477197887cf9d646c5d8cf8b0836d3d1fc"
+        "transcript_sha256": "4892440ddf2ca275a0a801db55f7e2d0c83289eab7051c8a02efdfd06b8f6d81"
       },
       {
         "argv_redacted": "S",
@@ -438,7 +440,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
         "independent_check": "MemoryTool and sqlite readback in the driver",
         "observed": "519612 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "af1122222a777113854d102f52a4b6fde0acee940c0b9ee6507363ab68c57a75"
+        "transcript_sha256": "28f168d965d03e17e6f1392d193ae6226a7fb78642392775cf04de94d8d07448"
       },
       {
         "argv_redacted": "S",
@@ -446,47 +448,55 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
         "independent_check": "MemoryTool and sqlite readback in the driver",
         "observed": "519612 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "bc9b5a4ace22ada901ee4741e00469f47d289010333d6ab4e42f4b0d137856fe"
+        "transcript_sha256": "89fa73a96089f562231d6508d6f372e390293141de23404c9ef4f40864087e33"
       },
       {
         "argv_redacted": "S",
         "expected": "next subject lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519990 characters",
+        "observed": "519686 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "461ecf85a1844f9b586936b1bf3600c91611d0c2b36b763f18065a97e3993095"
+        "transcript_sha256": "c9716262196624b657bbe835f742c25e318f286ea13c2c075c07754a897c6f59"
       },
       {
         "argv_redacted": "S",
         "expected": "next subject lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526072 characters",
+        "observed": "519613 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "b73b2349d17a89162e08cfa04da6d93a404687bfa3ed4840bff42b2d85fc48d8"
+        "transcript_sha256": "e782d8607d443f8b13336a9d8e1ecb5ec6bad36f8fa2a505b0bb948e06152a9a"
       },
       {
         "argv_redacted": "S",
         "expected": "next subject lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519990 characters",
+        "observed": "519612 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "10f5e79dfadbf8c374f2b1b3d3a38bed24c36f4e1d5f055cf2ba5316818e1186"
+        "transcript_sha256": "095b7ed6c21c48518662749116f1dff5019942d65cc77058a7f9031160b32541"
       },
       {
         "argv_redacted": "S",
         "expected": "next subject lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526072 characters",
+        "observed": "519612 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "bacbd0149087156d239579c16ee67b7330c938700bf2a661965495705b31ff9d"
+        "transcript_sha256": "f4da21bfe1a1e0a92c65e8407117dc9c7c1cdbb253f990ae3d86084c48d642b0"
       },
       {
         "argv_redacted": "S",
         "expected": "next subject lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "492264 characters",
+        "observed": "485805 characters",
         "step": "subject-cycle",
-        "transcript_sha256": "6b4b104e391a91fb5e6dc7cc5affb08a08697cd3dceea800e6515dbcaec9f50a"
+        "transcript_sha256": "655f6169be891192e04328199991d4f104568ebb3b8403fbb9799f1933cf60ea"
+      },
+      {
+        "argv_redacted": "S",
+        "expected": "failure rows list",
+        "independent_check": "MemoryTool and sqlite readback in the driver",
+        "observed": "519235 characters",
+        "step": "hostile-row",
+        "transcript_sha256": "16d02ddd8c8b1b79dbf0fa2a3aa48e41d228c449ac15ebe0a4672834c7d6992b"
       },
       {
         "argv_redacted": "S",
@@ -494,143 +504,135 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
         "independent_check": "MemoryTool and sqlite readback in the driver",
         "observed": "519612 characters",
         "step": "hostile-row",
-        "transcript_sha256": "3ef5ac8d6813cfe14b2a616efcfa192cc33128feb6021ad40da76688db3a4fb3"
+        "transcript_sha256": "89fa73a96089f562231d6508d6f372e390293141de23404c9ef4f40864087e33"
       },
       {
         "argv_redacted": "S",
         "expected": "failure rows list",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519990 characters",
+        "observed": "519687 characters",
         "step": "hostile-row",
-        "transcript_sha256": "442046c09def62b398d19e2d31e792681c8f6959672c4ca7f150d86e6ac65601"
+        "transcript_sha256": "f667a693cfdf38f93e568cddea2c8b3da63039087e81dbf93b97863bdcd81d18"
       },
       {
         "argv_redacted": "S",
         "expected": "failure rows list",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526450 characters",
+        "observed": "519613 characters",
         "step": "hostile-row",
-        "transcript_sha256": "907fd269852e544d8d1ba77bf2d6aa1f9a3fdbcc0fabae68027d7af7d2209eeb"
+        "transcript_sha256": "e782d8607d443f8b13336a9d8e1ecb5ec6bad36f8fa2a505b0bb948e06152a9a"
       },
       {
         "argv_redacted": "S",
         "expected": "failure rows list",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526450 characters",
+        "observed": "519612 characters",
         "step": "hostile-row",
-        "transcript_sha256": "78834b87cbbdfabf4e1b191d310e7a662dc19a50837b16e8aaa1ced10d094be7"
-      },
-      {
-        "argv_redacted": "S",
-        "expected": "failure rows list",
-        "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526450 characters",
-        "step": "hostile-row",
-        "transcript_sha256": "53dab3d64c3a4474212412611bc390fcbc5a53a1fc4c5449b32ac196fe41987a"
+        "transcript_sha256": "095b7ed6c21c48518662749116f1dff5019942d65cc77058a7f9031160b32541"
       },
       {
         "argv_redacted": "j",
         "expected": "hostile row selected",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "539746 characters",
+        "observed": "527314 characters",
         "step": "hostile-select",
-        "transcript_sha256": "92410840b49e96b7912982b7de5a3e2926e0d5868f5d3e282130278c0f09ed52"
+        "transcript_sha256": "b87103d325e622b52b7f4be005774d2ad0d958cc8984d6ccdb9b664e8c741b10"
       },
       {
         "argv_redacted": "S",
         "expected": "domain_knowledge lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "540123 characters",
+        "observed": "546095 characters",
         "step": "to-domain",
-        "transcript_sha256": "0104a1c16c005b2344deef5892bd9ff8aa50953920ab3a6acae02e10865f6243"
+        "transcript_sha256": "589ff3bb14750061c31d9e5dee95942184195c44e982a63a5196e3084b379020"
       },
       {
         "argv_redacted": "S",
         "expected": "domain_knowledge lists",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "499101 characters",
+        "observed": "444405 characters",
         "step": "to-domain",
-        "transcript_sha256": "808e252959549922c45ba27d1836a61217e6523bb0904c6f4885b3cbb6b39c75"
+        "transcript_sha256": "a50769052f34360ab12fd89c45086e232d6e51f98f67c55a93db28afcda89da2"
       },
       {
         "argv_redacted": "/ text(6) enter",
         "expected": "query lists matches",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519612 characters",
+        "observed": "300828 characters",
         "step": "search",
-        "transcript_sha256": "84e21b99f761e589b3f7e2053a3e8ac9c04675b86caf94658df9d39212b5bd8a"
+        "transcript_sha256": "4bb76e159a196ba6d1ca1c186f919031ba69b86b27af06e85f72765b4c687366"
       },
       {
         "argv_redacted": "]",
         "expected": "next page differs",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "512775 characters",
+        "observed": "492642 characters",
         "step": "page-forward",
-        "transcript_sha256": "61a702ede700450c7d333f30de12026a71af5629a5c3d86fb27d0f541df90dce"
+        "transcript_sha256": "f6538f59bae4d1805bf5c198c0ebae62e61de2232eebaaa5cc4de3cf196c1328"
       },
       {
         "argv_redacted": "[",
         "expected": "first page returns",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "499479 characters",
+        "observed": "464539 characters",
         "step": "page-back",
-        "transcript_sha256": "3b9d01cb5205693421220a18960b25b8570eab041db170a69ba450787d56696f"
+        "transcript_sha256": "fb05a3e566b4ec6387f3d48282fe98ac4eb281c49e1181c385eb69e8722d430e"
       },
       {
         "argv_redacted": "x",
         "expected": "exact version expands",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "526072 characters",
+        "observed": "519990 characters",
         "step": "expand",
-        "transcript_sha256": "797620e3f2ed1b1cf9552f08eb227f6116c34dcc51c7cfbb213601860277f1f0"
+        "transcript_sha256": "2c7f9c17b72556635132a6cb021f9ee3754958f010de32fb3e1da86b70e5aeeb"
       },
       {
         "argv_redacted": "v",
         "expected": "history opens",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "513153 characters",
+        "observed": "532909 characters",
         "step": "history",
-        "transcript_sha256": "8fe18fd7ae9e18c31341363a2d5e5eeeee68e941eb2d4711d7fe9d1bd3c9f913"
+        "transcript_sha256": "eee2dd7675f1be92bdc615d92e54a183213877879f42268a6c37158859235e04"
       },
       {
         "argv_redacted": "E",
         "expected": "explain opens",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "519613 characters",
+        "observed": "519612 characters",
         "step": "explain",
-        "transcript_sha256": "41125916a96ccc130c1c0b52b59843196a1802b164510fd512297a4b9faaf7c9"
+        "transcript_sha256": "f861b2478053c353903ba9d2d361f6d2b7e27c55cf9fd894f07c2687819ce222"
       },
       {
         "argv_redacted": "c escape",
         "expected": "cancel writes nothing",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "546961 characters",
+        "observed": "519990 characters",
         "step": "correct-cancel",
-        "transcript_sha256": "59a8801d83375ec34e0b886b98eeba77e36905716c60301737c3c0f31e053bf5"
+        "transcript_sha256": "30580fca17a4ae5672e61aa4a07f08b16cd1539a78653c6d3a5374f8f59a7f6b"
       },
       {
         "argv_redacted": "c tab t e r m i n a l   c o r r e c t i o n tab n e e d l e   c o r r e c t e d   b y   t e r m i n a l enter",
-        "expected": "version n+1 persisted",
+        "expected": "preview shown, nothing persisted",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "560257 characters",
-        "step": "correct-apply",
-        "transcript_sha256": "47d6f49b217e809850130fbc7b6a6ebc8f8a1157706a363500f8006504918c5e"
+        "observed": "553420 characters",
+        "step": "correct-preview",
+        "transcript_sha256": "0ddd84b9a36cf15258474da6ceb35f9f908ba52f455b6f9cad3c9a0ed7268113"
       },
       {
         "argv_redacted": "y",
         "expected": "version n+2 persisted",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "499101 characters",
+        "observed": "492264 characters",
         "step": "correct-apply",
-        "transcript_sha256": "33d96e0a24c9dc19d5fd4236ed363836a7e3366b0510410d669dfda147dd9083"
+        "transcript_sha256": "9adb50db0203b41455187c0ed92fb075c4e806752fbbee049f70dcd3f44ae4d8"
       },
       {
         "argv_redacted": "enter",
         "expected": "conflict keeps input",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "505938 characters",
+        "observed": "505561 characters",
         "step": "correct-conflict",
-        "transcript_sha256": "b8c04ac9475be186fcd5a97ccba8ab5384bb7909a611a273bfddbb1803c8d031"
+        "transcript_sha256": "ed9e82e425f8983ccc1cb4e9cbea00f84357f0a5c261f060c02ed025d4b4294c"
       },
       {
         "argv_redacted": "S",
@@ -638,22 +640,22 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
         "independent_check": "MemoryTool and sqlite readback in the driver",
         "observed": "526449 characters",
         "step": "revoked",
-        "transcript_sha256": "a280409db3e709aa2cee77a24a589e16a5fa69711f101d53248944891b907b45"
+        "transcript_sha256": "ca2bf57c5284dca46cbc300f0ec82d56c350284d3c7eb05337af92f02ecb2977"
       },
       {
         "argv_redacted": "M",
         "expected": "expired state shown",
         "independent_check": "MemoryTool and sqlite readback in the driver",
-        "observed": "546583 characters",
+        "observed": "547338 characters",
         "step": "expired",
-        "transcript_sha256": "11393fe1a72f4bf6b636ef00cd8e6976d719daea266e1c6e6198b8bb260a4537"
+        "transcript_sha256": "649cb6201585ebed5a270ca92258ba990cce76afa84201487f904b8e8dc52a43"
       }
     ],
     "version": "0.3.0"
   },
   "two-agent-same-project": {
-    "archive_sha256": "02214f7c62d333aa143fdcf8ed6b3ad85f07e5cb77bd7e9f0381a92c465bc1c8",
-    "artifact_sha256": "7172ae181917007eb9e1b4fa1335fa08292dfa283464754d23ac7a4264997e9f",
+    "archive_sha256": "3f282af910aa7dbd43ab86a7ea2b9fe1095cf640fbd800a890c3f24f03531600",
+    "artifact_sha256": "2de374b62673f52661209ce6939ef2630079a807e8e5de20e0788f237631b779",
     "lane": "two-agent-same-project",
     "steps": [
       {
@@ -667,7 +669,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "stale_v1"
         ],
         "step": "agent-b-0",
-        "transcript_sha256": "e7601bf2e4b6aa2fa8780a99d3c7b1a2246483b8cbd1ffb26950934de5ac1025"
+        "transcript_sha256": "b333bf3bc485c12034afe359578f7e31f1db087c7e6deaaf7307d455225890db"
       },
       {
         "argv_redacted": "codex exec --json",
@@ -680,7 +682,7 @@ Lane receipts, as written by the drivers (`RUSH_T09_LIVE_ARCHIVE` and `RUSH_T09_
           "stale_v1"
         ],
         "step": "agent-b-1",
-        "transcript_sha256": "920e1d1b8a56524df46ded95e21e713f06f73d034c3ec1de57e0a2aab7d1a583"
+        "transcript_sha256": "b00932c890ac0883a05ce84b3db46f16fb47866c0ecfa91cbd2486543ab198a8"
       }
     ],
     "version": "0.3.0"
@@ -713,17 +715,17 @@ Each driver writes its grants in a temporary data root that is deleted with the 
 
 | lane | implementation_gate | live_acceptance | blocker | evidence |
 |---|---|---|---|---|
-| `installed-artifact-cli-mcp` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `52daf095eb1458772e1e403d98cb8d7e0d83ac0ebc92d02e52397de467725f91` |
-| `dashboard-memory-api` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `614a25806a02e5fd9b1c4efa14514534f0886166bf4340ab371a018a9135e367` |
-| `pty-terminal` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_pty_walkthrough`, receipt sha256 `4f28993169c01a6cf80e90a1a792c4c3b5f07529d4787c8c2d5da7cc8e11cae6` |
-| `personal-overlay-two-projects` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `a6764372db9fbcd690262cf2d19b5105f88201315b6b29a33e298683ac6cdf53` |
-| `two-agent-same-project` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_two_agent`, receipt sha256 `73f71e8d24e1e2f9a6c57daf994eb03ac3ef5260540c67f650432c242f492e66` |
-| `e06-e25-rejection-reversal` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_two_agent`, receipt sha256 `33bba09202a4d2931feca47343ef9883272ca1bb1c889400f8700c5690889e12` |
-| `pas-import` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_pas_import`, receipt sha256 `249e9f2473bd610a002e01c43592788ab47017b20a36e171a3d5aa55fc7ad865` |
+| `installed-artifact-cli-mcp` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `e8bc5ef445499d1924c00bd22c7a4c657ddbe75be4738b039b533fba160c0234` |
+| `dashboard-memory-api` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `8e85709f3d7cc4d9395e45a5f7f3208bf53657f201d41afa50bad0362c43546e` |
+| `pty-terminal` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_pty_walkthrough`, receipt sha256 `f9c24f9ad48509e819242c76a96095bb0dcd118d53d025523bd25dba30d5a10a` |
+| `personal-overlay-two-projects` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes`, receipt sha256 `a1e2a41d83c2c6a124c2ced438e01f51111c1f2aa9a4b9c080ede6c292ce91ae` |
+| `two-agent-same-project` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_two_agent`, receipt sha256 `47611a08f69722d1bae93323eede8a5dcc24d1d68b26bd86368ca47b0c778e92` |
+| `e06-e25-rejection-reversal` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_two_agent`, receipt sha256 `626d113aac689483605e6d4655fc41a0886dd0e1d7f10385325e93f950103c69` |
+| `pas-import` | `passed` | `passed` | — | `tests/test_phase72_memory_acceptance.py::test_t09_live_pas_import`, receipt sha256 `9e64de05c3dbb5f4f4a8db20bcc633579352e3cb81146daeb4997dc367b3ae86` |
 | `portable-route-release` | `open` | `open` | Phase 73 73-T09 final release (75-T01 receipts, 75-T03/T04 budget and recovery) not landed | `docs/phase-plans/phase-73-agent-activation-and-continuity-plan.md` |
 | `native-linux-ci` | `open` | `open` | The branch is not pushed, so the Linux CI lane has not run | `.github/workflows/ci.yml` |
 | `native-windows-ci` | `open` | `open` | The branch is not pushed, so no `PASSED` line exists from `windows-latest` | `tests/test_phase72_memory_acceptance.py::test_t09_live_windows_console` |
-| `native-macos` | `passed` | `open` | The branch is not pushed, so the macOS `artifact-probes` CI job has not run | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes` local run, receipt sha256 `edd50582c47a6e994a92878860f7c393e6c15cd9d67a70338c79f3b691f7d09e` |
+| `native-macos` | `passed` | `open` | The branch is not pushed, so the macOS `artifact-probes` CI job has not run | `tests/test_phase72_memory_acceptance.py::test_t09_live_installed_routes` local run, receipt sha256 `e0ccb9e1daad1c1ca0c5d6480559e3b0b27b21bd1b87b2b7ccbace72530335bd` |
 | `hybrid-evaluation` | `passed` | `open` | The Codex route is unavailable: its 32745-token route overhead exceeds the 16000-token case budget | `docs/reports/phase-72-memory-eval/hybrid-verdict.json` |
 | `r5b-frame-receipts` | `open` | `open` | Phase 75 75-T01 frame columns not landed | `tests/test_phase75_usage.py::test_memory_event_frame_receipt_columns` |
 | `phase70-t28d-g5-g8` | `open` | `open` | Phase 70 T28-D gates G5 to G8 are outside the Phase 72 checks | `docs/phase-plans/phase-72-memory-correctness-and-user-control-plan.md` |
@@ -734,12 +736,22 @@ Each driver writes its grants in a temporary data root that is deleted with the 
 - The branch is not pushed, so the Linux, Windows and macOS CI lanes have not run; the macOS lane's local driver passed (receipt above).
 - The 72-T08 Codex route is `unavailable`: its router probe counts 32745 model tokens, including the user's `~/.codex/AGENTS.md` (4844 cl100k tokens), above the plan's 16000-token case budget. The global hybrid verdict is therefore `unavailable` and the hybrid default stays off.
 - `portable-route-release`, `r5b-frame-receipts`, `phase70-t28d-g5-g8` and `phase71-p07` wait on Phase 73, Phase 75, Phase 70 and Phase 71 work outside this phase.
+- Correction: the report on the previous freeze listed R8 as passed. It failed there: 324 matrix ids carried a `-producer-` suffix, which R8 rejects. On this freeze the ten matrices collect 20499 ids with no `-producer-` id and no uncovered (route, dimension, value) pair, and R8 runs every cell.
+- G14 scope, from one `scripts/scope_gate.py` record per task commit: task commits changed 40 paths outside their packets' allowed paths. 7 are covered by gate amendments (72-T02 A13, 72-T04 A1 and A3, 72-T08 A1, 73-T09/CODEC A2b). 33 have no written approval in the packet, its gate amendments, `decisions.md` or the owner resolutions:
+  - 72-T01 (11): `src/rush/memory/expiry.py`, `src/rush/memory/maintenance.py`, `tests/test_benchmark_memory.py`, `tests/test_memory_efficiency.py`, `tests/test_phase62_cache_gate.py`, `tests/test_phase72_portable_memory_policy.py`, `tests/test_phase49_trace_swarm_recorder.py`, `tests/test_phase58_checkpoint_journals.py`, `tests/test_phase61_migration.py`, and 2 GoalBuddy board files under `docs/goals/phase-72-memory-correctness/`.
+  - 72-T02 (4): `scripts/benchmarks/memory.py`, `src/rush/mcp_support/request_models.py`, and 2 board files.
+  - 73-T02/BOOTSTRAP-CONSENT (4): `scripts/benchmarks/coordination.py`, `local.py`, `providers.py`, `reporting.py` (typing only).
+  - 73-T02/POLICY (12): 11 board files and `docs/reports/phase-64-66-documentation-coverage.md`.
+  - 75-T02/EVALUATOR (2): `scripts/benchmarks/coordination.py`, `local.py` (typing only).
+  - 72-T01 also changed the protected asserts of `test_t01_fix2_j1_noncanonical_backfill_survives_rewrite` and `test_t01_fix2_blob_content_never_rebound` (operands wrapped for typing), then restored their baseline assert AST; at the freeze they equal the baseline.
 
 ## Plan-vs-code check
 
 - `rush memory grant` previews also require `--expected-policy-revision` (BOOTSTRAP-CONSENT A2.8); the working-with-AI-agents guide said a preview needed only `--project` and `--source` and now names the revision.
 - A user-stated reversal of an explicit preference is a `preference correct` with `kind: "supersede"` on the rejection row (72-T05 §3.6.1). A second `record` of the same key and scope is a same-scope conflict that resolves `unresolved` (72-T05 R12); the two-agent driver uses the supersede form.
-- `preference correct` with `kind: "correct"` writes the corrected version and promotes it to STATED, so the row moves from version n to n+2 (72-T05 §3.6.2 step 4); only `reject` is the n+1 case. The 72-T07 and 72-T09 walkthrough texts say n+1.
+- `preference correct` with `kind: "correct"` writes the corrected version and promotes it to STATED, so the row moves from version n to n+2 (72-T05 §3.6.2 step 4); only `reject` is the n+1 case. The 72-T09 PTY driver on the previous freeze labelled its `correct` step `correct-apply`, "version n+1 persisted", although the step is a preview; it is now `correct-preview`, "preview shown, nothing persisted". The 72-T07 n+1 text (R14) is about a CLI `edit`, which is n+1.
+- Plan L51/L55 (ordinary delivery needs a visible row that is usable as current) was broken on four surfaces, found by the R8 cells and fixed for this freeze: `memory_overview` listed and counted rejected, pending and task-bound rows; the dashboard legacy browse emitted them unqualified; the TUI memory table did not mark them; `_resolve_authorized_statement` accepted a rejected, pending or task-bound STATED row. `useful_memory_count` and the `rush status` memory count also counted them. `rush memory list` (v2 inspect, with a `rejected` badge) and the registry inventories show them by design.
+- The v2 `maintain` route ran its maintenance cycle without the request's store root, so the cycle swept and locked the store of the process's working directory: it refused the request's rows as `not_visible` and created `.rush/memory.db` and the maintenance lock there. Found by a test-pollution watcher during integration (the matrix cells ran from the repository); fixed for this freeze, with `test_t06_v2_maintain_runs_on_the_request_project_not_the_cwd`.
 - The TUI import form (`I`) takes a capsule path only (72-T07 §3.5), so a PAS session is imported through the CLI with `--format pas_v1` and a mapping, and the TUI review covers the Rush capsule of the same lane.
 - `rush memory grant`, `rush memory revoke` and `rush memory bind-store` are CLI-only. No MCP operation writes a grant.
 
