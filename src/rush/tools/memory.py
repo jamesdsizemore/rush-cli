@@ -2779,10 +2779,11 @@ class MemoryTool(ToolFn):
                 for artifact_id in self._v2_targets(call)
                 if (row := store.get_current_row(artifact_id)) is not None
             }
-        outcome = run_maintenance_cycle(  # type: ignore[call-arg]
+        outcome = run_maintenance_cycle(
             req.task,
             access=access,
             batch_size=req.batch_size,
+            project_root=root,
             candidate_ids=list(req.candidate_ids)
             if req.candidate_ids is not None
             else None,

@@ -7209,6 +7209,22 @@ def test_t06_maintain_replay_and_revocation_before_receipt(
     assert not v2_receipts(late)
 
 
+def test_t06_v2_maintain_runs_on_the_request_project_not_the_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The v2 maintain cycle sweeps the store of the request's project: run from
+    another working directory, it sees `r1` and creates nothing there."""
+    env = make_env(tmp_path / "proj")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    result = apply_call(env, "maintain", m_maintain())
+    assert code(result) == "OK", dump(raw(result))
+    # A cycle on the cwd's store refuses r1 as not_visible (no such row there).
+    assert data(result)["result"]["refused"] == [], dump(raw(result))
+    assert list(elsewhere.iterdir()) == []
+
+
 def test_t06_v2_read_request_accepts_exactly_the_declared_fields(
     tmp_path: Path,
 ) -> None:
