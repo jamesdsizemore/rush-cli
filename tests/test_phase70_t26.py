@@ -32,7 +32,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -73,10 +72,12 @@ def _isolated_home(
 
 
 @pytest.fixture(scope="session")
-def warm_npm_cache() -> Iterator[str]:
+def warm_npm_cache(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     """An npm cache in which aislop's npm runtime runs offline: the
     already-warm `npm_config_cache` when set (CI warms it after sync), else a
-    temp cache warmed once per session -- never one download per test."""
+    temp cache warmed once per session -- never one download per test. The
+    temp cache lives under the session basetemp, so a killed run leaves it
+    to the basetemp cleanup instead of orphaning ~570 MB in $TMPDIR."""
     from rush.setup.provision import prefetch_npm_runtime
     from rush.tools.common import clear_binary_cache, resolve_binary
 
@@ -95,8 +96,7 @@ def warm_npm_cache() -> Iterator[str]:
     if configured:
         yield warm(configured)  # already warm: one offline run, no fetch
         return
-    with tempfile.TemporaryDirectory() as cache:
-        yield warm(cache)
+    yield warm(str(tmp_path_factory.mktemp("npm-cache")))
 
 
 def _fake_host_which(name: str) -> str:
