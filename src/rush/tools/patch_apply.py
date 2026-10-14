@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from rush.io.physical_paths import PhysicalRoot
 from rush.permissions import ExecutionPermissions, check_permissions
+from rush.runtime.project_python import PYTHON_PREREQUISITE, project_python
 from rush.safety.redactor import sanitize_value
 
 from .base import ToolFn, ToolResult, ToolStatus
@@ -76,9 +76,13 @@ class PatchApplyTool(ToolFn):
             allowed, missing = check_permissions(
                 ExecutionPermissions(artifact_write=not dry_run), permissions
             )
+            python = project_python(Path(path)) if allowed else None
             if not allowed:
                 status = "skipped"
                 summary = f"Patch promotion requires {', '.join(missing)}."
+            elif python is None:
+                status = "skipped"
+                summary = f"Patch verification {PYTHON_PREREQUISITE}."
             else:
                 from rush.patch.applier import PatchApplier
                 from rush.patch.contracts import PatchContract, VerifierCommandPlan
@@ -116,7 +120,7 @@ class PatchApplyTool(ToolFn):
                     applied_diff = sandbox_diff_digest(sandbox, root)
                     if not applied_diff:
                         raise ValueError("Patch produced no tracked changes to verify.")
-                    command = (sys.executable, "-m", "pytest", "-q", "--tb=short")
+                    command = (python, "-m", "pytest", "-q", "--tb=short")
                     contract = PatchContract(
                         base_commit=base_commit,
                         base_tree_digest=base_tree,

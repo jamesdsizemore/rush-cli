@@ -10,7 +10,7 @@ This review covers today's audit-to-planning transition, creation and correction
 
 Controlling outcome: ten individual, repository-grounded TDD development plans per batch; subagents with appropriate task/model/reasoning assignments; user reviews and approves before the next ten. Dedicated implementation worktree and future command-focused PRs were approved. A PRD, replacement README/index, extra chat, production changes, and commits were not requested for plan creation.
 
-Evidence: [session JSONL](/Users/jamesdsizemore/.codex/sessions/2026/10/01/rollout-2026-10-01T07-43-39-01a0f7eb-c3fc-71f0-a6a4-8d802e80c8ba.jsonl), [current batch files](/Users/jamesdsizemore/Developer/rush-cli/docs/phase-plans/command-tdd-2026-10-01/), [task-block template](/Users/jamesdsizemore/Developer/rush-cli/docs/templates/task-block-template.md:3), and [Phase 70 contract](/Users/jamesdsizemore/Developer/rush-cli-worktrees/phase-70/docs/phase-plans/phase-70-agent-adoption-and-usability-plan.md:99). References “S” below are exact JSONL line numbers. Session excerpts and agent receipts were checked against saved files; receipts alone are not acceptance.
+Evidence: session JSONL (machine-local provenance: `/Users/jamesdsizemore/.codex/sessions/2026/10/01/rollout-2026-10-01T07-43-39-01a0f7eb-c3fc-71f0-a6a4-8d802e80c8ba.jsonl`), [current batch files](../phase-plans/command-tdd-2026-10-01/), [task-block template](../templates/task-block-template.md) (recorded line 3), and [Phase 70 contract](../phase-plans/phase-70-agent-adoption-and-usability-plan.md) (recorded line 99). References “S” below are exact JSONL line numbers. Session excerpts and agent receipts were checked against saved files; receipts alone are not acceptance.
 
 ## Timeline and controlling requests
 
@@ -61,7 +61,7 @@ Approval to canonical delivery took approximately 2 hours 25 minutes. That elaps
 
 ## All-ten coverage and residual state
 
-File references in this table are relative to [batch directory](/Users/jamesdsizemore/Developer/rush-cli/docs/phase-plans/command-tdd-2026-10-01/). Each file still binds source revision `c78e445…`; none records Phase 70 reconciliation. Final proposed test bodies are present, but proposed/unexecuted status alone is **not** a planning defect.
+File references in this table are relative to [batch directory](../phase-plans/command-tdd-2026-10-01/). Each file still binds source revision `c78e445…`; none records Phase 70 reconciliation. Final proposed test bodies are present, but proposed/unexecuted status alone is **not** a planning defect.
 
 | Command | Current useful substance | Specific unresolved issue |
 |---|---|---|
@@ -90,7 +90,7 @@ Recovery inventories before disputed moves and wrapper removal were appropriate.
 
 ## Concrete correction and use
 
-The replacement artifact is [reusable batch prompt](/Users/jamesdsizemore/Developer/rush-cli/docs/agents/cli-command-remediation-plan-batch-prompt.md). Its controlling gates replace the failed decisions above: authoritative baseline before drafting; exact standalone output; complete per-command ownership; existing-API RED before bug fixes; resolved dependency packets; full Phase 70 reconciliation; frozen substantive review before readiness.
+The replacement artifact is [reusable batch prompt](../agents/cli-command-remediation-plan-batch-prompt.md). Its controlling gates replace the failed decisions above: authoritative baseline before drafting; exact standalone output; complete per-command ownership; existing-API RED before bug fixes; resolved dependency packets; full Phase 70 reconciliation; frozen substantive review before readiness.
 
 Creating that prompt does not repair Batch 1. Existing ten files remain unchanged by this review. Use the prompt only for an explicitly authorized batch; the earlier review/approval boundary remains in force.
 
@@ -101,4 +101,3 @@ Reviewed the session messages/tool evidence, current ten documents, local task t
 The reviewer did not execute production tests, apply proposed fixes, ratify Phase 70 or fully re-derive all 79 command findings. Preserve that distinction when using this review.
 
 Final check for this task: both requested Markdown artifacts exist, their contents cover F01–F18 and all ten commands, and pre-review hashes of all ten plan files remain unchanged.
-

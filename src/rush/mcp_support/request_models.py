@@ -1,0 +1,1883 @@
+"""Phase 70 T6: strict request models for `rush_project`, `rush_scan`, `rush_memory`.
+
+One set of Pydantic models per tool drives both the published MCP `inputSchema`
+(`published_schema`) and the validation every `tools/call` passes before dispatch
+(`validate_and_normalize`). Every model is `extra="forbid"` and strict: no bool-as-int,
+no string booleans, no float versions (X3: `schema_version` is `StrictInt` bounded to 1,
+never `Literal[1]`, which accepts `True`/`1.0`).
+
+Published schemas stay a top-level `{"type": "object"}` with no top-level combinator
+(X2): project/scan publish the legacy `request` envelope (a nested `oneOf`) next to the
+flattened named fields; memory publishes its flat arguments plus typed per-operation
+fields. Conditional requirements live in the nested `request` schema and in each named
+field's description. The models are validation only: grants stay runtime authority.
+"""
+
+from __future__ import annotations
+
+import copy
+import functools
+import inspect
+import json
+import math
+import operator
+import unicodedata
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, field
+from typing import Annotated, Any, Literal, cast, get_args
+
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    PlainValidator,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    Tag,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    WithJsonSchema,
+    create_model,
+    field_validator,
+    model_validator,
+)
+from pydantic.json_schema import models_json_schema
+
+from rush.delivery import compact
+from rush.mcp_support.tool_registry import _PROJECT_DESCRIPTION
+from rush.memory.relations import RELATION_KINDS
+from rush.memory.retrieval import (
+    DEFAULT_ENCODING,
+    DEFAULT_MAX_BYTES,
+    DEFAULT_MAX_TOKENS,
+)
+from rush.safety.redactor import sanitize_value
+
+# Via `rush.tools.memory` (not `rush.memory.*` directly): importing
+# `rush.memory.maintenance` first is a circular import through `rush.tools`.
+from rush.tools.memory import (
+    _LEGACY_DEFAULTS,
+    _V2_OPERATIONS,
+    MaintenanceTask,
+    MemorySubject,
+    MemoryTool,
+    SourceKind,
+    _is_v2_call,
+    _non_v2_rejection,
+    _v2_raw,
+)
+
+REQUEST_MODEL_TOOLS = frozenset({"rush_project", "rush_scan", "rush_memory"})
+
+_REQUIRED: Any = ...
+_OPTIONAL: Any = None
+_STRICT = ConfigDict(extra="forbid", strict=True)
+
+SchemaVersion = Annotated[StrictInt, Field(ge=1, le=1)]
+NonEmptyStr = Annotated[StrictStr, Field(min_length=1)]
+
+
+def _literal_text(value: Any) -> str:
+    """A non-empty `str` kept verbatim, lone surrogates included: a JSON `\\ud800`
+    escape decodes to one, and pydantic's `str` check would refuse it before the tool
+    treats the value as literal text (72-T03 consolidate `symptom`)."""
+    if not isinstance(value, str):
+        # pydantic reports only ValueError as a validation error; TypeError escapes.
+        raise ValueError("Input should be a valid string")  # noqa: TRY004
+    if not value:
+        raise ValueError("String should have at least 1 character")
+    return value
+
+
+LiteralText = Annotated[
+    Any,
+    PlainValidator(_literal_text),
+    WithJsonSchema({"minLength": 1, "type": "string"}),
+]
+NonNegativeInt = Annotated[StrictInt, Field(ge=0)]
+StrList = list[StrictStr]
+AnyDict = dict[str, Any]
+AnyList = list[Any]
+# `ProjectTool._require_valid_uuid`: a version-4 UUID (RFC 4122 variant) string.
+UUID4Str = Annotated[
+    StrictStr,
+    Field(
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}"
+        r"-[0-9a-fA-F]{12}$"
+    ),
+]
+PathStr = Annotated[StrictStr, Field(json_schema_extra={"format": "path"})]
+
+
+def _union(members: Iterable[Any]) -> Any:
+    """`A | B | ...` over a runtime-built member list."""
+    return functools.reduce(operator.or_, members)
+
+
+def _bounded(minimum: int, maximum: int) -> Any:
+    return Annotated[StrictInt, Field(ge=minimum, le=maximum)]
+
+
+def _no_path_separators(value: str) -> str:
+    # `MemoryTool._run_delete`/`_edit_or_archive`: an ID never carries a path.
+    if "/" in value or "\\" in value or ".." in value:
+        raise ValueError("must be a non-empty ID with no path separators")
+    return value
+
+
+ArtifactId = Annotated[
+    StrictStr, Field(min_length=1), AfterValidator(_no_path_separators)
+]
+
+
+def _memory_source(value: str) -> str:
+    # 72-T01 D40: a memory source label is a literal (no `*`, NUL, Cc/Cf/Cs, padding).
+    from rush.memory.authorization import literal_source_is_valid
+
+    if not literal_source_is_valid(value):
+        raise ValueError("source must be a non-empty literal label")
+    return value
+
+
+MemorySource = Annotated[StrictStr, AfterValidator(_memory_source)]
+MemorySourceList = list[MemorySource]
+
+
+def _not_v2_receipt(value: str) -> str:
+    # 72-T06 D29: the `v2:` operation-id namespace belongs to v2 receipts only.
+    if value.startswith("v2:"):
+        raise ValueError("receipt operation ids starting 'v2:' are reserved")
+    return value
+
+
+LegacyReceiptId = Annotated[StrictStr, AfterValidator(_not_v2_receipt)]
+
+
+def _no_v2_receipt_values(value: dict[str, str]) -> dict[str, str]:
+    for receipt_id in value.values():
+        _not_v2_receipt(receipt_id)
+    return value
+
+
+LegacyReceiptIds = Annotated[
+    dict[str, StrictStr], AfterValidator(_no_v2_receipt_values)
+]
+
+
+# 72-T08 §3.2: request-sourced embedding fields use the same predicates as the in-process
+# `_compact_query` check (deferred import: `rush.memory` imports through `rush.tools`).
+def _embedding_endpoint(value: str) -> str:
+    from rush.memory.embeddings import request_endpoint_error
+
+    error = request_endpoint_error(value)
+    if error is not None:
+        raise ValueError(f"embedding_endpoint: {error}")
+    return value
+
+
+def _embedding_model(value: str) -> str:
+    from rush.memory.embeddings import valid_model
+
+    if not valid_model(value):
+        raise ValueError("embedding_model: invalid model name")
+    return value
+
+
+def _embedding_model_digest(value: str) -> str:
+    from rush.memory.embeddings import valid_digest
+
+    if not valid_digest(value):
+        raise ValueError("embedding_model_digest: must be 12-64 lowercase hex")
+    return value
+
+
+def _embedding_chunking_version(value: str) -> str:
+    from rush.memory.embeddings import valid_chunking
+
+    if not valid_chunking(value):
+        raise ValueError("embedding_chunking_version: invalid chunking version")
+    return value
+
+
+EmbeddingEndpoint = Annotated[StrictStr, AfterValidator(_embedding_endpoint)]
+EmbeddingModel = Annotated[StrictStr, AfterValidator(_embedding_model)]
+EmbeddingModelDigest = Annotated[StrictStr, AfterValidator(_embedding_model_digest)]
+EmbeddingChunkingVersion = Annotated[
+    StrictStr, AfterValidator(_embedding_chunking_version)
+]
+
+_GRANT_FIELDS = (
+    "allow_network",
+    "allow_download",
+    "allow_cache_write",
+    "allow_build",
+    "allow_slow",
+    "allow_artifact_write",
+    "allow_browser",
+)
+_GRANTS: dict[str, Any] = {name: (StrictBool, _OPTIONAL) for name in _GRANT_FIELDS}
+
+
+def _drop_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
+
+
+def _model(
+    name: str,
+    fields: Mapping[str, Any],
+    defaults: Mapping[str, Any] | None = None,
+    validators: Mapping[str, Any] | None = None,
+) -> Any:
+    """A strict model. An optional field takes its public default from `defaults`;
+    one that cannot be null publishes no `default: null` placeholder. `validators`
+    are pydantic field/model validators attached to the built model."""
+    built: dict[str, Any] = {}
+    for key, (annotation, default) in fields.items():
+        if default is _OPTIONAL:
+            default = (defaults or {}).get(key)
+            if default is None and type(None) not in get_args(annotation):
+                default = Field(default=None, json_schema_extra=_drop_default)
+        built[key] = (annotation, default)
+    return create_model(
+        name, __config__=_STRICT, __validators__=dict(validators or {}), **built
+    )
+
+
+# --- rush_project ------------------------------------------------------------
+# Fields: `ProjectTool._REQUEST_FIELDS` per operation (select gains its grants).
+
+_ProjectSettings = _model(
+    "ProjectSettings",
+    {
+        "exclude_tools": (StrList, _OPTIONAL),
+        "severity": (Literal["info", "warn", "error"], _OPTIONAL),
+        "concurrency": (_bounded(1, 8), _OPTIONAL),
+        "timeout_seconds": (_bounded(1, 3600), _OPTIONAL),
+        "memory_record": (StrictBool, _OPTIONAL),
+        "agent_ids": (StrList, _OPTIONAL),
+    },
+)
+_ACTIVE_PROJECT = {
+    "project": (StrictStr | None, _OPTIONAL),
+    "session_id": (StrictStr | None, _OPTIONAL),
+}
+PROJECT_FIELDS: dict[str, dict[str, Any]] = {
+    "list": {
+        "limit": (_bounded(1, 200), _OPTIONAL),
+        "cursor": (StrictStr | None, _OPTIONAL),
+    },
+    "add": {
+        "path": (NonEmptyStr, _REQUIRED),
+        "name": (StrictStr | None, _OPTIONAL),
+        **_GRANTS,
+    },
+    "show": dict(_ACTIVE_PROJECT),
+    "snapshot": dict(_ACTIVE_PROJECT),
+    "select": {
+        "project": (UUID4Str, _REQUIRED),
+        "session_id": (NonEmptyStr, _REQUIRED),
+        **_GRANTS,
+    },
+    "create": {
+        "parent": (NonEmptyStr, _REQUIRED),
+        "name": (NonEmptyStr, _REQUIRED),
+        "git_init": (StrictBool, _OPTIONAL),
+        **_GRANTS,
+    },
+    "relink": {
+        "project": (UUID4Str, _REQUIRED),
+        "path": (NonEmptyStr, _REQUIRED),
+        "expected_revision": (NonNegativeInt, _REQUIRED),
+        **_GRANTS,
+    },
+    "configure": {
+        "project": (UUID4Str, _REQUIRED),
+        "settings": (_ProjectSettings | None, _OPTIONAL),
+        "expected_revision": (NonNegativeInt, _OPTIONAL),
+        "apply": (StrictBool, _OPTIONAL),
+        "plan_id": (StrictStr, _OPTIONAL),
+        **_GRANTS,
+    },
+    "artifacts": {
+        **_ACTIVE_PROJECT,
+        "categories": (StrList, _OPTIONAL),
+        "limit": (_bounded(1, 1000), _OPTIONAL),
+        "offset": (NonNegativeInt, _OPTIONAL),
+    },
+}
+
+# --- rush_scan ---------------------------------------------------------------
+# Fields: `ScanTool._REQUEST_FIELDS` plus the direct cancel/resume operations
+# (`mcp._scan_direct_allowed_fields`). `full`/`install`/`after_sequence` are
+# accepted-but-ignored compatibility fields (no effect, disclosed in metadata).
+
+SCAN_COMPATIBILITY_FIELDS = ("full", "install", "after_sequence")
+_RUN_REF = {"project": (NonEmptyStr, _REQUIRED), "run_id": (NonEmptyStr, _REQUIRED)}
+SCAN_FIELDS: dict[str, dict[str, Any]] = {
+    "plan": {
+        "project": (NonEmptyStr, _REQUIRED),
+        "exclude": (StrList, _OPTIONAL),
+        "targets": (dict[StrictStr, AnyDict], _OPTIONAL),
+        "severity": (Literal["info", "warn", "error"], _OPTIONAL),
+        "concurrency": (_bounded(1, 8), _OPTIONAL),
+        "timeout_seconds": (_bounded(1, 3600), _OPTIONAL),
+        "full": (StrictBool, _OPTIONAL),
+    },
+    "run": {
+        "project": (NonEmptyStr, _REQUIRED),
+        "plan_id": (NonEmptyStr, _REQUIRED),
+        "install": (StrictBool, _OPTIONAL),
+        **_GRANTS,
+    },
+    "status": {
+        **_RUN_REF,
+        "limit": (_bounded(1, 200), _OPTIONAL),
+        "cursor": (StrictStr | None, _OPTIONAL),
+        "after_sequence": (NonNegativeInt, _OPTIONAL),
+    },
+    "rescan": {**_RUN_REF, **_GRANTS},
+    "cancel": dict(_RUN_REF),
+    "resume": {**_RUN_REF, **_GRANTS},
+}
+
+# --- rush_memory nested `request` models ---------------------------------------
+# Key sets equal `rush.tools.memory._*_REQUEST_KEYS`; required keys and types mirror
+# each handler's own `E_INPUT` checks (element types stay open where the handler
+# checks only the container).
+
+
+class MemoryOwnerScope(BaseModel):
+    """`OwnerScope.from_value`: exactly `kind` and a non-blank `id`."""
+
+    model_config = _STRICT
+
+    kind: Literal["user", "project", "session", "agent"]
+    id: Annotated[StrictStr, Field(pattern=r"\S")]
+
+
+# 73-T09/CODEC: a canonical lowercase hyphenated UUID (`invocation_id`, `mapping_id`).
+_CapsuleUuid = Annotated[
+    StrictStr,
+    Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+]
+# No upper bound here: the handler reports `budget_above_hard_cap` itself.
+_CapsuleLimit = Annotated[StrictInt, Field(ge=1)]
+# An omitted optional capsule key stays absent; an explicit `null` is rejected.
+_ABSENT: Any = Field(default=None, json_schema_extra=_drop_default)
+
+
+class MemoryCapsuleTaskRef(BaseModel):
+    """`capsule` `selectors.task_ref`: one checkpoint row at an exact version."""
+
+    model_config = _STRICT
+
+    artifact_id: NonEmptyStr
+    version: Annotated[StrictInt, Field(ge=1)]
+
+
+class MemoryCapsuleSelectors(BaseModel):
+    """`capsule` `selectors`: the export task, owner and source narrowing."""
+
+    model_config = _STRICT
+
+    task_ref: MemoryCapsuleTaskRef = _ABSENT
+    owner_scope: MemoryOwnerScope = _ABSENT
+    sources: MemorySourceList = _ABSENT
+    include_personal: StrictBool = _ABSENT
+
+    @model_validator(mode="after")
+    def _unique_sources(self) -> MemoryCapsuleSelectors:
+        if self.sources is not None and len(set(self.sources)) != len(self.sources):
+            raise ValueError("sources must be unique")
+        return self
+
+
+class MemoryCheckRef(BaseModel):
+    """`_plan_checks`: an object with a non-empty string `id` (other keys kept)."""
+
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: NonEmptyStr
+
+
+class MemorySelectedRef(BaseModel):
+    """`_handoff` prepare: an object with a non-empty `id` and an integer `version`."""
+
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: NonEmptyStr
+    version: StrictInt
+
+
+_CompactRequest = _model(
+    "MemoryCompactRequest",
+    {
+        "view": (Literal["compact"], _REQUIRED),
+        "limit": (StrictInt, _OPTIONAL),
+        "max_tokens": (StrictInt, _OPTIONAL),
+        "max_bytes": (StrictInt, _OPTIONAL),
+        "encoding": (StrictStr, _OPTIONAL),
+        "cursor": (StrictStr | None, _OPTIONAL),
+        "retrieval": (Literal["lexical", "hybrid"], _OPTIONAL),
+        "embedding_endpoint": (EmbeddingEndpoint | None, _OPTIONAL),
+        "embedding_model": (EmbeddingModel | None, _OPTIONAL),
+        "embedding_model_digest": (EmbeddingModelDigest | None, _OPTIONAL),
+        "embedding_chunking_version": (EmbeddingChunkingVersion | None, _OPTIONAL),
+    },
+)
+_BUDGET = {
+    "max_tokens": (StrictInt, _OPTIONAL),
+    "max_bytes": (StrictInt, _OPTIONAL),
+    "encoding": (StrictStr, _OPTIONAL),
+}
+_ARTIFACT_VERSION = {"id": (NonEmptyStr, _REQUIRED), "version": (StrictInt, _REQUIRED)}
+
+
+class MemoryDeleteRequest(BaseModel):
+    """`MemoryTool._run_delete`: 1-100 unique IDs, revisions for exactly those IDs."""
+
+    model_config = _STRICT
+
+    artifact_ids: Annotated[list[ArtifactId], Field(min_length=1, max_length=100)]
+    expected_revisions: dict[str, StrictInt]
+    scope: MemorySubject
+    owner_scope: MemoryOwnerScope | None = None
+    apply: StrictBool = False
+    receipt_operation_id: LegacyReceiptId | None = None
+    receipt_operation_ids: LegacyReceiptIds | None = None
+    required_grants: list[StrictStr] | None = None
+
+    @model_validator(mode="after")
+    def _ids_match_revisions(self) -> MemoryDeleteRequest:
+        if len(set(self.artifact_ids)) != len(self.artifact_ids):
+            raise ValueError("artifact_ids must be unique")
+        if set(self.expected_revisions) != set(self.artifact_ids):
+            raise ValueError(
+                "expected_revisions must map exactly the given artifact_ids"
+            )
+        return self
+
+
+def _sqlite_version(value: int) -> int:
+    # `store.sqlite_integer_in_range`: a revision SQLite stores as INTEGER.
+    from rush.memory.store import sqlite_integer_in_range
+
+    if not sqlite_integer_in_range(value):
+        raise ValueError("must be an integer SQLite can store")
+    return value
+
+
+Revision = Annotated[StrictInt, Field(ge=1), AfterValidator(_sqlite_version)]
+
+
+class MemoryCandidateRef(BaseModel):
+    """72-T04 D8: one reviewed corroborator, `{id, version, source}`."""
+
+    model_config = _STRICT
+
+    id: ArtifactId
+    version: Revision
+    source: MemorySource
+
+
+class MemoryPromoteRequest(BaseModel):
+    """`MemoryTool._run_promote`'s review contract: `apply`, the grants pinned at
+    review, the reviewed source row and its version (given together), and the
+    reviewed corroborators."""
+
+    model_config = _STRICT
+
+    apply: StrictBool = False
+    required_grants: list[StrictStr] | None = None
+    source_id: ArtifactId | None = None
+    expected_version: Revision | None = None
+    candidate_refs: (
+        Annotated[list[MemoryCandidateRef], Field(min_length=1, max_length=64)] | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _source_pair(self) -> MemoryPromoteRequest:
+        if (self.source_id is None) != (self.expected_version is None):
+            raise ValueError("source_id and expected_version are given together")
+        return self
+
+
+class MemoryMaintainRequest(BaseModel):
+    """`MemoryTool._run_maintain`'s review contract: `apply`, the grants pinned at
+    review, and the previewed candidate set with its reviewed revisions."""
+
+    model_config = _STRICT
+
+    apply: StrictBool = False
+    required_grants: list[StrictStr] | None = None
+    candidate_ids: list[ArtifactId] | None = None
+    expected_revisions: dict[ArtifactId, Revision] | None = None
+
+    @model_validator(mode="after")
+    def _ids_match_revisions(self) -> MemoryMaintainRequest:
+        ids = self.candidate_ids
+        if ids is not None and len(set(ids)) != len(ids):
+            raise ValueError("candidate_ids must be unique")
+        if (
+            ids is not None
+            and self.expected_revisions is not None
+            and set(self.expected_revisions) != set(ids)
+        ):
+            raise ValueError("expected_revisions must cover exactly candidate_ids")
+        return self
+
+
+def _candidate_sources_need_refs(value: Any, info: ValidationInfo) -> Any:
+    # 72-T04 D8: raw candidate sources are never evidence; only reviewed refs are.
+    request = info.data.get("request")
+    if value is not None and (request is None or request.candidate_refs is None):
+        raise ValueError("candidate_sources requires request.candidate_refs")
+    return value
+
+
+_MEMORY_VALIDATORS: dict[str, dict[str, Any]] = {
+    "promote": {
+        "_candidate_sources_need_refs": field_validator("candidate_sources")(
+            _candidate_sources_need_refs
+        )
+    }
+}
+
+_MUTATION = {
+    "scope": (MemorySubject, _REQUIRED),
+    "id": (ArtifactId, _REQUIRED),
+    "expected_version": (StrictInt, _REQUIRED),
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+    "apply": (StrictBool, _OPTIONAL),
+    "receipt_operation_id": (LegacyReceiptId | None, _OPTIONAL),
+    "required_grants": (list[StrictStr] | None, _OPTIONAL),
+}
+
+_INTENT_KEYS = {
+    "intent_id": (NonEmptyStr, _REQUIRED),
+    "behavior_id": (StrictStr | None, _OPTIONAL),
+    "statement_ref": (AnyDict | None, _OPTIONAL),
+    "new_statement_ref": (AnyDict | None, _OPTIONAL),
+    "new_behavior_id": (StrictStr | None, _OPTIONAL),
+    "source_refs": (AnyList | None, _OPTIONAL),
+    "check_refs": (AnyList | None, _OPTIONAL),
+    "exceptions": (AnyList | None, _OPTIONAL),
+    "expected_version": (StrictInt | None, _OPTIONAL),
+    "current_revision": (StrictStr | None, _OPTIONAL),
+}
+_INTENT_REQUIRED: dict[str, dict[str, Any]] = {
+    "create": {},
+    "check": {},
+    "confirm": {"expected_version": (StrictInt, _REQUIRED)},
+    "supersede": {
+        "expected_version": (StrictInt, _REQUIRED),
+        "new_statement_ref": (Annotated[AnyDict, Field(min_length=1)], _REQUIRED),
+    },
+}
+_RECIPE_KEYS = {
+    "recipe_id": (NonEmptyStr, _REQUIRED),
+    "purpose": (StrictStr | None, _OPTIONAL),
+    "helper_ref": (AnyDict | None, _OPTIONAL),
+    "required_symbols": (AnyList | None, _OPTIONAL),
+    "required_dependencies": (AnyDict | None, _OPTIONAL),
+    "required_config_digest": (StrictStr | None, _OPTIONAL),
+    "checks": (AnyList | None, _OPTIONAL),
+    "exceptions": (AnyList | None, _OPTIONAL),
+    "expected_version": (StrictInt | None, _OPTIONAL),
+    "current_dependencies": (AnyDict | None, _OPTIONAL),
+    "current_config_digest": (StrictStr | None, _OPTIONAL),
+    "recipe_version": (StrictInt | None, _OPTIONAL),
+    "patch_hash": (StrictStr | None, _OPTIONAL),
+    "verifier_receipt_ref": (AnyDict | None, _OPTIONAL),
+}
+_RECIPE_REQUIRED: dict[str, dict[str, Any]] = {
+    "record": {},
+    "resolve": {},
+    "outcome": {
+        "recipe_version": (StrictInt, _REQUIRED),
+        "patch_hash": (NonEmptyStr, _REQUIRED),
+        "verifier_receipt_ref": (AnyDict, _REQUIRED),
+    },
+}
+_HANDOFF_KEYS = {
+    "receiver_namespace": (StrictStr | None, _OPTIONAL),
+    "receiver_audience": (StrictStr | None, _OPTIONAL),
+    "goal": (StrictStr | None, _OPTIONAL),
+    "constraints": (AnyDict | None, _OPTIONAL),
+    "unresolved_decisions": (AnyList | None, _OPTIONAL),
+    "selected_refs": (AnyList | None, _OPTIONAL),
+    "handoff_id": (StrictStr | None, _OPTIONAL),
+}
+_HANDOFF_REQUIRED: dict[str, dict[str, Any]] = {
+    "prepare": {
+        "receiver_audience": (NonEmptyStr, _REQUIRED),
+        "goal": (NonEmptyStr, _REQUIRED),
+        "selected_refs": (
+            Annotated[list[MemorySelectedRef], Field(min_length=1)],
+            _REQUIRED,
+        ),
+    },
+    "dispatch": {},
+    "status": {},
+}
+
+# 72-T05 §3.13: the `preference` request. Every key is optional at the model level
+# (the handler enforces per-action content rules); each action tightens its own
+# required keys. A `value` left out stays absent (never `null`).
+_PREFERENCE_KEYS = {
+    "key": (NonEmptyStr | None, _OPTIONAL),
+    "query": (NonEmptyStr | None, _OPTIONAL),
+    "value": (Any, _OPTIONAL),
+    "scope": (Literal["personal", "project", "task"] | None, _OPTIONAL),
+    "authority": (Literal["explicit", "inferred"] | None, _OPTIONAL),
+    "source": (NonEmptyStr | None, _OPTIONAL),
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+    "expires_at": (StrictFloat | StrictInt | None, _OPTIONAL),
+    "attribution": (StrictStr | None, _OPTIONAL),
+    "artifact_id": (ArtifactId | None, _OPTIONAL),
+    "layer": (Literal["project", "personal"] | None, _OPTIONAL),
+    "kind": (Literal["correct", "reject", "supersede"] | None, _OPTIONAL),
+    "reason": (NonEmptyStr | None, _OPTIONAL),
+    "expected_version": (StrictInt | None, _OPTIONAL),
+    "expected_versions": (dict[str, StrictInt] | None, _OPTIONAL),
+    "project_id": (NonEmptyStr | None, _OPTIONAL),
+    "worktree_id": (NonEmptyStr | None, _OPTIONAL),
+    "task_id": (NonEmptyStr | None, _OPTIONAL),
+    "preview_digest": (NonEmptyStr | None, _OPTIONAL),
+    "apply": (StrictBool, _OPTIONAL),
+    "user_stated": (StrictBool, _OPTIONAL),
+    "receipt_operation_id": (StrictStr | None, _OPTIONAL),
+}
+_PREFERENCE_REQUIRED: dict[str, dict[str, Any]] = {
+    "resolve": {},
+    "record": {
+        "key": (NonEmptyStr, _REQUIRED),
+        "value": (Any, _REQUIRED),
+        "scope": (Literal["personal", "project", "task"], _REQUIRED),
+        "authority": (Literal["explicit", "inferred"], _REQUIRED),
+    },
+    "correct": {
+        "artifact_id": (ArtifactId, _REQUIRED),
+        "layer": (Literal["project", "personal"], _REQUIRED),
+        "kind": (Literal["correct", "reject", "supersede"], _REQUIRED),
+        "reason": (NonEmptyStr, _REQUIRED),
+        "expected_version": (StrictInt, _REQUIRED),
+    },
+    "end_task": {
+        "task_id": (NonEmptyStr, _REQUIRED),
+        "expected_versions": (dict[str, StrictInt], _REQUIRED),
+    },
+    "migrate": {},
+}
+
+
+def _action_union(
+    prefix: str, keys: Mapping[str, Any], required: Mapping[str, Mapping[str, Any]]
+) -> Any:
+    """A nested `request` discriminated by `action`: every branch accepts the whole
+    allowlist (as the handler does); each branch tightens its own required keys."""
+    branches = tuple(
+        _model(
+            f"{prefix}{action.title()}Request",
+            {"action": (Literal[action], _REQUIRED), **keys, **extra},
+        )
+        for action, extra in required.items()
+    )
+    return Annotated[_union(branches), Field(discriminator="action")]
+
+
+_REQUEST_MODELS: dict[str, Any] = {
+    "expand": _model(
+        "MemoryExpandRequest",
+        {
+            **_ARTIFACT_VERSION,
+            "offset": (StrictInt, _OPTIONAL),
+            "representation": (Literal["base64", "utf8"], _OPTIONAL),
+            **_BUDGET,
+        },
+    ),
+    "link": _model(
+        "MemoryLinkRequest",
+        {
+            "source_id": (NonEmptyStr, _REQUIRED),
+            "source_version": (StrictInt, _REQUIRED),
+            "target_id": (NonEmptyStr, _REQUIRED),
+            "target_version": (StrictInt, _REQUIRED),
+            "kind": (StrictStr, _REQUIRED),
+            "origin_ref": (StrictStr | None, _OPTIONAL),
+        },
+    ),
+    "related": _model(
+        "MemoryRelatedRequest",
+        {
+            **_ARTIFACT_VERSION,
+            "depth": (StrictInt, _OPTIONAL),
+            "max_nodes": (StrictInt, _OPTIONAL),
+            **_BUDGET,
+        },
+    ),
+    "consolidate": _model(
+        "MemoryConsolidateRequest", {"symptom": (LiteralText, _REQUIRED)}
+    ),
+    "verify_attempt": _model(
+        "MemoryVerifyAttemptRequest",
+        {
+            "attempt_id": (NonEmptyStr, _REQUIRED),
+            "behavior_ids": (Annotated[AnyList, Field(min_length=1)], _REQUIRED),
+            "contract": (AnyDict, _REQUIRED),
+            "patch": (NonEmptyStr, _REQUIRED),
+            "declared_permissions": (StrList, _OPTIONAL),
+        },
+    ),
+    "prepare": _model(
+        "MemoryPrepareRequest",
+        {
+            "task": (NonEmptyStr, _REQUIRED),
+            "conditions": (AnyDict, _REQUIRED),
+            "behavior_ids": (StrList, _OPTIONAL),
+            "query": (StrictStr, _OPTIONAL),
+        },
+    ),
+    "intent": _action_union("MemoryIntent", _INTENT_KEYS, _INTENT_REQUIRED),
+    "recipe": _action_union("MemoryRecipe", _RECIPE_KEYS, _RECIPE_REQUIRED),
+    "plan_checks": _model(
+        "MemoryPlanChecksRequest",
+        {
+            "changed_targets": (list[MemoryCheckRef], _REQUIRED),
+            "required_checks": (
+                Annotated[list[MemoryCheckRef], Field(min_length=1)],
+                _REQUIRED,
+            ),
+            "environment": (AnyDict, _OPTIONAL),
+        },
+    ),
+    "last_success_diagnose": _model(
+        "MemoryLastSuccessDiagnoseRequest",
+        {
+            "behavior_id": (NonEmptyStr, _REQUIRED),
+            "conditions": (AnyDict, _REQUIRED),
+            "historical": (StrictBool, _OPTIONAL),
+        },
+    ),
+    "handoff": _action_union("MemoryHandoff", _HANDOFF_KEYS, _HANDOFF_REQUIRED),
+    "preference": _action_union(
+        "MemoryPreference", _PREFERENCE_KEYS, _PREFERENCE_REQUIRED
+    ),
+    "receive": _model(
+        "MemoryReceiveRequest",
+        {
+            "session_id": (NonEmptyStr, _REQUIRED),
+            "capability": (NonEmptyStr, _REQUIRED),
+            "cursor": (StrictStr | None, _OPTIONAL),
+            "page_size": (StrictInt, _OPTIONAL),
+            "ack": (AnyList | None, _OPTIONAL),
+        },
+    ),
+    "delete": MemoryDeleteRequest,
+    "edit": _model("MemoryEditRequest", {**_MUTATION, "content": (AnyDict, _REQUIRED)}),
+    "archive": _model(
+        "MemoryArchiveRequest", {**_MUTATION, "archived": (StrictBool, _OPTIONAL)}
+    ),
+    # 73-T09/CODEC: key set equals `rush.tools.memory._CAPSULE_REQUEST_KEYS`.
+    "capsule": _model(
+        "MemoryCapsuleRequest",
+        {
+            "action": (
+                Literal[
+                    "preview_export", "export", "preview_import", "import", "bridge"
+                ],
+                _REQUIRED,
+            ),
+            "format": (Literal["rush_v1", "pas_v1"], _OPTIONAL),
+            "input": (NonEmptyStr, _OPTIONAL),
+            "output": (NonEmptyStr, _OPTIONAL),
+            "max_bytes": (_CapsuleLimit, _OPTIONAL),
+            "max_tokens": (_CapsuleLimit, _OPTIONAL),
+            "mapping_id": (_CapsuleUuid, _OPTIONAL),
+            "invocation_id": (_CapsuleUuid, _OPTIONAL),
+            "expected_digest": (
+                Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")],
+                _OPTIONAL,
+            ),
+            "expected_store_revision": (
+                Annotated[StrictInt, Field(ge=0, le=2**63 - 1)],
+                _OPTIONAL,
+            ),
+            "confirm_constraint_ids": (list[NonEmptyStr], _OPTIONAL),
+            "apply": (StrictBool, _OPTIONAL),
+            "selectors": (MemoryCapsuleSelectors, _OPTIONAL),
+        },
+    ),
+}
+_REQUEST_MODELS["resume"] = _REQUEST_MODELS["prepare"]
+_NESTED_ACTIONS = {
+    "intent": frozenset(_INTENT_REQUIRED),
+    "recipe": frozenset(_RECIPE_REQUIRED),
+    "handoff": frozenset(_HANDOFF_REQUIRED),
+    "preference": frozenset(_PREFERENCE_REQUIRED),
+}
+
+# --- rush_memory schema_version 2 `request` models (72-T06) ------------------------
+# One strict model per v2 operation. Every identifier rejects NUL/Cc/Cf/Cs, every
+# integer that reaches SQLite stays inside its signed 64-bit range, and no float in
+# the request is NaN or infinite.
+
+_SQLITE_MAX = 2**63 - 1
+_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_ALL_SUBJECTS: tuple[Any, ...] = get_args(MemorySubject)
+
+
+def _no_unsafe_chars(value: str) -> str:
+    if any(unicodedata.category(ch) in _UNSAFE_CATEGORIES for ch in value):
+        raise ValueError("must not contain control, format or surrogate characters")
+    return value
+
+
+def _no_nul_or_surrogate(value: str) -> str:
+    if any(ch == "\x00" or unicodedata.category(ch) == "Cs" for ch in value):
+        raise ValueError("must not contain NUL or surrogate characters")
+    return value
+
+
+def _unique(values: list[Any]) -> list[Any]:
+    seen: list[Any] = []
+    for value in values:
+        if value in seen:
+            raise ValueError("entries must be unique")
+        seen.append(value)
+    return values
+
+
+V2Id = Annotated[
+    StrictStr,
+    Field(min_length=1),
+    AfterValidator(_no_path_separators),
+    AfterValidator(_no_unsafe_chars),
+]
+# An opaque label (receipt ids): stored verbatim, so path-like text is allowed.
+V2Label = Annotated[StrictStr, Field(min_length=1), AfterValidator(_no_unsafe_chars)]
+V2Text = Annotated[StrictStr, AfterValidator(_no_nul_or_surrogate)]
+V2Query = Annotated[
+    StrictStr, Field(min_length=1), AfterValidator(_no_nul_or_surrogate)
+]
+SqliteVersion = Annotated[StrictInt, Field(ge=1, le=_SQLITE_MAX)]
+SqliteOffset = Annotated[StrictInt, Field(ge=0, le=_SQLITE_MAX)]
+PositiveBudget = Annotated[StrictInt, Field(ge=1)]
+V2Limit = Annotated[StrictInt, Field(ge=1, le=100)]
+V2Subjects = Annotated[
+    list[MemorySubject], Field(min_length=1), AfterValidator(_unique)
+]
+V2Sources = Annotated[list[MemorySource], Field(min_length=1), AfterValidator(_unique)]
+V2TrustTiers = Annotated[
+    list[Literal["IMPORTED", "EXTERNAL_WRITE", "DERIVED", "STATED"]],
+    Field(min_length=1),
+    AfterValidator(_unique),
+]
+V2Freshness = Annotated[
+    list[Literal["current", "stale", "unknown", "not_applicable"]],
+    Field(min_length=1),
+    AfterValidator(_unique),
+]
+V2Reason = Annotated[StrictStr, Field(min_length=1), AfterValidator(_no_unsafe_chars)]
+
+
+def _absent() -> Any:
+    """An optional field that cannot be null: omitted means unset."""
+    return Field(default=None, json_schema_extra=_drop_default)
+
+
+_MAX_REQUEST_DEPTH = 256
+
+
+def _untrusted_data_problem(value: Any) -> str | None:
+    """Why `value` cannot be a request: nesting deeper than `_MAX_REQUEST_DEPTH`, a
+    cycle, or a NaN/infinite float (iterative, so untrusted depth never recurses)."""
+    stack: list[tuple[str, Any, int, frozenset[int]]] = [("", value, 0, frozenset())]
+    while stack:
+        path, node, depth, ancestors = stack.pop()
+        where = path or "request"
+        if isinstance(node, float) and not math.isfinite(node):
+            return f"{where}: numbers must be finite"
+        if not isinstance(node, (dict, list, tuple)):
+            continue
+        if id(node) in ancestors:
+            return f"{where}: data must not be cyclic"
+        if depth >= _MAX_REQUEST_DEPTH:
+            return f"{where}: data is nested too deeply"
+        inner = ancestors | {id(node)}
+        items = node.items() if isinstance(node, dict) else enumerate(node)
+        stack.extend(
+            (f"{path}.{key}" if path else str(key), item, depth + 1, inner)
+            for key, item in items
+        )
+    return None
+
+
+class MemoryV2OwnerScope(BaseModel):
+    """`OwnerScope.from_value` with identifier-safe text."""
+
+    model_config = _STRICT
+
+    kind: Literal["user", "project", "session", "agent"]
+    id: Annotated[StrictStr, Field(pattern=r"\S"), AfterValidator(_no_unsafe_chars)]
+
+
+class MemoryV2VersionRef(BaseModel):
+    model_config = _STRICT
+
+    artifact_id: V2Id
+    artifact_version: SqliteVersion
+
+
+class MemoryV2CandidateRef(BaseModel):
+    model_config = _STRICT
+
+    id: V2Id
+    version: SqliteVersion
+    source: MemorySource
+
+
+class _V2Request(BaseModel):
+    model_config = _STRICT
+
+    schema_version: Annotated[StrictInt, Field(ge=2, le=2)]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _finite(cls, value: Any) -> Any:
+        problem = _untrusted_data_problem(value)
+        if problem is not None:
+            raise ValueError(problem)
+        return value
+
+
+class _V2Scoped(_V2Request):
+    owner_scope: MemoryV2OwnerScope = _absent()
+    sources: V2Sources = _absent()
+    archive_mode: Literal["active", "historical"] = "active"
+
+
+class _V2Budget(_V2Scoped):
+    max_tokens: PositiveBudget = DEFAULT_MAX_TOKENS
+    max_bytes: PositiveBudget = DEFAULT_MAX_BYTES
+    encoding: V2Text = DEFAULT_ENCODING
+
+
+class MemoryV2ReadRequest(_V2Budget):
+    """`ask`/`recall`: a nonempty query over one or more subjects."""
+
+    subjects: V2Subjects
+    query: V2Query
+    trust_tiers: V2TrustTiers = _absent()
+    freshness: V2Freshness = _absent()
+    limit: V2Limit = 20
+    cursor: V2Query | None = None
+    retrieval: Literal["lexical", "hybrid"] = "lexical"
+    # 72-T06 declares these; 72-T08 owns their semantic validation.
+    embedding_endpoint: V2Text = _absent()
+    embedding_model: V2Text = _absent()
+    embedding_model_digest: V2Text = _absent()
+    embedding_chunking_version: V2Text = _absent()
+
+
+class MemoryV2ListRequest(MemoryV2ReadRequest):
+    """`list`: an empty (or omitted) query browses in artifact-id order."""
+
+    query: V2Text = ""  # type: ignore[assignment]
+
+
+class MemoryV2ExpandRequest(_V2Budget):
+    artifact_id: V2Id
+    artifact_version: SqliteVersion
+    offset: SqliteOffset = 0
+    representation: Literal["base64", "utf8"] = _absent()
+
+
+class MemoryV2RelatedRequest(_V2Budget):
+    artifact_id: V2Id
+    artifact_version: SqliteVersion = _absent()
+    depth: Annotated[StrictInt, Field(ge=1, le=2)] = 1
+    max_nodes: Annotated[StrictInt, Field(ge=1, le=32)] = 32
+
+
+class MemoryV2HistoryRequest(_V2Budget):
+    artifact_id: V2Id
+    representation: Literal["base64", "utf8"] = "utf8"
+    limit: V2Limit = 20
+    cursor: V2Query | None = None
+
+
+class MemoryV2ExplainRequest(_V2Budget):
+    artifact_id: V2Id = _absent()
+    query: V2Query = _absent()
+    subjects: V2Subjects = list(_ALL_SUBJECTS)
+    limit: V2Limit = 20
+
+    @model_validator(mode="after")
+    def _one_form(self) -> MemoryV2ExplainRequest:
+        if (self.artifact_id is None) == (self.query is None):
+            raise ValueError("explain takes exactly one of artifact_id or query")
+        return self
+
+
+class _V2Mutation(_V2Request):
+    apply: StrictBool = False
+    invocation_id: V2Label = _absent()
+    effect_id: V2Label = _absent()
+    required_grants: list[StrictStr] = _absent()
+    owner_scope: MemoryV2OwnerScope = _absent()
+    # D1 `legacy` mode only: the explicit source allowlist of a mutation.
+    sources: V2Sources = _absent()
+
+    @model_validator(mode="after")
+    def _receipt_ids(self) -> _V2Mutation:
+        if (self.invocation_id is None) != (self.effect_id is None):
+            raise ValueError("invocation_id and effect_id are given together")
+        if self.apply and self.invocation_id is None:
+            raise ValueError("apply requires invocation_id and effect_id")
+        return self
+
+
+class MemoryV2WriteRequest(_V2Mutation):
+    subject: MemorySubject
+    content: AnyDict
+    source: MemorySource
+    symbol_ref: StrictStr = _absent()
+    source_kind: SourceKind = "local_tool"
+
+
+class MemoryEditCorrection(BaseModel):
+    """72-T06 owns the correction request; 72-T05 owns its transaction."""
+
+    model_config = _STRICT
+
+    kind: Literal["correct", "reject", "supersede"]
+    reason: V2Reason
+    supersedes: Annotated[
+        list[MemoryV2VersionRef],
+        Field(min_length=1, max_length=64),
+        AfterValidator(_unique),
+    ] = _absent()
+
+
+class MemoryV2EditRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    content: AnyDict = _absent()
+    correction: MemoryEditCorrection = _absent()
+
+    @model_validator(mode="after")
+    def _content_rules(self) -> MemoryV2EditRequest:
+        if self.correction is None and self.content is None:
+            raise ValueError("edit requires content or a correction")
+        if (
+            self.correction is not None
+            and self.correction.kind == "reject"
+            and self.content is not None
+        ):
+            raise ValueError("a reject correction takes no content")
+        return self
+
+
+class MemoryV2ArchiveRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    archived: StrictBool = True
+
+
+class MemoryV2DeleteRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_ids: Annotated[
+        list[V2Id], Field(min_length=1, max_length=100), AfterValidator(_unique)
+    ]
+    expected_revisions: dict[V2Id, SqliteVersion]
+
+    @model_validator(mode="after")
+    def _revisions_match(self) -> MemoryV2DeleteRequest:
+        if set(self.expected_revisions) != set(self.artifact_ids):
+            raise ValueError("expected_revisions must map exactly the artifact_ids")
+        return self
+
+
+class MemoryV2PromoteRequest(_V2Mutation):
+    subject: MemorySubject
+    artifact_id: V2Id
+    expected_version: SqliteVersion
+    user_stated: StrictBool = False
+    candidate_refs: Annotated[
+        list[MemoryV2CandidateRef], Field(min_length=1, max_length=64)
+    ] = _absent()
+
+
+class MemoryV2MaintainRequest(_V2Mutation):
+    task: MaintenanceTask
+    batch_size: Annotated[StrictInt, Field(ge=1, le=1000)] = 500
+    candidate_ids: Annotated[list[V2Id], AfterValidator(_unique)] = _absent()
+    expected_revisions: dict[V2Id, SqliteVersion] = _absent()
+
+    @model_validator(mode="after")
+    def _reviewed_revisions(self) -> MemoryV2MaintainRequest:
+        if (self.candidate_ids is None) != (self.expected_revisions is None) or (
+            self.expected_revisions is not None
+            and set(self.expected_revisions) != set(self.candidate_ids or ())
+        ):
+            raise ValueError("expected_revisions must map exactly the candidate_ids")
+        return self
+
+
+class MemoryV2LinkRequest(_V2Mutation):
+    source_id: V2Id
+    source_version: SqliteVersion
+    target_id: V2Id
+    target_version: SqliteVersion
+    kind: Literal[tuple(sorted(RELATION_KINDS))]  # type: ignore[valid-type]
+    origin_ref: V2Text = _absent()
+
+    @model_validator(mode="after")
+    def _apply_only(self) -> MemoryV2LinkRequest:
+        if not self.apply:
+            raise ValueError("link has no preview: apply must be true")
+        return self
+
+
+_V2_REQUEST_MODELS: dict[str, Any] = {
+    "ask": MemoryV2ReadRequest,
+    "recall": MemoryV2ReadRequest,
+    "list": MemoryV2ListRequest,
+    "expand": MemoryV2ExpandRequest,
+    "related": MemoryV2RelatedRequest,
+    "history": MemoryV2HistoryRequest,
+    "explain": MemoryV2ExplainRequest,
+    "write": MemoryV2WriteRequest,
+    "edit": MemoryV2EditRequest,
+    "archive": MemoryV2ArchiveRequest,
+    "delete": MemoryV2DeleteRequest,
+    "promote": MemoryV2PromoteRequest,
+    "maintain": MemoryV2MaintainRequest,
+    "link": MemoryV2LinkRequest,
+}
+
+# --- rush_memory top-level operation fields -------------------------------------
+# Common to every operation: `MemoryTool.__call__`'s path, grants, and attribution
+# (`project_id` doubles as the T8 declared root). Everything else is consumed only
+# by the operations below (`MemoryTool.run`'s dispatch table); any other top-level
+# field is rejected for that operation.
+
+_MEMORY_COMMON: dict[str, Any] = {
+    "path": (PathStr, _REQUIRED),
+    **_GRANTS,
+    "invocation_id": (StrictStr | None, _OPTIONAL),
+    # T8 5.2: `project_id` is also this call's declared root; keep its description.
+    "project_id": (
+        StrictStr | None,
+        Field(
+            default=None,
+            description="Also serves as this call's declared root. "
+            + _PROJECT_DESCRIPTION,
+        ),
+    ),
+    "run_id": (StrictStr | None, _OPTIONAL),
+    "agent_id": (StrictStr | None, _OPTIONAL),
+    "session_id": (StrictStr | None, _OPTIONAL),
+    # 72-T05 §3.11: the optional task context of every memory operation.
+    "task_id": (NonEmptyStr | None, _OPTIONAL),
+    # Phase 70 T16 (R16.5/finding 1): the shared result-view parameters. The
+    # values pass through unchanged so `rush.delivery.compact` applies the
+    # one validation (RESULT_VIEW_INVALID) every transport shares.
+    "result_view": (compact.ResultViewParam, None),
+    "limit": (compact.LimitParam, None),
+    "max_bytes": (compact.MaxBytesParam, None),
+    "no_cache": (StrictBool, False),
+}
+# 72-T01 R5: a query's allowlist is optional (policy mode resolves owner and
+# sources; an allowlist only narrows them) but never an explicit `[]`.
+_ALLOWLIST_QUERY = (
+    Annotated[MemorySourceList, Field(min_length=1)] | None,
+    _OPTIONAL,
+)
+_ALLOWLIST_OPTIONAL = (MemorySourceList | None, _OPTIONAL)
+_QUERY = {
+    "subject": (MemorySubject, _REQUIRED),
+    "query": (NonEmptyStr, _REQUIRED),
+    "session_allowlist": _ALLOWLIST_QUERY,
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+}
+_WRITE = {
+    "subject": (MemorySubject, _REQUIRED),
+    "content": (AnyDict, _REQUIRED),
+    "source": (MemorySource, _REQUIRED),
+    "symbol_ref": (StrictStr | None, _OPTIONAL),
+    "source_kind": (SourceKind, _OPTIONAL),
+    "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+}
+
+
+def _request_field(operation: str) -> dict[str, Any]:
+    return {"request": (_REQUEST_MODELS[operation], _REQUIRED)}
+
+
+# 72-T03 R3: link, related and consolidate take a top-level owner selector.
+_OWNER_SELECTOR: dict[str, dict[str, Any]] = {
+    op: {"owner_scope": (MemoryOwnerScope | None, _OPTIONAL)}
+    for op in ("link", "related", "consolidate")
+}
+
+
+# Model tag -> (operation, fields). `list:compact` is `list` with a compact `request`
+# (query optional, `include_archived` not consumed); plain `list` is the `_query` path.
+MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
+    "ask": ("ask", {**_QUERY, "request": (_CompactRequest | None, _OPTIONAL)}),
+    "recall": ("recall", {**_QUERY, "request": (_CompactRequest | None, _OPTIONAL)}),
+    "list": ("list", {**_QUERY, "include_archived": (StrictBool, _OPTIONAL)}),
+    "list:compact": (
+        "list",
+        {
+            "subject": (MemorySubject, _REQUIRED),
+            "query": (StrictStr, _OPTIONAL),
+            "session_allowlist": _ALLOWLIST_QUERY,
+            "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+            "request": (_CompactRequest, _REQUIRED),
+        },
+    ),
+    "write": ("write", dict(_WRITE)),
+    "promote": (
+        "promote",
+        {
+            **_WRITE,
+            "user_stated": (StrictBool, _OPTIONAL),
+            # `request` precedes `candidate_sources`: its validator reads the refs.
+            "request": (MemoryPromoteRequest | None, _OPTIONAL),
+            "candidate_sources": (StrList | None, _OPTIONAL),
+        },
+    ),
+    "maintain": (
+        "maintain",
+        {
+            "task": (MaintenanceTask, _REQUIRED),
+            # 72-T04 D9: policy mode takes the owner from the grant; legacy mode
+            # applies the D3 owner rule.
+            "owner_scope": (MemoryOwnerScope | None, _OPTIONAL),
+            "batch_size": (_bounded(1, 1000), _OPTIONAL),
+            "sources": (StrList | None, _OPTIONAL),
+            "request": (MemoryMaintainRequest | None, _OPTIONAL),
+        },
+    ),
+    **{
+        op: (
+            op,
+            {
+                **_request_field(op),
+                "session_allowlist": _ALLOWLIST_OPTIONAL,
+                **_OWNER_SELECTOR.get(op, {}),
+            },
+        )
+        for op in (
+            "expand",
+            "related",
+            "consolidate",
+            "prepare",
+            "resume",
+            "preference",
+        )
+    },
+    **{
+        op: (op, {**_request_field(op), **_OWNER_SELECTOR.get(op, {})})
+        for op in (
+            "link",
+            "verify_attempt",
+            "intent",
+            "recipe",
+            "plan_checks",
+            "last_success_diagnose",
+            "handoff",
+            "receive",
+            "delete",
+            "edit",
+            "archive",
+        )
+    },
+    # 73-T09/CODEC: no `session_allowlist`; authority comes from the policy only.
+    "capsule": ("capsule", _request_field("capsule")),
+    # 72-T06: the schema_version 2 form of each v2 operation (`history` and
+    # `explain` have no other form). Top-level `limit`/`max_bytes` and every legacy
+    # field are absent, so a mixed form is `extra_forbidden`.
+    **{
+        f"{op}:v2": (op, {"request": (_V2_REQUEST_MODELS[op], _REQUIRED)})
+        for op in sorted(_V2_OPERATIONS)
+    },
+}
+_V2_COMMON: dict[str, Any] = {
+    **{k: v for k, v in _MEMORY_COMMON.items() if k not in ("limit", "max_bytes")},
+    "task_id": (StrictStr | None, _OPTIONAL),
+}
+
+
+# --- model construction --------------------------------------------------------
+
+
+def _camel(value: str) -> str:
+    return "".join(part.title() for part in value.replace(":", "_").split("_"))
+
+
+def _operation_model(
+    prefix: str,
+    operation: str,
+    fields: Mapping[str, Any],
+    *,
+    extra: Mapping[str, Any],
+    tag: str | None = None,
+    defaults: Mapping[str, Any] | None = None,
+    validators: Mapping[str, Any] | None = None,
+) -> Any:
+    op_default = "ask" if (prefix == "Memory" and operation == "ask") else _REQUIRED
+    return _model(
+        f"{prefix}{_camel(tag or operation)}",
+        {"operation": (Literal[operation], op_default), **extra, **fields},
+        defaults,
+        validators,
+    )
+
+
+def _tagged(operation: str, model: Any) -> Any:
+    return Annotated[model, Tag(operation)]
+
+
+@dataclass(frozen=True)
+class _ToolSpec:
+    tool: str  # ToolResult `tool` name
+    named: dict[str, Any]  # tag -> named-form model
+    legacy: dict[str, Any] = field(default_factory=dict)  # tag -> legacy model
+    tag_operation: dict[str, str] = field(default_factory=dict)
+    named_adapter: Any = None
+    legacy_adapter: Any = None
+
+
+def _envelope_spec(
+    tool: str, prefix: str, table: Mapping[str, Mapping[str, Any]]
+) -> _ToolSpec:
+    named = {
+        op: _operation_model(
+            prefix, op, fields, extra={"schema_version": (SchemaVersion, _OPTIONAL)}
+        )
+        for op, fields in table.items()
+    }
+    legacy = {
+        op: _operation_model(
+            f"{prefix}Legacy",
+            op,
+            fields,
+            extra={"schema_version": (SchemaVersion, _REQUIRED)},
+        )
+        for op, fields in table.items()
+    }
+
+    def adapter(models: Mapping[str, Any]) -> Any:
+        return TypeAdapter(
+            Annotated[_union(models.values()), Field(discriminator="operation")]
+        )
+
+    return _ToolSpec(
+        tool=tool,
+        named=named,
+        legacy=legacy,
+        tag_operation={op: op for op in table},
+        named_adapter=adapter(named),
+        legacy_adapter=adapter(legacy),
+    )
+
+
+def _memory_tag(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return None
+    operation = value.get("operation", "ask")
+    if not isinstance(operation, str):
+        return None
+    if _is_v2_call(operation, value.get("request")):
+        return f"{operation}:v2"
+    if operation == "list" and value.get("request") is not None:
+        return "list:compact"
+    return operation
+
+
+def _memory_spec() -> _ToolSpec:
+    # Plan: memory models keep `MemoryTool.__call__`'s public signature defaults.
+    # 72-T06: a legacy parameter's signature default is a presence sentinel; its
+    # public default stays the legacy value.
+    defaults = {
+        name: _LEGACY_DEFAULTS.get(name, parameter.default)
+        for name, parameter in inspect.signature(MemoryTool.__call__).parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    }
+    named = {
+        tag: _operation_model(
+            "Memory",
+            op,
+            fields,
+            extra=_V2_COMMON if tag.endswith(":v2") else _MEMORY_COMMON,
+            tag=tag,
+            defaults=defaults,
+            validators=_MEMORY_VALIDATORS.get(tag),
+        )
+        for tag, (op, fields) in MEMORY_FIELDS.items()
+    }
+    union = _union(_tagged(tag, model) for tag, model in named.items())
+    return _ToolSpec(
+        tool="memory",
+        named=named,
+        tag_operation={tag: op for tag, (op, _) in MEMORY_FIELDS.items()},
+        named_adapter=TypeAdapter(Annotated[union, Discriminator(_memory_tag)]),
+    )
+
+
+_SPECS: dict[str, _ToolSpec] = {
+    "rush_project": _envelope_spec("project", "Project", PROJECT_FIELDS),
+    "rush_scan": _envelope_spec("scan", "Scan", SCAN_FIELDS),
+    "rush_memory": _memory_spec(),
+}
+
+
+def project_model_tags() -> set[str]:
+    return set(_SPECS["rush_project"].tag_operation.values())
+
+
+def scan_model_tags() -> set[str]:
+    return set(_SPECS["rush_scan"].tag_operation.values())
+
+
+def memory_model_tags() -> set[str]:
+    return set(_SPECS["rush_memory"].tag_operation.values())
+
+
+def memory_request_model_keys(operation: str) -> set[str]:
+    """The nested `request` key set a memory operation's model accepts."""
+    annotation = _REQUEST_MODELS[operation]
+    models = (
+        get_args(get_args(annotation)[0])
+        if operation in _NESTED_ACTIONS
+        else (annotation,)
+    )
+    keys: set[str] = set()
+    for model in models:
+        keys |= set(model.model_fields)
+    return keys
+
+
+# --- published schema ---------------------------------------------------------
+
+
+def _strip(node: Any) -> Any:
+    """Drop OpenAPI-only `discriminator` keys (plain JSON Schema is published)."""
+    if isinstance(node, dict):
+        return {
+            key: _strip(value) for key, value in node.items() if key != "discriminator"
+        }
+    if isinstance(node, list):
+        return [_strip(item) for item in node]
+    return node
+
+
+def _refs(node: Any) -> set[str]:
+    if isinstance(node, dict):
+        found = {node["$ref"].rsplit("/", 1)[-1]} if "$ref" in node else set()
+        for value in node.values():
+            found |= _refs(value)
+        return found
+    if isinstance(node, list):
+        return set().union(*(_refs(item) for item in node)) if node else set()
+    return set()
+
+
+def _prune_defs(schema: dict[str, Any], defs: dict[str, Any]) -> dict[str, Any]:
+    keep: set[str] = set()
+    pending = _refs(schema["properties"])
+    while pending:
+        name = pending.pop()
+        if name not in keep:
+            keep.add(name)
+            pending |= _refs(defs[name])
+    if keep:
+        schema["$defs"] = {name: defs[name] for name in sorted(keep)}
+    return schema
+
+
+def _usage_text(usage: Mapping[str, str], total: int) -> str:
+    """`usage`: operation -> required | conditional | optional."""
+    groups: dict[str, list[str]] = {}
+    for op in sorted(usage):
+        groups.setdefault(usage[op], []).append(op)
+    if len(usage) == total and len(groups) == 1:
+        return f"{next(iter(groups)).capitalize()} for every operation."
+    labels = {
+        "required": "Required for operation(s)",
+        # Memory operations have a legacy and a schema_version 2 form.
+        "conditional": "Required by one form (legacy or schema_version 2) of "
+        "operation(s)",
+        "optional": "Optional for operation(s)",
+    }
+    parts = [
+        f"{labels[kind]}: {', '.join(groups[kind])}."
+        for kind in labels
+        if kind in groups
+    ]
+    if len(usage) < total:
+        parts.append("Rejected for every other operation.")
+    return " ".join(parts)
+
+
+def _flatten(
+    spec: _ToolSpec, defs: dict[str, Any], *, skip: frozenset[str] = frozenset()
+) -> dict[str, Any]:
+    """Union of every named branch's properties. A field whose shape differs across
+    branches becomes a nested `anyOf` of the distinct shapes."""
+    shapes: dict[str, list[Any]] = {}
+    # field -> operation -> [branches allowing it, branches requiring it]
+    counts: dict[str, dict[str, list[int]]] = {}
+    tags_per_op: dict[str, int] = {}
+    for tag, model in spec.named.items():
+        op = spec.tag_operation[tag]
+        tags_per_op[op] = tags_per_op.get(op, 0) + 1
+        body = defs[model.__name__]
+        for name, prop in body["properties"].items():
+            if name in skip:
+                continue
+            shape = {k: v for k, v in prop.items() if k != "title"}
+            bucket = shapes.setdefault(name, [])
+            if shape not in bucket:
+                bucket.append(shape)
+            tally = counts.setdefault(name, {}).setdefault(op, [0, 0])
+            tally[0] += 1
+            tally[1] += name in body.get("required", [])
+    usages: dict[str, dict[str, str]] = {
+        name: {
+            op: "optional"
+            if required == 0
+            else ("required" if required == tags_per_op[op] else "conditional")
+            for op, (_, required) in per_op.items()
+        }
+        for name, per_op in counts.items()
+    }
+    properties: dict[str, Any] = {}
+    for name, bucket in shapes.items():
+        prop = bucket[0] if len(bucket) == 1 else {"anyOf": bucket}
+        usage = _usage_text(usages[name], len(tags_per_op))
+        own = prop.get("description")
+        prop["description"] = f"{own} {usage}" if own else usage
+        if name in SCAN_COMPATIBILITY_FIELDS and spec.tool == "scan":
+            prop["deprecated"] = True
+            prop["description"] += (
+                " Deprecated compatibility field: accepted and ignored (no effect), "
+                "disclosed in metadata.compatibility."
+            )
+        properties[name] = prop
+    return properties
+
+
+@functools.cache
+def _published(tool_name: str) -> dict[str, Any]:
+    spec = _SPECS[tool_name]
+    models = [*spec.named.values(), *spec.legacy.values()]
+    _, top = models_json_schema(
+        [(model, "validation") for model in models], ref_template="#/$defs/{model}"
+    )
+    defs = _strip(top["$defs"])
+    operations = sorted(set(spec.tag_operation.values()))
+    properties = _flatten(spec, defs, skip=frozenset({"operation", "schema_version"}))
+    operation: dict[str, Any] = {
+        "type": "string",
+        "enum": operations,
+        "description": "Operation to run; selects which other fields apply.",
+    }
+    if spec.legacy:
+        properties = {
+            "request": {
+                "description": "Legacy versioned envelope ({schema_version: 1, "
+                "operation, ...operation fields}). Send either `request` alone or "
+                "the named fields, never both.",
+                "oneOf": [
+                    {"$ref": f"#/$defs/{model.__name__}"}
+                    for model in spec.legacy.values()
+                ],
+            },
+            "operation": operation,
+            "schema_version": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1,
+                "description": "Envelope version; optional with named fields "
+                "(defaults to 1).",
+            },
+            **properties,
+        }
+        required: list[str] = []
+    else:
+        operation["default"] = "ask"
+        properties = {"operation": operation, **properties}
+        required = ["path"]
+    schema = {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+    return _prune_defs(schema, defs)
+
+
+def published_schema(tool_name: str) -> dict[str, Any]:
+    """The `inputSchema` `tools/list` publishes for one T6 tool (a fresh copy)."""
+    return copy.deepcopy(_published(tool_name))
+
+
+# --- validation --------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ValidationOutcome:
+    """`arguments` to dispatch when accepted; otherwise the tool's own rejection
+    `result` envelope and its `error` part (project/scan: `raw.error`; memory: the
+    MC02 `raw` envelope)."""
+
+    arguments: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
+
+    @property
+    def rejected(self) -> bool:
+        return self.result is not None
+
+
+@functools.cache
+def _container_keys(tool_name: str) -> frozenset[str]:
+    """Top-level fields whose schema is an object or array (JSON-string decode set)."""
+    keys = set()
+    for name, prop in _published(tool_name)["properties"].items():
+        options = prop.get("anyOf") or prop.get("oneOf") or [prop]
+        if any(
+            "$ref" in option or option.get("type") in ("object", "array")
+            for option in options
+        ):
+            keys.add(name)
+    return frozenset(keys)
+
+
+def _decode_containers(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """FastMCP `pre_parse_json` subset: a top-level string that decodes to an object or
+    array for an object/array field is decoded; scalar strings never are."""
+    decoded = dict(arguments)
+    for key in _container_keys(tool_name) & decoded.keys():
+        value = decoded[key]
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                continue
+            if isinstance(parsed, (dict, list)):
+                decoded[key] = parsed
+    return decoded
+
+
+def _details(spec: _ToolSpec, exc: ValidationError, prefix: list[str]) -> list[Any]:
+    details = []
+    for error in exc.errors(
+        include_url=False, include_context=False, include_input=False
+    ):
+        loc: list[Any] = list(error["loc"])
+        msg = error["msg"]
+        actions: frozenset[str] = frozenset()
+        if loc and isinstance(loc[0], str) and loc[0] in spec.tag_operation:
+            actions = _NESTED_ACTIONS.get(spec.tag_operation[loc.pop(0)], frozenset())
+            if len(loc) > 1 and loc[0] == "request" and loc[1] in actions:
+                del loc[1]
+        if error["type"] in ("union_tag_invalid", "union_tag_not_found"):
+            # The discriminator itself is missing or unknown: name the field and
+            # the public choices (never the internal `list:compact` tag).
+            key = "action" if loc else "operation"
+            choices = actions if loc else set(spec.tag_operation.values())
+            loc.append(key)
+            msg = f"{key} must be one of: {', '.join(sorted(choices))}"
+        details.append({"loc": prefix + loc, "type": error["type"], "msg": msg})
+    return details
+
+
+def _message(details: list[Any]) -> str:
+    return "invalid request: " + "; ".join(
+        f"{'.'.join(map(str, d['loc'])) or '<arguments>'}: {d['msg']}" for d in details
+    )
+
+
+def _memory_v2_rejection(operation: str, details: list[Any]) -> dict[str, Any]:
+    """72-T06: the v2 `E_INPUT` raw of a strict-validation failure (both transports)."""
+    raw = _v2_raw(
+        operation, "E_INPUT", data={"message": _message(details), "details": details}
+    )
+    return cast(dict[str, Any], sanitize_value(raw).value)
+
+
+def validate_memory_v2(
+    operation: str, request: Any, top_level: Mapping[str, Any]
+) -> tuple[Any, dict[str, Any] | None]:
+    """72-T06: the in-process (CLI, dashboard, `MemoryTool.run`) strict validation of
+    one v2 call, through the same adapter MCP uses: `(request model, None)`, or
+    `(None, E_INPUT raw)` whose bytes equal MCP's for the same arguments."""
+    spec = _SPECS["rush_memory"]
+    payload = {"path": ".", "operation": operation, "request": request, **top_level}
+    try:
+        model = spec.named_adapter.validate_python(payload)
+    except ValidationError as exc:
+        return None, _memory_v2_rejection(operation, _details(spec, exc, []))
+    return model.request, None
+
+
+def _reject(
+    spec: _ToolSpec,
+    operation: Any,
+    details: list[Any],
+    *,
+    v2: bool = False,
+    v2_raw: dict[str, Any] | None = None,
+) -> ValidationOutcome:
+    op = str(operation)
+    message = _message(details)
+    raw: dict[str, Any]
+    if spec.tool == "memory" and v2_raw is not None:
+        raw = v2_raw
+        summary = f"memory {op} returned E_INPUT."
+        extra: dict[str, Any] = {"metadata": {"operation": op}}
+    elif spec.tool == "memory" and v2:
+        raw = _memory_v2_rejection(op, details)
+        summary = f"memory {op} returned E_INPUT."
+        extra = {"metadata": {"operation": op}}
+    elif spec.tool == "memory":
+        raw = {
+            "schema_version": 1,
+            "operation": op,
+            "code": "E_INPUT",
+            "data": {"message": message, "details": details},
+        }
+        summary = f"memory {op} returned E_INPUT."
+        extra = {"metadata": {"operation": op}}
+    else:
+        raw = {
+            "schema_version": 1,
+            "operation": op,
+            "data": None,
+            "error": {
+                "code": "INVALID_REQUEST",
+                "message": message,
+                "retryable": False,
+                "details": details,
+            },
+        }
+        summary = f"{spec.tool} {op}: {message}"
+        extra = {}
+    result = sanitize_value(
+        {
+            "tool": spec.tool,
+            "engine": None,
+            "engine_version": None,
+            "status": "error",
+            "duration_ms": 0,
+            "summary": summary,
+            "findings": [],
+            "raw": raw,
+            **extra,
+        }
+    ).value
+    error = result["raw"] if spec.tool == "memory" else result["raw"]["error"]
+    return ValidationOutcome(result=result, error=error)
+
+
+def _compatibility(fields: Mapping[str, Any]) -> dict[str, Any] | None:
+    ignored = [name for name in SCAN_COMPATIBILITY_FIELDS if name in fields]
+    if not ignored:
+        return None
+    return {"version": 1, "ignored_fields": ignored, "effect": "none"}
+
+
+def validate_and_normalize(
+    tool_name: str, arguments: dict[str, Any]
+) -> ValidationOutcome:
+    """Validate one `tools/call` against the tool's models, before any dispatch.
+
+    project/scan: legacy `{"request": {...}}` or named fields (never both) normalize
+    to the same versioned envelope; named requests get `schema_version: 1`. memory:
+    the flat arguments, validated per operation. Omitted versus explicit null is kept
+    (`exclude_unset`).
+    """
+    spec = _SPECS[tool_name]
+    default_op = "ask" if spec.tool == "memory" else None
+    if not isinstance(arguments, dict):
+        details = [
+            {"loc": [], "type": "dict_type", "msg": "arguments must be an object"}
+        ]
+        return _reject(spec, default_op, details)
+    args = _decode_containers(tool_name, arguments)
+    prefix: list[str] = []
+    adapter = spec.named_adapter
+    payload: Any = args
+    if spec.legacy and "request" in args:
+        mixed = sorted(set(args) - {"request"})
+        if mixed:
+            details = [
+                {
+                    "loc": [key],
+                    "type": "extra_forbidden",
+                    "msg": "named fields cannot be combined with the legacy `request` "
+                    "envelope",
+                }
+                for key in mixed
+            ]
+            return _reject(spec, args.get("operation"), details)
+        prefix, adapter, payload = ["request"], spec.legacy_adapter, args["request"]
+    operation = (
+        payload.get("operation", default_op)
+        if isinstance(payload, dict)
+        else default_op
+    )
+    request = payload.get("request") if isinstance(payload, dict) else None
+    if (
+        spec.tool == "memory"
+        and isinstance(request, dict)
+        and "schema_version" in request
+        and isinstance(operation, str)
+        and operation in set(spec.tag_operation.values()) - _V2_OPERATIONS
+    ):
+        # 72-T06: schema_version 2 sent to an operation without a v2 form (the
+        # same body `MemoryTool.run` returns in process).
+        raw = _non_v2_rejection(str(operation))
+        return _reject(spec, operation, raw["data"]["details"], v2_raw=raw)
+    try:
+        model = adapter.validate_python(payload)
+    except ValidationError as exc:
+        v2 = spec.tool == "memory" and (
+            _is_v2_call(operation, request)
+            or (isinstance(request, dict) and "schema_version" in request)
+        )
+        return _reject(spec, operation, _details(spec, exc, prefix), v2=v2)
+    fields = model.model_dump(exclude_unset=True)
+    if spec.tool == "memory":
+        return ValidationOutcome(arguments=fields)
+    request = {"schema_version": 1, **fields}
+    compatibility = _compatibility(fields) if spec.tool == "scan" else None
+    if compatibility is not None:
+        request["metadata"] = {"compatibility": compatibility}
+    return ValidationOutcome(arguments={"request": request})
+
+
+__all__ = [
+    "REQUEST_MODEL_TOOLS",
+    "ValidationOutcome",
+    "memory_model_tags",
+    "memory_request_model_keys",
+    "project_model_tags",
+    "published_schema",
+    "scan_model_tags",
+    "validate_and_normalize",
+    "validate_memory_v2",
+]

@@ -251,6 +251,51 @@ def _require_real_engine(name: str) -> None:
         assert shutil.which(name), f"required engine absent: {name}"
 
 
+# The Python-packaged engines CI's `engine-contracts` job installs for the
+# real-workload tests (executable -> pinned package). k6 is a standalone
+# binary that job downloads; it must be on PATH.
+_REAL_WORKLOAD_PACKAGES = (
+    ("mutmut", "mutmut==3.7.0"),
+    ("pact-provider-verifier", "pact-python-cli==2.6.0.1"),
+)
+
+
+@pytest.fixture(scope="session")
+def _real_workload_engine_bin(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path | None:
+    """Engines already on PATH (the `engine-contracts` job installs them into
+    the venv) are used as-is; any missing one is installed once per session
+    into an isolated venv, never into the test environment itself. Returns
+    that venv's bin dir, or None when nothing was missing."""
+    missing = [pkg for exe, pkg in _REAL_WORKLOAD_PACKAGES if shutil.which(exe) is None]
+    if not missing:
+        return None
+    uv = shutil.which("uv")
+    assert uv is not None, f"installing {missing} needs uv"
+    venv = tmp_path_factory.mktemp("real-workload-engines")
+    for argv in (
+        [uv, "venv", "--quiet", "--python", sys.executable, str(venv)],
+        [uv, "pip", "install", "--quiet", "--python", str(venv), *missing],
+    ):
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, f"{argv} failed:\n{result.stderr}"
+    return venv / ("Scripts" if os.name == "nt" else "bin")
+
+
+@pytest.fixture
+def real_workload_engines(
+    monkeypatch: pytest.MonkeyPatch, _real_workload_engine_bin: Path | None
+) -> None:
+    """Real-engine acceptance on: `RUSH_REQUIRE_REAL_ENGINES=1`, as in the
+    `engine-contracts` CI job, with the pinned engines resolvable."""
+    monkeypatch.setenv("RUSH_REQUIRE_REAL_ENGINES", "1")
+    if _real_workload_engine_bin is not None:
+        monkeypatch.setenv(
+            "PATH", f"{_real_workload_engine_bin}{os.pathsep}{os.environ['PATH']}"
+        )
+
+
 def test_required_engine_absence_fails(monkeypatch) -> None:
     monkeypatch.setenv("RUSH_REQUIRE_REAL_ENGINES", "1")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
@@ -321,10 +366,9 @@ def test_mutation_rejects_version_only_and_nonconserving_reports(
     assert expected in result["summary"]
 
 
+@pytest.mark.usefixtures("real_workload_engines")
 def test_mutation_real_workload(tmp_path: Path) -> None:
     _require_real_engine("mutmut")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real mutation engine acceptance disabled")
 
     source = tmp_path / "calculator.py"
     test_file = tmp_path / "test_calculator.py"
@@ -386,7 +430,7 @@ def test_fuzz_runs_target_and_reports_reproducer(monkeypatch, tmp_path: Path) ->
 
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = []
 
     def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
@@ -447,7 +491,7 @@ def test_fuzz_config_and_explicit_options_reach_argv(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = []
 
     def fake_run(argv, *, cwd=None, timeout=120, **_kwargs):
@@ -526,7 +570,7 @@ def test_fuzz_uses_anchored_stderr_stats_and_rejects_fake_stdout(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     outputs = iter(
         [
             (0, "runs 1000", ""),
@@ -564,7 +608,7 @@ def test_fuzz_timeout_and_positive_exit_without_reproducer_are_errors(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     calls = iter((subprocess.TimeoutExpired([sys.executable], 4),))
 
     def timeout_run(*_args, **_kwargs):
@@ -598,7 +642,7 @@ def test_fuzz_positive_exit_without_reproducer_is_error(
     _write_fuzz_inputs(tmp_path)
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
     monkeypatch.setattr(
         fuzz_mod,
         "run_subprocess",
@@ -623,7 +667,7 @@ def test_fuzz_report_symlink_cannot_overwrite_outside_file(
     outside.write_text("sentinel", encoding="utf-8")
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
 
     def fake_run(argv, *, cwd=None, **_kwargs):
         report = Path(cwd) / "fuzz-report.json"
@@ -651,7 +695,7 @@ def test_fuzz_crash_symlink_outside_run_is_rejected(
     outside.mkdir()
     import rush.tools.fuzz as fuzz_mod
 
-    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda: True)
+    monkeypatch.setattr(fuzz_mod, "atheris_available", lambda _python: True)
 
     def fake_run(argv, *, cwd=None, **_kwargs):
         crashes = Path(cwd) / "crashes"
@@ -682,10 +726,9 @@ def test_required_atheris_module_absence_fails(monkeypatch) -> None:
         _require_real_module("atheris")
 
 
+@pytest.mark.atheris_only
 def test_fuzz_real_workload(tmp_path: Path) -> None:
     _require_real_module("atheris")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real fuzz engine acceptance disabled")
 
     harness = tmp_path / "harness.py"
     corpus = tmp_path / "corpus"
@@ -1000,10 +1043,9 @@ def test_load_options_reach_execution_and_invalid_duration_denies_launch(
     assert len(calls) == call_count
 
 
+@pytest.mark.usefixtures("real_workload_engines")
 def test_load_real_workload(tmp_path: Path) -> None:
     _require_real_engine("k6")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real load engine acceptance disabled")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1018,7 +1060,9 @@ def test_load_real_workload(tmp_path: Path) -> None:
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.counter = 0
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     try:
         script = tmp_path / "load.js"
@@ -1057,10 +1101,9 @@ def test_load_real_workload(tmp_path: Path) -> None:
         thread.join(timeout=2)
 
 
+@pytest.mark.usefixtures("real_workload_engines")
 def test_load_real_workload_clean_target(tmp_path: Path) -> None:
     _require_real_engine("k6")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real load engine acceptance disabled")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1074,7 +1117,9 @@ def test_load_real_workload_clean_target(tmp_path: Path) -> None:
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.counter = 0
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     try:
         (tmp_path / "load.js").write_text(
@@ -1498,10 +1543,9 @@ def test_contract_rejects_report_symlink(monkeypatch, tmp_path: Path) -> None:
     assert "private-contract-value" not in json.dumps(result)
 
 
+@pytest.mark.usefixtures("real_workload_engines")
 def test_contract_real_workload(tmp_path: Path) -> None:
     _require_real_engine("pact-provider-verifier")
-    if os.environ.get("RUSH_REQUIRE_REAL_ENGINES") != "1":
-        pytest.skip("real contract engine acceptance disabled")
 
     class Handler(BaseHTTPRequestHandler):
         corrected = False
@@ -1517,7 +1561,9 @@ def test_contract_real_workload(tmp_path: Path) -> None:
             return
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     try:
         pact = tmp_path / "provider.json"

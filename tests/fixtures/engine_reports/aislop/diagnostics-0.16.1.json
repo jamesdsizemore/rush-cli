@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1",
+  "cliVersion": "0.16.1",
+  "version": "0.16.1",
+  "score": 51,
+  "label": "Needs Work",
+  "scoreable": true,
+  "diagnostics": [
+    {
+      "filePath": "pkg/a.py",
+      "engine": "lint",
+      "rule": "ruff/F401",
+      "severity": "error",
+      "message": "`os` imported but unused",
+      "help": "",
+      "line": 1,
+      "column": 8,
+      "category": "Python Lint",
+      "fixable": true,
+      "assessment": {
+        "kind": "confirmed-defect",
+        "confidence": "high",
+        "label": "confirmed defects"
+      },
+      "scoreImpact": {
+        "tier": "standard",
+        "multiplier": 1,
+        "rationale": "External ruff rule uses standard lint impact."
+      },
+      "forceFixable": false
+    },
+    {
+      "filePath": "pkg/a.py",
+      "engine": "ai-slop",
+      "rule": "ai-slop/trivial-comment",
+      "severity": "warning",
+      "message": "Trivial comment that restates the code",
+      "help": "Remove comments that don't add information beyond what the code already expresses",
+      "line": 6,
+      "column": 0,
+      "category": "AI Slop",
+      "fixable": true,
+      "assessment": {
+        "kind": "style-policy",
+        "confidence": "medium",
+        "label": "style/policy"
+      },
+      "scoreImpact": {
+        "tier": "style",
+        "multiplier": 0.5,
+        "cap": 8,
+        "rationale": "Restating comments are style noise; keep the finding visible but score gently."
+      },
+      "forceFixable": false
+    },
+    {
+      "filePath": "pkg/a.py",
+      "engine": "ai-slop",
+      "rule": "ai-slop/swallowed-exception",
+      "severity": "error",
+      "message": "Bare except with pass swallows errors silently",
+      "help": "Handle errors explicitly: log with context, rethrow, or return an error value",
+      "line": 9,
+      "column": 0,
+      "category": "AI Slop",
+      "fixable": false,
+      "assessment": {
+        "kind": "ai-slop-indicator",
+        "confidence": "high",
+        "label": "AI-slop indicators"
+      },
+      "scoreImpact": {
+        "tier": "strict",
+        "multiplier": 1,
+        "rationale": "Swallowed failures hide real broken states and deserve full scoring impact."
+      },
+      "forceFixable": false
+    }
+  ],
+  "summary": {
+    "errors": 2,
+    "warnings": 1,
+    "fixable": 2,
+    "files": 1,
+    "elapsed": "26ms"
+  }
+}

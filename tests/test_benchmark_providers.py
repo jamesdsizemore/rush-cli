@@ -351,7 +351,11 @@ def test_tampered_instruction_is_quarantined():
     assert res.metrics["quarantined"] is True
 
 
-def test_all_named_providers_and_routers_evaluated():
+def test_all_named_providers_and_routers_evaluated(monkeypatch: pytest.MonkeyPatch):
+    def reject_spawn(*args, **kwargs):
+        pytest.fail("ungranted provider process spawned")
+
+    monkeypatch.setattr("scripts.benchmarks.providers.subprocess.run", reject_spawn)
     routes = load_provider_routes()
     for route_id, route in routes.items():
         sc = Scenario(

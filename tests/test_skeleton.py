@@ -59,10 +59,11 @@ def test_cli_help_renders(runner: CliRunner):
     assert "rush" in result.output.lower()
     assert "review" in result.output
     assert "lint" in result.output
-    assert "format" in result.output
     assert "test" in result.output
     assert "security" in result.output
     assert "mcp" in result.output
+    # T25: non-everyday commands such as `format` are listed by --help-all.
+    assert "format" in runner.invoke(cli, ["--help-all"]).output
 
 
 def test_cli_version_flag(runner: CliRunner):

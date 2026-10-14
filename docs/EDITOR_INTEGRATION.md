@@ -4,7 +4,7 @@ Rush can be integrated into any modern code editor as a command-line task runner
 
 ---
 
-## 1. Visual Studio Code & Cursor Integration
+## 1. Visual Studio Code Integration
 
 ### VS Code Tasks (`.vscode/tasks.json`)
 Configure automated check tasks that run in the background:
@@ -44,8 +44,8 @@ Configure automated check tasks that run in the background:
 }
 ```
 
-### Cursor & Windsurf AI Assistant Configuration (`mcp.json`)
-Connect Rush to Cursor's Composer or Chat interface over stdio:
+### Windsurf AI Assistant Configuration (`mcp.json`)
+Connect Rush to Windsurf's Chat interface over stdio:
 
 ```json
 {

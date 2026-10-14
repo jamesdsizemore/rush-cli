@@ -8,7 +8,7 @@ Context omissions are stored only after redaction as local CCR chunks and expose
 
 ## 1. Why Existing Agent Memory Fails
 
-Current agent memory implementations (chat history summaries, vector databases, or static `.cursorrules` / `AGENTS.md` files) break down because they treat all text equally:
+Current agent memory implementations (chat history summaries, vector databases, or static `AGENTS.md` files) break down because they treat all text equally:
 * **No distinction between proof and guesswork:** An unverified assumption made by an agent in Turn 3 is stored alongside a verified test result or explicit user instruction. Future sessions treat guesses as ground truth.
 * **No invalidation when code changes:** When code is refactored, past memories about function signatures, API behavior, or test assumptions become silently toxic, poisoning future agent turns with stale information.
 * **Context pollution:** Dumping memory files into every prompt burns token budgets and dilutes the model's focus on the active task.
@@ -125,3 +125,27 @@ When handing off work from one agent (or model provider) to another:
 | **Context Overhead** | Giant global rules files dumped every turn | Symbol-scoped context injected only at the active edit site |
 | **Error Learning** | Agents repeat the same bug across sessions | AST negative invariants prevent re-attempting failed patterns |
 | **Model Switching** | Context lost when switching providers | Open, structured task capsules restore exact task state |
+
+---
+
+## Memory claim status
+
+Each row names one claim of this document, its status, the revision at which the status was determined, the route that serves it and the test that proves it. Sections 2 to 5 describe a design; a `proposed` row is not shipped behavior.
+
+| Claim | Status | Revision | Route | Evidence |
+|---|---|---|---|---|
+| primitive:epistemic-classes: the four epistemic classes `PROVEN_EVIDENCE`, `USER_INTENT`, `OBSERVED_CONVENTION` and `AGENT_HYPOTHESIS` are a design; no class of those names exists in `src/rush`, and records carry a `trust_tier` instead. | `proposed` | `392f882` | — | — |
+| primitive:grounding-hash: a stored SHA-256 grounding hash of the AST node, test output or commit that produced each record is a design; no `grounding_hash` field exists in `src/rush`. | `proposed` | `392f882` | — | — |
+| primitive:invalidation-watchers: per-record watcher lists of file paths and symbols that demote a record to `STALE` are a design; `src/rush/memory` holds no per-record watcher list. | `proposed` | `392f882` | — | — |
+| primitive:scope-levels: the `SESSION`, `REPO` and `USER` scope levels and the `.rush/ledger/` store are a design; no scope value named `SESSION`, `REPO` or `USER` and no `.rush/ledger/` path exists in `src/rush`, which scopes memory by project store, owner scope and source. | `proposed` | `392f882` | — | — |
+| lifecycle:context-hydration: Step 1, symbol-scoped context injected into tool responses as `rush_grounded_context`, is a design; no code emits that block. | `proposed` | `392f882` | — | — |
+| lifecycle:automatic-invalidation: Step 2, AST comparison against grounding hashes with an explicit `rush_stale_alert` on the next turn, is a design; no code emits that alert. | `proposed` | `392f882` | — | — |
+| lifecycle:negative-invariants: Step 3, `NEGATIVE_INVARIANT` records extracted from rejected changes, is a design; no record type of that name exists in `src/rush`. | `proposed` | `392f882` | — | — |
+| lifecycle:structured-handoffs: Step 4, a Task Handoff Capsule file at `.rush/capsules/<task_id>.json`, is a design; that path appears nowhere in `src/rush`. | `proposed` | `392f882` | — | — |
+| handoff:delta-handoff-and-receive: a bounded delta handoff carries only changed, authorized artifact versions and the receiver reads the exact versions before acknowledging; this is the current handoff route, not the Step 4 capsule file. | `implemented` | `392f882` | `rush memory handoff`, `rush memory receive` | `tests/test_memory_handoff.py::test_delta_contains_only_changed_authorized_versions`, `tests/test_memory_handoff.py::test_receiver_reads_exact_versions_before_ack` |
+| tool:rush_memory_hydrate: the hydration tool is a design; `rush_memory` is the only registered MCP tool whose name starts `rush_memory`. | `proposed` | `392f882` | — | — |
+| tool:rush_memory_record_intent: the intent-recording tool is a design; intent is recorded through the `intent` operation of `rush_memory`, and no tool named `rush_memory_record_intent` is registered. | `proposed` | `392f882` | — | — |
+| tool:rush_memory_record_proof: the post-test proof-promotion hook is a design; no such hook or tool is registered. | `proposed` | `392f882` | — | — |
+| tool:rush_memory_invalidate: the post-edit invalidation hook is a design; no such hook or tool is registered. | `proposed` | `392f882` | — | — |
+| tool:rush_task_capsule: the provider-portable capsule tool is a design; no tool named `rush_task_capsule` is registered. | `proposed` | `392f882` | — | — |
+| recovery:bounded-recovery-references: context omissions are stored as redacted local CCR chunks and retrieved by a stable handle; the retrieved content is redacted even for chunks stored before redaction existed. | `implemented` | `392f882` | `rush context retrieve` | `tests/test_phase44_context_pack_cache.py::test_continuity_context_retrieve_redacts_preexisting_ccr_content` |

@@ -12,7 +12,6 @@ from enum import Enum
 
 from rush.catalog import TOOL_SPECS
 from rush.cli import cli
-from rush.mcp import build_server
 from rush.tools import ALL_TOOLS
 
 
@@ -36,6 +35,10 @@ class PublicOperation:
     safe_probe: str
 
 
+_CLI_ONLY_GROUP_LEAVES = frozenset({"memory"})
+_BARE_ROUTE_OPERATION = "tool.status"
+
+
 def build_operations_inventory() -> list[PublicOperation]:
     """Reconcile Click leaf commands and FastMCP tools into an exhaustive inventory."""
     inventory: list[PublicOperation] = []
@@ -46,24 +49,36 @@ def build_operations_inventory() -> list[PublicOperation]:
         for tool in ALL_TOOLS
     }
 
-    # 1. Discover all Click leaf commands
+    # 1. Discover all Click leaf commands, at every depth: a nested group
+    # (`memory capsule`, `memory capsule mapping`) contributes `<path> <leaf>`
+    # for each of its leaves.
     click_leaves: list[str] = []
-    for name, cmd in cli.commands.items():
-        if hasattr(cmd, "commands") and cmd.commands:
-            for sub_name in cmd.commands:
-                click_leaves.append(f"{name} {sub_name}")
-            # A group invocable bare (invoke_without_command=True, e.g. `rush
-            # scan --full`) is also its own callable leaf -- don't let having
-            # subcommands hide that route.
-            if getattr(cmd, "invoke_without_command", False):
-                click_leaves.append(name)
-        else:
-            click_leaves.append(name)
 
-    # 2. Discover all FastMCP registered tools
+    def _discover(path: str, cmd: object) -> None:
+        subcommands = getattr(cmd, "commands", None)
+        if not subcommands:
+            click_leaves.append(path)
+            return
+        for sub_name, sub in subcommands.items():
+            _discover(f"{path} {sub_name}", sub)
+        # A group invocable bare (invoke_without_command=True, e.g. `rush
+        # scan --full`) is also its own callable leaf -- don't let having
+        # subcommands hide that route.
+        if getattr(cmd, "invoke_without_command", False):
+            click_leaves.append(path)
+
+    for name, cmd in cli.commands.items():
+        _discover(name, cmd)
+
+    # 2. Discover all FastMCP registered tools (the module-level server
+    # `rush mcp serve` runs; building a second one costs about a second).
+    # T27: imported here, not at module load, so `rush governance check` /
+    # `rush scaffold init` (which import the `rush.governance` package) never
+    # load the MCP server and SDK they do not use.
+    from rush.mcp import mcp_server
+
     async def get_mcp_tools():
-        server = build_server()
-        return [t.name for t in await server.list_tools()]
+        return [t.name for t in await mcp_server.list_tools()]
 
     mcp_tools: list[str] = asyncio.run(get_mcp_tools())
 
@@ -142,6 +157,18 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush context gain --help",
             "tool",
         ),
+        # `rush gain` is a bare-command alias of `context gain` -- same
+        # underlying implementation and MCP tool. Matches the "memory
+        # list"/"memory recall" precedent: doesn't claim the already-assigned
+        # "rush_context_gain_stats" MCP tool name (mcp_tool uniqueness is
+        # enforced by test_operation_ids_and_transport_names_are_unique).
+        "gain": (
+            None,
+            "rush.token_economy.tui_gain:render_gain_summary",
+            "read-only",
+            "rush gain --help",
+            "tool",
+        ),
         "context-mistakes": (
             "rush_context_mistakes_check",
             "rush.memory.mistake_miner:MistakeMiner",
@@ -212,6 +239,78 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory maintain --help",
             "admin",
         ),
+        # 73-T09/CODEC: the non-invokable `memory capsule` group's leaves.
+        "memory capsule preview-export": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory capsule preview-export --help",
+            "admin",
+        ),
+        "memory capsule export": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule export --help",
+            "admin",
+        ),
+        "memory capsule preview-import": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory capsule preview-import --help",
+            "admin",
+        ),
+        "memory capsule import": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule import --help",
+            "admin",
+        ),
+        "memory capsule bridge": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule bridge --help",
+            "admin",
+        ),
+        "memory capsule mapping create": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule mapping create --help",
+            "admin",
+        ),
+        "memory capsule mapping revoke": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory capsule mapping revoke --help",
+            "admin",
+        ),
+        # 73-T02/BOOTSTRAP-CONSENT: the CLI-only consent writers (no MCP route).
+        "memory grant": (
+            None,
+            "rush.memory.authorization:grant_memory_scope",
+            "stateful-mutation",
+            "rush memory grant --help",
+            "admin",
+        ),
+        "memory revoke": (
+            None,
+            "rush.memory.authorization:revoke_memory_scope",
+            "stateful-mutation",
+            "rush memory revoke --help",
+            "admin",
+        ),
+        "memory bind-store": (
+            None,
+            "rush.memory.store:TypedArtifactStore",
+            "stateful-mutation",
+            "rush memory bind-store --help",
+            "admin",
+        ),
         # MC14 (Phase 63 §9.1): the 13 new memory operations. None of them claim the
         # shared "rush_memory" MCP tool name (already claimed by "memory ask" above --
         # test_operation_ids_and_transport_names_are_unique requires mcp_tool uniqueness),
@@ -221,6 +320,20 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush.tools.memory:MemoryTool",
             "read-only",
             "rush memory expand --help",
+            "admin",
+        ),
+        "memory history": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory history --help",
+            "admin",
+        ),
+        "memory explain": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory explain --help",
             "admin",
         ),
         "memory link": (
@@ -334,6 +447,15 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory archive --help",
             "admin",
         ),
+        # 72-T05 (D10/D11): consented layered preferences -- `resolve` reads, the
+        # other actions mutate, so "admin" kind with the edit/archive precedent.
+        "memory preference": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "stateful-mutation",
+            "rush memory preference --help",
+            "admin",
+        ),
         # P65-03.3 (Phase 65 §3.2): project registry operations over `ProjectTool`.
         # `list`/`show` are read-only queries ("tool" kind, matching the "memory
         # ask/recall/list" precedent); `add`/`select`/`configure`/`create`/`relink`
@@ -444,12 +566,32 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush agent connect --help",
             "admin",
         ),
+        # Phase 70 T3: `disconnect` removes Rush-owned MCP entries, instruction
+        # blocks and resources from third-party agent configs and project files
+        # -- the same administrative mutation class as `connect`.
+        "agent disconnect": (
+            None,
+            "rush.tools.agent_connection:AgentConnectionTool",
+            "stateful-mutation",
+            "rush agent disconnect --help",
+            "admin",
+        ),
         "agent doctor": (
             None,
             "rush.tools.agent_connection:AgentConnectionTool",
             "read-only",
             "rush agent doctor --help",
             "tool",
+        ),
+        # Phase 70 T2: the stdin entrypoint the native Claude Code/Codex plugin
+        # hooks run after each edit. Inert until T7 adds opt-in activation, so
+        # it only reads (the activation record) and writes nothing.
+        "agent hook": (
+            None,
+            "rush.integrations.agent_hooks:run_agent_hook",
+            "read-only",
+            "rush agent hook --help",
+            "admin",
         ),
         # T024 (Phase 65 §6.1): InstallTool is administrative CLI composition,
         # not a remotely callable installer MCP tool -- mcp_tool stays None.
@@ -467,13 +609,16 @@ def build_operations_inventory() -> list[PublicOperation]:
         ),
     }
 
-    # 3. Pair canonical tool specs first
+    # 3. Pair canonical tool specs first. T20: bare `rush memory` is the local-admin
+    # overview, not the `rush_memory` MCP tool (which never exposes it), so it stays a
+    # CLI-only admin leaf (step 6) and `rush_memory` keeps its per-subcommand pairings.
     for name, spec in sorted(TOOL_SPECS.items()):
         mcp_name = f"rush_{name.replace('-', '_')}"
         if (
             name in click_leaves
             and mcp_name in mcp_tools
             and name not in explicit_pairs
+            and name not in _CLI_ONLY_GROUP_LEAVES
         ):
             canonical = tool_impl_map.get(
                 name, f"rush.tools.{name.replace('-', '_')}:Tool"
@@ -584,6 +729,10 @@ def render_operations_toml(inventory: list[PublicOperation]) -> str:
     ]
 
     for op in inventory:
+        # T23 (X1): the root group's bare route is not a Click leaf, so the
+        # operation it runs carries the note.
+        if op.id == _BARE_ROUTE_OPERATION and cli.invoke_without_command:
+            lines.append("# Bare `rush` (no subcommand) runs this operation.")
         lines.append("[[operations]]")
         lines.append(f'id = "{op.id}"')
         lines.append(f'kind = "{op.kind}"')

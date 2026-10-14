@@ -22,7 +22,7 @@ Rush is evolving into the definitive **Agent-Native Quality Operating System**�
 flowchart TD
   subgraph AgentEcosystem["Autonomous Coding Agents & Vibe-Coders"]
     Claude["Claude Code (Anthropic)"]
-    Codex["Codex / Operator / Cursor (OpenAI)"]
+    Codex["Codex / Operator (OpenAI)"]
     AGY["Antigravity / Gemini CLI (Google DeepMind)"]
     DeepSeek["DeepSeek-Coder / R1 (Local/API)"]
     Devs["Full-Stack Vibe-Coders & Developers"]
@@ -247,9 +247,9 @@ Equip Rush's FastMCP stdio server with model-adaptive output serializers (tailor
    - Implement `format_findings_for_agent(findings, agent_type)`:
      - `AgentType.CLAUDE`: Semantic XML `<findings><finding id="..." rule="..." file="...">...</finding></findings>`.
      - `AgentType.DEEPSEEK`: Dense structural pseudo-diff format optimized for R1 reasoning tokens.
-     - `AgentType.CODEX` / `AgentType.CURSOR`: Compact unified diff patches with concise file-line anchors.
+     - `AgentType.CODEX`: Compact unified diff patches with concise file-line anchors.
      - `AgentType.AGY` / `AgentType.GEMINI`: High-density structured JSON with explicit AST node addresses.
-3. **Task 31.3: Stateful Cursor Pagination (`rush_paginate_findings`)**
+3. **Task 31.3: Stateful cursor pagination (`rush_paginate_findings`)**
    - Implement `PaginatedFindingManager` storing in-memory query snapshots keyed by UUID.
    - Computes BPE token estimation per chunk and enforces `limit` and `min_severity` parameters.
 4. **Task 31.4: Real-Time Turn Token & Latency Meter (`_rush_telemetry`)**
@@ -303,7 +303,7 @@ Implement native offline scanners protecting developers and vibe-coders from AI 
    - Scans repository for unignored files exceeding 20,000 tokens (e.g. debug JSON dumps, test artifacts).
    - Provides `--prune` flag to automatically append offenders to `.gitignore` or clean scratchpads.
 5. **Task 32.5: System Prompt & Instruction Linter (`rush prompt-linter`)**
-   - Lints `CLAUDE.md`, `.cursorrules`, `AGENTS.md` against Anthropic/OpenAI prompt engineering rubrics.
+   - Lints `CLAUDE.md`, `AGENTS.md` against Anthropic/OpenAI prompt engineering rubrics.
    - Detects conflicting rules, excessive token length, and non-deterministic directives.
 6. **Task 32.6: Historical Git Reflog & Packfile Secret Scanner (`rush git-leak-history`)**
    - Implements `GitLeakHistoryScanner` in `src/rush/git/leak_history.py`.
@@ -566,7 +566,7 @@ Build an enterprise-grade agent skills runtime and automated non-destructive rep
   - `src/rush/skills/auditor.py` (New: Agent skill YAML frontmatter, token & security auditor)
   - `src/rush/skills/synthesizer.py` (New: Natural language rule to AST plugin compiler using `graft`)
   - `src/rush/skills/watcher.py` (New: Zero-restart skill file watcher & MCP notification dispatcher)
-  - `src/rush/skills/adapter.py` (New: Universal `CLAUDE.md` ↔ `SKILL.md` ↔ Cursor translator)
+  - `src/rush/skills/adapter.py` (New: Universal `CLAUDE.md` ↔ `SKILL.md` translator)
   - `src/rush/skills/fuzzer.py` (New: Skill boundary & malformed input fuzzer)
   - `src/rush/scaffolder.py` (New: Non-destructive repo scaffolder & agent config auto-wirer)
   - `src/rush/tools/skill_audit.py` (New: CLI/MCP tool entrypoint)
@@ -594,13 +594,13 @@ Build an enterprise-grade agent skills runtime and automated non-destructive rep
      - **Blank Repository Scaffolding (Greenfield Mode)**:
        - Supports `--stack=python|typescript|fullstack|rust|go|polyglot` (or interactive prompt).
        - Generates `.gitignore` (with `.rush/cache.db`, `.rush/worktrees/`, `.env`), `README.md` (with `rush score` badge template), `LICENSE` (MIT baseline), and initializes Git repo (`git init`) if not already present.
-       - Creates clean `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with project guidelines and embedded `<!-- RUSH_START --> ... <!-- RUSH_END -->` blocks.
+       - Creates clean `CLAUDE.md` and `AGENTS.md` with project guidelines and embedded `<!-- RUSH_START --> ... <!-- RUSH_END -->` blocks.
        - Generates `.rush/skills/` (with `plugin_builder.md`, `plugin_installer.md`), `.rush/plugins/` (with `example_plugin.py`), `.rush/rules/`, and a stack-tailored `rush.toml`.
-       - Writes ready-to-run FastMCP stdio server configurations into `.claude.json`, `.cursor/mcp.json`, and `.gemini/`.
+       - Writes ready-to-run FastMCP stdio server configurations into `.claude.json` and `.gemini/`.
      - **Occupied Repository Scaffolding (Brownfield Mode)**:
        - Zero Overwrite Invariant: Never modifies or deletes existing user rules, code, or configs.
-       - Non-Destructive Config Appender: Inserts or updates delimited boundary blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in existing `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` with agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
-       - Safe MCP Config Merging: Parses existing JSON in `.claude.json` / `.cursor/mcp.json` / `.gemini/` and merges the `"rush"` stdio transport entry without disturbing existing MCP servers.
+       - Non-Destructive Config Appender: Inserts or updates delimited boundary blocks (`<!-- RUSH_START --> ... <!-- RUSH_END -->`) in existing `CLAUDE.md` and `AGENTS.md` with agent slash commands (`/rush-check`, `/rush-fix`, `/rush-gate`, `/rush-score`).
+       - Safe MCP Config Merging: Parses existing JSON in `.claude.json` / `.gemini/` and merges the `"rush"` stdio transport entry without disturbing existing MCP servers.
        - Schema-Preserving `rush.toml`: If `rush.toml` exists, validates schema without altering user settings; if absent, runs stack discovery and generates tailored config.
 
 #### Verification & Exit Criteria

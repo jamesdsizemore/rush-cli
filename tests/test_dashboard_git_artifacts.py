@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -42,7 +43,13 @@ import pytest
 from rush.dashboard.server import create_dashboard_server
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
-from rush.tui import ProjectState, TuiState, _dispatch_key, default_scan_actions
+from rush.tui import (
+    ProjectState,
+    TuiState,
+    _dispatch_key,
+    _pump,
+    default_scan_actions,
+)
 from rush.workflows import project_run as project_run_module
 from rush.workflows import projects as projects_module
 from rush.workflows.project_run import ScanCandidate, ScanPlan
@@ -55,11 +62,15 @@ from rush.workflows.projects import (
     register_project,
 )
 
+pytestmark = pytest.mark.usefixtures("hermetic_engine_path")
+
 # --- shared HTTP helpers (mirrors tests/test_dashboard_memory_tokens.py) -----
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -209,6 +220,46 @@ def _commit_file(root: Path, rel_path: str, content: str, message: str) -> str:
     return _run_git(root, "rev-parse", "HEAD")
 
 
+def _commit_files(root: Path, commits: list[tuple[str, str, str]]) -> str:
+    """`_commit_file` for each `(rel_path, content, message)` in order, as
+    one `git fast-import` stream instead of three git spawns per commit:
+    same author/committer, subjects and files, each commit on top of the
+    current branch. The work tree and index are then synced to the result.
+    Returns the final HEAD."""
+    branch = _run_git(root, "symbolic-ref", "HEAD")
+    parent = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", "HEAD"],
+        cwd=root,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    identity = f"{_GIT_ENV['GIT_AUTHOR_NAME']} <{_GIT_ENV['GIT_AUTHOR_EMAIL']}> now"
+    stream = io.BytesIO()
+    for rel_path, content, message in commits:
+        data = content.encode("utf-8")
+        subject = message.encode("utf-8")
+        stream.write(f"commit {branch}\n".encode())
+        stream.write(f"author {identity}\ncommitter {identity}\n".encode())
+        stream.write(f"data {len(subject)}\n".encode() + subject + b"\n")
+        if parent:
+            stream.write(f"from {parent}\n".encode())
+            parent = ""
+        stream.write(f"M 100644 inline {rel_path}\n".encode())
+        stream.write(f"data {len(data)}\n".encode() + data + b"\n")
+    subprocess.run(
+        ["git", "fast-import", "--quiet", "--date-format=now"],
+        cwd=root,
+        env=_GIT_ENV,
+        input=stream.getvalue(),
+        check=True,
+        capture_output=True,
+    )
+    _run_git(root, "reset", "--quiet", "--hard", "HEAD")
+    return _run_git(root, "rev-parse", "HEAD")
+
+
 def _rename_file(root: Path, old: str, new: str, message: str) -> str:
     _run_git(root, "mv", old, new)
     _run_git(root, "commit", "--quiet", "-m", message)
@@ -228,6 +279,7 @@ def _repo_state(root: Path) -> tuple[str, str]:
 def _write_manifest(
     root: Path,
     *,
+    project_id: str,
     run_id: str,
     scheduled: list[dict[str, Any]],
     attempt_id: str | None = None,
@@ -240,7 +292,7 @@ def _write_manifest(
         "attempt_id": attempt_id,
         "git_link": git_link or {},
         "plan_id": f"plan-{run_id}",
-        "project_id": "unused-by-reader",
+        "project_id": project_id,
         "root": str(root),
         "run_state": "completed",
         "severity": "warn",
@@ -541,6 +593,7 @@ def test_git_scan_link_requires_matching_source_revision_not_just_path(
     # Matches the commit exactly: linked.
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-connect",
         scheduled=[
             _scheduled_item("matching-tool", "quality", artifacts=["src/app.py"]),
@@ -556,6 +609,7 @@ def test_git_scan_link_requires_matching_source_revision_not_just_path(
     # not match this commit -- must NOT be linked despite the path overlap.
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-stale",
         scheduled=[
             _scheduled_item("stale-tool", "quality", artifacts=["src/app.py"]),
@@ -704,11 +758,14 @@ def test_git_history_uses_50_commit_cursor_not_offset_pagination(
     default 20-entry `skip`/`limit` offset pagination."""
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "cursor-repo")
-    expected_subjects = []
-    for i in range(25):
-        subject = f"commit number {i}"
-        _commit_file(root, f"f{i}.txt", f"{i}\n", subject)
-        expected_subjects.append(subject)
+    expected_subjects = [f"commit number {i}" for i in range(25)]
+    _commit_files(
+        root,
+        [
+            (f"f{i}.txt", f"{i}\n", subject)
+            for i, subject in enumerate(expected_subjects)
+        ],
+    )
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
     try:
@@ -763,6 +820,7 @@ def test_artifacts_section_lists_every_manifest_entry_with_bounded_pagination(
     project_id, root = _register(tmp_path, "artifacts-repo")
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         scheduled=[
             _scheduled_item("tool-a", "quality"),
@@ -810,7 +868,10 @@ def test_artifacts_section_missing_artifact_expand_returns_found_false(
     _isolate_data_roots(tmp_path, monkeypatch)
     project_id, root = _register(tmp_path, "missing-artifact-repo")
     _write_manifest(
-        root, run_id="run-1", scheduled=[_scheduled_item("tool-a", "quality")]
+        root,
+        project_id=project_id,
+        run_id="run-1",
+        scheduled=[_scheduled_item("tool-a", "quality")],
     )
 
     server, base_url, cookie, _csrf = _start_dashboard(project_id, root)
@@ -843,6 +904,7 @@ def test_artifacts_section_unknown_output_type_gets_generic_safe_redacted_view(
     (root / "profile.out").write_text(hostile_line + "\n", encoding="utf-8")
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-profiler",
         scheduled=[
             _scheduled_item(
@@ -894,6 +956,7 @@ def test_artifact_content_route_supports_paged_download(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-dl",
         scheduled=[
             _scheduled_item(
@@ -1137,6 +1200,7 @@ def test_download_more_than_two_pages_containing_split_utf8_nul_and_0xff_bytes_r
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-bin",
         scheduled=[
             _scheduled_item(
@@ -1200,6 +1264,7 @@ def test_a_reference_and_offset_for_attempt_a_never_selects_attempt_bs_bytes(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-a",
         attempt_id="attempt-a",
         scheduled=[
@@ -1213,6 +1278,7 @@ def test_a_reference_and_offset_for_attempt_a_never_selects_attempt_bs_bytes(
     )
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-b",
         attempt_id="attempt-b",
         scheduled=[
@@ -1264,6 +1330,7 @@ def test_two_attempts_of_same_run_produce_distinct_artifact_references(
 
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         attempt_id="run-1-attempt-a",
         scheduled=[_scheduled_item("tool-a", "quality")],
@@ -1278,6 +1345,7 @@ def test_two_attempts_of_same_run_produce_distinct_artifact_references(
 
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         attempt_id="run-1-attempt-b",
         scheduled=[_scheduled_item("tool-a", "quality")],
@@ -1308,6 +1376,7 @@ def test_list_project_artifacts_surfaces_persisted_git_link_provenance(
     }
     _write_manifest(
         root,
+        project_id=project_id,
         run_id="run-1",
         scheduled=[_scheduled_item("tool-a", "quality")],
         git_link=git_link,
@@ -1482,6 +1551,19 @@ def test_project_git_history_reports_has_git_false_without_error(
 # --- P66-06.4 VERIFY: TUI Git & artifacts view -------------------------------
 
 
+def _settle_git(state: TuiState, actions: Any) -> None:
+    """T28-E: Git reads run on the loop's worker; drive `_pump` the way
+    `run_interactive_tui` does until no Git request is in flight (2 s max)."""
+    project = state.active_project
+    deadline = time.monotonic() + 2.0
+    while True:
+        _pump(state, actions)
+        if not any(str(key).startswith("git") for key in project.pending):
+            return
+        assert time.monotonic() < deadline, "git still loading after 2 s"
+        time.sleep(0.01)
+
+
 def _tui_state(root: Path) -> TuiState:
     project = ProjectState(name=root.name, root=root, results=[])
     return TuiState(projects=[project])
@@ -1499,6 +1581,7 @@ def test_tui_git_view_loads_real_history_and_status(
     state = _tui_state(root)
     actions = default_scan_actions()
     _dispatch_key(state, "G", actions)
+    _settle_git(state, actions)
 
     assert state.mode == "git"
     assert state.git_data["git"]["has_git"] is True
@@ -1528,6 +1611,7 @@ def test_tui_git_view_renders_hostile_and_markup_content_as_literal_text(
     state = _tui_state(root)
     actions = default_scan_actions()
     _dispatch_key(state, "G", actions)
+    _settle_git(state, actions)
     assert state.git_message == ""
 
     panel = _render_git_panel(state)
@@ -1559,6 +1643,7 @@ def test_tui_git_view_two_project_isolation_no_leak(
     actions = default_scan_actions()
 
     _dispatch_key(state, "G", actions)
+    _settle_git(state, actions)
     subjects_a = {c["subject"] for c in state.git_data["git"]["history"]}
     assert subjects_a == {"commit in A"}
 
@@ -1571,6 +1656,7 @@ def test_tui_git_view_two_project_isolation_no_leak(
     assert state.git_data is None  # reset -- never leaks project A's data
 
     _dispatch_key(state, "G", actions)
+    _settle_git(state, actions)
     subjects_b = {c["subject"] for c in state.git_data["git"]["history"]}
     assert subjects_b == {"commit in B"}
 
@@ -1588,5 +1674,7 @@ def test_tui_git_read_never_mutates_branch_or_index(
     state = _tui_state(root)
     actions = default_scan_actions()
     _dispatch_key(state, "G", actions)
+    _settle_git(state, actions)
+    assert state.git_data["git"]["dirty"] is True  # a real read happened
     after = _repo_state(root)
     assert before == after

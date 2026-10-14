@@ -15,7 +15,7 @@ This document defines the platform, operating system, and language ecosystem com
 | **Python** | Python 3.12 (`>=3.12,<3.13`) | Exact declared package requirement in `pyproject.toml`. |
 | **Package Manager** | uv (recommended), pip | Development loop, frozen dependency lockfile, package build (`uv build`). |
 | **Operating Systems** | Windows, macOS, Linux are intended targets | Clean-platform installation and archive/architecture verification remain planned in [P65-01](phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md); source-level portability tests do not prove all listed platform variants. |
-| **MCP Transport** | stdio (JSON-RPC over standard input/output) | Compatible with Claude Desktop, Cursor, Claude Code, Goose, Hermes, Zed, Windsurf. |
+| **MCP Transport** | stdio (JSON-RPC over standard input/output) | Compatible with Claude Desktop, Claude Code, Goose, Hermes, Zed, Windsurf. |
 
 ---
 

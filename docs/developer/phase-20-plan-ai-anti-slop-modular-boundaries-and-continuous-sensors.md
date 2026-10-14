@@ -31,7 +31,7 @@
 ## 1. Architectural Mission & Invariants
 
 ### 1.1 Problem Statement & Deep Threat Model
-With the widespread adoption of LLM-driven vibe coding, multi-agent autonomous software generation, and generative pair-programming assistants (Claude Code, Cursor, Antigravity, GitHub Copilot), modern codebases accumulate a distinct class of structural and architectural degradation termed "AI Slop":
+With the widespread adoption of LLM-driven vibe coding, multi-agent autonomous software generation, and generative pair-programming assistants (Claude Code, Antigravity, GitHub Copilot), modern codebases accumulate a distinct class of structural and architectural degradation termed "AI Slop":
 1. **Hallucinated Abstractions & Defensive Boilerplate**: Over-defensive type checks (e.g. checking `if s is not None and isinstance(s, str) and len(s) > 0` across five consecutive functions), duplicate helper utilities across modules, tautological nil-checks, and hallucinated wrapper classes that encapsulate standard library calls in redundant boilerplate.
 2. **Erosion of Modular Architecture Boundaries**: Autonomous agents lack repository-level domain context. They indiscriminately import private symbols across bounded context domains (e.g. importing `billing.internal.stripe_client` directly inside `frontend.views`), creating hidden architectural coupling, cyclic import graphs, and monolithic architectural decay.
 3. **Diff Coverage Blind Spots & Mock Illusions**: Autonomous agents frequently implement complex feature logic while generating trivial, superficial unit tests that assert tautological conditions (`assert response is not None`) while failing to execute critical branch conditions and error-handling paths on modified diff lines.

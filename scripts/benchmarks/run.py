@@ -3,31 +3,104 @@
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
+import stat
 import sys
 import tempfile
-from collections.abc import Callable
-from dataclasses import replace
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from rush.delivery.compact import canonical_json
+from rush.io.physical_paths import ContainmentError, PhysicalRoot
+from rush.memory.retrieval import MemoryAccess, _excerpt
+from rush.memory.store import MemorySubject, OwnerScope, TypedArtifactStore
+from rush.patch_generator import patch_target_paths
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 
-from .contracts import FixtureError, Outcome, ProbeResult
+# D13a: `python scripts/benchmarks/run.py` (script form) resolves the
+# relative imports below exactly like `python -m scripts.benchmarks.run`.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    __package__ = "scripts.benchmarks"
+
+from . import memory_datasets
+from .contracts import (
+    DecisionBudget,
+    DecisionResult,
+    FixtureError,
+    Outcome,
+    ProbeResult,
+)
 from .fixtures import load_scenarios
-from .memory import EPISODE_BUILDERS, run_named_episode
+from .memory import (
+    BASELINE_CASES_SHA256,
+    EPISODE_BUILDERS,
+    EPISODE_OPERATION_KWARGS,
+    OPERATION_SCHEMAS,
+    EpisodeAction,
+    EpisodeObservation,
+    expand_python_token,
+    fixture_revision,
+    load_task_manifest,
+    normalized_contains,
+    receiver_readback_acknowledged,
+    run_memory_episode,
+    run_named_episode,
+    verifier_receipt_completed,
+)
 from .memory_datasets import (
+    CountingMemoryTool,
     DatasetCaseResult,
     aggregate_dataset_results,
     load_dataset_section,
     run_longmemeval_case,
+    strip_longmemeval_gold,
 )
-from .reporting import paired_bootstrap_ci, write_memory_suite_report, write_result
+from .providers import (
+    invocation_record,
+    preflight_decision_route,
+    resolve_decision_route,
+    run_memory_decision,
+)
+from .reporting import (
+    HYBRID_ARMS,
+    chance_recall,
+    paired_bootstrap_ci,
+    recall_at_k,
+    redact_report,
+    write_hybrid_verdict,
+    write_memory_suite_report,
+    write_result,
+)
 
-_MEMORY_VARIANTS = ("none", "current", "raw", "budgeted", "linked", "full", "hybrid")
+_MEMORY_VARIANTS = (
+    "none",
+    "current",
+    "raw",
+    "budgeted",
+    "linked",
+    "full",
+    "hybrid",
+    "metadata",
+)
 _VARIANT_MAX_TOKENS = {"budgeted": 256, "current": 2048, "full": 16000}
+# 72-T08: the in-process Rush calls of a memory-suite run see these redirected into a
+# temporary root; provider subprocesses keep the caller's original environment.
+_ISOLATED_ENV_KEYS = ("HOME", "XDG_DATA_HOME", "LOCALAPPDATA")
+# The frozen `p72-` corpus: 48 records, 12 of them security-role records no arm may
+# return, so `E_i = 36` eligible records per case.
+_P72_ELIGIBLE = 36
+_P72_SECURITY_ROLES = frozenset({"denied_owner", "revoked_source", "stale_hash"})
+_P72_READER = OwnerScope("user", "p72-reader")
+_P72_QUERIES_SECTION = "phase72_hybrid_queries"
+_P72_CORPUS_SECTION = "phase72_hybrid_corpus"
 
 # Probe registry forward references (imported lazily or dynamically)
 _PROBE_MAP: dict[str, Callable[..., ProbeResult]] = {}
@@ -170,7 +243,149 @@ def build_parser() -> argparse.ArgumentParser:
         default=16000,
         help="MC13.2: per-case/per-episode token budget for the memory suite",
     )
+    parser.add_argument(
+        "--decision-mode",
+        type=str,
+        choices=("component", "live"),
+        default="component",
+        help="Phase 72 D13: 'component' runs the scripted harness (harness "
+        "completion only); 'live' asks --decision-route for every decision",
+    )
+    parser.add_argument(
+        "--decision-route",
+        type=str,
+        default=None,
+        help="Phase 72 D13: live decision route ID (requires --decision-mode live "
+        "and its --allow-live-route grant)",
+    )
+    parser.add_argument(
+        "--task-manifest",
+        type=Path,
+        default=None,
+        help="Phase 72 D13a: strict memory task manifest "
+        "(tests/fixtures/phase75/task_manifest.json)",
+    )
     return parser
+
+
+def _variant_retrieval(
+    variant: str,
+    root: Path,
+    tool: MemoryTool,
+    permissions: ExecutionPermissions,
+    *,
+    query: str,
+    subject: MemorySubject,
+    owner_scope: OwnerScope | None,
+    session_allowlist: list[str] | None,
+    request_override: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """72-T08: one arm's retrieval for one case and its measurements. Compact arms ask
+    `recall` for at most 8 items in 8192 bytes; `hybrid` adds `request_override` (the
+    frozen engine identity) or a bare `retrieval="hybrid"`. `metadata` answers from the
+    legacy `list` route: the grant's sources, the owner, freshness `fresh`, no query, the
+    first eight rows by id."""
+    owner_kwargs: dict[str, Any] = (
+        {"owner_scope": owner_scope} if owner_scope is not None else {}
+    )
+    out: dict[str, Any] = {
+        "ids": [],
+        "excerpts": [],
+        "retrieval": None,
+        "embedding_fallback_code": None,
+        "override_skipped": None,
+        "page_tokens": 0,
+        "retrieval_ms": 0.0,
+        "embedded_texts": 0,
+        "raw": None,
+    }
+    started = time.perf_counter()
+    if variant == "metadata":
+        sources = session_allowlist
+        if sources is None:
+            access = MemoryAccess.resolve(
+                Path(root), operation="list", owner_scope=owner_scope
+            )
+            sources = list(access.sources) if access is not None else []
+        listed: dict[str, Any] = dict(
+            tool.run(
+                root,
+                operation="list",
+                subject=subject,
+                session_allowlist=sources,
+                freshness_filter="fresh",
+                owner_filter=(
+                    f"{owner_scope.kind}:{owner_scope.id}" if owner_scope else None
+                ),
+                permissions=permissions,
+                **owner_kwargs,
+            )
+        )
+        raw = listed.get("raw")
+        entries = sorted(
+            (e for e in (raw if isinstance(raw, list) else []) if isinstance(e, dict)),
+            key=lambda entry: str(entry.get("id")),
+        )[:8]
+        out.update(
+            ids=[str(entry.get("id")) for entry in entries],
+            excerpts=[_excerpt(entry.get("content") or {}) for entry in entries],
+            retrieval="metadata",
+            raw=raw,
+        )
+    else:
+        request: dict[str, Any] = {
+            "view": "compact",
+            "limit": 8,
+            "max_tokens": _VARIANT_MAX_TOKENS.get(variant, 2048),
+            "max_bytes": 8192,
+        }
+        if variant == "hybrid":
+            request.update(request_override or {"retrieval": "hybrid"})
+        recalled: dict[str, Any] = dict(
+            tool.run(
+                root,
+                operation="recall",
+                subject=subject,
+                query=query,
+                session_allowlist=session_allowlist,
+                request=request,
+                permissions=permissions,
+                **owner_kwargs,
+            )
+        )
+        recalled_raw: dict[str, Any] = recalled.get("raw") or {}
+        data: dict[str, Any] = recalled_raw.get("data") or {}
+        items = [i for i in data.get("items") or [] if isinstance(i, dict)]
+        excerpts = [str(item.get("excerpt", "")) for item in items]
+        if variant == "linked" and items:
+            first = items[0]
+            related: dict[str, Any] = dict(
+                tool.run(
+                    root,
+                    operation="related",
+                    session_allowlist=session_allowlist,
+                    request={"id": first.get("id"), "version": first.get("version", 1)},
+                    **owner_kwargs,
+                )
+            )
+            related_raw: dict[str, Any] = related.get("raw") or {}
+            related_data: dict[str, Any] = related_raw.get("data") or {}
+            excerpts.extend(
+                str(item.get("excerpt", ""))
+                for item in related_data.get("items") or []
+                if isinstance(item, dict)
+            )
+        out.update(
+            ids=[str(item.get("id")) for item in items],
+            excerpts=excerpts,
+            retrieval=data.get("retrieval", "lexical"),
+            embedding_fallback_code=data.get("embedding_fallback_code"),
+            page_tokens=int(data.get("tokens") or 0),
+            embedded_texts=int(data.get("embedded_texts") or 0),
+            raw=recalled_raw,
+        )
+    out["retrieval_ms"] = (time.perf_counter() - started) * 1000.0
+    return out
 
 
 def _variant_hypothesis(
@@ -179,66 +394,51 @@ def _variant_hypothesis(
     tool: MemoryTool,
     permissions: ExecutionPermissions,
     sanitized: dict[str, Any],
+    *,
+    query: str | None = None,
+    subject: MemorySubject = "episodic",
+    owner_scope: OwnerScope | None = None,
+    session_allowlist: list[str] | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> str:
-    """Produces one dataset case's hypothesis under a named memory variant.
+    """Produces one dataset case's hypothesis under a named memory variant: the
+    returned items' excerpts (a compact item carries `excerpt`, never `content`).
     Never touches `sanitized`'s stripped gold fields (already removed by
     `strip_longmemeval_gold`). `"none"` never calls the memory tool at all;
     `"hybrid"` requests `retrieval=hybrid` and honestly reports whatever
-    `MemoryTool` itself returns (a real lexical fallback when no embedding
-    engine is configured, per MC12 -- never a fabricated hybrid result)."""
+    `MemoryTool` itself returns (a labelled lexical fallback when no embedding
+    engine answers, per MC12/72-T08 -- never a fabricated hybrid result).
+
+    72-T08: a caller passes the case's own `query` and grant (`owner_scope`, or an
+    explicit `session_allowlist`); without them the LongMemEval form derives the query
+    from the question's last word and the allowlist from the haystack sessions."""
     if variant == "none":
         return ""
-    session_ids = [
-        s.get("session_id", "") for s in sanitized.get("haystack_sessions", [])
-    ]
-    query_terms = [w.strip("?.,!") for w in sanitized.get("question", "").split()]
-    query = query_terms[-1] if query_terms else ""
     if variant == "raw":
         return " ".join(
             str(turn.get("content", ""))
             for session in sanitized.get("haystack_sessions", [])
             for turn in session.get("turns", [])
         )
-    request: dict[str, Any] = {
-        "view": "compact",
-        "max_tokens": _VARIANT_MAX_TOKENS.get(variant, 2048),
-    }
-    if variant == "hybrid":
-        request["retrieval"] = "hybrid"
-    recalled: dict[str, Any] = dict(
-        tool.run(
-            root,
-            operation="recall",
-            subject="episodic",
-            query=query,
-            session_allowlist=session_ids,
-            request=request,
-            permissions=permissions,
-        )
+    if query is None:
+        query_terms = [w.strip("?.,!") for w in sanitized.get("question", "").split()]
+        query = query_terms[-1] if query_terms else ""
+    if session_allowlist is None and owner_scope is None:
+        session_allowlist = [
+            s.get("session_id", "") for s in sanitized.get("haystack_sessions", [])
+        ]
+    retrieved = _variant_retrieval(
+        variant,
+        root,
+        tool,
+        permissions,
+        query=query,
+        subject=subject,
+        owner_scope=owner_scope,
+        session_allowlist=session_allowlist,
+        request_override=request_override,
     )
-    recalled_raw: dict[str, Any] = recalled.get("raw") or {}
-    recalled_data: dict[str, Any] = recalled_raw.get("data") or {}
-    items: list[dict[str, Any]] = recalled_data.get("items") or []
-    texts = [str(item.get("content", "")) for item in items if isinstance(item, dict)]
-    if variant == "linked" and items:
-        first = items[0]
-        related: dict[str, Any] = dict(
-            tool.run(
-                root,
-                operation="related",
-                session_allowlist=session_ids,
-                request={"id": first.get("id"), "version": first.get("version", 1)},
-            )
-        )
-        related_raw: dict[str, Any] = related.get("raw") or {}
-        related_data: dict[str, Any] = related_raw.get("data") or {}
-        related_items: list[dict[str, Any]] = related_data.get("related") or []
-        texts.extend(
-            str(item.get("content", ""))
-            for item in related_items
-            if isinstance(item, dict)
-        )
-    return " ".join(texts)
+    return " ".join(retrieved["excerpts"])
 
 
 _BASELINE_VARIANT = "none"
@@ -286,15 +486,1195 @@ def _run_variant_cases(
     ]
 
 
+_COMPONENT_BLOCKER = (
+    "real agent decision-making (choosing the next tool call / producing "
+    "a hypothesis or patch from a live model) was not exercised: no live "
+    "provider credential or --allow-live-route grant was supplied in this "
+    "environment. Dataset ingestion, gold-stripping, hash verification, "
+    "namespace reset and every named episode's real MemoryTool/verify_attempt/"
+    "handoff mechanics ran for real; only the live-model reasoning step is "
+    "blocked, matching MC12's precedent for a missing external engine."
+)
+_EVALUATOR_VERSION = 1
+_VERIFY_REQUEST_KEYS = frozenset({"attempt_id", "behavior_ids", "contract", "patch"})
+_VERIFY_CONTRACT_KEYS = frozenset(
+    {
+        "base_commit",
+        "base_tree_digest",
+        "patch_content_digest",
+        "required_commands",
+        "config_digest",
+        "review_class",
+    }
+)
+_COMMAND_KEYS = frozenset({"command", "expected_exit_code"})
+_EPISODE_RESPONSE_SCHEMA = {
+    "action": {
+        "kind": "action",
+        "operation": "<one of permitted_actions except submit>",
+        "kwargs": "<object with keys from operations[operation].kwargs>",
+    },
+    "submit": {"kind": "submit", "final": "<any JSON value>"},
+}
+_ANSWER_RESPONSE_SCHEMA = {"kind": "answer", "text": "<string>"}
+
+
+def _check_decision_flags(args: argparse.Namespace) -> None:
+    """B2 steps 2-4: decision flag combinations, before any filesystem effect."""
+    if args.decision_route is not None and args.decision_mode == "component":
+        raise FixtureError(
+            "decision_route_requires_live_mode: --decision-route needs "
+            "--decision-mode live"
+        )
+    if args.decision_mode == "live" and args.decision_route is None:
+        raise FixtureError(
+            "live_requires_decision_route: --decision-mode live needs --decision-route"
+        )
+    if args.decision_mode == "live" and args.task_manifest is None:
+        raise FixtureError(
+            "live_requires_task_manifest: --decision-mode live needs --task-manifest"
+        )
+
+
+def _sha256_json(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def _cases_sha256(cases: list[dict[str, Any]]) -> str:
+    return _sha256_json(sorted(cases, key=lambda case: case["id"]))
+
+
+def _parse_seeds(raw: str) -> list[int]:
+    return [int(s) for s in raw.split(",") if s.strip()] or [0]
+
+
+def _check_output_guard(
+    output: Path, cases_sha256: str, embedding: dict[str, Any] | None
+) -> None:
+    """B9: an existing report under --output must come from the same frozen
+    manifest (cases digest and embedding identity); nothing is written."""
+    report_path = Path(output) / "memory-suite-report.json"
+    if not os.path.lexists(report_path):
+        return
+    try:
+        existing = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        existing = None
+    task_manifest = (
+        existing.get("task_manifest") if isinstance(existing, dict) else None
+    )
+    if (
+        not isinstance(task_manifest, dict)
+        or task_manifest.get("cases_sha256") != cases_sha256
+        or task_manifest.get("phase72_embedding") != embedding
+    ):
+        raise FixtureError(
+            f"output_manifest_mismatch: {report_path} was written for a different "
+            "task manifest"
+        )
+
+
+def _check_editable_path(root: Path, rel: str, case_id: str) -> None:
+    """B10: an editable path is a contained regular file whose last component
+    exists with exactly this spelling."""
+    try:
+        candidate = PhysicalRoot(root).open_contained(rel)
+        mode = os.lstat(candidate).st_mode
+        listing = os.listdir(candidate.parent)
+    except (ContainmentError, OSError, ValueError):
+        raise FixtureError(
+            f"unsafe_path: case {case_id} editable path {rel!r}"
+        ) from None
+    if not stat.S_ISREG(mode) or candidate.name not in listing:
+        raise FixtureError(f"unsafe_path: case {case_id} editable path {rel!r}")
+
+
+@dataclass
+class _Phase72Data:
+    """72-T08: the frozen query records by id, the corpus records and the hybrid arm's
+    request override (`None` for a manifest without `phase72_embedding`)."""
+
+    queries: dict[str, dict[str, Any]]
+    corpus: list[dict[str, Any]]
+    override: dict[str, str] | None
+
+
+def _is_phase72(case: dict[str, Any]) -> bool:
+    return (
+        case["kind"] == "dataset_answer"
+        and case["inputs"].get("section") == _P72_QUERIES_SECTION
+    )
+
+
+def _load_phase72(manifest: dict[str, Any]) -> _Phase72Data:
+    _queries_manifest, queries = load_dataset_section(_P72_QUERIES_SECTION)
+    _corpus_manifest, corpus = load_dataset_section(_P72_CORPUS_SECTION)
+    embedding = manifest.get("phase72_embedding")
+    override = (
+        {
+            "retrieval": "hybrid",
+            "embedding_endpoint": embedding["endpoint"],
+            "embedding_model": embedding["model"],
+            "embedding_model_digest": embedding["model_digest"],
+        }
+        if isinstance(embedding, dict)
+        else None
+    )
+    return _Phase72Data(
+        queries={str(q["question_id"]): q for q in queries},
+        corpus=list(corpus),
+        override=override,
+    )
+
+
+def _verify_fixtures(
+    cases: list[dict[str, Any]],
+    verify_root: Path,
+    records_by_id: dict[str, dict[str, Any]],
+    phase72: _Phase72Data | None = None,
+) -> None:
+    """B10: builds every case's fixture once under `<workspace>/verify/<index>`
+    and checks its frozen revision, task text and editable paths before any
+    route preflight or provider call."""
+    # The Phase 72 fixtures (the T08 subject, seeded in-process) are built first; every
+    # case is still checked before any route preflight or provider call.
+    ordered = sorted(enumerate(cases), key=lambda item: not _is_phase72(item[1]))
+    for index, case in ordered:
+        root = verify_root / str(index)
+        root.mkdir(parents=True)
+        task: str | None = None
+        revision: str | None
+        if case["kind"] == "episode":
+            task, _scripted = EPISODE_BUILDERS[case["inputs"]["builder"]](root)
+            revision = fixture_revision(root)
+        elif phase72 is not None and _is_phase72(case):
+            seen72: list[str] = []
+
+            def capture72(
+                case_root: Path,
+                _tool: MemoryTool,
+                _perms: ExecutionPermissions,
+                _record: dict[str, Any],
+                _seen: list[str] = seen72,
+            ) -> dict[str, Any]:
+                _seen.append(fixture_revision(case_root))
+                return {}
+
+            memory_datasets.run_phase72_case(
+                phase72.queries[case["inputs"]["record_id"]],
+                phase72.corpus,
+                decide_fn=capture72,
+                max_total_tokens=None,
+                workspace_root=root,
+            )
+            revision = seen72[0] if seen72 else None
+        else:
+            seen: list[str] = []
+
+            def capture(
+                case_root: Path,
+                _tool: MemoryTool,
+                _perms: ExecutionPermissions,
+                _sanitized: dict[str, Any],
+                _seen: list[str] = seen,
+            ) -> str:
+                _seen.append(fixture_revision(case_root))
+                return ""
+
+            run_longmemeval_case(
+                records_by_id[case["inputs"]["record_id"]],
+                decide_fn=capture,
+                max_total_tokens=None,
+                workspace_root=root,
+            )
+            revision = seen[0] if seen else None
+        if revision != case["fixture_revision"]:
+            raise FixtureError(
+                f"fixture_revision_mismatch: case {case['id']} fixture is {revision}"
+            )
+        if task is not None and task != case["inputs"]["task"]:
+            raise FixtureError(f"task_mismatch: case {case['id']} builder task changed")
+        for rel in case["editable_paths"]:
+            _check_editable_path(root, rel, case["id"])
+
+
+def _expand_commands(commands: Any) -> list[dict[str, Any]] | None:
+    """D13a: `{python}` expansion of a required-commands list; `None` when an
+    entry is not exactly `{command, expected_exit_code}`."""
+    if not isinstance(commands, list):
+        return None
+    expanded: list[dict[str, Any]] = []
+    for entry in commands:
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != _COMMAND_KEYS
+            or not isinstance(entry["command"], list)
+            or not all(isinstance(part, str) for part in entry["command"])
+            or type(entry["expected_exit_code"]) is not int
+        ):
+            return None
+        expanded.append(
+            {
+                "command": list(expand_python_token(entry["command"])),
+                "expected_exit_code": entry["expected_exit_code"],
+            }
+        )
+    return expanded
+
+
+def _validate_episode_action(
+    case: dict[str, Any], decision: dict[str, Any]
+) -> tuple[str | None, EpisodeAction | None]:
+    """G8-A: a model action is checked against the fixture-owned case before
+    any tool call; a refused action never reaches `MemoryTool.run`."""
+    operation = decision["operation"]
+    kwargs = decision["kwargs"]
+    offered = set(case["permitted_actions"]) - {"submit"}
+    if not isinstance(operation, str) or operation not in offered:
+        return "action_not_permitted", None
+    if not isinstance(kwargs, dict) or set(kwargs) - set(
+        EPISODE_OPERATION_KWARGS[operation]
+    ):
+        return "unknown_decision_field", None
+    kwargs = copy.deepcopy(kwargs)
+    if operation == "verify_attempt":
+        request = kwargs.get("request")
+        if not isinstance(request, dict) or set(request) - _VERIFY_REQUEST_KEYS:
+            return "unknown_decision_field", None
+        contract = request.get("contract")
+        if not isinstance(contract, dict) or set(contract) - _VERIFY_CONTRACT_KEYS:
+            return "unknown_decision_field", None
+        patch = request.get("patch")
+        paths = patch_target_paths(patch) if isinstance(patch, str) else None
+        if paths is None or any(path not in case["editable_paths"] for path in paths):
+            return "edit_outside_editable_paths", None
+        expanded = _expand_commands(contract.get("required_commands"))
+        if expanded is None or expanded != _expand_commands(
+            case["acceptance"]["required_commands"]
+        ):
+            return "contract_not_fixture_owned", None
+        contract["required_commands"] = expanded
+    elif operation == "handoff" and case["acceptance"]["handoff"] is not None:
+        request = kwargs.get("request")
+        if isinstance(request, dict):
+            source = case["acceptance"]["handoff"]["source"]
+            if request.setdefault("receiver_namespace", source) != source:
+                return "action_not_permitted", None
+    return None, EpisodeAction(operation=operation, kwargs=kwargs)
+
+
+@dataclass
+class _LiveContext:
+    route_id: str
+    decision_route: Any
+    workspace_root: Path
+    route_overhead_tokens: int
+    provider_env: Mapping[str, str] | None = None
+
+
+@dataclass
+class _CaseState:
+    reason: str | None = None
+    steps: int = 0
+    submitted: bool = False
+    answer: str | None = None
+    local_returned_tokens: int = 0
+    invocations: list[dict[str, Any]] = field(default_factory=list)
+    provider_ids: set[str] = field(default_factory=set)
+
+
+def _invoke_decision(
+    live: _LiveContext,
+    state: _CaseState,
+    request: dict[str, Any],
+    *,
+    kind: str,
+    root: Path,
+    budget: DecisionBudget,
+    timeout_s: float,
+    step: int,
+) -> DecisionResult:
+    """One live decision call (B12), recorded as an invocation (G8-O)."""
+    result = run_memory_decision(
+        request,
+        decision_route=live.decision_route,
+        kind=kind,
+        root=root,
+        workspace_root=live.workspace_root,
+        budget=budget,
+        timeout_s=timeout_s,
+        env=live.provider_env,
+    )
+    state.invocations.append(
+        invocation_record(result, step=step, route_id=live.route_id)
+    )
+    state.provider_ids.update(result.provider_ids)
+    return result
+
+
+def _remaining_tokens(budget: DecisionBudget) -> int:
+    return (
+        budget.max_total_tokens
+        - budget.model_tokens
+        - budget.route_overhead_tokens
+        - budget.output_reserve_tokens
+    )
+
+
+def _history_result(result: Any) -> Any:
+    """72-T08: a decision request's history entry. The `metadata` arm's legacy `list`
+    answers with whole rows (a LongMemEval turn carries its own `role` key); the request
+    carries each row's id and excerpt, the same text `variant_context` holds."""
+    raw = result.get("raw") if isinstance(result, dict) else None
+    if not isinstance(raw, list):
+        return result
+    return {
+        **result,
+        "raw": [
+            {"id": entry.get("id"), "excerpt": _excerpt(entry.get("content") or {})}
+            for entry in raw
+            if isinstance(entry, dict)
+        ],
+    }
+
+
+def _run_dataset_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    record: dict[str, Any],
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> bool:
+    """A dataset_answer case: ingestion by `run_longmemeval_case`, then one
+    decision (live) or the variant hypothesis (component). Returns whether
+    the harness completed; quality is the separate evaluator verdict."""
+    _sanitized, gold = strip_longmemeval_gold(record)
+    permissions = ExecutionPermissions(**{grant: True for grant in case["grants"]})
+    timeout_s = float(case["budget"]["timeout_s"])
+
+    def decide(
+        root: Path,
+        tool: MemoryTool,
+        _perms: ExecutionPermissions,
+        sanitized: dict[str, Any],
+    ) -> str:
+        state.steps += 1
+        if fixture_revision(root) != case["fixture_revision"]:
+            state.reason = "fixture_revision_mismatch"
+            return ""
+        counting = cast(CountingMemoryTool, tool)
+        before, before_tokens = len(counting.results), counting.tokens
+        context = _variant_hypothesis(args.variant, root, tool, permissions, sanitized)
+        state.local_returned_tokens += counting.tokens - before_tokens
+        if live is None or budget is None:
+            state.answer = context
+            return context
+        request = {
+            "schema_version": 1,
+            "decision_kind": "answer",
+            "case_id": case["id"],
+            "task": sanitized["question"],
+            "question_date": sanitized.get("question_date"),
+            "step": 0,
+            "variant": args.variant,
+            "history": [
+                {"operation": operation, "result": _history_result(result)}
+                for operation, result in counting.results[before:]
+            ],
+            "variant_context": context,
+            "remaining_budget_tokens": _remaining_tokens(budget),
+            "permitted_actions": ["answer"],
+            "response_schema": dict(_ANSWER_RESPONSE_SCHEMA),
+        }
+        result = _invoke_decision(
+            live,
+            state,
+            request,
+            kind="dataset_answer",
+            root=root,
+            budget=budget,
+            timeout_s=timeout_s,
+            step=0,
+        )
+        if result.reason is not None or result.decision is None:
+            state.reason = result.reason or "malformed_decision_json"
+            state.answer = result.text
+            return ""
+        state.answer = str(result.decision["text"])
+        return state.answer
+
+    outcome = run_longmemeval_case(
+        record,
+        decide_fn=decide,
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+        workspace_root=run_dir,
+    )
+    if state.reason is None and outcome.outcome != "scored":
+        state.reason = outcome.outcome
+    harness_completed = state.reason is None and state.steps > 0
+    if state.reason is None and not normalized_contains(
+        state.answer or "", str(gold.get("answer", ""))
+    ):
+        state.reason = "evaluator_failed"
+    return harness_completed
+
+
+def _run_phase72_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    phase72: _Phase72Data,
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> tuple[bool, DatasetCaseResult]:
+    """72-T08: a `p72-` dataset_answer case. The arm's retrieval runs in the seeded
+    fresh root with the case's own query and the reader's grant; the decision (live) or
+    the recalled excerpts (component) is scored against the query record's gold answer
+    here, after the decision. Gold keys, `split` and the corpus `role` never enter the
+    decision request."""
+    query_record = phase72.queries[case["inputs"]["record_id"]]
+    gold_answer = str(query_record.get("answer", ""))
+    timeout_s = float(case["budget"]["timeout_s"])
+
+    def decide(
+        root: Path,
+        tool: MemoryTool,
+        perms: ExecutionPermissions,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        state.steps += 1
+        measured: dict[str, Any] = {
+            "returned_ids": [],
+            "retrieval": None,
+            "embedding_fallback_code": None,
+            "override_skipped": None,
+            "page_tokens": 0,
+            "retrieval_ms": 0.0,
+            "decision_ms": 0.0,
+            "embedded_texts": 0,
+            "passed": False,
+            "model_tokens": 0,
+            "local_returned_tokens": 0,
+        }
+        if fixture_revision(root) != case["fixture_revision"]:
+            state.reason = "fixture_revision_mismatch"
+            return measured
+        retrieved = _variant_retrieval(
+            args.variant,
+            root,
+            tool,
+            perms,
+            query=case["inputs"]["query"],
+            subject="domain_knowledge",
+            owner_scope=_P72_READER,
+            session_allowlist=None,
+            request_override=phase72.override if args.variant == "hybrid" else None,
+        )
+        state.local_returned_tokens += int(retrieved["page_tokens"])
+        measured.update(
+            returned_ids=retrieved["ids"],
+            retrieval=retrieved["retrieval"],
+            embedding_fallback_code=retrieved["embedding_fallback_code"],
+            override_skipped=retrieved["override_skipped"],
+            page_tokens=retrieved["page_tokens"],
+            retrieval_ms=retrieved["retrieval_ms"],
+            embedded_texts=retrieved["embedded_texts"],
+            local_returned_tokens=int(retrieved["page_tokens"]),
+        )
+        context = " ".join(retrieved["excerpts"])
+        text = context
+        if live is not None and budget is not None:
+            request = {
+                "schema_version": 1,
+                "decision_kind": "answer",
+                "case_id": case["id"],
+                "task": record["question"],
+                "step": 0,
+                "variant": args.variant,
+                "history": [],
+                "variant_context": context,
+                "remaining_budget_tokens": _remaining_tokens(budget),
+                "permitted_actions": ["answer"],
+                "response_schema": dict(_ANSWER_RESPONSE_SCHEMA),
+            }
+            started = time.perf_counter()
+            result = _invoke_decision(
+                live,
+                state,
+                request,
+                kind="dataset_answer",
+                root=root,
+                budget=budget,
+                timeout_s=timeout_s,
+                step=0,
+            )
+            measured["decision_ms"] = (time.perf_counter() - started) * 1000.0
+            measured["model_tokens"] = budget.model_tokens
+            if result.reason is not None or result.decision is None:
+                state.reason = result.reason or "malformed_decision_json"
+                text = ""
+            else:
+                text = str(result.decision["text"])
+        state.answer = text
+        measured["passed"] = state.reason is None and normalized_contains(
+            text, gold_answer
+        )
+        return measured
+
+    case_started = time.perf_counter()
+    outcome = memory_datasets.run_phase72_case(
+        query_record,
+        phase72.corpus,
+        decide_fn=decide,
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+        workspace_root=run_dir,
+    )
+    if outcome.phase72 is not None:
+        # The case's own wall-clock (seeding, retrieval and decision): the PR4 cost per
+        # correct answer is measured on it, not on the retrieval call alone.
+        outcome.phase72["case_ms"] = (time.perf_counter() - case_started) * 1000.0
+    if state.reason is None and outcome.outcome != "scored":
+        state.reason = outcome.outcome
+    harness_completed = state.reason is None and state.steps > 0
+    if state.reason is None and not (outcome.phase72 or {}).get("passed"):
+        state.reason = "evaluator_failed"
+    return harness_completed, outcome
+
+
+def _run_episode_case(
+    case: dict[str, Any],
+    run_dir: Path,
+    state: _CaseState,
+    live: _LiveContext | None,
+    budget: DecisionBudget | None,
+    effective: int,
+) -> tuple[bool, list[dict[str, Any]] | None]:
+    """An episode case: rebuild the fixture, re-check its revision, then run
+    the scripted (component) or live decider through `run_memory_episode`."""
+    root = run_dir / "fixture"
+    root.mkdir()
+    _task, scripted = EPISODE_BUILDERS[case["inputs"]["builder"]](root)
+    if fixture_revision(root) != case["fixture_revision"]:
+        state.reason = "fixture_revision_mismatch"
+        return False, None
+    permissions = ExecutionPermissions(**{grant: True for grant in case["grants"]})
+    timeout_s = float(case["budget"]["timeout_s"])
+    acceptance = case["acceptance"]
+
+    def decide_component(observation: EpisodeObservation) -> EpisodeAction:
+        state.steps += 1
+        action = scripted(observation)
+        if action.operation == "submit":
+            state.submitted = True
+        return action
+
+    def decide_live(observation: EpisodeObservation) -> EpisodeAction:
+        if live is None or budget is None:
+            raise FixtureError("decision_route_unavailable: live decider without route")
+        state.steps += 1
+        request = {
+            "schema_version": 1,
+            "decision_kind": "episode",
+            "case_id": case["id"],
+            "task": case["inputs"]["task"],
+            "step": observation.step_index,
+            "history": list(observation.history),
+            "remaining_budget_tokens": _remaining_tokens(budget),
+            "permitted_actions": case["permitted_actions"],
+            "editable_paths": case["editable_paths"],
+            "acceptance": {
+                "behavior_ids": acceptance["behavior_ids"],
+                "required_commands": acceptance["required_commands"],
+                "handoff": acceptance["handoff"],
+            },
+            "operations": {
+                op: OPERATION_SCHEMAS[op]
+                for op in case["permitted_actions"]
+                if op != "submit"
+            },
+            "response_schema": copy.deepcopy(_EPISODE_RESPONSE_SCHEMA),
+        }
+        result = _invoke_decision(
+            live,
+            state,
+            request,
+            kind="episode",
+            root=root,
+            budget=budget,
+            timeout_s=timeout_s,
+            step=observation.step_index,
+        )
+        decision = result.decision
+        if result.reason is not None or decision is None:
+            state.reason = result.reason or "malformed_decision_json"
+            return EpisodeAction(operation="submit", final=None)
+        if decision["kind"] == "submit":
+            state.submitted = True
+            return EpisodeAction(operation="submit", final=decision.get("final"))
+        reason, action = _validate_episode_action(case, decision)
+        if reason is not None or action is None:
+            state.reason = reason or "malformed_decision_json"
+            return EpisodeAction(operation="submit", final=None)
+        return action
+
+    result = run_memory_episode(
+        case["id"],
+        case["inputs"]["task"],
+        decide_live if live is not None else decide_component,
+        root=root,
+        permissions=permissions,
+        max_steps=case["budget"]["max_steps"],
+        max_total_tokens=None if live is not None else effective,
+        timeout_seconds=timeout_s,
+    )
+    state.local_returned_tokens = result.total_tokens
+    if state.reason is None:
+        if result.timed_out:
+            state.reason = "timeout"
+        elif result.budget_exhausted:
+            state.reason = "budget_exhausted"
+        elif not state.submitted:
+            state.reason = "max_steps_exhausted"
+    harness_completed = state.reason is None
+    bound_refs: list[dict[str, Any]] | None = None
+    if state.reason is None:
+        if acceptance["evaluator"] == "verifier_receipt_completed":
+            ok = verifier_receipt_completed(result.events, acceptance)
+        else:
+            ok, bound_refs = receiver_readback_acknowledged(
+                result.events, acceptance, root
+            )
+        if not ok:
+            state.reason = "evaluator_failed"
+    return harness_completed, bound_refs
+
+
+def _run_manifest_case(
+    args: argparse.Namespace,
+    case: dict[str, Any],
+    seed: int,
+    run_dir: Path,
+    records_by_id: dict[str, dict[str, Any]],
+    live: _LiveContext | None,
+    provider_ids: set[str],
+    phase72: _Phase72Data | None = None,
+    phase72_results: dict[int, list[DatasetCaseResult]] | None = None,
+) -> dict[str, Any]:
+    """One case x seed (B17, B20): its own budget, decisions and evaluator."""
+    effective = min(args.max_total_tokens, case["budget"]["max_total_tokens"])
+    reserve = case["budget"]["output_reserve_tokens"]
+    budget = (
+        DecisionBudget(effective, reserve, live.route_overhead_tokens)
+        if live is not None
+        else None
+    )
+    state = _CaseState()
+    run_dir.mkdir(parents=True)
+    bound_refs: list[dict[str, Any]] | None = None
+    phase72_result: DatasetCaseResult | None = None
+    if phase72 is not None and _is_phase72(case):
+        harness_completed, phase72_result = _run_phase72_case(
+            args, case, phase72, run_dir, state, live, budget, effective
+        )
+        if phase72_results is not None:
+            phase72_results.setdefault(seed, []).append(phase72_result)
+    elif case["kind"] == "dataset_answer":
+        harness_completed = _run_dataset_case(
+            args,
+            case,
+            records_by_id[case["inputs"]["record_id"]],
+            run_dir,
+            state,
+            live,
+            budget,
+            effective,
+        )
+    else:
+        harness_completed, bound_refs = _run_episode_case(
+            case, run_dir, state, live, budget, effective
+        )
+    provider_ids.update(state.provider_ids)
+    record = {
+        "case_id": case["id"],
+        "seed": seed,
+        "kind": case["kind"],
+        "family": case["family"],
+        "variant": case["variant"],
+        "fixture_revision": case["fixture_revision"],
+        "passed": state.reason is None,
+        "reason": state.reason,
+        "harness_completed": harness_completed,
+        "evaluator": case["acceptance"]["evaluator"],
+        "evaluator_version": _EVALUATOR_VERSION,
+        "budget": {
+            "max_total_tokens": effective,
+            "output_reserve_tokens": reserve,
+            "model_tokens": None if budget is None else budget.model_tokens,
+            "local_returned_tokens": state.local_returned_tokens,
+        },
+        "steps": state.steps,
+        "invocations": state.invocations,
+        "answer": state.answer if case["kind"] == "dataset_answer" else None,
+        "bound_refs": bound_refs,
+    }
+    if phase72_result is not None:
+        record["phase72"] = phase72_result.phase72
+    return record
+
+
+def _aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
+    failed: dict[str, int] = {}
+    for record in records:
+        if not record["passed"]:
+            failed[record["reason"]] = failed.get(record["reason"], 0) + 1
+    return {
+        "total": len(records),
+        "passed": sum(1 for record in records if record["passed"]),
+        "failed_by_reason": failed,
+    }
+
+
+def _preflight_provider_ids(preflight: Any) -> list[str]:
+    if isinstance(preflight, DecisionResult):
+        return list(preflight.provider_ids)
+    if isinstance(preflight, dict):
+        ids = preflight.get("provider_ids") or []
+        return [value for value in ids if isinstance(value, str)]
+    return []
+
+
+def _execute_manifest(
+    args: argparse.Namespace,
+    manifest: dict[str, Any],
+    cases_sha256: str,
+    decision_route: Any,
+    workspace_root: Path,
+    provider_env: Mapping[str, str] | None = None,
+) -> int:
+    cases: list[dict[str, Any]] = manifest["cases"]
+    seeds = _parse_seeds(args.seeds)
+    is_live = decision_route is not None
+    records_by_id: dict[str, dict[str, Any]] = {}
+    if any(case["kind"] == "dataset_answer" for case in cases):
+        _section, records = load_dataset_section("longmemeval")
+        records_by_id = {str(r.get("question_id")): r for r in records}
+    phase72 = _load_phase72(manifest) if any(_is_phase72(c) for c in cases) else None
+    _verify_fixtures(cases, workspace_root / "verify", records_by_id, phase72)
+
+    blockers: list[str] = []
+    route_report: dict[str, Any] | None = None
+    redaction_patterns: list[str] = []
+    provider_ids: set[str] = set()
+    live: _LiveContext | None = None
+    available = True
+    if is_live:
+        redaction_patterns = list(decision_route.redaction_patterns)
+        preflight = preflight_decision_route(
+            decision_route,
+            workspace_root=workspace_root,
+            case_budgets=[
+                (
+                    min(args.max_total_tokens, case["budget"]["max_total_tokens"]),
+                    case["budget"]["output_reserve_tokens"],
+                )
+                for case in cases
+            ],
+            env=provider_env,
+        )
+        provider_ids.update(_preflight_provider_ids(preflight.get("preflight")))
+        route_report = {
+            "route_id": args.decision_route,
+            "format": decision_route.format,
+            "executable": str(decision_route.executable),
+            "version": preflight.get("version"),
+            "status": preflight.get("status"),
+            "reason": preflight.get("reason"),
+            "route_overhead_tokens": preflight.get("route_overhead_tokens"),
+            "instruction_files": preflight.get("instruction_files"),
+            "preflight": preflight.get("preflight"),
+        }
+        if preflight.get("status") == "unavailable":
+            available = False
+            blockers.append(
+                f"decision route {args.decision_route} unavailable: "
+                f"{preflight.get('reason')}"
+            )
+        else:
+            live = _LiveContext(
+                route_id=args.decision_route,
+                decision_route=decision_route,
+                workspace_root=workspace_root,
+                route_overhead_tokens=int(preflight["route_overhead_tokens"]),
+                provider_env=provider_env,
+            )
+    else:
+        blockers.append(_COMPONENT_BLOCKER)
+
+    case_results: list[dict[str, Any]] = []
+    phase72_results: dict[int, list[DatasetCaseResult]] = {}
+    if available:
+        for index, case in enumerate(cases):
+            for seed in seeds:
+                case_results.append(
+                    _run_manifest_case(
+                        args,
+                        case,
+                        seed,
+                        workspace_root / "runs" / f"{index}-{seed}",
+                        records_by_id,
+                        live,
+                        provider_ids,
+                        phase72,
+                        phase72_results,
+                    )
+                )
+
+    payload = {
+        "decision_mode": args.decision_mode,
+        "variant": args.variant,
+        "seeds": seeds,
+        "seed_semantics": "repetition_labels" if is_live else "bootstrap_seed",
+        "max_total_tokens": args.max_total_tokens,
+        "python": {"executable": sys.executable, "version": sys.version},
+        "task_manifest": {
+            "path": str(args.task_manifest),
+            "schema_version": manifest["schema_version"],
+            "cases_sha256": cases_sha256,
+            "baseline_cases_sha256": BASELINE_CASES_SHA256,
+            "phase72_cases_sha256": manifest.get("phase72_cases_sha256"),
+            "phase72_embedding": manifest.get("phase72_embedding"),
+            "case_count": len(cases),
+            "declared": manifest["declared"],
+            "phase75_family_coverage": manifest["phase75_family_coverage"],
+        },
+        "decision_route": route_report,
+        "case_results": case_results,
+        "aggregate": _aggregate(case_results),
+        "usage_accounting": {
+            "budget_basis": "provider_model_tokens" if is_live else "local_cl100k"
+        },
+        "blockers": blockers,
+    }
+    # 72-T08: the verdict rows (the provider of a row is its route directory,
+    # `<eval root>/<arm>/<route>`) and the R20 counts of the arm.
+    output = Path(args.output).resolve()
+    if phase72 is not None:
+        verdict_rows = (
+            _phase72_rows(
+                phase72_results, manifest, arm=args.variant, provider=output.name
+            )
+            if available
+            else [_unavailable_row(output.name, args.variant)]
+        )
+        payload["verdict_rows"] = verdict_rows
+        payload["phase72_summary"] = _phase72_summary(verdict_rows)
+    report_path = write_memory_suite_report(
+        args.output,
+        payload,
+        redaction_patterns=redaction_patterns,
+        provider_id_values=sorted(provider_ids),
+        home=None if provider_env is None else provider_env.get("HOME"),
+    )
+    if phase72 is not None and output.parent.name in HYBRID_ARMS:
+        write_hybrid_verdict(output.parent.parent)
+    sys.stdout.write(f"\nMemory suite report written to: {report_path}\n")
+    for blocker in blockers:
+        sys.stdout.write(f"BLOCKED (named): {blocker}\n")
+    return 0 if available else 1
+
+
+def _error_chain(err: BaseException | None) -> str:
+    parts: list[str] = []
+    seen: set[int] = set()
+    current = err
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current)
+        if text and text not in parts:
+            parts.append(text)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return " <- ".join(parts)
+
+
+def _raised_by_store_close(err: BaseException) -> bool:
+    """True when `err` was raised inside `TypedArtifactStore.close` (the
+    method currently bound on the store's class), wherever the caller was."""
+    tb = err.__traceback__
+    while tb is not None:
+        frame = tb.tb_frame
+        owner = frame.f_locals.get("self")
+        if isinstance(owner, TypedArtifactStore) and frame.f_code is getattr(
+            type(owner).close, "__code__", None
+        ):
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _run_manifest_suite(args: argparse.Namespace) -> int:
+    """B2 steps 5-6, B6-B11, B17, B20: a strict-manifest memory run in
+    component or live decision mode. Every rejection happens before any
+    provider call and before --output is touched; the workspace is always
+    removed, and a cleanup failure never masks the primary error. 72-T08 (D14):
+    every in-process Rush call sees `HOME`, `XDG_DATA_HOME` and `LOCALAPPDATA` inside a
+    temporary root, restored on every exit."""
+    original_env = dict(os.environ)
+    isolated = tempfile.TemporaryDirectory(prefix="memory-suite-home-")
+    primary: Exception | None = None
+    code = 1
+    try:
+        for key in _ISOLATED_ENV_KEYS:
+            os.environ[key] = str(Path(isolated.name) / key.lower())
+        code = _run_isolated_manifest_suite(args, original_env)
+    except Exception as exc:  # noqa: BLE001 - re-raised after the cleanup below
+        primary = exc
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
+    try:
+        isolated.cleanup()
+    except OSError as cleanup_exc:
+        detail = _error_chain(cleanup_exc)
+        if primary is not None:
+            detail += f"; primary error: {_error_chain(primary)}"
+        raise FixtureError(f"cleanup_failed: {detail}") from None
+    if primary is not None:
+        raise primary
+    return code
+
+
+def _run_isolated_manifest_suite(
+    args: argparse.Namespace, provider_env: Mapping[str, str]
+) -> int:
+    """`_run_manifest_suite`'s body, run inside the isolated environment; every
+    provider subprocess takes `provider_env`, the caller's original one."""
+    manifest = load_task_manifest(args.task_manifest)
+    cases: list[dict[str, Any]] = manifest["cases"]
+    if (
+        args.variant == "hybrid"
+        and any(case["id"].startswith("p72-") for case in cases)
+        and "phase72_embedding" not in manifest
+    ):
+        raise FixtureError(
+            "hybrid_requires_phase72_embedding: --variant hybrid with p72- cases "
+            "needs phase72_embedding"
+        )
+    cases_sha256 = _cases_sha256(cases)
+    _check_output_guard(args.output, cases_sha256, manifest.get("phase72_embedding"))
+    decision_route = None
+    if args.decision_mode == "live":
+        decision_route = resolve_decision_route(
+            args.decision_route,
+            allow_live_route=args.allow_live_route,
+            provider_executable=args.provider_executable,
+        )
+    workspace = tempfile.TemporaryDirectory(prefix="memory-suite-")
+    primary: Exception | None = None
+    code = 1
+    try:
+        code = _execute_manifest(
+            args,
+            manifest,
+            cases_sha256,
+            decision_route,
+            Path(workspace.name).resolve(),
+            provider_env,
+        )
+    except Exception as exc:  # noqa: BLE001 - re-raised after workspace cleanup
+        primary = exc
+        if _raised_by_store_close(exc):
+            # a store/read-only view close failed inside a tool call; the
+            # chain keeps any primary error the close interrupted
+            primary = FixtureError(f"cleanup_failed: store close: {_error_chain(exc)}")
+    try:
+        workspace.cleanup()
+    except OSError as cleanup_exc:
+        detail = _error_chain(cleanup_exc)
+        if primary is not None:
+            detail += f"; primary error: {_error_chain(primary)}"
+        raise FixtureError(f"cleanup_failed: {detail}") from None
+    if primary is not None:
+        raise primary
+    return code
+
+
+def _manifest_document(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    document = json.loads(Path(path).read_text(encoding="utf-8"))
+    return document if isinstance(document, dict) else None
+
+
+def _recorded_embedding_differs(output: Path, embedding: Any) -> bool:
+    """72-T08: an `--output` already holding a report made under another frozen engine
+    identity is never overwritten (the paired arms must share one identity)."""
+    report = Path(output) / "memory-suite-report.json"
+    if not report.is_file():
+        return False
+    recorded = json.loads(report.read_text(encoding="utf-8"))
+    return (
+        not isinstance(recorded, dict) or recorded.get("phase72_embedding") != embedding
+    )
+
+
+def _phase72_rows(
+    results_by_seed: dict[int, list[DatasetCaseResult]],
+    manifest: dict[str, Any] | None,
+    *,
+    arm: str,
+    provider: str,
+) -> list[dict[str, Any]]:
+    """72-T08: one verdict row (`reporting.aggregate_hybrid_verdict`'s contract) per
+    `p72-` case and seed, scored against the frozen query and corpus sections. The gold
+    `relevant_ids`, `split` and corpus `role` are read here, after the decision."""
+    measured = [
+        (seed, result)
+        for seed, results in results_by_seed.items()
+        for result in results
+        if result.phase72 is not None
+    ]
+    if not measured:
+        return []
+    _queries_manifest, queries = load_dataset_section("phase72_hybrid_queries")
+    _corpus_manifest, corpus = load_dataset_section("phase72_hybrid_corpus")
+    query_by_id = {str(q["question_id"]): q for q in queries}
+    role_by_id = {str(c["id"]): c.get("role") for c in corpus}
+    case_by_id = {
+        str(case.get("id")): case
+        for case in (manifest or {}).get("cases") or []
+        if isinstance(case, dict)
+    }
+    rows: list[dict[str, Any]] = []
+    for seed, result in measured:
+        phase72 = result.phase72 or {}
+        query = query_by_id[result.case_id]
+        case = case_by_id.get(result.case_id, {})
+        relevant = [str(i) for i in query.get("relevant_ids") or []]
+        returned = [str(i) for i in phase72.get("returned_ids") or []]
+        rows.append(
+            {
+                "provider": provider,
+                "arm": arm,
+                "case_id": result.case_id,
+                "seed": seed,
+                "fixture_revision": case.get("fixture_revision"),
+                "grants": case.get("grants"),
+                "budgets": case.get("budget"),
+                "split": query.get("split"),
+                "retrieval_required": bool(case.get("retrieval_required", True)),
+                "recall_at_8": recall_at_k(returned, relevant),
+                "chance_recall": chance_recall(len(returned[:8]), _P72_ELIGIBLE),
+                "false_inclusion": sum(1 for i in returned[:8] if i not in relevant),
+                "security_inclusion": sum(
+                    1 for i in returned if role_by_id.get(i) in _P72_SECURITY_ROLES
+                ),
+                "passed": bool(phase72.get("passed")),
+                "case_tokens": result.total_tokens,
+                "case_ms": float(
+                    phase72.get("case_ms")
+                    or float(phase72.get("retrieval_ms") or 0.0)
+                    + float(phase72.get("decision_ms") or 0.0)
+                ),
+                "page_tokens": phase72.get("page_tokens"),
+                "retrieval_ms": phase72.get("retrieval_ms"),
+                "embedded_texts": phase72.get("embedded_texts"),
+                "retrieval": phase72.get("retrieval"),
+                "embedding_fallback_code": phase72.get("embedding_fallback_code"),
+                "override_skipped": phase72.get("override_skipped"),
+                "route_available": True,
+            }
+        )
+    return rows
+
+
+def _unavailable_row(provider: str, arm: str) -> dict[str, Any]:
+    """The one verdict row of an arm whose decision route was unavailable: the verdict
+    for that provider is `unavailable`, never absent."""
+    return {
+        "provider": provider,
+        "arm": arm,
+        "case_id": "route",
+        "seed": 0,
+        "fixture_revision": None,
+        "grants": None,
+        "budgets": None,
+        "split": None,
+        "route_available": False,
+    }
+
+
+def _phase72_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per-arm R20 counts and the retrieval latency p95 over the verdict rows."""
+    latencies = sorted(float(r.get("retrieval_ms") or 0.0) for r in rows)
+    p95 = latencies[max(0, -(-len(latencies) * 95 // 100) - 1)] if latencies else 0.0
+    return {
+        "retrieval_ms_p95": p95,
+        "hybrid_pages": sum(1 for r in rows if r.get("retrieval") == "hybrid"),
+        "fallback_pages": sum(
+            1
+            for r in rows
+            if r.get("embedding_fallback_code")
+            or r.get("override_skipped") == "no_request"
+        ),
+        "embedded_texts": sum(int(r.get("embedded_texts") or 0) for r in rows),
+    }
+
+
 def run_memory_suite(args: argparse.Namespace) -> int:
     """MC13.5: runs the local (no live-credential-required) portion of the
     memory benchmark suite -- LongMemEval-shaped dataset cases compared
-    across all seven named retrieval variants, plus all five MC13.3 named
+    across all named retrieval variants, plus all five MC13.3 named
     agent episodes -- and writes a combined report. Missing external dataset
     downloads or live-provider credentials are recorded as named blockers,
-    never a fabricated pass."""
+    never a fabricated pass.
+
+    72-T08 (D14): every in-process Rush call sees `HOME`, `XDG_DATA_HOME` and
+    `LOCALAPPDATA` inside a temporary root; the caller's environment is captured first
+    (`provider_env`, for every provider subprocess) and restored before return. A report
+    already in `--output` under a different `phase72_embedding` is refused (exit 1)."""
+    _check_decision_flags(args)
+    if args.task_manifest is not None:
+        return _run_manifest_suite(args)
+    manifest = _manifest_document(getattr(args, "task_manifest", None))
+    embedding = manifest.get("phase72_embedding") if manifest else None
+    if _recorded_embedding_differs(Path(args.output), embedding):
+        sys.stderr.write(
+            "refused: --output holds a report made under a different "
+            "phase72_embedding; use a fresh output directory.\n"
+        )
+        return 1
+    original_env = dict(os.environ)
+    with tempfile.TemporaryDirectory(prefix="memory-suite-home-") as isolated:
+        try:
+            for key in _ISOLATED_ENV_KEYS:
+                os.environ[key] = str(Path(isolated) / key.lower())
+            return _run_memory_suite(
+                args, manifest=manifest, embedding=embedding, provider_env=original_env
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(original_env)
+
+
+def _run_memory_suite(
+    args: argparse.Namespace,
+    *,
+    manifest: dict[str, Any] | None,
+    embedding: Any,
+    provider_env: Mapping[str, str],
+) -> int:
+    """`run_memory_suite()`'s body, run inside the isolated environment."""
     permissions = ExecutionPermissions(
-        cache_write=True, artifact_write=True, build=True
+        network=True, cache_write=True, artifact_write=True, build=True
     )
     seeds = [int(s) for s in args.seeds.split(",") if s.strip()] or [0]
     blockers: list[str] = []
@@ -371,6 +1751,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
         diffs = [variant_scores[i] - baseline_scores[i] for i in range(len(case_ids))]
         ci_low, ci_high = paired_bootstrap_ci(diffs, seed=seeds[0])
         cross_variant_comparison[variant] = {
+            "score_kind": "harness_completion",
             "case_scores": variant_scores,
             "diff_vs_baseline": diffs,
             "paired_bootstrap_ci": {"low": ci_low, "high": ci_high},
@@ -386,15 +1767,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
             "--dataset-manifest with more cases is supplied."
         )
 
-    blockers.append(
-        "real agent decision-making (choosing the next tool call / producing "
-        "a hypothesis or patch from a live model) was not exercised: no live "
-        "provider credential or --allow-live-route grant was supplied in this "
-        "environment. Dataset ingestion, gold-stripping, hash verification, "
-        "namespace reset and every named episode's real MemoryTool/verify_attempt/"
-        "handoff mechanics ran for real; only the live-model reasoning step is "
-        "blocked, matching MC12's precedent for a missing external engine."
-    )
+    blockers.append(_COMPONENT_BLOCKER)
 
     episode_results = {}
     for episode_id in EPISODE_BUILDERS:
@@ -421,6 +1794,7 @@ def run_memory_suite(args: argparse.Namespace) -> int:
     )
 
     payload = {
+        "decision_mode": "component",
         "variant": args.variant,
         "seeds": seeds,
         "max_total_tokens": args.max_total_tokens,
@@ -453,7 +1827,18 @@ def run_memory_suite(args: argparse.Namespace) -> int:
         },
         "blockers": blockers,
     }
+    # 72-T08: the frozen engine identity, the verdict rows and the R20 counts. The
+    # provider of a row is its route directory (`<eval root>/<arm>/<route>`).
+    output = Path(args.output).resolve()
+    verdict_rows = _phase72_rows(
+        dataset_results, manifest, arm=args.variant, provider=output.name
+    )
+    payload["phase72_embedding"] = embedding
+    payload["verdict_rows"] = verdict_rows
+    payload["phase72_summary"] = _phase72_summary(verdict_rows)
     report_path = write_memory_suite_report(args.output, payload)
+    if output.parent.name in HYBRID_ARMS:
+        write_hybrid_verdict(output.parent.parent)
     sys.stdout.write(f"\nMemory suite report written to: {report_path}\n")
     for blocker in blockers:
         sys.stdout.write(f"BLOCKED (named): {blocker}\n")
@@ -596,13 +1981,14 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
     project_b_id = register_project(project_b_root, data_root=data_root).project_id
 
     provision_plan = build_provision_plan(
-        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS)
+        project_a_root, list(_JOURNEY_MISSING_ENGINE_IDS), data_root=data_root
     )
     provision_result = apply_provision_plan(
         provision_plan,
         full_permissions,
         project_id=project_a_id,
         data_root=data_root,
+        reviewed_plan_id=provision_plan.plan_id,
         which=lambda _name: None,
     )
 
@@ -669,7 +2055,8 @@ def run_project_journey(tmp_root: Path) -> dict[str, Any]:
         operation="write",
         subject="episodic",
         content={
-            "text": f"handoff {handoff.handoff_id} completed for run {run_a.run_id}"
+            "kind": "observation",
+            "text": f"handoff {handoff.handoff_id} completed for run {run_a.run_id}",
         },
         source="journey-session",
         permissions=full_permissions,
@@ -928,7 +2315,9 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         ),
     ):
         server, ctx, token = create_dashboard_server({})
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread = threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+        )
         thread.start()
         try:
             base_url = ctx.launch_origin
@@ -1172,8 +2561,16 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
 
             # --- tokens ----------------------------------------------------
             start = time.monotonic()
-            TelemetryStore(project_root).record_savings(
-                "review", raw_tokens=100, compressed_tokens=40
+            telemetry = TelemetryStore(project_root)
+            telemetry.record_savings(
+                "review", raw_tokens=100, compressed_tokens=40, project_id=project_id
+            )
+            telemetry.record_savings("review", raw_tokens=1000, compressed_tokens=400)
+            telemetry.record_savings(
+                "review",
+                raw_tokens=2000,
+                compressed_tokens=800,
+                project_id=str(uuid.uuid4()),
             )
             tok_status, tok_snap = _snapshot(base_url, project_id, cookie, "tokens")
             timings_ms["tokens"] = round((time.monotonic() - start) * 1000, 3)
@@ -1181,7 +2578,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
                 "tokens",
                 tok_status == 200
                 and tok_snap.get("data", {}).get("actual", {}).get("raw_tokens", 0)
-                >= 100,
+                == 100,
                 f"status={tok_status}",
             )
 
@@ -1215,6 +2612,7 @@ def run_dashboard_user_journey(tmp_root: Path) -> dict[str, Any]:
         "coverage": coverage,
         "errors": errors,
         "memory_mutation_arguments_sent": memory_mutation_arguments_sent,
+        "tokens_snapshot": tok_snap.get("data", {}),
         "blockers": [
             (
                 "actual pixel layout at 360px/1280px and a real visual "
@@ -1284,8 +2682,10 @@ def run_scenario(
     provider_executable: Path | None = None,
     local_runtime_executable: list[Path] | None = None,
     router_urls: list[str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> ProbeResult:
-    """Executes a single scenario by ID and writes atomic output JSON."""
+    """Executes a single scenario by ID and writes atomic output JSON. 72-T08 (D14):
+    `env`, when given, is the environment every provider subprocess runs with."""
     scenarios = load_scenarios()
     if scenario_id not in scenarios:
         raise FixtureError(f"unknown scenario: {scenario_id}")
@@ -1328,6 +2728,9 @@ def run_scenario(
         live_input["route_id"] = selected_route
         scenario = replace(scenario, input=live_input)
     probe_fn = get_probe_runner(scenario.probe)
+    provider_env = (
+        {"env": env} if env is not None and scenario.probe == "provider" else {}
+    )
     result = probe_fn(
         scenario,
         model_cache=model_cache,
@@ -1339,6 +2742,7 @@ def run_scenario(
         provider_executable=provider_executable,
         local_runtime_executable=local_runtime_executable,
         router_urls=router_urls,
+        **provider_env,
     )
     write_result(output_root, result)
     return result
@@ -1349,11 +2753,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.suite != "memory" and (
+        args.decision_mode == "live"
+        or args.decision_route is not None
+        or args.task_manifest is not None
+    ):
+        sys.stderr.write(
+            "Memory suite error: decision_flags_require_memory_suite: "
+            "--decision-mode live, --decision-route and --task-manifest need "
+            "--suite memory\n"
+        )
+        return 1
+
     if args.suite == "memory":
         try:
             return run_memory_suite(args)
         except (FixtureError, OSError, ValueError) as err:
-            sys.stderr.write(f"Memory suite error: {err}\n")
+            message, _count = redact_report(_error_chain(err))
+            sys.stderr.write(f"Memory suite error: {message}\n")
             return 1
 
     if args.suite == "project_journey":

@@ -6,6 +6,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from rush.memory import authorization as auth
 from rush.memory.experience import (
     behavior_runtime_digest,
     compare_last_success,
@@ -13,8 +16,48 @@ from rush.memory.experience import (
     record_cause_experiment,
     write_observation,
 )
-from rush.memory.store import TypedArtifactStore
+from rush.memory.store import TypedArtifactStore, legacy_owner_scope
+from rush.setup.provision import default_data_root
 from rush.tools.memory import MemoryTool
+from rush.workflows.projects import register_project
+
+# 72-T01 (OD-3, PM gate delta 2 B2): this reader has no allowlist, so only the memory
+# policy authorizes it. Every test grants `ask` on the sources it reads, under a
+# per-test data root (HOME/XDG_DATA_HOME/LOCALAPPDATA point at a temp dir).
+_GRANTED_SOURCES = [
+    "test:upload-pass",
+    "test:upload-fail",
+    "test:download-pass",
+    "test:upload-cached",
+    "test:upload-skip",
+    "test:cause-unavailable",
+    "test:cause-reproduced",
+]
+
+
+@pytest.fixture(autouse=True)
+def _ask_grant(
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+    monkeypatch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+    data_root = default_data_root()
+    register_project(tmp_path, data_root=data_root)
+    revision = auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+    auth.grant_memory_scope(
+        project_root=tmp_path,
+        owner_scope=legacy_owner_scope(tmp_path),
+        approved_sources=_GRANTED_SOURCES,
+        allowed_operations=["ask", "write"],
+        expected_policy_revision=int(revision),
+        consent=True,
+        data_root=data_root,
+    )
+
 
 _UPLOAD_CONDITIONS = {
     "runtime": "python3.11",
@@ -289,6 +332,7 @@ def test_memory_tool_last_success_diagnose_operation_returns_diagnosis(
     )
 
     assert result["status"] == "ok"
+    assert result["raw"] is not None
     data = result["raw"]["data"]
     assert data["config_changes"] == {"baseline": "config-v1", "current": "config-v2"}
     assert data["code_changes"] is None

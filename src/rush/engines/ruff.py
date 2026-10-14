@@ -23,6 +23,7 @@ from pathlib import Path
 
 from ..tools.base import ToolResult, ToolStatus
 from ..tools.common import resolve_binary, run_subprocess
+from ..tools.routing import deduplicate_findings
 from .base import Engine, EngineResult, ownership_kwargs
 
 
@@ -98,6 +99,35 @@ class RuffEngine(Engine):
             duration_ms=0,  # stamped by run_engine()
         )
 
+    def show_files(
+        self,
+        path: Path,
+        args: list[str],
+        cwd: Path | None = None,
+    ) -> list[str] | None:
+        """Phase 70 T16 (finding 24): the files `ruff check` would consume for
+        the identical argv, cwd and config, via `--show-files`. `None` when
+        the engine cannot list them (a config error)."""
+        binary_path = resolve_binary(self.binary) or self.binary
+        argv = [
+            binary_path,
+            "check",
+            "--show-files",
+            "--output-format=json",
+            "--no-cache",
+            str(path),
+            *args,
+        ]
+        proc = run_subprocess(argv, cwd=cwd, timeout=120)
+        if proc.returncode != 0:
+            return None
+        base = cwd if cwd is not None else Path.cwd()
+        return [
+            line if Path(line).is_absolute() else str(base / line)
+            for line in (item.strip() for item in proc.stdout.splitlines())
+            if line
+        ]
+
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         """Convert ruff JSON to canonical ToolResult."""
         from ..tools.common import elapsed_ms, normalize_findings
@@ -115,10 +145,22 @@ class RuffEngine(Engine):
                     "severity": _ruff_severity(f.get("code", "")),
                     "message": f.get("message", ""),
                     "fix": f.get("fix"),
+                    # T13 (finding 22, fix round 1): carried on the SAME raw
+                    # record `normalize_findings` reads everything else from,
+                    # so it survives redaction/sorting/dropping by identity,
+                    # never by re-deriving and zipping a separate ordering.
+                    **(
+                        {"extensions": {"end_location": f["end_location"]}}
+                        if f.get("end_location")
+                        else {}
+                    ),
                 }
                 for f in raw.get("findings", [])
             ]
         )
+        # T13 (finding 22): collapse identical repeated emissions within this
+        # engine's own output before lint aggregation ever sees them.
+        findings = deduplicate_findings(findings)
 
         # ruff exit 0 = clean, 1 = findings, 2+ = config/crash
         if exit_code not in (0, 1):
@@ -154,15 +196,10 @@ class RuffEngine(Engine):
             return f"ruff exit {exit_code}"
         return f"{n_findings} ruff issue(s)" if n_findings else "ruff clean"
 
-    _cached_version: str | None = None
-
     def _version_str(self) -> str | None:
-        # Cache per-instance; first call shells out, subsequent return cached.
-        if RuffEngine._cached_version is not None:
-            return RuffEngine._cached_version
-        v = self.version()
-        RuffEngine._cached_version = v
-        return v
+        # `Engine.version()` caches by executable identity (S11.7); a
+        # class-global cache here would outlive a replaced ruff binary.
+        return self.version()
 
 
 def _ruff_severity(code: str) -> str:

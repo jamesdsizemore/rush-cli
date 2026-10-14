@@ -44,12 +44,21 @@ DEFAULT_KEYBINDINGS = [
         action_name="open_project_selector",
         description="Open project selector",
     ),
+    # T28-A: F3 opens the eight-section chooser (digits 1-8); F5 refreshes
+    # the current section's read-only data.
     KeybindingAction(
-        key="f3", action_name="next_section", description="Switch section"
+        key="f3",
+        action_name="open_section_chooser",
+        description="Section chooser (1-8)",
     ),
-    KeybindingAction(key="+", action_name="map_expand", description="Expand Map node"),
     KeybindingAction(
-        key="-", action_name="map_collapse", description="Collapse Map node"
+        key="f5", action_name="refresh", description="Refresh current section"
+    ),
+    # Phase 66 §3.8: `+`/`-` expand/collapse the detail pane in every
+    # section; Map nodes keep Right/l and Left/h.
+    KeybindingAction(key="+", action_name="detail_expand", description="Expand detail"),
+    KeybindingAction(
+        key="-", action_name="detail_collapse", description="Collapse detail"
     ),
     KeybindingAction(
         key="?", action_name="show_help", description="Show current key bindings"
@@ -91,8 +100,8 @@ DEFAULT_KEYBINDINGS = [
     ),
     KeybindingAction(
         key="m",
-        action_name="toggle_memory",
-        description="Toggle memory/token-gain HUD",
+        action_name="goto_tokens",
+        description="Tokens section (replaces the token-gain HUD)",
     ),
     KeybindingAction(
         key="y",

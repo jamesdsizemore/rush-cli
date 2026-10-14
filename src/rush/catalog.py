@@ -98,6 +98,20 @@ class ToolSpec:
     experimental: bool = False
     maturity: ToolMaturity = "catalog_only"
     option_specs: tuple[ToolOptionSpec, ...] = ()
+    # T9/R9.1: `None` means "by category" (see `validates_target`).
+    target_validation: bool | None = None
+    # T16 (R16.4): "operation" tools do not analyze files, so the executor's
+    # default scope says `not_file_analysis` instead of a file count.
+    scope_kind: Literal["file", "operation"] = "file"
+
+    @property
+    def validates_target(self) -> bool:
+        """T9/R9.1: whether the executor refuses to run this tool against an
+        explicitly requested target that does not exist. Defaults to true for
+        quality, security and test tools; set explicitly otherwise."""
+        if self.target_validation is not None:
+            return self.target_validation
+        return self.category in ("quality", "security", "test")
 
 
 @dataclass(frozen=True)
@@ -123,14 +137,16 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         ),
         engine_names=(),
         maturity="real_adapter",
+        scope_kind="operation",
     ),
     "memory": ToolSpec(
         name="memory",
         category="workflow",
         description="Query, write, or promote cross-tool memory artifacts.",
         mcp_description=(
-            "Query, write, or promote a cross-tool memory artifact in the typed artifact "
-            "store. Write/promote/maintain require explicit cache-write permission."
+            "Recall or record memory at <path>. Reads use policy grants; legacy "
+            "needs non-empty session_allowlist. Mutations need the allow_cache_write "
+            "permission. Returns {status, findings[], summary}."
         ),
         engine_names=(),
         maturity="real_adapter",
@@ -144,7 +160,32 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                     "Requires host-granted cache-write per invocation; default off."
                 ),
             ),
+            ToolOptionSpec(
+                name="embedding_endpoint",
+                value_type=str,
+                default=None,
+                description=(
+                    "Loopback http URL, with port, of a local embedding engine for "
+                    "hybrid retrieval. Reads still need a per-call network grant."
+                ),
+            ),
+            ToolOptionSpec(
+                name="embedding_model",
+                value_type=str,
+                default=None,
+                description="Embedding model served at embedding_endpoint.",
+            ),
+            ToolOptionSpec(
+                name="embedding_model_digest",
+                value_type=str,
+                default=None,
+                description=(
+                    "Lowercase hex prefix (12-64 characters) of the embedding model "
+                    "digest the engine must report."
+                ),
+            ),
         ),
+        scope_kind="operation",
     ),
     "semantic-drift": ToolSpec(
         name="semantic-drift",
@@ -159,8 +200,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="quality",
         description="Review code for deterministic heuristic quality signals.",
         mcp_description=(
-            "Review <path> with deterministic heuristics. Returns {status, findings[], "
-            "summary}; optional LLM and local Graft context use are explicit."
+            "Before commit: heuristic review of <path>; engines are deterministic. Returns "
+            "{status, findings[], summary}. use_llm=true sends findings to a configured "
+            "external LLM; no Rush grant gates it."
         ),
         engine_names=(),
     ),
@@ -169,8 +211,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="quality",
         description="Lint Python and JavaScript/TypeScript source files.",
         mcp_description=(
-            "Lint Python/JS/TS files at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "Lint Python/JS/TS files at <path> after every edit (ruff, eslint); no grant "
+            "needed. Returns {status, findings[], summary}; skipped = no work ran (missing "
+            "engine or no supported files)."
         ),
         engine_names=("ruff", "eslint"),
     ),
@@ -189,8 +232,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="test",
         description="Run the project test runner selected from project metadata.",
         mcp_description=(
-            "Run tests at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "After edits: run the project's tests at <path> (pytest, vitest). Runs only "
+            "with allow_build; otherwise skipped and nothing runs. Returns {status, "
+            "findings[], summary}."
         ),
         engine_names=("pytest", "vitest"),
     ),
@@ -199,17 +243,33 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         category="security",
         description="Scan dependency manifests for known vulnerabilities.",
         mcp_description=(
-            "Scan dependencies at <path>. Returns {status, findings[], summary}. "
-            "Missing engines return status='skipped'."
+            "Before commit: audit dependencies at <path>. Returns {status, findings[], "
+            "summary}; skipped = no audit ran. pyproject-only audit needs "
+            "allow_network, allow_download, allow_cache_write, allow_build."
         ),
-        engine_names=("pip-audit", "npm-audit"),
+        # T14 (R14.2): osv-scanner (uv.lock/requirements*) and medusa are
+        # owned here, not standalone scan candidates.
+        engine_names=("pip-audit", "npm-audit", "osv-scanner", "medusa"),
     ),
     "typecheck": ToolSpec(
         name="typecheck",
         category="quality",
         description="Type-check Python and JavaScript/TypeScript source.",
         mcp_description="Type-check Python and JS/TS at <path>; missing mypy or tsc returns status='skipped'.",
-        engine_names=("mypy", "tsc"),
+        engine_names=("mypy", "tsc", "pyrefly"),
+        option_specs=(
+            ToolOptionSpec(
+                name="environment",
+                value_type=str,
+                default=None,
+                choices=("project", "isolated"),
+                description=(
+                    "Python interpreter environment: project (.venv, requires "
+                    "--allow-build) or isolated. Default prefers project and "
+                    "falls back to isolated without the grant."
+                ),
+            ),
+        ),
     ),
     "dead": ToolSpec(
         name="dead",
@@ -442,6 +502,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Validate commit messages without rewriting history.",
         "Validate commit messages; it never rewrites Git history.",
         ("commitlint",),
+        scope_kind="operation",
     ),
     "ci": ToolSpec(
         "ci",
@@ -449,6 +510,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Inspect local CI workflow configuration.",
         "Inspect local CI configuration without exposing credentials.",
         (),
+        scope_kind="operation",
     ),
     "release": ToolSpec(
         "release",
@@ -456,6 +518,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Create a dry-run release plan.",
         "Create a dry-run release plan; publication requires confirmation.",
         (),
+        scope_kind="operation",
     ),
     "ai-eval": ToolSpec(
         "ai-eval",
@@ -470,6 +533,10 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Verify Test-Driven Development (TDD) compliance and test existence.",
         "Verify TDD compliance at <path>. Returns {status, findings[], summary}.",
         ("tdd-guard",),
+        # W2 finding 20: a missing tdd target is TARGET_NOT_FOUND, never the
+        # name-based "test suite verified" `ok`.
+        target_validation=True,
+        scope_kind="operation",
     ),
     "fix": ToolSpec(
         "fix",
@@ -484,6 +551,22 @@ TOOL_SPECS: dict[str, ToolSpec] = {
         "Diagnose environment health, toolchain integrity, and binary resolution.",
         "Diagnose environment health and binary resolution at <path>. Returns {status, findings[], summary}.",
         (),
+        scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
+    ),
+    # T23: `workflow` keeps status out of scan candidates (project_run).
+    "status": ToolSpec(
+        "status",
+        "workflow",
+        "Show the selected project's registration, setup, scan and memory status without changing anything.",
+        "Call first each session. Read-only, no grant: <path> project setup, engines, "
+        "scans, results, agents, memory. Agent registration is not verified activity. "
+        "operation=result reads a stored result.",
+        (),
+        scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "patch-apply": ToolSpec(
         name="patch-apply",
@@ -523,6 +606,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Explicitly grant promotion writes.",
             ),
         ),
+        scope_kind="operation",
     ),
     "attest": ToolSpec(
         name="attest",
@@ -747,6 +831,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Base git reference for diff.",
             ),
         ),
+        scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "benchmark": ToolSpec(
         name="benchmark",
@@ -781,6 +868,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Named benchmark baseline.",
             ),
         ),
+        scope_kind="operation",
     ),
     "error-catalog": ToolSpec(
         name="error-catalog",
@@ -816,6 +904,9 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Maximum number of commits to scan.",
             ),
         ),
+        scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
     ),
     "dead-asset": ToolSpec(
         name="dead-asset",
@@ -856,6 +947,27 @@ TOOL_SPECS: dict[str, ToolSpec] = {
                 description="Contained destination path to export PR summary Markdown.",
             ),
         ),
+        scope_kind="operation",
+        # T27: a missing explicit target is TARGET_NOT_FOUND, never ok/skipped.
+        target_validation=True,
+    ),
+    # Phase 70 T17 (R17.1): a workflow tool -- full scans classify it
+    # not_applicable and its steps validate their own targets.
+    "check": ToolSpec(
+        name="check",
+        category="workflow",
+        description=(
+            "Run the six-step check suite: format (check-only), lint, "
+            "typecheck, dead, slop and test."
+        ),
+        mcp_description=(
+            "Before commit/after edits: format-check, lint, typecheck, dead, slop, test "
+            "at <path>. Test step runs only with allow_build; else it is skipped and the "
+            "result is never ok (warn if all else passes)."
+        ),
+        engine_names=(),
+        maturity="real_adapter",
+        scope_kind="file",
     ),
 }
 
@@ -900,6 +1012,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "tdd": "real_adapter",
     "fix": "real_adapter",
     "doctor": "real_adapter",
+    "status": "real_adapter",
     "patch-apply": "real_adapter",
     "attest": "real_adapter",
     "license-matrix": "real_adapter",
@@ -915,6 +1028,7 @@ _TOOL_MATURITY: dict[str, ToolMaturity] = {
     "provenance-ai": "real_adapter",
     "dead-asset": "real_adapter",
     "pr-synthesize": "real_adapter",
+    "check": "real_adapter",
 }
 if set(_TOOL_MATURITY) != set(TOOL_SPECS):
     raise RuntimeError("catalog maturity map must classify every tool exactly once")
@@ -1059,6 +1173,7 @@ ENGINE_SPECS: dict[str, EngineSpec] = {
         (
             "poetry.lock",
             "requirements.txt",
+            "uv.lock",
             "package-lock.json",
             "Cargo.lock",
             "go.sum",

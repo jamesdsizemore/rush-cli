@@ -11,7 +11,7 @@
 
 ## Executive Summary
 
-As AI-assisted pair programming and autonomous coding agents (Claude Code, Cursor, Codex, OpenClaw, Windsurf, Hermes) become the standard software development interface, development teams face an urgent challenge: **how to maintain architectural integrity, avoid AI-generated "slop" (hollow boilerplate, type erasure, band-aid fixes), enforce strict ship-readiness gates, and manage agent memory across long-running sessions.**
+As AI-assisted pair programming and autonomous coding agents (Claude Code, Codex, OpenClaw, Windsurf, Hermes) become the standard software development interface, development teams face an urgent challenge: **how to maintain architectural integrity, avoid AI-generated "slop" (hollow boilerplate, type erasure, band-aid fixes), enforce strict ship-readiness gates, and manage agent memory across long-running sessions.**
 
 This report delivers a deep code-level exploration of **all 73 open-source repositories** identified in `rushtoolsurls.txt`. Rather than merely scanning `README` files, we explored the internal mechanics, AST parsers, database schemas, and protocol adapters across each project.
 
@@ -182,7 +182,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 ### 2. MemTensor/memmy-agent (and MemTensor/MemOS)
 * **Repository**: `MemTensor/memmy-agent`
 * **Architecture & Mechanics**:
-  * TypeScript-based local backend (Fastify + SQLite) providing a shared memory hub across disparate AI agents (Claude Code, Cursor, Codex, OpenClaw, Hermes).
+  * TypeScript-based local backend (Fastify + SQLite) providing a shared memory hub across disparate AI agents (Claude Code, Codex, OpenClaw, Hermes).
   * Built around a **4-layer memory hierarchy**:
     1. **L1 Trace**: Raw conversation/execution turns.
     2. **L2 Policy**: Distilled experiences, preferences, and success patterns.
@@ -257,7 +257,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 * **Repository**: `Nimrobo/superdense`
 * **Architecture & Mechanics**:
   * Node/TypeScript CLI (`@nimrobo/superdense`) and local SQLite store implementing an "outcome-loop and reward layer" for coding agents.
-  * Integrates with Claude Code, Codex, and Cursor via transcript adapters.
+  * Integrates with Claude Code and Codex via transcript adapters.
   * Implements a **Token Compaction Engine** that extracts causal chains (Goal $\to$ Edit $\to$ Test Run $\to$ Error $\to$ Fix $\to$ Green) and discards conversational fluff.
   * Stores verified problem-solution pairs in a durable local record.
 * **Score**: 8.0/10 | **Tier**: **Tier 2** (Feature/Idea to Borrow)
@@ -300,7 +300,7 @@ Across the 15 repositories evaluated, several dominant technical paradigms emerg
 ### 10. entireio/cli
 * **Repository**: `entireio/cli`
 * **Architecture & Mechanics**:
-  * Written in Go; hooks into Git lifecycles and agent sessions (Claude Code, Gemini CLI, Cursor).
+  * Written in Go; hooks into Git lifecycles and agent sessions (Claude Code, Gemini CLI).
   * Maintains an immutable record of AI prompts, responses, tool calls, and AST diffs stored on an isolated shadow Git branch (`entire/checkpoints/v1`).
   * Attaches a 12-character Checkpoint ID as a Git commit trailer (`Checkpoint: <id>`), maintaining a clean primary commit history while guaranteeing full auditability.
   * Provides instant rewind capabilities (`entire rewind <id>`) to roll back code and agent context to any previous state.
@@ -682,7 +682,7 @@ Domain 2 provides static heuristics, AST algorithms, and evaluation harnesses to
 
 Domain 3 investigates tools and architectures built for **pre-flight verification, release readiness gating, semver automation, changelog generation, and agentic safety controls**.
 
-In modern agent-driven workflows (Claude Code, Cursor, Codex, Windsurf), automated "shipping" introduces unique failure modes:
+In modern agent-driven workflows (Claude Code, Codex, Windsurf), automated "shipping" introduces unique failure modes:
 1. **AI-Introduced Vulnerabilities & Hallucinations:** Agents slipping in insecure bypasses (`shell=True`, `verify=False`, wildcard CORS, debug flags, hallucinated packages).
 2. **Agent Surface & MCP Privilege Escalation:** Overprivileged tool surfaces, untracked MCP capabilities, and prompt/tool injection vectors.
 3. **Release Drift & Broken Lockfiles:** Desynchronized lockfiles (`uv.lock`, `package-lock.json`), dirty working trees, missing tests, and unbumped multi-manifest versions.
@@ -722,7 +722,7 @@ The 17 surveyed repositories span from specialized agentic merge gates (`ThreeMo
 * **Overview:** A local-first CLI security scanner specifically targeted at applications built or modified by AI coding agents.
 * **Code & Mechanics:**
   * Uses modular probe agents (`cli/agents/mcp-security-agent.js`, CI/CD auditors, secret sniffers).
-  * Audits MCP configuration files (`claude_desktop_config.json`, `.cursor/mcp.json`, project MCP definitions) for untrusted command execution and parameter injection vectors.
+  * Audits MCP configuration files (`claude_desktop_config.json`, project MCP definitions) for untrusted command execution and parameter injection vectors.
   * Checks for agent over-permissioning, hardcoded keys, and suspicious AI package dependencies.
   * Supports `ship-safe ci` (exports SARIF reports for GitHub Code Scanning) and `ship-safe fix` (produces unified diffs for user review before applying).
   * Includes `--no-ai` for 100% offline, deterministic rule-based checks.
@@ -873,7 +873,7 @@ The 17 surveyed repositories span from specialized agentic merge gates (`ThreeMo
     * Unsigned webhook endpoints (e.g. missing Stripe webhook signature verification).
     * Insecure database access rules (Firebase/Supabase permissive read/write policies).
     * Unsafe package scripts (e.g. `preinstall` scripts running arbitrary network downloads).
-  * MCP server allows agents (Claude Desktop, Cursor) to run pre-flight audits during conversation before declaring a task complete.
+  * MCP server allows agents (Claude Desktop) to run pre-flight audits during conversation before declaring a task complete.
 * **Score:** 9.0 / 10 | **Tier:** **Tier 1** (High Value / Direct Integration)
 * **Borrow for Rush:**
   * **Pre-Flight Launch Risk Engine:** Incorporating launch-hazard checks into `rush preflight` / `rush check --ship`: scanning for unpinned deps, exposed environment secrets in build artifacts, missing webhook verification, and unsafe lifecycle scripts.
@@ -1007,7 +1007,7 @@ Based on Domain 3 research, here is the architectural blueprint for implementing
 
 ## Executive Summary & Domain Taxonomy
 
-Domain 4 investigates the emerging ecosystem of **Vibecoding Safety, Agent Sandboxing, Prompt Guardrails, and Execution Truth**. As development shifts toward autonomous and semi-autonomous AI coding agents (Claude Code, Cursor, Codex, OpenCode, OpenClaw), teams face unprecedented challenges:
+Domain 4 investigates the emerging ecosystem of **Vibecoding Safety, Agent Sandboxing, Prompt Guardrails, and Execution Truth**. As development shifts toward autonomous and semi-autonomous AI coding agents (Claude Code, Codex, OpenCode, OpenClaw), teams face unprecedented challenges:
 1. **Hallucinated & Malicious Dependencies ("Slopsquatting"):** Agents installing non-existent or typosquatted packages.
 2. **Superficial "Band-Aid" Fixes:** Agents masking errors with null-checks, empty try-catches, and defensive bloat rather than structural repairs.
 3. **Prompt Ambiguity & Behavioral Drift:** Lack of strict contract pre-validation before agent execution.
@@ -1031,7 +1031,7 @@ Tier Definitions:
 ---
 
 ### 1. `NoahDuongMaster/vibe-code-stack-for-ceos`
-* **Overview:** A full-stack monorepo boilerplate tailored for non-technical builders and founders using AI coding assistants (Claude Code, Cursor, Copilot, Gemini CLI, Windsurf).
+* **Overview:** A full-stack monorepo boilerplate tailored for non-technical builders and founders using AI coding assistants (Claude Code, Copilot, Gemini CLI, Windsurf).
 * **Architecture & Mechanics:**
   - Standardizes a single root `AGENTS.md` "company handbook" that defines architectural rules, vertical-slice patterns, and coding conventions across multiple agent runtimes.
   - Strict TypeScript architecture combining Next.js 16, Astro, Connect-RPC, and TanStack Query with schema-first validation (Zod) at all network and domain boundaries.
@@ -1137,12 +1137,12 @@ Tier Definitions:
 ### 9. `mikiships/agentkit-cli`
 * **Overview:** An Agent Quality Toolkit CLI for scoring repository "agent-readiness", synchronizing canonical rules across multiple agent formats, and enforcing CI quality gates.
 * **Architecture & Mechanics:**
-  - **Canonical Source Management & Projection:** Maintains a single source of truth for agent rules and projects them into `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `llms.txt`.
+  - **Canonical Source Management & Projection:** Maintains a single source of truth for agent rules and projects them into `AGENTS.md`, `CLAUDE.md`, and `llms.txt`.
   - **Agent-Readiness Scorecard:** Analyzes project documentation, test coverage, linter configurations, and file hierarchies to generate a composite score and dark-themed standalone HTML report.
   - **CI Quality Gating (`agentkit gate`):** Integrates into GitHub Actions to fail PRs if agent instructions drift or if the repository's agent-readiness score drops below a designated threshold.
 * **Score:** 8.5 / 10 | **Tier:** **Tier 1** (High Value / Direct Integration)
 * **What to Borrow / Integration into Rush:**
-  - **Universal Instruction Projection (`rush agent sync` / `rush docs`):** Expand Rush's documentation sync engine (`scripts/sync_docs.py`) to project canonical rules into `CLAUDE.md`, `.cursorrules`, `AGENTS.md`, and `llms.txt`.
+  - **Universal Instruction Projection (`rush agent sync` / `rush docs`):** Expand Rush's documentation sync engine (`scripts/sync_docs.py`) to project canonical rules into `CLAUDE.md`, `AGENTS.md`, and `llms.txt`.
   - **Agent Quality Gate (`rush gate`):** Provide a single command to evaluate whether a repo meets agent execution standards (clean contracts, no drift, complete test suite, strict permissions).
 
 ---
@@ -1248,7 +1248,7 @@ Tier Definitions:
 * **Semantic Hunk Inspection (`modem-dev/hunk`):** Categorize diff chunks into logic, configuration, and formatting noise for rapid review by humans and meta-review agents.
 
 ### 4. Continuous Governance & Synchronization (Management Phase)
-* **Universal Rule Projection (`mikiships/agentkit-cli`):** Expand documentation sync into a full multi-agent projection engine that distributes canonical project standards to `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, and `llms.txt`.
+* **Universal Rule Projection (`mikiships/agentkit-cli`):** Expand documentation sync into a full multi-agent projection engine that distributes canonical project standards to `AGENTS.md`, `CLAUDE.md`, and `llms.txt`.
 * **31-Class CI Log Classifier (`patchrail/patchrail`):** Integrate offline CI failure signature detection directly into `rush ci` and `rush doctor` for instant local diagnostic triage.
 
 
@@ -1378,7 +1378,7 @@ Tier Definitions:
 ---
 
 ### 8. `Laith0003/ux-skill`
-- **Overview:** Deterministic UI/UX design intelligence engine and "anti-AI-slop" linter for AI coding tools (Claude Code, Cursor, Windsurf), providing 152 deterministic design rules and an 18-tool MCP server.
+- **Overview:** Deterministic UI/UX design intelligence engine and "anti-AI-slop" linter for AI coding tools (Claude Code, Windsurf), providing 152 deterministic design rules and an 18-tool MCP server.
 - **Code & Architecture Mechanics:**
   - **152 Deterministic Anti-Pattern Rules:** Evaluates React, HTML, CSS, and Tailwind class names to detect AI-generated UI flaws (generic multi-stop gradients, nested glassmorphism, improper contrast ratios, broken whitespace scales, missing accessible focus states) with 100% deterministic, offline execution (zero LLM calls).
   - **7-Axis Synthesizer:** Algorithmically derives comprehensive design tokens (colors, typography scales, border radii, component spacing, elevation) based on structured project briefs (audience, density, archetype, industry, tone).

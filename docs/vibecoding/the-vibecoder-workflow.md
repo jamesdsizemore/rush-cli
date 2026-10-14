@@ -36,7 +36,7 @@ Rush returns a clean, 25-line verbatim snippet with line numbers.
 
 ## Phase 2: Manifest (The AI Generates Code)
 
-Your AI coding assistant (Cursor, Claude Code, Cline, etc.) generates the new code and test cases in seconds.
+Your AI coding assistant (Claude Code, Cline, etc.) generates the new code and test cases in seconds.
 
 ---
 

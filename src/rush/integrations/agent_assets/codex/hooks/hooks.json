@@ -1,0 +1,17 @@
+{
+  "description": "Rush post-edit checks. Inert: runs no check until Rush agent hooks are enabled for this host and project.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

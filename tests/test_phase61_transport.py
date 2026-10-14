@@ -5,7 +5,9 @@ CLI dispatch, a separate concern (§2.1 Drift 6)."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import multiprocessing.connection
 import os
 import signal
 import sys
@@ -16,6 +18,19 @@ import pytest
 
 from rush.memory import transport
 from rush.permissions import ExecutionPermissions
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _warm_native_forkserver() -> None:
+    """Start the native-handoff forkserver (SDK preloaded) once, before any
+    timed dispatch: its one-time cold start is per process, not part of any
+    single handoff's deadline or of the elapsed bounds asserted below."""
+    if importlib.util.find_spec("claude_agent_sdk") is not None:
+        # `ensure_running` only launches the server; forking one trivial
+        # child waits until its preload has finished.
+        warm = transport._native_context().Process(target=os.getpid)
+        warm.start()
+        warm.join()
 
 
 def test_native_sdk_tier_selected_when_available(
@@ -139,7 +154,8 @@ def test_acp_package_without_adapter_falls_back(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("stage", ["version", "initialization"])
 def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
-    sdk = pytest.importorskip("claude_agent_sdk")
+    import claude_agent_sdk as sdk
+
     pidfile = tmp_path / "startup.pid"
     peer = tmp_path / "startup-peer"
     peer.write_text(
@@ -159,6 +175,23 @@ def test_native_startup_timeout_reaps_child(monkeypatch, tmp_path, stage):
         sdk,
         "ClaudeAgentOptions",
         lambda **kwargs: options_type(**kwargs, cli_path=str(peer)),
+    )
+    # The peer never answers, so `_send_native`'s wait on its result pipe
+    # always ends in the timeout. Once the pidfile shows the peer is parked
+    # at `stage`, report that deadline as expired instead of sleeping out
+    # the rest of it; before then, the real wait runs in 50ms steps.
+    real_poll = multiprocessing.connection.Connection.poll
+
+    def _poll_until_peer_parked(self, timeout=0.0):
+        deadline = time.monotonic() + timeout
+        while True:
+            if real_poll(self, min(0.05, max(0.0, deadline - time.monotonic()))):
+                return True
+            if pidfile.is_file() or time.monotonic() >= deadline:
+                return False
+
+    monkeypatch.setattr(
+        multiprocessing.connection.Connection, "poll", _poll_until_peer_parked
     )
     start = time.monotonic()
     result = transport.dispatch(
@@ -282,7 +315,9 @@ for line in sys.stdin:
     ],
 )
 def test_real_sdk_local_peer(monkeypatch, tmp_path, protocol, outcome):
-    sdk = pytest.importorskip("claude_agent_sdk" if protocol == "native_sdk" else "acp")
+    sdk = importlib.import_module(
+        "claude_agent_sdk" if protocol == "native_sdk" else "acp"
+    )
     peer = _peer(tmp_path, "claude" if protocol == "native_sdk" else "acp", outcome)
     outside = tmp_path / "outside-secret.txt"
     outside.write_text("synthetic-secret")
@@ -344,6 +379,16 @@ def test_real_sdk_local_peer(monkeypatch, tmp_path, protocol, outcome):
         assert "error" in denial
         assert outside.read_text() == "synthetic-secret"
     pid = int((tmp_path / "peer.pid").read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    # Same reaping contract as the timeout test above: the SIGKILLed peer is a
+    # zombie until its (reparented) parent reaps it, and os.kill(pid, 0) still
+    # succeeds against an unreaped zombie -- poll, never assert instantaneously.
+    deadline = time.monotonic() + 2.0
+    while True:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= deadline:
+            pytest.fail(f"peer pid {pid} was not reaped within 2s of dispatch")
+        time.sleep(0.05)
     assert not (tmp_path / transport.HANDOFF_FILE).exists()

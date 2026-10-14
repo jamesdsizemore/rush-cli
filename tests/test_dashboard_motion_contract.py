@@ -169,6 +169,12 @@ def test_responsive_breakpoints_768_1024_present() -> None:
     assert "data-open" in DASHBOARD_CSS
     assert "translateX(-100%)" in DASHBOARD_CSS
     assert "translateX(100%)" in DASHBOARD_CSS
+    mobile_css = DASHBOARD_CSS.split("@media (max-width: 768px)", 1)[1]
+    inspector_rule = mobile_css.split(".rush-inspector {", 1)[1].split("}", 1)[0]
+    assert "position: fixed;" in inspector_rule
+    assert "top: 56px;" in inspector_rule
+    assert "bottom: 0;" in inspector_rule
+    assert "overflow-y: auto;" in inspector_rule
 
 
 def test_fit_restores_full_bounds_not_translation_reset() -> None:

@@ -6,23 +6,30 @@ import base64
 import datetime
 import hashlib
 import json
+import os
+import re
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Callable
+import unicodedata
+import urllib.parse
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import tiktoken
 
+from rush.delivery.compact import canonical_json
 from rush.memory.store import TypedArtifactStore, legacy_owner_scope
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryOperation, MemoryTool
 
 from .contracts import FixtureError, Outcome, ProbeResult, Scenario
+from .memory_datasets import load_dataset_section
 
 
 def _sha256(payload: bytes) -> str:
@@ -95,6 +102,8 @@ def _probe_stale_record(
         task="expiry_sweep",
         permissions=permissions,
         owner_scope=legacy_owner_scope(root),
+        # 72-T04 (D3): `legacy` mode maintains only the sources the caller names.
+        sources=["allowed"],
     )
     if swept["status"] != "ok":
         raise FixtureError(f"memory maintain failed: {swept['summary']}")
@@ -134,9 +143,9 @@ def _probe_oversized_payload(
 ) -> dict[str, int | bool]:
     """M06: one compact `ask` with a `max_bytes` budget too tight for the full record
     count, measuring real (not hardcoded) truncation by comparing the page's returned
-    item count against `total_records`. `recall_page`'s own `complete` flag can't be used
-    here: it only ever reflects the internal 512-row scan cap, never `max_bytes`/`max_tokens`
-    truncation (correct, tested behavior in `recall_page`, not a bug)."""
+    item count against `total_records`. 72-T02: `recall_page`'s `complete` flag is honest
+    here too (`False` with a `next_cursor` whenever `limit`, `max_bytes`, `max_tokens` or
+    the 512-row scan cap stops the page early); the item count is the measured signal."""
     compact = tool.run(
         root,
         operation="ask",
@@ -455,6 +464,15 @@ class EpisodeEvent:
     kwargs: dict[str, Any]
     raw: dict[str, Any]
     token_count: int
+    # 72-T08: the hybrid arm's `request_override` as applied to this call, the agent's
+    # own values of the keys it replaced, or `"no_request"` when a retrieval call carried
+    # no `request` to override.
+    override_applied: dict[str, Any] | None = None
+    override_replaced: dict[str, Any] | None = None
+    override_skipped: str | None = None
+
+
+_OVERRIDE_OPERATIONS = frozenset({"ask", "recall", "list"})
 
 
 @dataclass(frozen=True)
@@ -544,15 +562,17 @@ def run_memory_episode(
     root: Path,
     permissions: ExecutionPermissions,
     max_steps: int = 12,
-    max_total_tokens: int = 16000,
+    max_total_tokens: int | None = 16000,
     timeout_seconds: float | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> EpisodeResult:
     """Runs one real agent episode against `root`'s live `MemoryTool`.
     `decide_fn` chooses each step from the actual observed history only;
     every tool call it requests is genuinely executed (no fabricated
     events). Every expansion/recall/etc. step's real serialized-result token
     cost counts toward `max_total_tokens` -- there is no free/uncounted
-    operation."""
+    operation. `request_override` (72-T08) is merged over the `request` dict of every
+    `ask`/`recall`/`list` call; every other operation's kwargs pass unchanged."""
     tool = MemoryTool()
     encoder = _get_encoder()
     events: list[EpisodeEvent] = []
@@ -574,10 +594,22 @@ def run_memory_episode(
             final = action.final
             break
         operation = cast(MemoryOperation, action.operation)
+        kwargs = action.kwargs
+        override_applied: dict[str, Any] | None = None
+        override_replaced: dict[str, Any] | None = None
+        override_skipped: str | None = None
+        if request_override is not None and action.operation in _OVERRIDE_OPERATIONS:
+            request = kwargs.get("request")
+            if isinstance(request, dict):
+                override_applied = dict(request_override)
+                override_replaced = {
+                    k: request[k] for k in request_override if k in request
+                }
+                kwargs = {**kwargs, "request": {**request, **request_override}}
+            else:
+                override_skipped = "no_request"
         raw: dict[str, Any] = dict(
-            tool.run(
-                root, operation=operation, permissions=permissions, **action.kwargs
-            )
+            tool.run(root, operation=operation, permissions=permissions, **kwargs)
         )
         serialized = json.dumps(
             raw, ensure_ascii=False, separators=(",", ":"), default=str
@@ -588,12 +620,15 @@ def run_memory_episode(
             EpisodeEvent(
                 step_index=step_index,
                 operation=action.operation,
-                kwargs=action.kwargs,
+                kwargs=kwargs,
                 raw=raw,
                 token_count=token_count,
+                override_applied=override_applied,
+                override_replaced=override_replaced,
+                override_skipped=override_skipped,
             )
         )
-        if total_tokens > max_total_tokens:
+        if max_total_tokens is not None and total_tokens > max_total_tokens:
             budget_exhausted = True
             break
     verifier_receipt = _verifier_receipt(tuple(events))
@@ -668,9 +703,9 @@ def _init_upload_repair_repo(root: Path) -> tuple[str, str]:
     _run_git(["init", "-b", "main"], root)
     _run_git(["config", "user.name", "RushBenchmark"], root)
     _run_git(["config", "user.email", "benchmark@example.com"], root)
-    (root / ".gitignore").write_text(".rush/\n", encoding="utf-8")
-    (root / "upload.py").write_text(_UPLOAD_BUGGY, encoding="utf-8")
-    (root / "check_upload.py").write_text(_CHECK_UPLOAD, encoding="utf-8")
+    (root / ".gitignore").write_text(".rush/\n", encoding="utf-8", newline="\n")
+    (root / "upload.py").write_text(_UPLOAD_BUGGY, encoding="utf-8", newline="\n")
+    (root / "check_upload.py").write_text(_CHECK_UPLOAD, encoding="utf-8", newline="\n")
     _run_git(["add", "."], root)
     _run_git(["commit", "-m", "initial upload module with two known bugs"], root)
     head = _run_git(["rev-parse", "HEAD"], root)
@@ -762,6 +797,7 @@ def build_guest_handoff_episode(root: Path) -> tuple[str, DecideFn]:
                     "request": {
                         "action": "prepare",
                         "receiver_audience": "handoff-receiver",
+                        "receiver_namespace": "guest-session",
                         "goal": "diagnose duplicate promo application",
                         "selected_refs": [
                             {
@@ -963,6 +999,7 @@ def build_diagnosis_handoff_episode(root: Path) -> tuple[str, DecideFn]:
                     "request": {
                         "action": "prepare",
                         "receiver_audience": "handoff-receiver",
+                        "receiver_namespace": "diagnosis-session",
                         "goal": "hand off deploy-pipeline diagnosis",
                         "selected_refs": [
                             {
@@ -1032,7 +1069,11 @@ EPISODE_BUILDERS: dict[str, Callable[[Path], tuple[str, DecideFn]]] = {
 
 
 def run_named_episode(
-    episode_id: str, root: Path, *, permissions: ExecutionPermissions | None = None
+    episode_id: str,
+    root: Path,
+    *,
+    permissions: ExecutionPermissions | None = None,
+    request_override: Mapping[str, Any] | None = None,
 ) -> EpisodeResult:
     """Builds and runs one of the five MC13.3 named episodes against a fresh
     `root`. `permissions` defaults to the full write/build grant every
@@ -1049,4 +1090,570 @@ def run_named_episode(
         root=root,
         permissions=permissions
         or ExecutionPermissions(cache_write=True, artifact_write=True, build=True),
+        request_override=request_override,
     )
+
+
+# --- Phase 72 D13/D13a/D14a: strict task manifest and evaluators (75-T02) ------
+
+BASELINE_CASES_SHA256 = (
+    "d3cfc6e4ba1083097089bcdf0f6029f3ceef22d128340637ceefd3c118584ad6"
+)
+PHASE75_DECLARED: tuple[tuple[str, str | None], ...] = (
+    ("bug repair", "bug_repair"),
+    ("critical late finding", None),
+    ("repeated failure", None),
+    ("changed dependency", None),
+    ("explicit UI requirement", None),
+    ("architecture seam", None),
+    ("stale memory", None),
+    ("contradictory correction", None),
+    ("Unicode recovery", None),
+    ("large log", None),
+    ("agent handoff", "agent_handoff"),
+    ("reuse", None),
+)
+PHASE75_OPEN_VARIANTS: tuple[str, ...] = (
+    "no reuse",
+    "misleading memory",
+    "search miss",
+    "initially irrelevant evidence later required",
+    "unsupported language",
+    "duplicate symbols",
+    "branch/worktree switch",
+    "rename",
+    "suppression",
+    "expired snapshot",
+    "long handoff",
+)
+EPISODE_OPERATION_KWARGS: dict[str, frozenset[str]] = {
+    "write": frozenset({"subject", "content", "source"}),
+    "handoff": frozenset({"request"}),
+    "receive": frozenset({"request"}),
+    "expand": frozenset({"session_allowlist", "request"}),
+    "last_success_diagnose": frozenset({"request"}),
+    "verify_attempt": frozenset({"request"}),
+}
+OPERATION_SCHEMAS: dict[str, dict[str, Any]] = {
+    "write": {
+        "kwargs": {
+            "subject": "acceptance.handoff.subject",
+            "content": '{"text": <string>}',
+            "source": "acceptance.handoff.source",
+        }
+    },
+    "handoff": {
+        "kwargs": {
+            "request": '{"action": "prepare", "receiver_namespace": '
+            "acceptance.handoff.source, "
+            '"receiver_audience": <string>, "goal": <string>, "selected_refs": '
+            '[{"id": <write result raw.id>, "version": <write result '
+            "raw.artifact_version>}]}"
+        }
+    },
+    "receive": {
+        "kwargs": {
+            "request": '{"session_id": <handoff result raw.data.handoff_id>, '
+            '"capability": <handoff result raw.data.capability>}, then the same '
+            'plus "ack": [{"id", "version", "digest": sha256 hex of the '
+            "base64-decoded expand raw.data.content_base64}]"
+        }
+    },
+    "expand": {
+        "kwargs": {
+            "session_allowlist": "[acceptance.handoff.source]",
+            "request": '{"id": <receive result raw.data.changes[i].id>, '
+            '"version": <receive result raw.data.changes[i].version>}',
+        }
+    },
+    "last_success_diagnose": {
+        "kwargs": {"request": '{"behavior_id": <string>, "conditions": <object>}'}
+    },
+    "verify_attempt": {
+        "kwargs": {
+            "request": '{"attempt_id": <string>, "behavior_ids": '
+            'acceptance.behavior_ids, "contract": {"required_commands": '
+            'acceptance.required_commands, "patch_content_digest": <string>, '
+            '"config_digest": <string>, "review_class": "standard", '
+            '"base_commit": <optional string>, "base_tree_digest": <optional '
+            'string>}, "patch": <unified diff touching only editable_paths>}'
+        }
+    },
+}
+EVALUATORS: dict[str, int] = {
+    "normalized_contains": 1,
+    "verifier_receipt_completed": 1,
+    "receiver_readback_acknowledged": 1,
+}
+
+_TOP_REQUIRED = frozenset(
+    {"schema_version", "cases", "declared", "phase75_family_coverage"}
+)
+_TOP_OPTIONAL = frozenset({"phase72_cases_sha256", "phase72_embedding"})
+_CASE_KEYS = frozenset(
+    {
+        "id",
+        "kind",
+        "family",
+        "variant",
+        "retrieval_required",
+        "inputs",
+        "fixture_revision",
+        "grants",
+        "permitted_actions",
+        "editable_paths",
+        "budget",
+        "acceptance",
+    }
+)
+_BUDGET_RANGES = {
+    "max_total_tokens": (1, 10_000_000),
+    "output_reserve_tokens": (0, 10_000_000),
+    "max_steps": (1, 1000),
+    "timeout_s": (1, 86_400),
+}
+_MANIFEST_MAX_DEPTH = 32
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+_CASE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+
+
+def _manifest_error(code: str, detail: str) -> FixtureError:
+    return FixtureError(f"{code}: {detail}")
+
+
+def _exact_keys(
+    obj: Any, keys: frozenset[str] | set[str], where: str
+) -> dict[str, Any]:
+    if not isinstance(obj, dict):
+        raise _manifest_error("wrong_type", f"{where} must be an object")
+    unknown = set(obj) - set(keys)
+    if unknown:
+        raise _manifest_error("unknown_key", f"{where}: {sorted(unknown)}")
+    missing = set(keys) - set(obj)
+    if missing:
+        raise _manifest_error("missing_key", f"{where}: {sorted(missing)}")
+    return obj
+
+
+def _typed(value: Any, kind: type, where: str) -> Any:
+    if type(value) is not kind:
+        raise _manifest_error("wrong_type", f"{where} must be {kind.__name__}")
+    return value
+
+
+def _text(value: Any, where: str) -> str:
+    text = _typed(value, str, where)
+    if not text:
+        raise _manifest_error("invalid_value", f"{where} is empty")
+    return cast(str, text)
+
+
+def _str_list(value: Any, where: str) -> list[str]:
+    items = _typed(value, list, where)
+    for item in items:
+        _typed(item, str, where)
+    if len(set(items)) != len(items):
+        raise _manifest_error("invalid_value", f"{where} has duplicates")
+    return cast(list[str], items)
+
+
+def _check_decoded(value: Any) -> None:
+    """Iterative walk: nesting depth and forbidden code points in every
+    string (control, format and surrogate characters)."""
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > _MANIFEST_MAX_DEPTH:
+            raise _manifest_error("invalid_value", "nesting too deep")
+        if isinstance(node, str):
+            if any(unicodedata.category(ch) in {"Cc", "Cf", "Cs"} for ch in node):
+                raise _manifest_error("invalid_value", "forbidden character")
+        elif isinstance(node, dict):
+            for key, inner in node.items():
+                stack.append((key, depth + 1))
+                stack.append((inner, depth + 1))
+        elif isinstance(node, list):
+            stack.extend((inner, depth + 1) for inner in node)
+
+
+def embedding_endpoint_ok(endpoint: str) -> bool:
+    """D14a loopback predicate, shared with the `[tools.memory]` config."""
+    if any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in endpoint):
+        return False
+    parts = urllib.parse.urlsplit(endpoint)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "http"
+        and "@" not in parts.netloc
+        and parts.hostname in {"127.0.0.1", "::1", "localhost"}
+        and port is not None
+        and 1 <= port <= 65535
+        and parts.path in ("", "/")
+        and parts.query == ""
+        and parts.fragment == ""
+    )
+
+
+def _check_embedding(value: Any) -> None:
+    emb = _exact_keys(value, {"endpoint", "model", "model_digest"}, "phase72_embedding")
+    for key in ("endpoint", "model", "model_digest"):
+        _typed(emb[key], str, f"phase72_embedding.{key}")
+    model = emb["model"]
+    if (
+        not embedding_endpoint_ok(emb["endpoint"])
+        or not model
+        or "/" in model
+        or ".." in model
+        or "\x00" in model
+        or re.fullmatch(r"[0-9a-f]{12,64}", emb["model_digest"]) is None
+    ):
+        raise _manifest_error("invalid_value", "phase72_embedding")
+
+
+def _check_editable(paths: list[str], where: str) -> None:
+    for p in paths:
+        if not p or "\\" in p:
+            raise _manifest_error("invalid_value", f"{where}: {p!r}")
+        posix = PurePosixPath(p)
+        if posix.is_absolute() or re.match(r"[A-Za-z]:", p) or ".." in posix.parts:
+            raise _manifest_error("unsafe_path", f"{where}: {p!r}")
+
+
+def _check_acceptance(value: Any, kind: str, where: str) -> None:
+    acc = _exact_keys(
+        value, {"evaluator", "behavior_ids", "required_commands", "handoff"}, where
+    )
+    evaluator = _typed(acc["evaluator"], str, f"{where}.evaluator")
+    if evaluator not in EVALUATORS:
+        raise _manifest_error("invalid_value", f"{where}.evaluator")
+    behavior_ids = _str_list(acc["behavior_ids"], f"{where}.behavior_ids")
+    commands = _typed(acc["required_commands"], list, f"{where}.required_commands")
+    for entry in commands:
+        command = _exact_keys(
+            entry, {"command", "expected_exit_code"}, f"{where}.required_commands"
+        )
+        argv = _typed(command["command"], list, f"{where}.command")
+        for token in argv:
+            _typed(token, str, f"{where}.command")
+        code = _typed(command["expected_exit_code"], int, f"{where}.expected_exit_code")
+        if not argv or not 0 <= code <= 255:
+            raise _manifest_error("invalid_value", f"{where}.required_commands")
+    handoff = acc["handoff"]
+    if handoff is not None:
+        h = _exact_keys(
+            handoff, {"subject", "source", "write_count", "content_contains"}, where
+        )
+        _text(h["subject"], f"{where}.handoff.subject")
+        _text(h["source"], f"{where}.handoff.source")
+        _text(h["content_contains"], f"{where}.handoff.content_contains")
+        if (
+            not 1
+            <= _typed(h["write_count"], int, f"{where}.handoff.write_count")
+            <= 100
+        ):
+            raise _manifest_error("invalid_value", f"{where}.handoff.write_count")
+    valid = {
+        "normalized_contains": kind == "dataset_answer"
+        and not behavior_ids
+        and not commands
+        and handoff is None,
+        "verifier_receipt_completed": kind == "episode"
+        and bool(commands)
+        and handoff is None,
+        "receiver_readback_acknowledged": kind == "episode"
+        and handoff is not None
+        and not commands,
+    }[evaluator]
+    if not valid:
+        raise _manifest_error("invalid_value", f"{where} does not fit {evaluator}")
+
+
+_DATASET_CORPUS_SECTIONS: dict[str, str | None] = {
+    "longmemeval": None,
+    "phase72_hybrid_queries": "phase72_hybrid_corpus",
+}
+
+
+def _check_case(case: Any, index: int, section_ids: Callable[[str], set[str]]) -> None:
+    where = f"cases[{index}]"
+    c = _exact_keys(case, _CASE_KEYS, where)
+    case_id = _typed(c["id"], str, f"{where}.id")
+    if _CASE_ID.fullmatch(case_id) is None:
+        raise _manifest_error("invalid_value", f"{where}.id")
+    kind = _typed(c["kind"], str, f"{where}.kind")
+    if kind not in {"dataset_answer", "episode"}:
+        raise _manifest_error("invalid_value", f"{where}.kind")
+    _text(c["family"], f"{where}.family")
+    if _typed(c["variant"], str, f"{where}.variant") != "base":
+        raise _manifest_error("invalid_value", f"{where}.variant")
+    retrieval = _typed(c["retrieval_required"], bool, f"{where}.retrieval_required")
+    if retrieval != case_id.startswith("p72-"):
+        raise _manifest_error("invalid_value", f"{where}.retrieval_required")
+    if kind == "dataset_answer":
+        inputs = _exact_keys(
+            c["inputs"], {"section", "corpus_section", "record_id", "query"}, where
+        )
+        section = _typed(inputs["section"], str, f"{where}.section")
+        if section not in _DATASET_CORPUS_SECTIONS:
+            raise _manifest_error("invalid_value", f"{where}.section")
+        if inputs["corpus_section"] != _DATASET_CORPUS_SECTIONS[section]:
+            raise _manifest_error("invalid_value", f"{where}.corpus_section")
+        record_id = _text(inputs["record_id"], f"{where}.record_id")
+        _text(inputs["query"], f"{where}.query")
+        if record_id not in section_ids(section):
+            raise _manifest_error("invalid_value", f"{where}.record_id")
+    else:
+        inputs = _exact_keys(c["inputs"], {"builder", "task"}, where)
+        if _typed(inputs["builder"], str, f"{where}.builder") not in EPISODE_BUILDERS:
+            raise _manifest_error("invalid_value", f"{where}.builder")
+        _text(inputs["task"], f"{where}.task")
+    revision = _typed(c["fixture_revision"], str, f"{where}.fixture_revision")
+    if _HEX64.fullmatch(revision) is None:
+        raise _manifest_error("invalid_value", f"{where}.fixture_revision")
+    grants = _str_list(c["grants"], f"{where}.grants")
+    if any(g not in ExecutionPermissions.__dataclass_fields__ for g in grants) or (
+        grants != sorted(grants)
+    ):
+        raise _manifest_error("invalid_value", f"{where}.grants")
+    actions = _str_list(c["permitted_actions"], f"{where}.permitted_actions")
+    if kind == "dataset_answer":
+        actions_ok = actions == ["answer"]
+    else:
+        actions_ok = "submit" in actions and all(
+            a in EPISODE_OPERATION_KWARGS for a in actions if a != "submit"
+        )
+    if not actions_ok:
+        raise _manifest_error("invalid_value", f"{where}.permitted_actions")
+    editable = _str_list(c["editable_paths"], f"{where}.editable_paths")
+    _check_editable(editable, f"{where}.editable_paths")
+    if kind == "dataset_answer" and editable:
+        raise _manifest_error("invalid_value", f"{where}.editable_paths")
+    budget = _exact_keys(c["budget"], frozenset(_BUDGET_RANGES), f"{where}.budget")
+    for key, (low, high) in _BUDGET_RANGES.items():
+        if not low <= _typed(budget[key], int, f"{where}.budget.{key}") <= high:
+            raise _manifest_error("invalid_value", f"{where}.budget.{key}")
+    if budget["output_reserve_tokens"] >= budget["max_total_tokens"]:
+        raise _manifest_error("invalid_value", f"{where}.budget.output_reserve_tokens")
+    _check_acceptance(c["acceptance"], kind, f"{where}.acceptance")
+
+
+def cases_digest(cases: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(
+        canonical_json(sorted(cases, key=lambda c: c["id"]))
+    ).hexdigest()
+
+
+def _decode_manifest(path: Path) -> Any:
+    try:
+        if stat.S_ISLNK(os.lstat(path).st_mode):
+            raise _manifest_error("unsafe_path", "task manifest is a symlink")
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(fd, "rb") as fh:
+            data = fh.read()
+    except FixtureError:
+        raise
+    except OSError as exc:
+        raise _manifest_error("manifest_unreadable", type(exc).__name__) from exc
+    if data.startswith(b"\xef\xbb\xbf"):
+        raise _manifest_error("manifest_unreadable", "byte order mark")
+
+    def no_constant(name: str) -> Any:
+        raise _manifest_error("invalid_value", f"non-finite constant {name}")
+
+    def no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        obj: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in obj:
+                raise _manifest_error("invalid_value", f"duplicate key {key!r}")
+            obj[key] = value
+        return obj
+
+    try:
+        return json.loads(
+            data.decode("utf-8"),
+            parse_constant=no_constant,
+            object_pairs_hook=no_duplicates,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise _manifest_error("manifest_unreadable", type(exc).__name__) from exc
+
+
+def load_task_manifest(path: Path) -> dict[str, Any]:
+    """Strict D13a task manifest loader; every rejection is a `FixtureError`
+    whose message starts with its code."""
+    manifest = _decode_manifest(Path(path))
+    _check_decoded(manifest)
+    top = _typed(manifest, dict, "manifest")
+    unknown = set(top) - _TOP_REQUIRED - _TOP_OPTIONAL
+    if unknown:
+        raise _manifest_error("unknown_key", f"manifest: {sorted(unknown)}")
+    missing = _TOP_REQUIRED - set(top)
+    if missing:
+        raise _manifest_error("missing_key", f"manifest: {sorted(missing)}")
+    if _typed(top["schema_version"], int, "schema_version") != 1:
+        raise _manifest_error("invalid_value", "schema_version")
+    declared = [{"family": f, "case_family": c} for f, c in PHASE75_DECLARED]
+    if _typed(top["declared"], list, "declared") != declared:
+        raise _manifest_error("invalid_value", "declared")
+    coverage = {
+        "open": {
+            "families": [f for f, c in PHASE75_DECLARED if c is None],
+            "variants": list(PHASE75_OPEN_VARIANTS),
+        }
+    }
+    if _typed(top["phase75_family_coverage"], dict, "coverage") != coverage:
+        raise _manifest_error("invalid_value", "phase75_family_coverage")
+    cases = _typed(top["cases"], list, "cases")
+    ids: set[str] = set()
+
+    def section_ids(section: str) -> set[str]:
+        if section not in ids_cache:
+            ids_cache[section] = {
+                str(r.get("question_id")) for r in load_dataset_section(section)[1]
+            }
+        return ids_cache[section]
+
+    ids_cache: dict[str, set[str]] = {}
+    for index, case in enumerate(cases):
+        _check_case(case, index, section_ids)
+        if case["id"] in ids:
+            raise _manifest_error("invalid_value", f"duplicate case id {case['id']}")
+        ids.add(case["id"])
+    if "phase72_embedding" in top:
+        _check_embedding(top["phase72_embedding"])
+    p72_digest = top.get("phase72_cases_sha256")
+    if (
+        p72_digest is not None
+        and _HEX64.fullmatch(_typed(p72_digest, str, "phase72_cases_sha256")) is None
+    ):
+        raise _manifest_error("invalid_value", "phase72_cases_sha256")
+    baseline = [c for c in cases if not c["id"].startswith("p72-")]
+    if cases_digest(baseline) != BASELINE_CASES_SHA256:
+        raise _manifest_error("baseline_altered", "the five baseline cases changed")
+    phase72 = [c for c in cases if c["id"].startswith("p72-")]
+    if phase72 and "phase72_cases_sha256" not in top:
+        raise _manifest_error("missing_key", "phase72_cases_sha256")
+    if "phase72_cases_sha256" in top and p72_digest != cases_digest(phase72):
+        raise _manifest_error("phase72_cases_mismatch", "phase72_cases_sha256")
+    return cast(dict[str, Any], top)
+
+
+def fixture_revision(root: Path) -> str:
+    """sha256 of canonical_json({posix rel path: sha256}) over regular files
+    (no-follow), excluding the top-level `.git/` and `.rush/`."""
+    root = Path(root)
+    files: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        if Path(dirpath) == root:
+            dirnames[:] = [d for d in dirnames if d not in {".git", ".rush"}]
+        for name in filenames:
+            full = Path(dirpath) / name
+            if stat.S_ISREG(os.lstat(full).st_mode):
+                rel = full.relative_to(root).as_posix()
+                files[rel] = hashlib.sha256(full.read_bytes()).hexdigest()
+    return hashlib.sha256(canonical_json(files)).hexdigest()
+
+
+def _norm(s: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", s).casefold().split())
+
+
+def normalized_contains(haystack: str, needle: str) -> bool:
+    n = _norm(needle)
+    return n != "" and n in _norm(haystack)
+
+
+def normalized_exact(a: str, b: str) -> bool:
+    n = _norm(b)
+    return n != "" and _norm(a) == n
+
+
+def expand_python_token(command: list[str]) -> list[str]:
+    """Replaces only elements exactly equal to "{python}"."""
+    return [sys.executable if token == "{python}" else token for token in command]
+
+
+def verifier_receipt_completed(
+    events: tuple[EpisodeEvent, ...], acceptance: dict[str, Any]
+) -> bool:
+    expected = [
+        (expand_python_token(c["command"]), c["expected_exit_code"])
+        for c in acceptance["required_commands"]
+    ]
+    wanted = set(acceptance["behavior_ids"])
+    for event in events:
+        if event.operation != "verify_attempt":
+            continue
+        receipt = event.raw.get("raw") or {}
+        if receipt.get("outcome") != "completed":
+            continue
+        if not set(receipt.get("behavior_ids") or []) >= wanted:
+            continue
+        executed = (receipt.get("result") or {}).get("executed_commands") or []
+        if all(
+            any(
+                list(rec["command"]) == cmd
+                and rec["expected_exit_code"] == code
+                and rec["passed"] is True
+                for rec in executed
+            )
+            for cmd, code in expected
+        ):
+            return True
+    return False
+
+
+def receiver_readback_acknowledged(
+    events: tuple[EpisodeEvent, ...], acceptance: dict[str, Any], root: Path
+) -> tuple[bool, list[dict[str, Any]]]:
+    """True only when exactly `write_count` handoff notes were written under
+    the acceptance subject/source, one handoff ran, and the store holds every
+    written ref unchanged with a matching receiver receipt. Refs and digests
+    come from tool results and the store only."""
+    h = acceptance["handoff"]
+    written = [
+        e.raw["raw"]
+        for e in events
+        if e.operation == "write"
+        and e.raw.get("status") == "ok"
+        and e.raw["raw"].get("subject") == h["subject"]
+        and e.raw["raw"].get("source") == h["source"]
+    ]
+    handoffs = [
+        e for e in events if e.operation == "handoff" and e.raw.get("status") == "ok"
+    ]
+    if len(written) != h["write_count"] or len(handoffs) != 1:
+        return False, []
+    session = handoffs[0].raw["raw"]["data"]["handoff_id"]
+    view, _reason = TypedArtifactStore.open_readonly_view(Path(root))
+    if view is None:
+        return False, []
+    bound: list[dict[str, Any]] = []
+    ok = True
+    try:
+        receipts = view.get_handoff_receipts(session)
+        for ref in written:
+            artifact_id, version = ref["id"], ref["artifact_version"]
+            payload = view.get_version_payload(artifact_id, version)
+            current = view.get_current_row(artifact_id)
+            if payload is None or current is None:
+                ok = False
+                continue
+            content, payload_hash = payload
+            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+            bound.append({"id": artifact_id, "version": version, "digest": digest})
+            ok = ok and (
+                (payload_hash is None or payload_hash == digest)
+                and normalized_contains(content, h["content_contains"])
+                and current["artifact_version"] == version
+                and receipts.get(artifact_id) == version
+            )
+    finally:
+        try:
+            view.close()
+        except Exception as exc:
+            raise FixtureError(f"cleanup_failed: read-only view close: {exc}") from exc
+    return ok, bound

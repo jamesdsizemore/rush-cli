@@ -4,7 +4,7 @@
 > **Milestone:** AGENTS.md Governance Synchronization, Multi-IDE Rule Parity, Subagent Hierarchies & Zero-Trust Scaffolding
 > **Status:** Ready for Implementation
 > **Target Version:** Rush v0.2.0
-> **Starting Goal:** Build agent governance and repository scaffolding tooling (`rush governance`, `rush scaffold`) that compiles canonical rules from `AGENTS.md` into multi-IDE rule files (.cursorrules, .windsurfrules, .copilot-instructions.md, .clauderules), verifies rule parity, enforces acyclic subagent invocation DAGs, and scaffolds zero-trust repositories.
+> **Starting Goal:** Build agent governance and repository scaffolding tooling (`rush governance`, `rush scaffold`) that compiles canonical rules from `AGENTS.md` into multi-IDE rule files (.windsurfrules, .copilot-instructions.md, .clauderules), verifies rule parity, enforces acyclic subagent invocation DAGs, and scaffolds zero-trust repositories.
 > **End State Outcome & Verification Checks:**
 > - [x] `RuleSynchronizer` compiles `AGENTS.md` into all IDE rule formats with SHA verification.
 > - [x] `ParityChecker` detects unsynchronized rule files in CI before PR merges.
@@ -33,10 +33,10 @@
 
 ### 1.1 Problem Statement & Deep Threat Model
 As multi-agent AI ecosystems interact with enterprise repositories, disparate AI IDE assistants and autonomous agents introduce governance fragmentation:
-1. **Multi-IDE Instruction Drift**: Developers using Cursor (`.cursorrules`), Windsurf (`.windsurfrules`), Copilot (`.github/copilot-instructions.md`), Cline (`.clinerules`), and Antigravity receive fragmented, conflicting security boundaries.
+1. **Multi-IDE Instruction Drift**: Developers using Windsurf (`.windsurfrules`), Copilot (`.github/copilot-instructions.md`), Cline (`.clinerules`), and Antigravity receive fragmented, conflicting security boundaries.
 2. **Missing Canonical Governance Source**: Lack of a single authoritative `AGENTS.md` specification defining permitted subprocess actions, environment constraints, and secret redaction rules.
 3. **Insecure Project Bootstrapping**: Newly created repositories lacking essential security defaults (e.g. unpinned CI actions, missing `.gitignore` rules for `.env`, lack of FastMCP stdio isolation).
-4. **Missing IDE MCP Server Attachments**: Manual setup of `.cursor/mcp.json` and `.vscode/mcp.json` causing configuration errors.
+4. **Missing IDE MCP Server Attachments**: Manual setup of `.vscode/mcp.json` causing configuration errors.
 5. **Cyclic Subagent Invocations**: Multi-agent swarms spawning recursive subagent loops causing runaway costs and context thrashing.
 6. **Filesystem Boundary Escapes**: Rogue agents attempting to read or write files outside the workspace root directory.
 7. **Agent Privilege Escalation**: Agents executing unrestricted terminal commands without role-based capability boundaries.
@@ -61,9 +61,8 @@ As multi-agent AI ecosystems interact with enterprise repositories, disparate AI
 |                      PHASE 38 ARCHITECTURAL INVARIANTS                      |
 +-----------------------------------------------------------------------------+
 | 1. Single Canonical Source: AGENTS.md is the sole source of governance.     |
-| 2. Multi-IDE Parity: Automatically syncs Cursor, Windsurf, Copilot, Cline.  |
+| 2. Multi-IDE Parity: Automatically syncs Windsurf, Copilot, Cline.  |
 | 3. Antigravity Support: Generates .gemini/antigravity/rules.md in lockstep. |
-| 4. MCP Config Generator: Automatically provisions .cursor/mcp.json configs. |
 | 5. Acyclic Subagent Guard: Enforces DAG hierarchy with depth cutoff <= 3.   |
 | 6. Filesystem Boundary Guard: Blocks file mutations outside repository root.|
 | 7. Zero-Trust Scaffolding: Generated repos include hardened security bounds.|
@@ -102,7 +101,7 @@ src/rush/
 ├── governance/
 │   ├── __init__.py           # Governance package exports
 │   ├── synchronizer.py       # AGENTS.md multi-IDE rule file compiler
-│   ├── mcp_configs.py        # IDE MCP server configuration generator (.cursor, .vscode)
+│   ├── mcp_configs.py        # IDE MCP server configuration generator (.vscode)
 │   ├── parity_checker.py     # Rule drift and SHA verification gate
 │   ├── subagent_guard.py     # Acyclic subagent invocation DAG validator
 │   ├── boundary_guard.py     # Workspace filesystem read/write boundary guard
@@ -140,7 +139,7 @@ src/rush/
 ## 4. User Stories, Acceptance Criteria & Bite-Sized TDD Tasks
 
 ### 4.1 User Stories & Acceptance Criteria
-- **User Story 1 (Multi-IDE Agent Rule Synchronization)**: As a repository maintainer, I want `rush governance sync` to compile canonical rules from `AGENTS.md` into `.cursorrules`, `.windsurfrules`, `.copilot-instructions.md`, and `.clauderules`.
+- **User Story 1 (Multi-IDE Agent Rule Synchronization)**: As a repository maintainer, I want `rush governance sync` to compile canonical rules from `AGENTS.md` into `.windsurfrules`, `.copilot-instructions.md`, and `.clauderules`.
   - *Acceptance Criteria*: Transpiles rule blocks into IDE-specific formats while maintaining 100% semantic parity and SHA verification.
 - **User Story 2 (Subagent Hierarchy & Invocation DAG Guard)**: As an AI agent framework author, I want `rush governance verify-subagents` to validate that subagent caller chains form a strictly acyclic DAG with depth <= 3.
   - *Acceptance Criteria*: Detects recursive subagent dispatch cycles and blocks unauthorized tool permissions.
@@ -190,7 +189,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 IDE_TARGETS = {
-    ".cursorrules": "Cursor IDE Rule File",
     ".windsurfrules": "Windsurf IDE Rule File",
     ".clinerules": "Cline / Roo-Code Rule File",
     ".github/copilot-instructions.md": "GitHub Copilot Instructions",
@@ -241,7 +239,7 @@ class AgentsMdSynchronizer:
 ### 4.2 `src/rush/governance/mcp_configs.py`
 
 ```python
-"""IDE MCP server configuration generator (.cursor, .vscode)."""
+"""IDE MCP server configuration generator (.vscode)."""
 
 from __future__ import annotations
 
@@ -250,25 +248,7 @@ from pathlib import Path
 
 
 class McpConfigGenerator:
-    """Generates standard MCP client configurations for Cursor and VS Code."""
-
-    @staticmethod
-    def generate_cursor_config(repo_root: Path) -> Path:
-        cursor_dir = repo_root / ".cursor"
-        cursor_dir.mkdir(parents=True, exist_ok=True)
-        config_file = cursor_dir / "mcp.json"
-
-        config = {
-            "mcpServers": {
-                "rush": {
-                    "command": "rush",
-                    "args": ["mcp", "serve"],
-                    "env": {},
-                }
-            }
-        }
-        config_file.write_text(json.dumps(config, indent=2), encoding="utf-8")
-        return config_file
+    """Generates standard MCP client configurations for VS Code."""
 
     @staticmethod
     def generate_vscode_config(repo_root: Path) -> Path:
@@ -726,14 +706,13 @@ def governance_group():
 
 @governance_group.command(name="sync")
 def governance_sync_cmd():
-    """Compile AGENTS.md into Cursor, Windsurf, Copilot, Cline, and Antigravity rule files."""
+    """Compile AGENTS.md into Windsurf, Copilot, Cline, and Antigravity rule files."""
     sync = AgentsMdSynchronizer(Path.cwd())
     results = sync.sync_all()
     if not results:
         click.echo("[FAIL] AGENTS.md not found.", err=True)
         raise SystemExit(1)
 
-    McpConfigGenerator.generate_cursor_config(Path.cwd())
     McpConfigGenerator.generate_vscode_config(Path.cwd())
 
     click.echo(
@@ -801,7 +780,7 @@ mcp = FastMCP("rush")
 
 @mcp.tool(
     name="rush_governance_sync",
-    description="Synchronize AGENTS.md into Cursor, Windsurf, Copilot, Cline, and Antigravity rule files.",
+    description="Synchronize AGENTS.md into Windsurf, Copilot, Cline, and Antigravity rule files.",
 )
 def rush_governance_sync() -> str:
     sync = AgentsMdSynchronizer(Path.cwd())
@@ -869,22 +848,20 @@ def test_agents_md_synchronizer(tmp_path: Path):
     sync = AgentsMdSynchronizer(tmp_path)
     results = sync.sync_all()
 
-    assert len(results) == 5
-    cursor_rules = tmp_path / ".cursorrules"
-    assert cursor_rules.exists()
-    assert "# Policy" in cursor_rules.read_text(encoding="utf-8")
+    assert len(results) == 4
+    windsurf_rules = tmp_path / ".windsurfrules"
+    assert windsurf_rules.exists()
+    assert "# Policy" in windsurf_rules.read_text(encoding="utf-8")
 
     antigravity_rules = tmp_path / ".gemini" / "antigravity" / "rules.md"
     assert antigravity_rules.exists()
 
 
 def test_mcp_config_generator(tmp_path: Path):
-    cursor_p = McpConfigGenerator.generate_cursor_config(tmp_path)
     vscode_p = McpConfigGenerator.generate_vscode_config(tmp_path)
 
-    assert cursor_p.exists()
     assert vscode_p.exists()
-    assert "rush" in cursor_p.read_text(encoding="utf-8")
+    assert "rush" in vscode_p.read_text(encoding="utf-8")
 
 
 def test_workspace_boundary_guard(tmp_path: Path):
@@ -964,7 +941,7 @@ def test_agent_budget_guard():
 
 
 def test_forbidden_rule_scanner(tmp_path: Path):
-    bad_rule_file = tmp_path / ".cursorrules"
+    bad_rule_file = tmp_path / ".windsurfrules"
     bad_rule_file.write_text("Always run git push --force on main.", encoding="utf-8")
 
     findings = ForbiddenRuleScanner.scan_file(bad_rule_file)
@@ -1014,7 +991,7 @@ def test_precommit_hook_scaffolder(tmp_path: Path):
 All Phase 38 diagnostics MUST be emitted to `sys.stderr` formatted as structured NDJSON.
 
 ```json
-{"timestamp": "2026-08-21T10:20:00.100Z", "phase": 38, "tool": "rush_governance", "event": "rules_synced", "targets": [".cursorrules", ".windsurfrules"]}
+{"timestamp": "2026-08-21T10:20:00.100Z", "phase": 38, "tool": "rush_governance", "event": "rules_synced", "targets": [".windsurfrules"]}
 {"timestamp": "2026-08-21T10:20:01.300Z", "phase": 38, "tool": "rush_governance", "event": "parity_drift_detected", "file": ".clinerules"}
 ```
 
@@ -1036,7 +1013,7 @@ The following specific documents across the `/docs` tree must be created or upda
 #### A. User-Facing Documentation
 - **[`docs/USER_GUIDE.md`](file:///C:/Users/james/developer/rush-cli/docs/USER_GUIDE.md)**: Add "AI Agent Governance & Multi-IDE Rule Parity" guide.
 - **[`docs/CLI_REFERENCE.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_REFERENCE.md)**: Document `rush governance sync`, `rush governance verify`, `rush scaffold init` (flags: `--strict`, `--ide`, `--template`).
-- **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for keeping `.cursorrules` and `.clauderules` synchronized with `AGENTS.md`.
+- **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for keeping `.clauderules` synchronized with `AGENTS.md`.
 - **[`docs/RECIPE_BOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/RECIPE_BOOK.md)**: Add automated recipe for generating zero-trust repository templates in organizations.
 - **[`docs/EXAMPLES.md`](file:///C:/Users/james/developer/rush-cli/docs/EXAMPLES.md)**: Show example generated multi-IDE configuration files and parity reports.
 - **[`docs/TUTORIALS.md`](file:///C:/Users/james/developer/rush-cli/docs/TUTORIALS.md)**: Add tutorial on authoring enterprise AGENTS.md rules with strict subagent depth limits.

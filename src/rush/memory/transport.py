@@ -294,10 +294,18 @@ def _send_native(
                 "authorized in this session."
             ),
         )
-    context = multiprocessing.get_context("spawn")
+    context = _native_context()
     receiver, sender = context.Pipe(duplex=False)
     process = context.Process(
-        target=_native_process, args=(sender, payload, options, allowed_tool_names)
+        target=_native_process,
+        args=(
+            sender,
+            payload,
+            options,
+            allowed_tool_names,
+            dict(os.environ),
+            os.getcwd(),
+        ),
     )
     try:
         process.start()
@@ -336,9 +344,43 @@ def _send_native(
                 process.close()
 
 
+_NATIVE_PRELOAD = ("claude_agent_sdk", "rush.memory.transport")
+
+
+def _native_context() -> Any:
+    """The multiprocessing context for native handoffs.
+
+    POSIX: a forkserver with the SDK preloaded, started here -- before the
+    handoff deadline begins -- so each handoff forks a ready child instead of
+    paying a cold interpreter plus the SDK's multi-second import inside the
+    deadline (which, under CPU load, alone exhausted it). Windows has no
+    forkserver and keeps spawn.
+    """
+    if sys.platform == "win32":
+        return multiprocessing.get_context("spawn")
+    from multiprocessing import forkserver
+
+    context = multiprocessing.get_context("forkserver")
+    context.set_forkserver_preload(list(_NATIVE_PRELOAD))
+    forkserver.ensure_running()
+    return context
+
+
 def _native_process(
-    sender, payload: str, options, allowed_tool_names: tuple[str, ...] = ()
+    sender,
+    payload: str,
+    options,
+    allowed_tool_names: tuple[str, ...] = (),
+    environ: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> None:
+    # A forkserver child inherits the server's environment and cwd, not the
+    # caller's: restore the caller's, exactly as a spawned child had them.
+    if environ is not None:
+        os.environ.clear()
+        os.environ.update(environ)
+    if cwd is not None:
+        os.chdir(cwd)
     if sys.platform != "win32":
         os.setsid()
     # SDK diagnostics must not reach stdio MCP stdout or reveal private content.
@@ -632,3 +674,74 @@ def cleanup_handoff_file(
         atomic = AtomicFile(PhysicalRoot(root))
         atomic.write_bytes(HANDOFF_FILE, SanitizedBytes.from_bytes(content))
     return removed
+
+
+def reassemble_utf8_expansion(
+    pages: Sequence[Mapping[str, Any]], *, artifact_id: str, version: int
+) -> tuple[bytes, str]:
+    """72-T02 receiver check: join `expand` pages taken with `representation="utf8"`
+    back into the exact persisted bytes and return `(bytes, sha256_hex)`; that digest is
+    what `receive`'s `ack` carries. Raises `HandoffError` with `E_INPUT` for a page
+    that is not a utf8 slice or has no digest, `E_OFFSET` for a gap, overlap, wrong
+    order, zero-progress page or length mismatch, and `E_VERSION` when the id, version,
+    `payload_hash` or `total_bytes` differs between pages or the final digest does not
+    match `payload_hash`."""
+    if not pages:
+        raise HandoffError("no expansion pages", code="E_INPUT")
+    chunks: list[bytes] = []
+    expected = 0
+    payload_hash: str | None = None
+    total: int | None = None
+    for index, page in enumerate(pages):
+        text = page.get("content_utf8")
+        if page.get("representation") != "utf8" or not isinstance(text, str):
+            raise HandoffError("expansion page is not a utf8 slice", code="E_INPUT")
+        if page.get("id") != artifact_id or page.get("version") != version:
+            raise HandoffError(
+                "expansion page names another artifact version", code="E_VERSION"
+            )
+        page_hash, page_total = page.get("payload_hash"), page.get("total_bytes")
+        if index == 0:
+            if (
+                not (
+                    isinstance(page_hash, str)
+                    and len(page_hash) == 64
+                    and all(c in "0123456789abcdef" for c in page_hash)
+                )
+                or type(page_total) is not int
+            ):
+                raise HandoffError(
+                    "expansion page lacks a payload digest", code="E_INPUT"
+                )
+            payload_hash, total = page_hash, page_total
+        elif page_hash != payload_hash or page_total != total:
+            raise HandoffError("payload digest changed between pages", code="E_VERSION")
+        try:
+            chunk = text.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise HandoffError(
+                "expansion page is not valid UTF-8 text", code="E_INPUT"
+            ) from exc
+        last = index == len(pages) - 1
+        if page.get("offset") != expected or (not chunk and not last):
+            raise HandoffError("expansion pages are out of sequence", code="E_OFFSET")
+        expected += len(chunk)
+        nxt = page.get("next_offset")
+        if (
+            page.get("complete") is not last
+            or (nxt is None) != last
+            or (nxt is not None and nxt != expected)
+        ):
+            raise HandoffError("expansion pages are out of sequence", code="E_OFFSET")
+        chunks.append(chunk)
+    data = b"".join(chunks)
+    if len(data) != total:
+        raise HandoffError(
+            "reassembled length differs from total_bytes", code="E_OFFSET"
+        )
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != payload_hash:
+        raise HandoffError(
+            "reassembled bytes do not match payload_hash", code="E_VERSION"
+        )
+    return data, digest

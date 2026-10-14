@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import base64
 import concurrent.futures
+import hashlib
 import json
 import shutil
 import subprocess
@@ -14,6 +16,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 import pytest
 
@@ -39,7 +42,9 @@ def _load_fixture(name: str) -> dict:
 
 
 def _serve(server) -> threading.Thread:
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     return thread
 
@@ -1014,19 +1019,404 @@ async function goto(section) {
 
 # --- U05: lossless artifact-download pagination ----------------------------
 
+
+@pytest.mark.parametrize(
+    "consumer", ["listing", "export", "browser", "preview", "tamper", "during_read"]
+)
+@pytest.mark.parametrize(
+    "artifact_path", ["out.bin", "reports/out file.bin", "reports/literal%2F file.bin"]
+)
+def test_captured_same_run_attempts_download_through_public_routes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, consumer: str, artifact_path: str
+) -> None:
+    from test_dashboard_git_artifacts import (
+        _action,
+        _isolate_data_roots,
+        _register,
+        _scheduled_item,
+        _snapshot,
+        _write_manifest,
+    )
+
+    from rush.workflows.project_run import _capture_artifact_snapshots
+
+    _isolate_data_roots(tmp_path, monkeypatch)
+    project_id, root = _register(tmp_path, init_git=False)
+    monkeypatch.chdir(root)
+    payloads = {
+        "attempt-1": bytes.fromhex("41e282ac4200ff") * 2,
+        "attempt-2": bytes.fromhex("42e282ac4300ff") * 3,
+    }
+    immutable_paths = {}
+    for attempt_id, content in payloads.items():
+        (root / artifact_path).parent.mkdir(parents=True, exist_ok=True)
+        (root / artifact_path).write_bytes(content)
+        snapshots = _capture_artifact_snapshots(
+            root, "same-run", attempt_id, "binary-tool", {"artifacts": [artifact_path]}
+        )
+        immutable_paths[attempt_id] = root / snapshots[artifact_path]["immutable_path"]
+        _write_manifest(
+            root,
+            project_id=project_id,
+            run_id="same-run",
+            attempt_id=attempt_id,
+            scheduled=[
+                _scheduled_item(
+                    "binary-tool",
+                    "quality",
+                    artifacts=[artifact_path],
+                    artifact_snapshots=snapshots,
+                )
+            ],
+        )
+        if consumer == "tamper":
+            immutable = root / snapshots[artifact_path]["immutable_path"]
+            immutable.write_bytes(b"C" + content[1:])
+    (root / artifact_path).write_bytes(b"LIVE-SENTINEL-must-never-appear")
+    foreign_id, foreign_root = _register(tmp_path, "foreign", init_git=False)
+    monkeypatch.chdir(foreign_root)
+    (foreign_root / "out.bin").write_bytes(b"foreign project bytes")
+    foreign_snapshots = _capture_artifact_snapshots(
+        foreign_root,
+        "foreign-run",
+        "foreign-attempt",
+        "binary-tool",
+        {"artifacts": ["out.bin"]},
+    )
+    _write_manifest(
+        foreign_root,
+        project_id=foreign_id,
+        run_id="foreign-run",
+        attempt_id="foreign-attempt",
+        scheduled=[
+            _scheduled_item(
+                "binary-tool",
+                "quality",
+                artifacts=["out.bin"],
+                artifact_snapshots=foreign_snapshots,
+            )
+        ],
+    )
+    monkeypatch.chdir(root)
+    server, ctx, token = create_dashboard_server(
+        {
+            pid: {
+                "schema_version": 1,
+                "project_id": pid,
+                "source_identity": str(path),
+                "root": str(path),
+                "files": [],
+                "findings": [],
+                "memories": [],
+                "agents": [],
+            }
+            for pid, path in [(project_id, root), (foreign_id, foreign_root)]
+        }
+    )
+    _serve(server)
+    base_url = ctx.launch_origin
+    cookie, csrf = _bootstrap_session(base_url, token)
+    try:
+        status, _, listing = _snapshot(base_url, project_id, cookie, "artifacts")
+        assert status == 200
+        for selected_id, foreign_ref in [
+            (project_id, "run:foreign-run:foreign-attempt:binary-tool:out.bin"),
+            (foreign_id, "run:same-run:attempt-1:binary-tool:out.bin"),
+            (project_id, "run:same-run:missing-attempt:binary-tool:out.bin"),
+            (project_id, "run:same-run:attempt-1:binary-tool:../out.bin"),
+        ]:
+            response = _get(
+                f"{base_url}/api/projects/{selected_id}/artifacts/{quote(foreign_ref, safe=':')}?path=out.bin",
+                headers={"Cookie": cookie},
+            )
+            assert response.status == 404
+            assert json.loads(response.read())["error"]["code"] == "not_found"
+        refs = {
+            f"run:same-run:{attempt}:binary-tool:{artifact_path}"
+            for attempt in payloads
+        }
+        if consumer == "listing":
+            captured = {
+                item["artifact_ref"]: item
+                for item in listing["data"]["items"]
+                if item["kind"] == "captured_artifact"
+            }
+            assert set(captured) == refs
+            for attempt, content in payloads.items():
+                item = captured[f"run:same-run:{attempt}:binary-tool:{artifact_path}"]
+                assert item["paths"] == [item["path"]] == [artifact_path]
+                assert item["size"] == len(content)
+                assert item["sha256"] == hashlib.sha256(content).hexdigest()
+            return
+        for index, (attempt, content) in enumerate(payloads.items()):
+            ref = f"run:same-run:{attempt}:binary-tool:{artifact_path}"
+            if consumer == "during_read":
+                from rush.workflows import projects as wp
+
+                immutable = immutable_paths[attempt]
+                identity = immutable.stat()
+                real_read = wp.os.read
+                altered = False
+
+                def replace_after_verified_read(
+                    fd: int,
+                    count: int,
+                    real_read=real_read,
+                    identity=identity,
+                    immutable=immutable,
+                    content=content,
+                ) -> bytes:
+                    nonlocal altered
+                    block = real_read(fd, count)
+                    opened = wp.os.fstat(fd)
+                    if (
+                        not altered
+                        and not block
+                        and (opened.st_dev, opened.st_ino)
+                        == (identity.st_dev, identity.st_ino)
+                    ):
+                        immutable.write_bytes(b"C" + content[1:])
+                        altered = True
+                    return block
+
+                with monkeypatch.context() as race:
+                    race.setattr(wp.os, "read", replace_after_verified_read)
+                    expanded_status, _, expanded = _snapshot(
+                        base_url, project_id, cookie, "artifacts", expand_ref=ref
+                    )
+                assert altered
+                assert immutable.read_bytes() == b"C" + content[1:]
+                assert expanded_status == 200
+                preview = expanded["data"]["expand"]["raw_excerpt"]
+                assert preview["lines"] == [content.decode("utf-8", errors="replace")]
+                continue
+            if consumer == "preview":
+                expanded_status, _, expanded = _snapshot(
+                    base_url, project_id, cookie, "artifacts", expand_ref=ref
+                )
+                assert expanded_status == 200
+                preview = expanded["data"]["expand"]["raw_excerpt"]
+                assert "LIVE-SENTINEL" not in json.dumps(preview)
+                assert preview["lines"] == [content.decode("utf-8", errors="replace")]
+            if consumer == "tamper":
+                expanded_status, _, expanded = _snapshot(
+                    base_url, project_id, cookie, "artifacts", expand_ref=ref
+                )
+                assert expanded_status == 200
+                preview = expanded["data"]["expand"]["raw_excerpt"]
+                assert preview == {
+                    "path": artifact_path,
+                    "lines": [],
+                    "error": "immutable_content_unavailable",
+                }
+            denied, _, denial = _action(
+                base_url,
+                project_id,
+                cookie,
+                csrf,
+                operation="artifact_export",
+                arguments={"artifact_id": ref},
+                grants={"download": False},
+            )
+            assert denied == 403
+            assert denial["error"]["code"] == "grant_denied"
+            export_status, _, exported = _action(
+                base_url,
+                project_id,
+                cookie,
+                csrf,
+                operation="artifact_export",
+                arguments={"artifact_id": ref},
+                grants={"download": True},
+            )
+            pages = []
+            if consumer == "tamper":
+                response = _get(
+                    f"{base_url}/api/projects/{project_id}/artifacts/{quote(ref, safe=':')}"
+                    f"?{urlencode({'path': artifact_path, 'limit': 2, 'offset': 0})}",
+                    headers={"Cookie": cookie},
+                )
+                assert response.status == 200
+                page = json.loads(response.read())["data"]["content"]
+                assert page["error"] == "immutable_content_unavailable"
+                assert page["content_base64"] is None
+            else:
+                offset = 0
+                while True:
+                    response = _get(
+                        f"{base_url}/api/projects/{project_id}/artifacts/{quote(ref, safe=':')}"
+                        f"?{urlencode({'path': artifact_path, 'limit': 2, 'offset': offset})}",
+                        headers={"Cookie": cookie},
+                    )
+                    page = json.loads(response.read())
+                    pages.append(page)
+                    data = page.get("data", {}).get("content")
+                    if not data or data["next_offset"] is None:
+                        break
+                    offset = data["next_offset"]
+                    assert len(pages) <= len(content)
+            if consumer in ("export", "preview"):
+                assert export_status == 200, exported
+                assert exported["data"]["entry"]["paths"] == [artifact_path]
+                assembled = b"".join(
+                    base64.b64decode(p["data"]["content"]["content_base64"])
+                    for p in pages
+                )
+                assert assembled == content
+                assert len(pages) > 2
+                assert pages[-1]["data"]["content"]["size"] == len(content)
+                assert (
+                    hashlib.sha256(assembled).hexdigest()
+                    == hashlib.sha256(content).hexdigest()
+                )
+            else:
+                scenario = (
+                    _ACTION_HARNESS_HELPERS_JS
+                    + f"""
+import {{ startApplication }} from "./application.js";
+const exported = {json.dumps(exported)};
+const expected = Buffer.from({json.dumps(base64.b64encode(content).decode())}, "base64");
+const project = {json.dumps(project_id)};
+const ref = {json.dumps(ref)};
+const tampered = {json.dumps(consumer == "tamper")};
+const path = {json.dumps(artifact_path)};
+const cookie = {json.dumps(cookie)};
+const baseUrl = {json.dumps(base_url)};
+const nativeFetch = global.fetch;
+let pageIndex = 0, blob = null;
+const RealBlob = global.Blob;
+global.Blob = class extends RealBlob {{ constructor(parts, opts) {{ super(parts, opts); blob = this; }} }};
+global.fetch = (url, options) => {{
+  const u = String(url);
+  if (u === "/api/session") return jsonOk(sessionBody());
+  if (u === "/api/theme") return jsonOk(themeBody());
+  if (u === "/api/projects") return jsonOk(projectsBody([{{ project_id: project, root: "/fixture" }}]));
+  if (u.includes("/snapshot")) return jsonOk(envelope(project, 1, {{ nodes: [], edges: [] }}));
+  if (u.endsWith("/actions")) {{
+    const request = JSON.parse(options.body);
+    if (request.arguments.artifact_id !== ref || request.grants.download !== true) throw new Error("wrong export request");
+    return jsonStatus({export_status}, exported);
+  }}
+  if (u.includes("/artifacts/")) {{
+    pageIndex++;
+    return nativeFetch(baseUrl + u, {{ headers: {{ Cookie: cookie }} }});
+  }}
+  return jsonOk(envelope(project, 1, {{}}));
+}};
+await startApplication(rootEl, {{ mapContainer: {{}} }});
+await goto("artifacts");
+const form = findForm("artifact_export");
+form.querySelector('[name="artifact_id"]').value = ref;
+form.querySelector('[data-grant="download"]').checked = true;
+form.dispatchEvent({{ type: "submit", preventDefault() {{}} }});
+const completionDeadline = Date.now() + 2000;
+while (!form.querySelector('[data-role="artifact-export-cancel"]').hidden && Date.now() < completionDeadline) {{
+  await wait(5);
+}}
+const result = form.querySelector('[data-role="action-result"]').textContent;
+const link = form.querySelector('[data-role="artifact-download-link"]');
+if (tampered ? (blob !== null || link !== null || pageIndex !== 1 ||
+               result !== "download failed: immutable_content_unavailable") :
+    (!blob || !Buffer.from(await blob.arrayBuffer()).equals(expected) || pageIndex !== 1 ||
+    !link || link.download !== path.split("/").pop() || result !== `downloaded ${{expected.length}} of ${{expected.length}} bytes`)) {{
+  throw new Error("captured download failed: " + result);
+}}
+console.log("PASS");
+process.exit(0);
+"""
+                )
+                harness_root = tmp_path / f"browser-{index}"
+                harness_root.mkdir()
+                returncode, stdout, stderr = _run_restore_project_id_harness(
+                    harness_root, scenario
+                )
+                assert returncode == 0, f"stdout={stdout}\nstderr={stderr}"
+                assert "PASS" in stdout
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_artifact_export_double_submit_cancel_before_approval(tmp_path: Path) -> None:
+    scenario = (
+        _ACTION_HARNESS_HELPERS_JS
+        + """
+import assert from "node:assert/strict";
+import { startApplication } from "./application.js";
+let approvals = 0, pages = 0, blobs = 0;
+const pending = [];
+const RealBlob = global.Blob;
+global.Blob = class extends RealBlob { constructor(parts, opts) { super(parts, opts); blobs++; } };
+global.fetch = (url, options) => {
+  const u = String(url);
+  if (u === "/api/session") return jsonOk(sessionBody());
+  if (u === "/api/theme") return jsonOk(themeBody());
+  if (u === "/api/projects") return jsonOk(projectsBody([{ project_id: "project-a", root: "/a" }]));
+  if (u.includes("/snapshot")) return jsonOk(envelope("project-a", 1, { nodes: [], edges: [] }));
+  if (u.endsWith("/actions")) {
+    approvals++;
+    return new Promise(resolve => pending.push(resolve));
+  }
+  if (u.includes("/artifacts/")) { pages++; throw new Error("cancelled approval started content"); }
+  return jsonOk(envelope("project-a", 1, {}));
+};
+await startApplication(rootEl, { mapContainer: {} });
+await goto("artifacts");
+const form = findForm("artifact_export");
+form.querySelector('[name="artifact_id"]').value = "run:r:a:c";
+form.querySelector('[data-grant="download"]').checked = true;
+form.dispatchEvent({ type: "submit", preventDefault() {} });
+form.dispatchEvent({ type: "submit", preventDefault() {} });
+await wait(10);
+assert.equal(approvals, 1);
+const cancel = form.querySelector('[data-role="artifact-export-cancel"]');
+assert.equal(cancel.hidden, false);
+cancel.click();
+pending[0]({ ok: true, status: 200, json: async () => envelope("project-a", 1, {
+  found: true, entry: { artifact_ref: "run:r:a:c", paths: ["out.bin"] }
+}) });
+await wait(30);
+assert.equal(form.querySelector('[data-role="action-result"]').textContent, "download cancelled");
+assert.equal(pages, 0);
+assert.equal(blobs, 0);
+assert.equal(form.querySelector('[data-role="artifact-download-link"]'), null);
+assert.equal(cancel.hidden, true);
+form.dispatchEvent({ type: "submit", preventDefault() {} });
+await wait(10);
+assert.equal(approvals, 2);
+cancel.click();
+pending[1]({ ok: true, status: 200, json: async () => envelope("project-a", 1, {
+  found: true, entry: { artifact_ref: "run:r:a:c", paths: ["out.bin"] }
+}) });
+await wait(30);
+assert.equal(pages, 0);
+console.log("PASS");
+process.exit(0);
+"""
+    )
+    returncode, stdout, stderr = _run_restore_project_id_harness(tmp_path, scenario)
+    assert returncode == 0, f"stdout={stdout}\nstderr={stderr}"
+    assert "PASS" in stdout
+
+
 _ARTIFACT_EXPORT_MULTI_PAGE_SCENARIO = (
     _ACTION_HARNESS_HELPERS_JS
     + """
 import { startApplication } from "./application.js";
+import { createHash } from "node:crypto";
 
-const fullBytes = Buffer.concat([
+const fullBytes = __EMPTY_ARTIFACT__ ? Buffer.alloc(0) : Buffer.concat([
   Buffer.from("h\\u00e9", "utf-8"), // 0x68 0xC3 0xA9 -- multi-byte char split below
   Buffer.from([0x00, 0xff]),
   Buffer.from("w\\u00f6rld", "utf-8"),
 ]);
-const splitAt = 2; // right inside the 2-byte 0xC3 0xA9 sequence
-const page1 = fullBytes.subarray(0, splitAt);
-const page2 = fullBytes.subarray(splitAt);
+const fullSha256 = createHash("sha256").update(fullBytes).digest("hex");
+const pages = fullBytes.length === 0 ? [fullBytes] : [
+  fullBytes.subarray(0, 2), // right inside the 2-byte 0xC3 0xA9 sequence
+  fullBytes.subarray(2, 5),
+  fullBytes.subarray(5),
+];
+let pageFetches = 0;
 const ARTIFACT_REF = "run:r1:a1:c1";
 
 const realBlob = global.Blob;
@@ -1045,6 +1435,12 @@ global.fetch = (url, options) => {
   if (u === "/api/projects") return jsonOk(projectsBody([{ project_id: "project-a", root: "/a" }]));
   if (u.indexOf("/api/projects/project-a/snapshot") === 0) return jsonOk(envelope("project-a", 1, { nodes: [], edges: [] }));
   if (u === "/api/projects/project-a/actions") {
+    const request = JSON.parse(options.body);
+    if (request.operation !== "artifact_export" ||
+        request.arguments.artifact_id !== ARTIFACT_REF ||
+        request.grants.download !== true) {
+      throw new Error("artifact export grant or reference missing");
+    }
     return jsonOk(
       envelope("project-a", 1, {
         found: true,
@@ -1055,8 +1451,13 @@ global.fetch = (url, options) => {
   }
   if (u.indexOf("/api/projects/project-a/artifacts/") === 0) {
     const offset = Number(new URL(u, "http://x").searchParams.get("offset"));
-    const page = offset === 0 ? page1 : page2;
-    const nextOffset = offset === 0 ? splitAt : null;
+    const expectedOffsets = fullBytes.length === 0 ? [0] : [0, 2, 5];
+    if (offset !== expectedOffsets[pageFetches]) {
+      throw new Error("unexpected artifact page offset");
+    }
+    const page = pages[pageFetches];
+    pageFetches += 1;
+    const nextOffset = pageFetches === pages.length ? null : offset + page.length;
     return jsonOk(
       envelope("project-a", 1, {
         found: true,
@@ -1068,7 +1469,7 @@ global.fetch = (url, options) => {
           size: fullBytes.length,
           content_base64: page.toString("base64"),
           next_offset: nextOffset,
-          sha256: "digest-1",
+          sha256: fullSha256,
           media_type: "application/octet-stream",
         },
       })
@@ -1087,7 +1488,9 @@ await wait(100);
 
 const result = form.querySelector('[data-role="action-result"]');
 const assembled = Buffer.concat((lastChunks || []).map((c) => Buffer.from(c)));
-if (assembled.equals(fullBytes) && result.textContent.indexOf("downloaded " + fullBytes.length) === 0) {
+if (lastChunks !== null && assembled.equals(fullBytes) && pageFetches === pages.length &&
+    result.textContent === "downloaded " + fullBytes.length + " of " + fullBytes.length + " bytes" &&
+    form.querySelector('[data-role="artifact-download-link"]') !== null) {
   console.log("PASS");
   process.exit(0);
 } else {
@@ -1100,12 +1503,15 @@ if (assembled.equals(fullBytes) && result.textContent.indexOf("downloaded " + fu
 )
 
 
+@pytest.mark.parametrize("empty_artifact", [False, True])
 def test_artifact_export_control_follows_next_offset_until_null_and_assembles_full_byte_content(
     tmp_path: Path,
+    empty_artifact: bool,
 ) -> None:
-    returncode, stdout, stderr = _run_restore_project_id_harness(
-        tmp_path, _ARTIFACT_EXPORT_MULTI_PAGE_SCENARIO
+    scenario = _ARTIFACT_EXPORT_MULTI_PAGE_SCENARIO.replace(
+        "__EMPTY_ARTIFACT__", json.dumps(empty_artifact)
     )
+    returncode, stdout, stderr = _run_restore_project_id_harness(tmp_path, scenario)
     assert returncode == 0, f"harness failed\\nstdout={stdout}\\nstderr={stderr}"
     assert "PASS" in stdout
 
@@ -1113,17 +1519,38 @@ def test_artifact_export_control_follows_next_offset_until_null_and_assembles_fu
 _ARTIFACT_EXPORT_INCONSISTENT_PAGE_SCENARIO = (
     _ACTION_HARNESS_HELPERS_JS
     + """
+import assert from "node:assert/strict";
 import { startApplication } from "./application.js";
 
+const PAGE_CASE = __PAGE_CASE__;
 const ARTIFACT_REF = "run:r1:a1:c1";
+let pageFetches = 0;
+let blobCalls = 0;
+let objectURLCalls = 0;
+const RealBlob = global.Blob;
+global.Blob = class extends RealBlob {
+  constructor(parts, opts) {
+    blobCalls += 1;
+    super(parts, opts);
+  }
+};
+const realCreateObjectURL = URL.createObjectURL.bind(URL);
+URL.createObjectURL = (blob) => {
+  objectURLCalls += 1;
+  return realCreateObjectURL(blob);
+};
 
-global.fetch = (url) => {
+global.fetch = (url, options) => {
   const u = String(url);
   if (u === "/api/session") return jsonOk(sessionBody());
   if (u === "/api/theme") return jsonOk(themeBody());
   if (u === "/api/projects") return jsonOk(projectsBody([{ project_id: "project-a", root: "/a" }]));
   if (u.indexOf("/api/projects/project-a/snapshot") === 0) return jsonOk(envelope("project-a", 1, { nodes: [], edges: [] }));
   if (u === "/api/projects/project-a/actions") {
+    const request = JSON.parse(options.body);
+    assert.equal(request.operation, "artifact_export");
+    assert.equal(request.arguments.artifact_id, ARTIFACT_REF);
+    assert.equal(request.grants.download, true);
     return jsonOk(
       envelope("project-a", 1, {
         found: true,
@@ -1133,39 +1560,28 @@ global.fetch = (url) => {
     );
   }
   if (u.indexOf("/api/projects/project-a/artifacts/") === 0) {
+    pageFetches += 1;
+    // Bound a broken zero-progress loop; exact fetch count below still fails it.
+    if (pageFetches > 2) throw new Error("unexpected third artifact page");
     const offset = Number(new URL(u, "http://x").searchParams.get("offset"));
-    if (offset === 0) {
-      return jsonOk(
-        envelope("project-a", 1, {
-          found: true,
-          entry: { artifact_ref: ARTIFACT_REF, paths: ["out.bin"] },
-          content: {
-            path: "out.bin",
-            offset: 0,
-            size: 10,
-            content_base64: Buffer.from("hello").toString("base64"),
-            next_offset: 5,
-            sha256: "digest-1",
-            media_type: "application/octet-stream",
-          },
-        })
-      );
-    }
-    // Second page: digest silently changed mid-download -- a truncated or
-    // tampered sequence must be rejected, never assembled as complete.
+    const content = {
+      path: "out.bin",
+      offset,
+      size: PAGE_CASE.size,
+      content_base64: Buffer.from(
+        offset === 0 ? "hello" : PAGE_CASE.second_bytes
+      ).toString("base64"),
+      next_offset: offset === 0 ? 5 : PAGE_CASE.next_offset,
+      sha256: offset === 0 ? "936a185caaa266bb9cbe981e9e05cb78cd732b0b3280eb944412bb6f8f8f07af" : PAGE_CASE.digest,
+      media_type: "application/octet-stream",
+    };
+    if (PAGE_CASE.omit_size) delete content.size;
+    if (offset !== 0 && PAGE_CASE.omit_next_offset) delete content.next_offset;
     return jsonOk(
       envelope("project-a", 1, {
         found: true,
         entry: { artifact_ref: ARTIFACT_REF, paths: ["out.bin"] },
-        content: {
-          path: "out.bin",
-          offset: 5,
-          size: 10,
-          content_base64: Buffer.from("world").toString("base64"),
-          next_offset: null,
-          sha256: "digest-DIFFERENT",
-          media_type: "application/octet-stream",
-        },
+        content,
       })
     );
   }
@@ -1181,24 +1597,62 @@ form.dispatchEvent({ type: "submit", preventDefault() {} });
 await wait(100);
 
 const result = form.querySelector('[data-role="action-result"]');
-const anchor = form.querySelector('[data-role="artifact-download-link"]');
-if (result.textContent.indexOf("download failed") === 0 && !anchor) {
-  console.log("PASS");
-  process.exit(0);
-} else {
-  console.error("FAIL result=" + result.textContent + " anchor=" + !!anchor);
-  process.exit(1);
+assert.ok(result.textContent.startsWith("download failed:"));
+if (PAGE_CASE.expected_error) {
+  assert.equal(result.textContent, "download failed: " + PAGE_CASE.expected_error);
 }
+assert.equal(pageFetches, PAGE_CASE.expected_fetches);
+assert.equal(blobCalls, 0);
+assert.equal(objectURLCalls, 0);
+assert.equal(form.querySelector('[data-role="artifact-download-link"]'), null);
+assert.ok(!result.textContent.startsWith("downloaded "));
+console.log("PASS");
+process.exit(0);
 """
 )
 
 
+@pytest.mark.parametrize(
+    "page_case",
+    [
+        pytest.param({"digest": "digest-DIFFERENT"}, id="changed-digest"),
+        pytest.param(
+            {"second_bytes": "w0rld", "expected_error": "artifact digest mismatch"},
+            id="same-size-byte-tamper",
+        ),
+        pytest.param({"second_bytes": "wo"}, id="premature-null"),
+        pytest.param({"omit_next_offset": True}, id="missing-next-offset"),
+        pytest.param({"second_bytes": "", "next_offset": 5}, id="zero-progress"),
+        pytest.param({"second_bytes": "world!"}, id="oversize-final-page"),
+        pytest.param({"size": 4, "expected_fetches": 1}, id="oversize-first-page"),
+        pytest.param({"size": None, "expected_fetches": 1}, id="null-size"),
+        pytest.param({"size": -1, "expected_fetches": 1}, id="negative-size"),
+        pytest.param({"size": 1.5, "expected_fetches": 1}, id="fractional-size"),
+        pytest.param({"size": "10", "expected_fetches": 1}, id="string-size"),
+        pytest.param({"size": True, "expected_fetches": 1}, id="boolean-size"),
+        pytest.param(
+            {"size": 9007199254740992, "expected_fetches": 1},
+            id="unsafe-integer-size",
+        ),
+        pytest.param({"omit_size": True, "expected_fetches": 1}, id="missing-size"),
+    ],
+)
 def test_artifact_export_control_rejects_a_truncated_or_inconsistent_page_sequence(
     tmp_path: Path,
+    page_case: dict,
 ) -> None:
-    returncode, stdout, stderr = _run_restore_project_id_harness(
-        tmp_path, _ARTIFACT_EXPORT_INCONSISTENT_PAGE_SCENARIO
+    case = {
+        "size": 10,
+        "second_bytes": "world",
+        "next_offset": None,
+        "digest": "936a185caaa266bb9cbe981e9e05cb78cd732b0b3280eb944412bb6f8f8f07af",
+        "expected_fetches": 2,
+        **page_case,
+    }
+    scenario = _ARTIFACT_EXPORT_INCONSISTENT_PAGE_SCENARIO.replace(
+        "__PAGE_CASE__", json.dumps(case)
     )
+    returncode, stdout, stderr = _run_restore_project_id_harness(tmp_path, scenario)
     assert returncode == 0, f"harness failed\\nstdout={stdout}\\nstderr={stderr}"
     assert "PASS" in stdout
 
@@ -1206,10 +1660,25 @@ def test_artifact_export_control_rejects_a_truncated_or_inconsistent_page_sequen
 _ARTIFACT_EXPORT_CANCELLATION_SCENARIO = (
     _ACTION_HARNESS_HELPERS_JS
     + """
+import assert from "node:assert/strict";
 import { startApplication } from "./application.js";
 
 const ARTIFACT_REF = "run:r1:a1:c1";
 let secondPageFetches = 0;
+let blobCalls = 0;
+let objectURLCalls = 0;
+const RealBlob = global.Blob;
+global.Blob = class extends RealBlob {
+  constructor(parts, opts) {
+    blobCalls += 1;
+    super(parts, opts);
+  }
+};
+const realCreateObjectURL = URL.createObjectURL.bind(URL);
+URL.createObjectURL = (blob) => {
+  objectURLCalls += 1;
+  return realCreateObjectURL(blob);
+};
 
 global.fetch = (url, options) => {
   const u = String(url);
@@ -1218,6 +1687,10 @@ global.fetch = (url, options) => {
   if (u === "/api/projects") return jsonOk(projectsBody([{ project_id: "project-a", root: "/a" }]));
   if (u.indexOf("/api/projects/project-a/snapshot") === 0) return jsonOk(envelope("project-a", 1, { nodes: [], edges: [] }));
   if (u === "/api/projects/project-a/actions") {
+    const request = JSON.parse(options.body);
+    assert.equal(request.operation, "artifact_export");
+    assert.equal(request.arguments.artifact_id, ARTIFACT_REF);
+    assert.equal(request.grants.download, true);
     return jsonOk(
       envelope("project-a", 1, {
         found: true,
@@ -1238,7 +1711,7 @@ global.fetch = (url, options) => {
             size: 10,
             content_base64: Buffer.from("hello").toString("base64"),
             next_offset: 5,
-            sha256: "digest-1",
+            sha256: "936a185caaa266bb9cbe981e9e05cb78cd732b0b3280eb944412bb6f8f8f07af",
             media_type: "application/octet-stream",
           },
         })
@@ -1271,13 +1744,13 @@ form.querySelector('[data-role="artifact-export-cancel"]').click();
 await wait(50);
 
 const result = form.querySelector('[data-role="action-result"]');
-if (result.textContent === "download cancelled" && secondPageFetches === 1) {
-  console.log("PASS");
-  process.exit(0);
-} else {
-  console.error("FAIL result=" + result.textContent + " secondPageFetches=" + secondPageFetches);
-  process.exit(1);
-}
+assert.equal(result.textContent, "download cancelled");
+assert.equal(secondPageFetches, 1);
+assert.equal(blobCalls, 0);
+assert.equal(objectURLCalls, 0);
+assert.equal(form.querySelector('[data-role="artifact-download-link"]'), null);
+console.log("PASS");
+process.exit(0);
 """
 )
 
@@ -1732,6 +2205,55 @@ if (missing.length === 0) {
 }
 """
 )
+
+
+def test_provision_forms_send_resolution_grant_and_full_frozen_review(
+    tmp_path: Path,
+) -> None:
+    scenario = (
+        _ACTION_HARNESS_HELPERS_JS
+        + """
+import { startApplication } from "./application.js";
+const captured = [];
+global.fetch = (url, options) => {
+  const u = String(url);
+  if (u === "/api/session") return jsonOk(sessionBody());
+  if (u === "/api/theme") return jsonOk(themeBody());
+  if (u === "/api/projects") return jsonOk(projectsBody([{project_id: "project-a", root: "/a"}]));
+  if (u === "/api/projects/project-a/actions") {
+    captured.push(JSON.parse(options.body));
+    return jsonOk(envelope("project-a", 1, {}));
+  }
+  return jsonOk(envelope("project-a", 1, {nodes: [], edges: []}));
+};
+await startApplication(rootEl, { mapContainer: {} });
+await goto("setup");
+const plan = findForm("provision_plan");
+if (plan.querySelector('[name="resolve"]').checked) throw Error("resolution must default offline");
+plan.querySelector('[name="resolve"]').checked = true;
+plan.querySelector('[data-grant="network"]').checked = true;
+plan.dispatchEvent({type: "submit", preventDefault() {}});
+await wait(50);
+if (captured[0].arguments.resolve !== true || captured[0].grants.network !== true) throw Error("resolution grant lost");
+const apply = findForm("provision_apply");
+apply.querySelector('[name="plan_id"]').value = "reviewed-plan";
+apply.querySelector('[name="review"]').value = "[]";
+apply.dispatchEvent({type: "submit", preventDefault() {}});
+await wait(50);
+if (captured.length !== 1) throw Error("invalid review was sent");
+const review = {kind: "setup_review", review_id: "reviewed-id", provision: {plan_id: "reviewed-plan", entries: [{identity: {version: "0.6.9"}}]}};
+apply.querySelector('[name="review"]').value = JSON.stringify(review);
+for (const grant of ["network", "download", "build", "cache_write", "artifact_write"]) apply.querySelector('[data-grant="'+grant+'"]').checked = true;
+apply.dispatchEvent({type: "submit", preventDefault() {}});
+await wait(50);
+if (captured.length !== 2 || JSON.stringify(captured[1].arguments.review) !== JSON.stringify(review)) throw Error("frozen review changed");
+console.log("PASS");
+process.exit(0);
+"""
+    )
+    returncode, stdout, stderr = _run_restore_project_id_harness(tmp_path, scenario)
+    assert returncode == 0, f"harness failed\nstdout={stdout}\nstderr={stderr}"
+    assert "PASS" in stdout
 
 
 def test_all_five_memory_actions_expose_owner_kind_and_id_control(

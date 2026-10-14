@@ -130,5 +130,965 @@
         }
       }
     ]
+  },
+  "phase72_hybrid_corpus": {
+    "manifest": {
+      "dataset": "rush_phase72_hybrid_corpus",
+      "url": "repo:tests/fixtures/benchmarks/memory_datasets.json",
+      "revision": "phase72-v1",
+      "sha256": "9cef78f698caa7a8e12af1de416c7869b7723c3154d02053f23c6082ecd4a4e3",
+      "license_or_terms": "Rush repository fixture",
+      "split": "heldout"
+    },
+    "records": [
+      {
+        "id": "p72-a-L01",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The invoice retry limit is 7 attempts before the job is parked."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L02",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The session cookie name is rush_sid_v2 for the dashboard."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L03",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The nightly backup window starts at 02:15 UTC."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L04",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The webhook signing header is X-Ledger-Signature."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L05",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The export batch size is 750 rows per request."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L06",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The staging database host is pg-stage-3.internal."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L07",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The audit log retention is 400 days."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L08",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The feature flag for bulk refunds is bulk_refund_v3."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L09",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The release branch prefix is ship/ for hotfix builds."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L10",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The rate limiter bucket size is 120 requests per minute."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L11",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The search index alias is orders_live_b."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-L12",
+        "role": "literal_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The worker queue name is ledger-settlements."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P01",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Customers can cancel a subscription without a fee during the first 21 days."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P02",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Password reset links expire after 35 minutes."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P03",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Uploaded avatars are resized to 256 pixels square."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P04",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The on-call engineer is paged after 3 consecutive health check failures."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P05",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Deleted projects stay recoverable in the trash for 9 days."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P06",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "API keys are rotated every 90 days by the security team."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P07",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Invoices are emailed to customers on the 3rd business day of each month."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P08",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Free plan accounts may store at most 2 GB of attachments."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P09",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Mobile builds are signed with the certificate named kestrel-ios-dist."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P10",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Support tickets marked urgent must get a first reply within 45 minutes."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P11",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Translations are synced from the vendor portal every Tuesday."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-P12",
+        "role": "paraphrase_positive",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Load tests run against a copy of production scaled to 40 percent."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N01",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The invoice retry limit was debated in the March planning review without a decision."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N02",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The session cookie name appears in the browser privacy notice draft."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N03",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The nightly backup window is listed on the infrastructure wiki homepage."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N04",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The webhook signing header was mentioned in a partner onboarding call."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N05",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The export batch size question came up during the analytics sync."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N06",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The staging database host is documented in the old runbook archive."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N07",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The audit log retention topic belongs to the compliance working group."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N08",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The feature flag for bulk refunds is owned by the payments squad."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N09",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The release branch prefix convention was proposed in an architecture note."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N10",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The rate limiter bucket size dashboard lives in the observability folder."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N11",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The search index alias rename is tracked in the platform backlog."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-N12",
+        "role": "near_neighbor",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The worker queue name collision was reported by the platform team."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-D01",
+        "role": "denied_owner",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The invoice retry limit is 2 attempts in the archived billing fork."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-other"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-D02",
+        "role": "denied_owner",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The session cookie name is legacy_sid for the old admin portal."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-other"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-D03",
+        "role": "denied_owner",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The nightly backup window starts at 23:40 UTC on the retired cluster."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-other"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-D04",
+        "role": "denied_owner",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The webhook signing header is X-Old-Signature in the deprecated API."
+        },
+        "source": "p72-notes",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-other"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-R01",
+        "role": "revoked_source",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Customers can cancel a subscription without a fee during the first 5 days."
+        },
+        "source": "p72-revoked",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-R02",
+        "role": "revoked_source",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Password reset links expire after 4 hours."
+        },
+        "source": "p72-revoked",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-R03",
+        "role": "revoked_source",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Uploaded avatars are resized to 64 pixels square."
+        },
+        "source": "p72-revoked",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-R04",
+        "role": "revoked_source",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The on-call engineer is paged after 10 consecutive health check failures."
+        },
+        "source": "p72-revoked",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": null
+      },
+      {
+        "id": "p72-a-S01",
+        "role": "stale_hash",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The export batch size is 300 rows per request."
+        },
+        "source": "p72-anchored",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": "src/p72_settings.py::"
+      },
+      {
+        "id": "p72-a-S02",
+        "role": "stale_hash",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "The staging database host is pg-stage-1.internal."
+        },
+        "source": "p72-anchored",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": "src/p72_settings.py::"
+      },
+      {
+        "id": "p72-a-S03",
+        "role": "stale_hash",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "Deleted projects stay recoverable in the trash for 30 days."
+        },
+        "source": "p72-anchored",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": "src/p72_settings.py::"
+      },
+      {
+        "id": "p72-a-S04",
+        "role": "stale_hash",
+        "subject": "domain_knowledge",
+        "trust_tier": "EXTERNAL_WRITE",
+        "content": {
+          "text": "API keys are rotated every 365 days by the security team."
+        },
+        "source": "p72-anchored",
+        "owner_scope": {
+          "kind": "user",
+          "id": "p72-reader"
+        },
+        "symbol_ref": "src/p72_settings.py::"
+      }
+    ]
+  },
+  "phase72_hybrid_queries": {
+    "manifest": {
+      "dataset": "rush_phase72_hybrid_queries",
+      "url": "repo:tests/fixtures/benchmarks/memory_datasets.json",
+      "revision": "phase72-v1",
+      "sha256": "ffd2bbb00ee3b2234cb07b3139b74ffc78d36c78b9dfaa3df5c3060a9a2a5e0a",
+      "license_or_terms": "Rush repository fixture",
+      "split": "heldout"
+    },
+    "records": [
+      {
+        "question_id": "p72-q01",
+        "split": "literal",
+        "question": "What is the invoice retry limit?",
+        "answer": "7 attempts",
+        "relevant_ids": [
+          "p72-a-L01"
+        ]
+      },
+      {
+        "question_id": "p72-q02",
+        "split": "literal",
+        "question": "What is the session cookie name?",
+        "answer": "rush_sid_v2",
+        "relevant_ids": [
+          "p72-a-L02"
+        ]
+      },
+      {
+        "question_id": "p72-q03",
+        "split": "literal",
+        "question": "When does the nightly backup window start?",
+        "answer": "02:15 UTC",
+        "relevant_ids": [
+          "p72-a-L03"
+        ]
+      },
+      {
+        "question_id": "p72-q04",
+        "split": "literal",
+        "question": "What is the webhook signing header?",
+        "answer": "X-Ledger-Signature",
+        "relevant_ids": [
+          "p72-a-L04"
+        ]
+      },
+      {
+        "question_id": "p72-q05",
+        "split": "literal",
+        "question": "What is the export batch size?",
+        "answer": "750 rows",
+        "relevant_ids": [
+          "p72-a-L05"
+        ]
+      },
+      {
+        "question_id": "p72-q06",
+        "split": "literal",
+        "question": "What is the staging database host?",
+        "answer": "pg-stage-3.internal",
+        "relevant_ids": [
+          "p72-a-L06"
+        ]
+      },
+      {
+        "question_id": "p72-q07",
+        "split": "literal",
+        "question": "What is the audit log retention?",
+        "answer": "400 days",
+        "relevant_ids": [
+          "p72-a-L07"
+        ]
+      },
+      {
+        "question_id": "p72-q08",
+        "split": "literal",
+        "question": "What is the feature flag for bulk refunds?",
+        "answer": "bulk_refund_v3",
+        "relevant_ids": [
+          "p72-a-L08"
+        ]
+      },
+      {
+        "question_id": "p72-q09",
+        "split": "literal",
+        "question": "What is the release branch prefix?",
+        "answer": "ship/",
+        "relevant_ids": [
+          "p72-a-L09"
+        ]
+      },
+      {
+        "question_id": "p72-q10",
+        "split": "literal",
+        "question": "What is the rate limiter bucket size?",
+        "answer": "120 requests",
+        "relevant_ids": [
+          "p72-a-L10"
+        ]
+      },
+      {
+        "question_id": "p72-q11",
+        "split": "literal",
+        "question": "What is the search index alias?",
+        "answer": "orders_live_b",
+        "relevant_ids": [
+          "p72-a-L11"
+        ]
+      },
+      {
+        "question_id": "p72-q12",
+        "split": "literal",
+        "question": "What is the worker queue name?",
+        "answer": "ledger-settlements",
+        "relevant_ids": [
+          "p72-a-L12"
+        ]
+      },
+      {
+        "question_id": "p72-q13",
+        "split": "paraphrase",
+        "question": "How long is the free cancellation period?",
+        "answer": "21 days",
+        "relevant_ids": [
+          "p72-a-P01"
+        ]
+      },
+      {
+        "question_id": "p72-q14",
+        "split": "paraphrase",
+        "question": "How long until a credential recovery email stops working?",
+        "answer": "35 minutes",
+        "relevant_ids": [
+          "p72-a-P02"
+        ]
+      },
+      {
+        "question_id": "p72-q15",
+        "split": "paraphrase",
+        "question": "What dimensions are profile pictures scaled to?",
+        "answer": "256 pixels",
+        "relevant_ids": [
+          "p72-a-P03"
+        ]
+      },
+      {
+        "question_id": "p72-q16",
+        "split": "paraphrase",
+        "question": "When does someone get woken up by monitoring alerts?",
+        "answer": "3 consecutive",
+        "relevant_ids": [
+          "p72-a-P04"
+        ]
+      },
+      {
+        "question_id": "p72-q17",
+        "split": "paraphrase",
+        "question": "Grace period before a removed workspace is gone for good?",
+        "answer": "9 days",
+        "relevant_ids": [
+          "p72-a-P05"
+        ]
+      },
+      {
+        "question_id": "p72-q18",
+        "split": "paraphrase",
+        "question": "How often are service credentials replaced?",
+        "answer": "90 days",
+        "relevant_ids": [
+          "p72-a-P06"
+        ]
+      },
+      {
+        "question_id": "p72-q19",
+        "split": "paraphrase",
+        "question": "When do clients receive their monthly bills?",
+        "answer": "3rd business day",
+        "relevant_ids": [
+          "p72-a-P07"
+        ]
+      },
+      {
+        "question_id": "p72-q20",
+        "split": "paraphrase",
+        "question": "Storage quota on the no-cost tier?",
+        "answer": "2 GB",
+        "relevant_ids": [
+          "p72-a-P08"
+        ]
+      },
+      {
+        "question_id": "p72-q21",
+        "split": "paraphrase",
+        "question": "Which signing identity do phone app releases use?",
+        "answer": "kestrel-ios-dist",
+        "relevant_ids": [
+          "p72-a-P09"
+        ]
+      },
+      {
+        "question_id": "p72-q22",
+        "split": "paraphrase",
+        "question": "Response time target for high priority customer requests?",
+        "answer": "45 minutes",
+        "relevant_ids": [
+          "p72-a-P10"
+        ]
+      },
+      {
+        "question_id": "p72-q23",
+        "split": "paraphrase",
+        "question": "What weekday do localized strings get imported?",
+        "answer": "Tuesday",
+        "relevant_ids": [
+          "p72-a-P11"
+        ]
+      },
+      {
+        "question_id": "p72-q24",
+        "split": "paraphrase",
+        "question": "How big is the performance testing environment relative to live?",
+        "answer": "40 percent",
+        "relevant_ids": [
+          "p72-a-P12"
+        ]
+      }
+    ]
   }
 }

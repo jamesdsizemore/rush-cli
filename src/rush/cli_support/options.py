@@ -30,6 +30,37 @@ def _extract_permissions(
     )
 
 
+def result_view_options(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """T16 S16.4: `--result-view`, `--limit` and `--max-bytes` (validated by
+    `rush.delivery.compact`, so both transports reject the same values)."""
+    fn = click.option(
+        "--max-bytes",
+        "max_bytes",
+        type=int,
+        default=None,
+        help="Compact view: size budget of the whole printed result, "
+        "4096-65536 bytes (default 32768).",
+    )(fn)
+    fn = click.option(
+        "--limit",
+        "limit",
+        type=int,
+        default=None,
+        help="Compact view: findings per page, 1-50 (default 50).",
+    )(fn)
+    fn = click.option(
+        "--result-view",
+        "result_view",
+        type=click.Choice(["full", "compact"]),
+        default=None,
+        help="full (default) prints the whole result and writes nothing. "
+        "compact stores the full redacted result in .rush/cache/ccr.db "
+        "(requires --allow-cache-write, not allowed with --no-cache) and "
+        "prints a bounded page plus a handle for `rush context retrieve`.",
+    )(fn)
+    return fn
+
+
 def permission_options(fn: Callable[..., Any]) -> Callable[..., Any]:
     """Add standard explicit execution permission flags to a Click command."""
     fn = click.option(

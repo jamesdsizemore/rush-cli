@@ -46,6 +46,14 @@ class InvariantGraph:
         self.tx.update(mutator, max_retries=20)
 
     def get_all(self) -> dict[str, Any]:
+        # 72-T01 D1 (§2.3 Invariant graph): a denied `ask` route returns `{}`.
+        from rush.memory.retrieval import RouteDenial, reader_route
+
+        if isinstance(
+            reader_route(self.project_root, "ask", ["migration:invariant_graph"]),
+            RouteDenial,
+        ):
+            return {}
         data = dict(self._read())
         for entry in read_origin_kind(self.project_root, "invariant_graph"):
             rule_id = entry.get("rule_id")

@@ -16,7 +16,7 @@
 ### 1.1 The Rush CLI Paradigm
 **Rush CLI** is an agentic code-quality, static-analysis, and test-confidence platform built in Python 3.12, managed with `uv`. Its core architectural thesis is simple yet powerful: **"One safe command surface for the quality tools your project already uses."**
 
-Modern software engineering repositories are inundated with dozens of fragmented quality engines (linters, formatters, type-checkers, security scanners, dead-code detectors, mutation testers, and bundle analyzers). Developers and AI coding assistants (such as Claude Code, Cursor, Copilot, Cline, Windsurf, and Devin) must context-switch between disparate configuration files, CLI arguments, and output formats. Rush bridges this chasm by:
+Modern software engineering repositories are inundated with dozens of fragmented quality engines (linters, formatters, type-checkers, security scanners, dead-code detectors, mutation testers, and bundle analyzers). Developers and AI coding assistants (such as Claude Code, Copilot, Cline, Windsurf, and Devin) must context-switch between disparate configuration files, CLI arguments, and output formats. Rush bridges this chasm by:
 1. **Unifying CLI and MCP Transports**: Exposing identical execution semantics through a Click CLI for humans and CI pipelines, and a zero-configuration FastMCP stdio server for LLM agents.
 2. **Canonical Output Normalization**: Standardizing output from 120+ underlying tools into a deterministic `ToolResult` shape (`status`, `findings`, `summary`, `duration_ms`, `metadata`).
 3. **Zero-Side-Effect Safety**: Enforcing non-destructive default modes, explicit permission gates (`--allow-network`, `--allow-build`, `--allow-artifact-write`), and ephemeral Git worktree sandboxing.
@@ -26,7 +26,7 @@ Modern software engineering repositories are inundated with dozens of fragmented
 flowchart TB
     subgraph Clients["Consumers & Transports"]
         Dev["Developer (Terminal / IDE)"]
-        Agent["AI Coding Agent (Claude, Cursor, Cline)"]
+        Agent["AI Coding Agent (Claude, Cline)"]
         CI["CI / CD Pipeline (GitHub Actions)"]
     end
 
@@ -85,7 +85,7 @@ Rush has evolved through 40 phases of development into a robust suite of static 
 | **CodeGraph & Slicing** | `rush codegraph slice`, `rush codegraph callgraph` | SQLite-backed Code Property Graph store providing sub-millisecond verbatim symbol slicing with exact line numbers. |
 | **Hygiene & AST Merges** | `rush hygiene dead-code`, `rush conflict solve` | Polyglot unreferenced export scanner, unused import pruner, and 3-way AST merge solver reconciling concurrent branch edits. |
 | **Bundle & Hotspots** | `rush bundle analyze`, `rush hotspots analyze` | Raw/Gzip/Brotli chunk transfer size auditing, budget gates, commit churn velocity, and McCabe cyclomatic complexity correlation matrix. |
-| **Governance & Hooks** | `rush governance sync`, `rush hook run` | Compiles canonical `AGENTS.md` into `.cursorrules`, `.clinerules`, and Copilot rules; runs sub-second staged AST pre-commit checks with Trojan Source Unicode detection. |
+| **Governance & Hooks** | `rush governance sync`, `rush hook run` | Compiles canonical `AGENTS.md` into `.clinerules` and Copilot rules; runs sub-second staged AST pre-commit checks with Trojan Source Unicode detection. |
 | **Scorecard & Consensus** | `rush score compute`, `rush consensus reconcile` | Calculates 6-pillar repository health grades (0–100%), generates SVG badges and PR cards, and reconciles multi-model AI code reviews via weighted voting. |
 
 ---
@@ -167,7 +167,7 @@ Below are the complete technical specifications, architectural designs, CLI/MCP 
 ### Feature 01: `rush context pack` — Agent Context Budget Optimizer & Dynamic AST Packing Engine
 
 #### Target Persona & Problem Solved
-- **Persona:** AI Coding Agents (Claude Code, Cursor, Cline) & Prompt Engineers.
+- **Persona:** AI Coding Agents (Claude Code, Cline) & Prompt Engineers.
 - **Problem:** Agents often dump entire source files into LLM prompts to satisfy dependencies, consuming tens of thousands of tokens, triggering prompt cache thrashing, and introducing irrelevant distractors that cause hallucinations.
 
 #### Technical Architecture & Deep Mechanics
@@ -777,7 +777,7 @@ src/utils/heavy_crypto.py   60ms          1.2 MB         Replace with standard h
 ### Feature 23: `rush mcp mesh` — Local Multi-Agent MCP Mesh Daemon & Coordinated Lock Manager
 
 #### Target Persona & Problem Solved
-- **Persona:** Multi-Agent Workflows & Developers running Claude Code, Cursor, and Copilot simultaneously.
+- **Persona:** Multi-Agent Workflows & Developers running Claude Code and Copilot simultaneously.
 - **Problem:** When multiple AI agents connect to local tools at the same time, they execute redundant scans, thrash local caches, and overwrite files concurrently without file locking.
 
 #### Technical Architecture & Deep Mechanics
@@ -789,7 +789,6 @@ src/utils/heavy_crypto.py   60ms          1.2 MB         Replace with standard h
 ```mermaid
 flowchart TD
     ClaudeCode["Claude Code (Agent 1)"] --> MeshDaemon["Rush MCP Mesh Daemon (127.0.0.1)"]
-    Cursor["Cursor Composer (Agent 2)"] --> MeshDaemon
     Cline["Cline Agent (Agent 3)"] --> MeshDaemon
     MeshDaemon --> LockMgr["Coordinated File Lock Manager"]
     MeshDaemon --> SharedCache["Shared Flag-Salted SQLite Cache"]

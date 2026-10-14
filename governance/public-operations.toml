@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 189
+total_operations = 207
 
 [[operations]]
 id = "admin.agent_connect"
@@ -13,6 +13,26 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush agent connect --help"
+
+[[operations]]
+id = "admin.agent_disconnect"
+kind = "admin"
+canonical_impl = "rush.tools.agent_connection:AgentConnectionTool"
+cli_command = "agent disconnect"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush agent disconnect --help"
+
+[[operations]]
+id = "admin.agent_hook"
+kind = "admin"
+canonical_impl = "rush.integrations.agent_hooks:run_agent_hook"
+cli_command = "agent hook"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush agent hook --help"
 
 [[operations]]
 id = "admin.install"
@@ -33,6 +53,86 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory archive --help"
+
+[[operations]]
+id = "admin.memory_bind_store"
+kind = "admin"
+canonical_impl = "rush.memory.store:TypedArtifactStore"
+cli_command = "memory bind-store"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory bind-store --help"
+
+[[operations]]
+id = "admin.memory_capsule_bridge"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule bridge"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule bridge --help"
+
+[[operations]]
+id = "admin.memory_capsule_export"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule export"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule export --help"
+
+[[operations]]
+id = "admin.memory_capsule_import"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule import"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule import --help"
+
+[[operations]]
+id = "admin.memory_capsule_mapping_create"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule mapping create"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule mapping create --help"
+
+[[operations]]
+id = "admin.memory_capsule_mapping_revoke"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule mapping revoke"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory capsule mapping revoke --help"
+
+[[operations]]
+id = "admin.memory_capsule_preview_export"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule preview-export"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory capsule preview-export --help"
+
+[[operations]]
+id = "admin.memory_capsule_preview_import"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory capsule preview-import"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory capsule preview-import --help"
 
 [[operations]]
 id = "admin.memory_consolidate"
@@ -75,6 +175,26 @@ effect_class = "read-only"
 safe_probe = "rush memory expand --help"
 
 [[operations]]
+id = "admin.memory_explain"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory explain"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory explain --help"
+
+[[operations]]
+id = "admin.memory_grant"
+kind = "admin"
+canonical_impl = "rush.memory.authorization:grant_memory_scope"
+cli_command = "memory grant"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory grant --help"
+
+[[operations]]
 id = "admin.memory_handoff"
 kind = "admin"
 canonical_impl = "rush.tools.memory:MemoryTool"
@@ -83,6 +203,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "stateful-mutation"
 safe_probe = "rush memory handoff --help"
+
+[[operations]]
+id = "admin.memory_history"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory history"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "read-only"
+safe_probe = "rush memory history --help"
 
 [[operations]]
 id = "admin.memory_intent"
@@ -133,6 +263,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "read-only"
 safe_probe = "rush memory plan-checks --help"
+
+[[operations]]
+id = "admin.memory_preference"
+kind = "admin"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory preference"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory preference --help"
 
 [[operations]]
 id = "admin.memory_prepare"
@@ -193,6 +333,16 @@ input_contract = "ToolInputOptions"
 output_contract = "RawResult"
 effect_class = "read-only"
 safe_probe = "rush memory resume --help"
+
+[[operations]]
+id = "admin.memory_revoke"
+kind = "admin"
+canonical_impl = "rush.memory.authorization:revoke_memory_scope"
+cli_command = "memory revoke"
+input_contract = "ToolInputOptions"
+output_contract = "RawResult"
+effect_class = "stateful-mutation"
+safe_probe = "rush memory revoke --help"
 
 [[operations]]
 id = "admin.memory_verify_attempt"
@@ -373,16 +523,6 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush capabilities --help"
-
-[[operations]]
-id = "cli.check"
-kind = "admin"
-canonical_impl = "rush.cli:check"
-cli_command = "check"
-input_contract = "ClickArguments"
-output_contract = "ClickExitCode"
-effect_class = "read-only"
-safe_probe = "rush check --help"
 
 [[operations]]
 id = "cli.ci_init"
@@ -575,6 +715,16 @@ effect_class = "read-only"
 safe_probe = "rush hallu-guard --help"
 
 [[operations]]
+id = "cli.help"
+kind = "admin"
+canonical_impl = "rush.cli:help"
+cli_command = "help"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush help --help"
+
+[[operations]]
 id = "cli.hook_run"
 kind = "tool"
 canonical_impl = "rush.cli:hook"
@@ -643,6 +793,16 @@ input_contract = "ClickArguments"
 output_contract = "ClickExitCode"
 effect_class = "read-only"
 safe_probe = "rush mcp serve --help"
+
+[[operations]]
+id = "cli.memory"
+kind = "admin"
+canonical_impl = "rush.cli:memory"
+cli_command = "memory"
+input_contract = "ClickArguments"
+output_contract = "ClickExitCode"
+effect_class = "read-only"
+safe_probe = "rush memory --help"
 
 [[operations]]
 id = "cli.outline"
@@ -1280,6 +1440,17 @@ effect_class = "read-only"
 safe_probe = "rush benchmark check --help"
 
 [[operations]]
+id = "tool.check"
+kind = "tool"
+canonical_impl = "rush.tools.check:CheckTool"
+cli_command = "check"
+mcp_tool = "rush_check"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush check --help"
+
+[[operations]]
 id = "tool.codeql"
 kind = "tool"
 canonical_impl = "rush.tools.codeql:CodeqlTool"
@@ -1344,17 +1515,6 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush context gain --help"
-
-[[operations]]
-id = "tool.gain"
-kind = "tool"
-canonical_impl = "rush.token_economy.tui_gain:render_gain_summary"
-cli_command = "gain"
-mcp_tool = "rush_context_gain_stats"
-input_contract = "ToolInputOptions"
-output_contract = "ToolResult"
-effect_class = "read-only"
-safe_probe = "rush gain --help"
 
 [[operations]]
 id = "tool.context_pack"
@@ -1498,6 +1658,16 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush fuzz --help"
+
+[[operations]]
+id = "tool.gain"
+kind = "tool"
+canonical_impl = "rush.token_economy.tui_gain:render_gain_summary"
+cli_command = "gain"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush gain --help"
 
 [[operations]]
 id = "tool.iac"
@@ -1878,6 +2048,18 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush sql --help"
+
+# Bare `rush` (no subcommand) runs this operation.
+[[operations]]
+id = "tool.status"
+kind = "tool"
+canonical_impl = "rush.tools.status:StatusTool"
+cli_command = "status"
+mcp_tool = "rush_status"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush status --help"
 
 [[operations]]
 id = "tool.tdd"

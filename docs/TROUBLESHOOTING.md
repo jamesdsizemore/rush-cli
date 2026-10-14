@@ -31,7 +31,7 @@ This guide addresses common errors in registered Rush tools and engine adapters.
 - **Cause**: The imported JSON/XML/SARIF report file is corrupted or contains an invalid schema.
 - **Solution**: Inspect the report file or re-generate it using the native engine.
 
-### MCP Server Fails to Connect in AI Editor (Cursor/Claude Code)
+### MCP Server Fails to Connect in AI Editor (Claude Code)
 - **Cause**: The editor launched `rush mcp serve` with an incorrect working directory or missing environment variables.
 - **Solution**: In your editor MCP settings, use absolute paths to `uv` and specify the workspace directory explicitly.
 

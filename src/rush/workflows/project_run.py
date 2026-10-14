@@ -71,11 +71,14 @@ output), so each one that isn't `capability="workflow"` gets disposition
 `applicable` and execution outcome `unavailable`/`ENGINE_ROUTE_MISSING` --
 never silently dropped, never counted as executed (plan §6.4: "missing
 executable route is unavailable/ENGINE_ROUTE_MISSING, not excluded").
+An engine-only entry with catalog `project_markers`, none of which exists at
+the project root, is `not_applicable` with reason
+`project_marker_absent:<markers>` instead, so it never runs on a project of
+another type.
 """
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import hmac
 import json
@@ -83,6 +86,7 @@ import mimetypes
 import os
 import secrets
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -96,6 +100,9 @@ from typing import Any, ClassVar, Literal, cast
 
 import tiktoken
 
+if sys.platform != "win32":
+    import fcntl
+
 from rush.catalog import ENGINE_SPECS, TOOL_SPECS
 from rush.engines.staging import (
     PROVENANCE_FORMAT,
@@ -106,6 +113,8 @@ from rush.engines.staging import (
     staging_scope,
 )
 from rush.invocation import InvocationExecutor, resolve_invocation
+from rush.invocation.models import InvocationError
+from rush.invocation.targets import registered_root_index, select_member
 from rush.memory.handoff import (
     HandoffError,
     prepare_handoff,
@@ -115,6 +124,8 @@ from rush.memory.handoff import (
 from rush.memory.store import MemoryArtifact, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.runtime.filesystem import atomic_write_bytes
+from rush.runtime.subprocesses import cancel_scope
+from rush.safety.redactor import sanitize_value
 from rush.tools import ALL_TOOLS
 from rush.tools.base import Finding, ToolResult
 from rush.tools.common import (
@@ -124,8 +135,14 @@ from rush.tools.common import (
     skipped_result,
 )
 from rush.tools.quality import GuardedQualityTool
-from rush.tools.routing import aggregate_results
+from rush.tools.routing import (
+    aggregate_results,
+    child_entry,
+    memory_attribution_of,
+    union_memory_attribution,
+)
 from rush.workflows.projects import ProjectError, resolve_project
+from rush.workflows.suites import memory_summary_clause
 
 Disposition = Literal[
     "applicable", "not_applicable", "requires_input", "unsupported", "excluded_by_user"
@@ -144,6 +161,11 @@ RunState = Literal[
 ]
 
 _NON_SCAN_REASON = "non_scan_workflow_operation"
+_MARKER_ABSENT_REASON = "project_marker_absent"
+# T27: a scan analyzes; a tool that rewrites source runs only when asked
+# (`rush fix`), never as a scan candidate against the staged copy.
+_REMEDIATION_TOOLS = frozenset({"fix"})
+_REMEDIATION_REASON = "remediation_operation"
 _REPORT_INPUT_REASON = "requires_report_input"
 _DYNAMIC_TARGET_REASON = "requires_dynamic_target_and_grants"
 _STATIC_REASON = "comprehensive_static_analysis"
@@ -209,8 +231,9 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     purely a waiting caller's own patience -- decoupled from any staleness
     concept, since there is none anymore.
 
-    POSIX only (`fcntl.flock`) -- the real Windows-equivalent named-mutex
-    primitive named in the plan is not implemented here.
+    On Windows (no `fcntl`), `msvcrt.locking` takes the same non-blocking
+    exclusive lock on the lock file's first byte; Windows likewise releases
+    it when the holding process exits.
     """
     lock_dir = root / ".rush" / "runs"
     lock_dir.mkdir(parents=True, exist_ok=True)
@@ -219,7 +242,12 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     start = time.monotonic()
     while True:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if sys.platform == "win32":  # pragma: no cover - Windows-only path
+                import msvcrt
+
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             break
         except OSError:
             if time.monotonic() - start >= timeout:
@@ -231,7 +259,12 @@ def _run_lock(root: Path, *, timeout: float = 5.0) -> Iterator[None]:
     try:
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        if sys.platform == "win32":  # pragma: no cover - Windows-only path
+            import msvcrt
+
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
 
@@ -400,6 +433,8 @@ def _classify_tool(name: str, tools_by_name: dict[str, Any]) -> tuple[Dispositio
         return "applicable", _STATIC_REASON
     if spec.category == "workflow":
         return "not_applicable", _NON_SCAN_REASON
+    if name in _REMEDIATION_TOOLS:
+        return "not_applicable", _REMEDIATION_REASON
     if spec.maturity == "importer":
         return "requires_input", _REPORT_INPUT_REASON
     if spec.maturity == "browser_runtime":
@@ -416,6 +451,19 @@ def _classify_engine(name: str) -> tuple[Disposition, str]:
     if spec.capability == "workflow":
         return "not_applicable", _NON_SCAN_REASON
     return "applicable", _STATIC_REASON
+
+
+def _absent_project_markers(candidate: ScanCandidate, root: Path) -> str | None:
+    """The applicability reason for an engine-only candidate whose catalog
+    `project_markers` are all absent from `root`, else `None`: an engine with
+    no owning tool is otherwise planned whatever the project type (pitest's
+    `mvn` on a Python project)."""
+    if candidate.kind != "engine" or candidate.disposition != "applicable":
+        return None
+    markers = ENGINE_SPECS[candidate.candidate_id].project_markers
+    if not markers or any((root / marker).exists() for marker in markers):
+        return None
+    return f"{_MARKER_ABSENT_REASON}:{','.join(markers)}"
 
 
 def _candidate_category(name: str) -> str:
@@ -447,6 +495,35 @@ def _build_candidates(tools: list[Any]) -> list[ScanCandidate]:
             )
         )
     return candidates
+
+
+_TARGET_PATH_KEYS = ("path", "file", "filename", "files", "paths")
+
+
+def _validate_scan_targets(
+    root: Path, targets: dict[str, dict[str, Any]], data_root: Path | None
+) -> None:
+    """T9/R9.5: every path-valued plan target is normalized with the T8 walk
+    against `root`, must stay contained in it, and must exist -- before the
+    plan is staged, so an invalid request never becomes a durable plan."""
+    index = registered_root_index(data_root)
+    for payload in targets.values():
+        for key in _TARGET_PATH_KEYS:
+            value = payload.get(key)
+            members = value if isinstance(value, (list, tuple)) else [value]
+            for member in members:
+                if isinstance(member, (str, Path)):
+                    _require_scan_target(root, str(member), index)
+
+
+def _require_scan_target(root: Path, raw: str, index: dict[str, str]) -> None:
+    shown = str(sanitize_value(raw).value)
+    try:
+        relative = select_member(raw, anchor=root, root=root, index=index)
+    except InvocationError as exc:
+        raise ScanInvalidRequestError(f"target invalid: {shown}: {exc}") from None
+    if not os.path.lexists(root / relative):
+        raise ScanInvalidRequestError(f"target not found: {shown}")
 
 
 def plan_scan(
@@ -495,6 +572,7 @@ def plan_scan(
     for tool_id, payload in targets.items():
         if not isinstance(payload, dict):
             raise ScanInvalidRequestError(f"targets[{tool_id!r}] must be an object")
+    _validate_scan_targets(root, targets, data_root)
 
     unknown_exclude = sorted(set(exclude) - known_ids)
     if unknown_exclude:
@@ -526,6 +604,10 @@ def plan_scan(
                     "applicable",
                     _EXPLICIT_TARGET_REASON,
                 )
+            )
+        elif (marker_reason := _absent_project_markers(candidate, root)) is not None:
+            resolved.append(
+                replace(candidate, disposition="not_applicable", reason=marker_reason)
             )
         else:
             resolved.append(candidate)
@@ -692,8 +774,8 @@ def _execute_candidate(
     its own owned subprocess mid-flight (via
     `rush.runtime.subprocesses.run_subprocess`'s optional `cancel_check`
     contract) rather than only at this function's own boundary. No catalog
-    tool implements this today -- every existing `ALL_TOOLS` candidate keeps
-    its exact prior behavior, unaffected."""
+    tool implements this today; `_run_candidates` supplies the same check to
+    generic candidates through its enclosing `cancel_scope`."""
     if candidate.kind == "engine":
         # M17: route through the canonical `rush.engines.ENGINES`/
         # `rush.catalog.ENGINE_SPECS` pair -- a registered engine with no
@@ -778,6 +860,27 @@ def _execute_candidate(
     # candidate's finding IDs/evidence are computed by the caller. A call
     # made outside a staged attempt (`active_staging()` is `None`) is
     # unaffected -- today's exact behavior byte for byte.
+    # T8: capture the logical (pre-staging) path-bearing values verbatim,
+    # before any staging substitution below rewrites them to the staged
+    # tree -- diagnostics keep the original request even though execution
+    # identity/cache identity below stays the staged/normalized value.
+    # Finding 8: derive originals only from this candidate's own explicit
+    # override (`targets[candidate.candidate_id]`), never from the merged
+    # `request` dict -- `request["path"]` is always populated (falls back to
+    # `str(root)`, the resolved registered root, when no override exists),
+    # so reading it here would record that resolved root as a fabricated
+    # "original request" whenever a caller supplied no real one.
+    candidate_override = targets.get(candidate.candidate_id, {})
+    original_targets: list[str] = []
+    for key in ("path", "file", "filename"):
+        value = candidate_override.get(key)
+        if isinstance(value, str):
+            original_targets.append(value)
+    for key in ("files", "paths"):
+        values = candidate_override.get(key)
+        if isinstance(values, (list, tuple)):
+            original_targets.extend(str(v) for v in values)
+
     staging = active_staging()
     staged_root = root
     if staging is not None:
@@ -802,6 +905,7 @@ def _execute_candidate(
             workspace_root=staged_root,
             config=config,
             permissions=permissions,
+            original_requested_targets=tuple(original_targets) or None,
         )
         result = executor.execute(context)
         if staging is not None:
@@ -989,6 +1093,11 @@ def _execute_attempt_locked(
     # the persisted manifest instead of a second, separate walk at finalize
     # time.
     inventory = _scan_inventory(root)
+    # T19 R19.7 (G4): with no caller config, the project's own `rush.toml` is
+    # loaded best-effort, as single-tool CLI/MCP calls do, so e.g.
+    # `[tools.memory] record` applies inside a scan too.
+    if config is None:
+        config = _load_config_or_none(root)
     with tempfile.TemporaryDirectory(prefix="rush-stage-") as staging_dir:
         staging = stage_inventory(root, Path(staging_dir), inventory)
         with staging_scope(staging):
@@ -1012,7 +1121,52 @@ def _execute_attempt_locked(
             staging_findings=staging.findings,
             file_inventory=inventory,
             staging_failures=staging.staging_failures,
+            retained_ids=frozenset(already_completed),
         )
+
+
+def _attribute_attempt_memory(
+    metadata: dict[str, Any],
+    scheduled: list[CandidateResult],
+    retained_ids: frozenset[str],
+) -> None:
+    """T19 B7/R19.5: `metadata.memory` unions only the children this attempt
+    executed; a resume's retained children ran in an earlier attempt, so
+    their receipts are disclosed as `metadata.cache.original_memory` (with
+    `retained_candidates`), never as this attempt's reads or writes. Each
+    child's own receipt stays in its child entry."""
+    retained = [
+        item for item in scheduled if item.candidate.candidate_id in retained_ids
+    ]
+    current = union_memory_attribution(
+        memory_attribution_of(item.result)
+        for item in scheduled
+        if item.candidate.candidate_id not in retained_ids
+    )
+    metadata.pop("memory", None)
+    if current is not None:
+        metadata["memory"] = current
+    if not retained:
+        return
+    cache = dict(metadata.get("cache") or {})
+    cache["retained_candidates"] = [item.candidate.candidate_id for item in retained]
+    original = union_memory_attribution(
+        memory_attribution_of(item.result) for item in retained
+    )
+    if original is not None:
+        cache["original_memory"] = original
+    metadata["cache"] = cache
+
+
+def _load_config_or_none(root: Path) -> Any:
+    """A malformed `rush.toml` fails open to no config, matching MCP's
+    `_load_config_or_none`."""
+    from rush.config import RushConfigError, load_config
+
+    try:
+        return load_config(start=root)
+    except RushConfigError:
+        return None
 
 
 def _run_candidates(
@@ -1059,17 +1213,21 @@ def _run_candidates(
             event="candidate_started",
             candidate_id=candidate.candidate_id,
         )
-        outcome, result = _execute_candidate(
-            candidate,
-            root=root,
-            permissions=permissions,
-            targets=plan.targets,
-            config=config,
-            tools_by_name=tools_by_name,
-            cancel_check=cancel_check,
-            owner_instance_id=owner_instance_id,
-            run_id=run_id,
-        )
+        with cancel_scope(cancel_check) as cancellation:
+            outcome, result = _execute_candidate(
+                candidate,
+                root=root,
+                permissions=permissions,
+                targets=plan.targets,
+                config=config,
+                tools_by_name=tools_by_name,
+                cancel_check=cancel_check,
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+            )
+        if cancellation is not None and cancellation.hit:
+            # `run_engine` marked a stopped subprocess; preserve that outcome.
+            outcome = "cancelled"
         for finding in result.get("findings") or []:
             cast(dict[str, Any], finding)["finding_id"] = _finding_id(
                 str(result.get("tool", candidate.candidate_id)),
@@ -1136,6 +1294,7 @@ def _finalize_attempt(
     staging_findings: list[dict[str, Any]] | None = None,
     file_inventory: list[str] | None = None,
     staging_failures: list[dict[str, Any]] | None = None,
+    retained_ids: frozenset[str] = frozenset(),
 ) -> ScanRun:
     children = [item.result for item in scheduled]
     if staging_findings:
@@ -1159,6 +1318,20 @@ def _finalize_attempt(
             ),
         ]
     aggregate = aggregate_results("scan", children)
+    # T16 §3 item 3: one full entry per candidate child; the aggregate scope
+    # is anchored at the scanned root.
+    scan_metadata = dict(aggregate.get("metadata") or {})
+    scan_metadata["scope"] = {
+        **scan_metadata.get("scope", {}),
+        "logical_root": str(root),
+    }
+    scan_metadata["children"] = [child_entry(child) for child in children]
+    _attribute_attempt_memory(scan_metadata, scheduled, retained_ids)
+    aggregate["metadata"] = scan_metadata
+    # T21 B1: this attempt's own receipts only, never `cache.original_memory`.
+    clause = memory_summary_clause(scan_metadata.get("memory"))
+    if clause is not None:
+        aggregate["summary"] += f"; {clause}"
 
     run_state: RunState
     if cancelled:
@@ -2210,71 +2383,113 @@ def build_handoff(
     artifact_receipt_id = effect_ids.get("artifact_create") or operation_id or None
     session_receipt_id = effect_ids.get("session_create") or operation_id or None
 
-    store = TypedArtifactStore(root)
-    artifact = store.write(
-        MemoryArtifact(
-            id=f"scan-handoff-{handoff_id}",
-            family="handoff",
-            subject="active_context",
-            trust_tier="DERIVED",
-            content={"run_id": run_id, "agent_id": agent_id, "findings": selected},
-            source=str(root),
-            created_at=time.time(),
-            symbol_ref=f"scan_handoff:{handoff_id}",
-        ),
-        receipt_operation_id=artifact_receipt_id,
+    # 72-T01 D4: every effect (artifact, session, descriptor) happens inside the
+    # shared writer gate for this project's own source; a denial writes nothing.
+    from rush.memory.retrieval import (
+        RouteDenial,
+        authorize_writer,
+        recheck_failure,
+        route_access,
+        writer_owner,
     )
+    from rush.memory.store import MemoryAccessChanged, legacy_owner_scope
 
-    try:
-        session, session_capability, _delta = prepare_handoff(
-            store,
-            root=root,
-            audience=agent_id,
-            granted_ids=[artifact.id],
-            session_allowlist=[str(root)],
-            constraints={
-                "run_id": run_id,
-                "acceptance_checks": list(acceptance_checks),
-                "granted_actions": list(granted_actions),
-            },
-            receipt_operation_id=session_receipt_id,
+    # D2: preparing a handoff needs `write` and `expand` in one grant, resolved
+    # before the first effect and handed to the writer gate and the transport.
+    handoff_access = route_access(
+        root,
+        "handoff",
+        session_allowlist=[str(root)],
+        owner_scope=legacy_owner_scope(root),
+        data_root=data_root,
+    )
+    if isinstance(handoff_access, RouteDenial):
+        raise ScanHandoffAuthError(
+            f"memory policy denied the handoff: {handoff_access.reason}"
         )
-    except HandoffError as exc:
-        raise ScanHandoffAuthError(str(exc)) from exc
+    with authorize_writer(root, str(root), access=handoff_access) as granted:
+        if isinstance(granted, RouteDenial):
+            raise ScanHandoffAuthError(
+                f"memory policy denied the handoff: {granted.reason}"
+            )
+        try:
+            store = TypedArtifactStore(root)
+            artifact = store.write(
+                MemoryArtifact(
+                    id=f"scan-handoff-{handoff_id}",
+                    family="handoff",
+                    subject="active_context",
+                    trust_tier="DERIVED",
+                    content={
+                        "run_id": run_id,
+                        "agent_id": agent_id,
+                        "findings": selected,
+                    },
+                    source=str(root),
+                    created_at=time.time(),
+                    symbol_ref=f"scan_handoff:{handoff_id}",
+                    owner_scope=writer_owner(granted),
+                ),
+                receipt_operation_id=artifact_receipt_id,
+                commit_check=lambda: recheck_failure(granted),
+            )
 
-    now = datetime.now(UTC).isoformat()
-    handoff = ScanHandoff(
-        handoff_id=handoff_id,
-        run_id=run_id,
-        project_id=record["project_id"],
-        root=str(root),
-        agent_id=agent_id,
-        state="prepared",
-        finding_ids=tuple(str(f.get("finding_id")) for f in selected),
-        packet=packet,
-        artifact_id=artifact.id,
-        artifact_version=artifact.artifact_version,
-        source_signature=_source_signature(root),
-        source_signature_format=PROVENANCE_FORMAT,
-        memory_session_id=session.session_id,
-        # S05: kept in-memory only, for an immediate same-call `dispatch_handoff`
-        # (server.py/tui.py both build then dispatch in one call chain) --
-        # never round-tripped through `to_dict()`/`from_dict()`.
-        session_capability=session_capability,
-        session_capability_digest=hashlib.sha256(
-            session_capability.encode("utf-8")
-        ).hexdigest(),
-        delivery_nonce=secrets.token_urlsafe(32),
-        granted_actions=tuple(granted_actions),
-        acceptance_checks=tuple(acceptance_checks),
-        created_at=now,
-        updated_at=now,
-        operation_id=operation_id,
-        attempt_id=attempt_id,
-        owner_instance_id=owner_instance_id,
-    )
-    _persist_handoff(root, handoff)
-    return handoff
+            try:
+                session, session_capability, _delta = prepare_handoff(
+                    store,
+                    root=root,
+                    audience=agent_id,
+                    granted_ids=[artifact.id],
+                    session_allowlist=[str(root)],
+                    constraints={
+                        "run_id": run_id,
+                        "acceptance_checks": list(acceptance_checks),
+                        "granted_actions": list(granted_actions),
+                    },
+                    receipt_operation_id=session_receipt_id,
+                    sender=granted,
+                    commit_check=lambda: recheck_failure(granted),
+                )
+            except HandoffError as exc:
+                raise ScanHandoffAuthError(str(exc)) from exc
+
+            now = datetime.now(UTC).isoformat()
+            handoff = ScanHandoff(
+                handoff_id=handoff_id,
+                run_id=run_id,
+                project_id=record["project_id"],
+                root=str(root),
+                agent_id=agent_id,
+                state="prepared",
+                finding_ids=tuple(str(f.get("finding_id")) for f in selected),
+                packet=packet,
+                artifact_id=artifact.id,
+                artifact_version=artifact.artifact_version,
+                source_signature=_source_signature(root),
+                source_signature_format=PROVENANCE_FORMAT,
+                memory_session_id=session.session_id,
+                # S05: kept in-memory only, for an immediate same-call `dispatch_handoff`
+                # (server.py/tui.py both build then dispatch in one call chain) --
+                # never round-tripped through `to_dict()`/`from_dict()`.
+                session_capability=session_capability,
+                session_capability_digest=hashlib.sha256(
+                    session_capability.encode("utf-8")
+                ).hexdigest(),
+                delivery_nonce=secrets.token_urlsafe(32),
+                granted_actions=tuple(granted_actions),
+                acceptance_checks=tuple(acceptance_checks),
+                created_at=now,
+                updated_at=now,
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                owner_instance_id=owner_instance_id,
+            )
+            _persist_handoff(root, handoff)
+            return handoff
+        except MemoryAccessChanged as exc:
+            raise ScanHandoffAuthError(
+                f"memory policy changed during the handoff: {exc.reason}"
+            ) from exc
 
 
 def _deliver_handoff(
@@ -2377,22 +2592,59 @@ def dispatch_handoff(
     if not hmac.compare_digest(presented_digest, handoff.session_capability_digest):
         raise ScanHandoffAuthError("invalid session_capability")
 
-    store = TypedArtifactStore(root)
+    view, _state = TypedArtifactStore.open_readonly_view(root)
     try:
+        if view is None:
+            raise HandoffError("Unknown or revoked handoff session.")
         delta = receive_handoff(
-            store, session_id=handoff.memory_session_id, capability=session_capability
+            view,
+            session_id=handoff.memory_session_id,
+            capability=session_capability,
         )
     except HandoffError as exc:
         raise ScanHandoffAuthError(str(exc)) from exc
+    finally:
+        if view is not None:
+            view.close()
 
     receipt_id = (
         delivery_receipt_id
         or handoff.operation_id
         or f"legacy-delivery:{handoff.handoff_id}"
     )
-    return _deliver_handoff(
-        root, handoff, delta, delivery_receipt_id=receipt_id, store=store
+    delivered = _authorized_delivery(
+        root, handoff, delta, receipt_id, lambda: TypedArtifactStore(root)
     )
+    if delivered is None:
+        raise ScanHandoffAuthError("memory policy denied the delivery receipt")
+    return delivered
+
+
+def _authorized_delivery(
+    root: Path,
+    handoff: ScanHandoff,
+    delta: dict[str, Any],
+    receipt_id: str,
+    open_store: Callable[[], TypedArtifactStore],
+) -> ScanHandoff | None:
+    """72-T01 D4: the delivery receipt is written only inside the shared writer
+    gate for this project's own source; `None` when the policy denies it."""
+    from rush.memory.retrieval import RouteDenial, authorize_writer
+    from rush.memory.store import MemoryAccessChanged
+
+    with authorize_writer(root, str(root)) as granted:
+        if isinstance(granted, RouteDenial):
+            return None
+        try:
+            return _deliver_handoff(
+                root,
+                handoff,
+                delta,
+                delivery_receipt_id=receipt_id,
+                store=open_store(),
+            )
+        except MemoryAccessChanged:
+            return None
 
 
 def _mark_handoff_unrecoverable(
@@ -2452,31 +2704,43 @@ def recover_prepared_handoff(
         return None
     if not claimed_operation_id or handoff.operation_id != claimed_operation_id:
         return None
-    store = TypedArtifactStore(root)
-    if store.get_receipt(artifact_create_receipt_id) is None:
-        _mark_handoff_unrecoverable(store, handoff)
+    # 72-T01 R15: receipts are inspected read-only before any writable open. A
+    # pre-72 or unreadable store (no read-only view) and an `unavailable`
+    # receipt recover nothing and clean nothing up; the exposure-reducing
+    # cleanup (`_mark_handoff_unrecoverable`) runs in every policy mode.
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    if view is None:
         return None
-    if store.get_receipt(session_create_receipt_id) is None:
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    if not _signature_comparable(handoff.source_signature_format):
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    if _source_signature(root) != handoff.source_signature:
-        _mark_handoff_unrecoverable(store, handoff)
-        return None
-    delta = recover_session_delta_without_capability(
-        store,
-        handoff.memory_session_id,
-        expected_root=str(root),
-        expected_audience=handoff.agent_id,
-        expected_session_allowlist=[str(root)],
-    )
+    try:
+        states = {
+            TypedArtifactStore.get_receipt_readonly(root, receipt_id)[0]
+            for receipt_id in (artifact_create_receipt_id, session_create_receipt_id)
+        }
+        if "unavailable" in states:
+            return None
+        recoverable = (
+            "absent" not in states
+            and _signature_comparable(handoff.source_signature_format)
+            and _source_signature(root) == handoff.source_signature
+        )
+        delta = (
+            recover_session_delta_without_capability(
+                view,
+                handoff.memory_session_id,
+                expected_root=str(root),
+                expected_audience=handoff.agent_id,
+                expected_session_allowlist=[str(root)],
+            )
+            if recoverable
+            else None
+        )
+    finally:
+        view.close()
     if delta is None:
-        _mark_handoff_unrecoverable(store, handoff)
+        _mark_handoff_unrecoverable(TypedArtifactStore(root), handoff)
         return None
-    return _deliver_handoff(
-        root, handoff, delta, delivery_receipt_id=delivery_receipt_id, store=store
+    return _authorized_delivery(
+        root, handoff, delta, delivery_receipt_id, lambda: TypedArtifactStore(root)
     )
 
 

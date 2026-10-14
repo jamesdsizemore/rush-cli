@@ -288,7 +288,7 @@ flowchart TB
 
 ## 7. Agentic Safety, Sandboxing & Skills Bundle
 
-The Agentic Safety bundle surrounds autonomous coding agents (Cursor, Claude Code, Cline, Windsurf, Hermes) with strict safety boundaries, destructive command interception, ephemeral worktree sandboxes, atomic patch rollbacks, and multi-turn session memory.
+The Agentic Safety bundle surrounds autonomous coding agents (Claude Code, Cline, Windsurf, Hermes) with strict safety boundaries, destructive command interception, ephemeral worktree sandboxes, atomic patch rollbacks, and multi-turn session memory.
 
 ```mermaid
 sequenceDiagram
@@ -383,7 +383,7 @@ flowchart TD
     subgraph IntelligenceEngines["Repository Intelligence Engines"]
         Hotspots["Hotspot Analyzer (Churn x McCabe Complexity = Defect Risk)"]
         HookGuard["Pre-Commit Hook Guard (AST lint, Trojan Source Unicode, Merge Markers)"]
-        Governance["Rule Synchronizer (Emits .cursorrules, .clinerules, .windsurfrules)"]
+        Governance["Rule Synchronizer (Emits .clinerules, .windsurfrules)"]
     end
 
     subgraph ConsensusSubsystem["Multi-Model Consensus (rush consensus)"]

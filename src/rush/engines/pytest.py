@@ -26,9 +26,9 @@ from __future__ import annotations
 
 import json
 import re
-import sys
 from pathlib import Path
 
+from ..runtime.project_python import PYTHON_PREREQUISITE, project_python
 from ..tools.base import Finding, ToolResult, ToolStatus
 from ..tools.common import run_subprocess
 from .base import Engine, EngineResult, ownership_kwargs
@@ -56,10 +56,22 @@ class PytestEngine(Engine):
         run_id: str | None = None,
     ) -> EngineResult:
         # Try --json-report first; fall back to plain output if plugin missing.
-        # Prefer the active interpreter over pytest.exe. On Windows, a console
-        # script launched from an MCP stdio child can inherit a broken entrypoint
-        # environment, while ``python -m pytest`` is bound to Rush's venv.
-        argv = [sys.executable, "-m", "pytest", str(path), "--tb=line", "-q", *args]
+        # Prefer an interpreter over pytest.exe. On Windows, a console script
+        # launched from an MCP stdio child can inherit a broken entrypoint
+        # environment, while ``python -m pytest`` is bound to the interpreter
+        # that runs it: the project's own venv, else Rush's venv from source.
+        # A frozen Rush's sys.executable is the rush binary, never a Python.
+        python = project_python(cwd or path)
+        if python is None:
+            return EngineResult(
+                stdout="",
+                stderr="",
+                parsed={"prerequisite": "python"},
+                findings=[],
+                summary=PYTHON_PREREQUISITE,
+                duration_ms=0,
+            )
+        argv = [python, "-m", "pytest", str(path), "--tb=line", "-q", *args]
         proc = run_subprocess(
             argv,
             cwd=cwd,
@@ -92,6 +104,19 @@ class PytestEngine(Engine):
 
     def normalize(self, raw: EngineResult, path: Path, tool_name: str) -> ToolResult:
         from ..tools.common import elapsed_ms
+
+        parsed = raw.get("parsed")
+        if isinstance(parsed, dict) and parsed.get("prerequisite") == "python":
+            return ToolResult(
+                tool=tool_name,
+                engine=self.name,
+                engine_version=None,
+                status="skipped",
+                duration_ms=raw.get("duration_ms", 0),
+                summary=PYTHON_PREREQUISITE,
+                findings=[],
+                raw=parsed,
+            )
 
         exit_code = raw.get("exit_code", 0)
         summary = raw.get("summary", "")

@@ -8,10 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import sys
+import time
 import warnings
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import nullcontext
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 import click
 from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
@@ -24,25 +29,56 @@ from pydantic_settings.sources.utils import IncompleteFieldDefinitionWarning
 warnings.filterwarnings("ignore", category=IncompleteFieldDefinitionWarning)
 
 from . import __version__
-from .cli_support.catalog_commands import build_catalog_path_command
-from .cli_support.options import _extract_permissions, permission_options
+from .cli_support.catalog_commands import (
+    build_catalog_path_command,
+    build_help_command,
+    format_everyday_commands,
+    help_all_option,
+)
+from .cli_support.options import (
+    _extract_permissions,
+    permission_options,
+    result_view_options,
+)
 from .cli_support.rendering import (
+    TargetPath,
+    _path_param_defaulted,
     _render_session_result,
     _run_tool,
+    cli_invocation_context,
+    collection_route,
+    echo,
+    echo_json,
+    echo_rows,
     exit_code_for,
     exit_with_result,
+    secho,
+    select_cli_target,
 )
 from .config import RushConfigError, load_config
+from .delivery.compact import ViewOptions
+from .integrations.agent_hooks import MAX_PAYLOAD_BYTES, quiet_logging, run_agent_hook
+from .invocation.models import InvocationError
+from .invocation.targets import RootSelection, assert_contained, select_root
 from .logging import setup_logging
-from .memory.store import MemorySubject, OwnerScope, legacy_owner_scope
+from .memory.authorization import GRANT_OPERATIONS
+from .memory.store import (
+    MemorySubject,
+    OwnerScope,
+    OwnerScopeKind,
+    legacy_owner_scope,
+)
 from .permissions import ExecutionPermissions
+from .theme import FINDINGS_CAP
 from .tools import ALL_TOOLS
 
 if TYPE_CHECKING:
     from .memory.maintenance import MaintenanceTask
+    from .tools.base import ToolResult
     from .tools.memory import SourceKind
 
 _MEMORY_SUBJECTS = get_args(MemorySubject)
+_JSON_LIST_HELP = "Print the full, untruncated list as JSON."
 
 __all__ = [
     "_extract_permissions",
@@ -56,17 +92,77 @@ __all__ = [
 ]
 
 
+class RushHelpFormatter(click.HelpFormatter):
+    """Narrows the option-table first column so long option terms (e.g.
+    ``--log-level``) don't force overflowing wrapped lines in narrow
+    terminals."""
+
+    def write_dl(
+        self,
+        rows: Iterable[tuple[str, str]],
+        col_max: int = 30,
+        col_spacing: int = 2,
+    ) -> None:
+        super().write_dl(
+            rows,
+            col_max=min(col_max, max(self.width // 3, 10)),
+            col_spacing=col_spacing,
+        )
+
+
+class RushContext(click.Context):
+    """Lets help wrap to the real terminal width, down to 20 columns
+    (Click's HelpFormatter floors width at 50)."""
+
+    formatter_class = RushHelpFormatter
+
+    def make_formatter(self) -> click.HelpFormatter:
+        formatter = super().make_formatter()
+        if self.terminal_width is None:
+            formatter.width = max(
+                min(shutil.get_terminal_size().columns, formatter.width + 2) - 2,
+                20,
+            )
+        return formatter
+
+
 class RushGroup(click.Group):
     """Click group dynamically resolving mesh commands while preserving public operations inventory."""
+
+    context_class = RushContext
 
     def get_command(self, ctx: click.Context, cmd_name: str) -> click.Command | None:
         if cmd_name == "lock":
             return lock_cmd_group
         return super().get_command(ctx, cmd_name)
 
+    def format_commands(
+        self, ctx: click.Context, formatter: click.HelpFormatter
+    ) -> None:
+        format_everyday_commands(self, ctx, formatter)
 
-@click.group(cls=RushGroup, context_settings={"help_option_names": ["-h", "--help"]})
+    def get_help(self, ctx: click.Context) -> str:
+        # ctx may not be a RushContext (e.g. built by hand), so widen the
+        # formatter here too, not only in RushContext.make_formatter.
+        formatter = RushHelpFormatter(
+            width=ctx.terminal_width, max_width=ctx.max_content_width
+        )
+        if ctx.terminal_width is None:
+            formatter.width = max(
+                min(shutil.get_terminal_size().columns, formatter.width + 2) - 2,
+                20,
+            )
+        self.format_help(ctx, formatter)
+        return formatter.getvalue().rstrip("\n")
+
+
+@click.group(
+    cls=RushGroup,
+    invoke_without_command=True,
+    context_settings={"help_option_names": ["-h", "--help"]},
+)
 @click.version_option(__version__, "--version", "-V", message="%(version)s")
+@help_all_option
 @click.option(
     "--log-level",
     envvar="RUSH_LOG_LEVEL",
@@ -74,16 +170,89 @@ class RushGroup(click.Group):
     type=click.Choice(["debug", "info", "warn", "error"], case_sensitive=False),
     help="Log verbosity (stderr NDJSON). Env: RUSH_LOG_LEVEL. Default: warn.",
 )
-def cli(log_level: str) -> None:
+@click.pass_context
+def cli(ctx: click.Context, log_level: str) -> None:
     """rush — agentic code-quality tools for coding agents.
 
-    \b
-    Five tools: review, lint, format, test, security.
     Pairs well with `npx @nanonets/graft` for context-graph queries.
     """
     setup_logging(log_level)
+    # T23: bare `rush` is exactly `rush status` for the invocation cwd.
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(status_cmd)
 
 
+@cli.command(name="status")
+@click.argument("path", type=TargetPath(path_type=Path), required=False)
+@click.option(
+    "--session",
+    "session_id",
+    default=None,
+    help="Show the project bound to this interface session (explicit PATH wins).",
+)
+@click.option(
+    "--result",
+    "result_handle",
+    default=None,
+    help="Read a stored result by handle, as `rush context retrieve --view`.",
+)
+@click.option(
+    "--view",
+    type=click.Choice(["result", "bytes"]),
+    default=None,
+    help="With --result: a findings page (result, default) or a byte slice.",
+)
+@click.option("--cursor", default=None, help="With --result: next_cursor.")
+@click.option("--offset", type=int, default=None, help="With --result: start.")
+@click.option("--limit", type=int, default=None, help="With --result: 1-50.")
+@click.option("--max-bytes", "max_bytes", type=int, default=None, help="With --result.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def status_cmd(
+    path: Path | None,
+    session_id: str | None,
+    result_handle: str | None,
+    view: str | None,
+    cursor: str | None,
+    offset: int | None,
+    limit: int | None,
+    max_bytes: int | None,
+    as_json: bool,
+) -> None:
+    """Show the project's status without changing anything."""
+    from rush.tools.status import render_status, run_status_cli
+
+    if path is not None and result_handle is None and not path.exists():
+        from .invocation.executor import target_error_result
+
+        exit_with_result(
+            target_error_result(
+                "status",
+                "TARGET_NOT_FOUND",
+                f"target not found: {path}",
+                target=str(path),
+                reason="target_not_found",
+            ),
+            as_json=as_json,
+        )
+    result = run_status_cli(
+        path,
+        session_id=session_id,
+        result_handle=result_handle,
+        view=view,
+        cursor=cursor,
+        offset=offset,
+        limit=limit,
+        max_bytes=max_bytes,
+    )
+    if result_handle is not None:
+        _render_session_result(result, as_json)
+    if as_json:
+        exit_with_result(result, as_json=True)
+    echo(render_status(result), nl=False)
+    sys.exit(exit_code_for(result))
+
+
+@collection_route("tools")
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -98,12 +267,16 @@ def capabilities(path: Path, as_json: bool) -> None:
     except RushConfigError as error:
         raise click.UsageError(str(error)) from error
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
-    else:
-        for name, capability in result["tools"].items():
-            click.echo(f"{name}: {capability['state']} ({capability['reason']})")
+        echo(json.dumps(result, indent=2, default=str))
+        return
+    echo_rows(
+        list(result["tools"].items()),
+        lambda item: f"{item[0]}: {item[1]['state']} ({item[1]['reason']})",
+        empty="no tools are declared in the catalog",
+    )
 
 
+@collection_route("steps")
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option("--profile", default="default", show_default=True)
@@ -117,14 +290,18 @@ def plan(path: Path, profile: str, as_json: bool) -> None:
     except (RushConfigError, ValueError) as error:
         raise click.UsageError(str(error)) from error
     if as_json:
-        click.echo(json.dumps(result, indent=2, default=str))
-    else:
-        for step in result["steps"]:
-            click.echo(f"{step['tool']}: {step['state']} ({step['reason']})")
+        echo(json.dumps(result, indent=2, default=str))
+        return
+    echo_rows(
+        result["steps"],
+        lambda step: f"{step['tool']}: {step['state']} ({step['reason']})",
+        empty="the selected profile plans no steps",
+    )
 
 
 def _benchmark_default_root() -> Path:
-    """Return the durable user-local benchmark root, never a repository path."""
+    """Return the durable user-local benchmark root, never a repository path.
+    Resolved at call time (a Click callable default), never at import."""
     return (
         Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         / "Rush"
@@ -132,13 +309,15 @@ def _benchmark_default_root() -> Path:
     )
 
 
+def _benchmark_default_output() -> Path:
+    return _benchmark_default_root() / "run"
+
+
 def _benchmark_default_model_cache() -> Path:
     """Return the durable user-local model cache, never a repository path."""
-    return (
-        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        / "Rush"
-        / "benchmark-model-cache"
-    )
+    from .setup.provision import default_data_root
+
+    return default_data_root() / "benchmark-model-cache"
 
 
 @cli.group()
@@ -152,14 +331,14 @@ def benchmark() -> None:
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_root() / "run",
-    show_default=True,
+    default=_benchmark_default_output,
+    show_default="<data root>/benchmarks/run",
 )
 @click.option(
     "--model-cache",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_model_cache(),
-    show_default=True,
+    default=_benchmark_default_model_cache,
+    show_default="<data root>/benchmark-model-cache",
 )
 @click.option(
     "--allow-model-download",
@@ -208,8 +387,15 @@ def benchmark_run(
     foreground: bool,
 ) -> None:
     """Start a durable detached benchmark; live routes require explicit opt-in."""
+    from scripts.benchmarks.run import load_scenarios
     from scripts.benchmarks.run import main as benchmark_main
 
+    if scenario and scenario not in load_scenarios():
+        # T27: an unknown scenario is an invalid input (exit 2), checked
+        # before any job starts.
+        raise click.BadParameter(
+            f"unknown scenario: {scenario}", param_hint="'--scenario'"
+        )
     argv = ["--output", str(output), "--model-cache", str(model_cache)]
     if scenario:
         argv.extend(["--scenario", scenario])
@@ -235,55 +421,83 @@ def benchmark_run(
         argv=argv,
         output=output,
     )
-    click.echo(
+    echo(
         f"Started {job['job_id']}; durable state: {output.parent / 'jobs' / (job['job_id'] + '.json')}"
     )
 
 
+def _benchmark_json_files(root: Path, pattern: str) -> list[tuple[Path, Any]]:
+    """Parsed `*.json` payloads under `root` (recursive for `**/`), skipping
+    unparseable files; empty when `root` is absent."""
+    if not root.is_dir():
+        return []
+    found = root.rglob(pattern[3:]) if pattern.startswith("**/") else root.glob(pattern)
+    parsed: list[tuple[Path, Any]] = []
+    for path in sorted(found):
+        try:
+            parsed.append((path, json.loads(path.read_text(encoding="utf-8"))))
+        except json.JSONDecodeError:
+            continue
+    return parsed
+
+
+@collection_route("jobs", "results")
 @benchmark.command("status")
 @click.option(
     "--output",
     type=click.Path(path_type=Path),
-    default=_benchmark_default_root() / "run",
-    show_default=True,
+    default=_benchmark_default_output,
+    show_default="<data root>/benchmarks/run",
 )
-def benchmark_status(output: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def benchmark_status(output: Path, as_json: bool) -> None:
     """Print durable job and scenario state without attaching to a worker."""
-    jobs_root = output.parent / "jobs"
-    if jobs_root.is_dir():
-        for path in sorted(jobs_root.glob("benchmark-*.json")):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                continue
-            click.echo(
-                f"{payload.get('job_id', path.stem)}: {payload.get('state', 'unknown')}"
-            )
-    if not output.is_dir():
-        return
-    results: list[dict[str, object]] = []
-    for path in sorted(output.rglob("*.json")):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            continue
-        if (
-            isinstance(payload, dict)
-            and "scenario_id" in payload
-            and "outcome" in payload
-        ):
-            results.append(payload)
-    if not results:
-        click.echo("No benchmark scenario results found.")
-        return
-    for result in results:
-        click.echo(
-            f"{result['scenario_id']}: {result['outcome']} ({result.get('duration_ms', 0)}ms)"
+    ctx = click.get_current_context()
+    explicit = (
+        ctx.get_parameter_source("output") is not click.core.ParameterSource.DEFAULT
+    )
+    if explicit and not output.is_dir():
+        # A typed output that is not an existing directory is an invalid
+        # target, not an empty history; the default is absent until a run.
+        problem = "is not a directory" if output.exists() else "does not exist"
+        raise click.BadParameter(f"Path '{output}' {problem}.", param_hint="'--output'")
+    jobs = [
+        {
+            "job_id": payload.get("job_id", path.stem),
+            "state": payload.get("state", "unknown"),
+        }
+        for path, payload in _benchmark_json_files(
+            output.parent / "jobs", "benchmark-*.json"
         )
+    ]
+    results = [
+        payload
+        for _path, payload in _benchmark_json_files(output, "**/*.json")
+        if isinstance(payload, dict)
+        and "scenario_id" in payload
+        and "outcome" in payload
+    ]
+    if as_json:
+        echo_json({"jobs": jobs, "results": results})
+        return
+    echo_rows(
+        jobs,
+        lambda job: f"{job['job_id']}: {job['state']}",
+        noun="jobs",
+        empty="no benchmark jobs are recorded",
+    )
+    if output.is_dir() and not results:
+        echo("No benchmark scenario results found.")
+    echo_rows(
+        results,
+        lambda r: f"{r['scenario_id']}: {r['outcome']} ({r.get('duration_ms', 0)}ms)",
+        noun="scenario results",
+        empty="no benchmark scenario results are recorded",
+    )
 
 
 @benchmark.command("check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--threshold", default=5.0, type=float, help="Percentage threshold for regression."
 )
@@ -294,6 +508,7 @@ def benchmark_status(output: Path) -> None:
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def benchmark_check_cmd(
     path: Path,
     threshold: float,
@@ -306,6 +521,9 @@ def benchmark_check_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Compare performance samples against baseline thresholds at <path>."""
     perms = _extract_permissions(
@@ -323,6 +541,7 @@ def benchmark_check_cmd(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"threshold_percent": threshold, "record": record},
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -330,7 +549,7 @@ def benchmark_check_cmd(
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--llm",
     "use_llm",
@@ -346,6 +565,7 @@ def benchmark_check_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def review(
     path: Path,
     use_llm: bool,
@@ -359,6 +579,9 @@ def review(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Review code for deterministic heuristics. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -380,16 +603,18 @@ def review(
             "use_graft": use_graft,
             "changed_files": list(changed_files) or None,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
 @cli.command()
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--check", "check_only", is_flag=True, help="Only check; don't modify files."
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def format(
     path: Path,
     check_only: bool,
@@ -401,6 +626,9 @@ def format(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Format Python and JS/TS safely. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -418,6 +646,7 @@ def format(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"check": check_only} if check_only else None,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -433,6 +662,7 @@ def format(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def commit_msg_cmd(
     path: Path,
     message: str,
@@ -444,6 +674,9 @@ def commit_msg_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Validate commit messages without rewriting history. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -461,11 +694,12 @@ def commit_msg_cmd(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"message": message} if message else None,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
 @cli.command(name="sbom")
-@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.argument("path", type=TargetPath(path_type=Path))
 @click.option(
     "--output",
     "-o",
@@ -481,6 +715,7 @@ def commit_msg_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def sbom_cmd(
     path: Path,
     output_path: Path | None,
@@ -493,6 +728,9 @@ def sbom_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Generate a safe SBOM artifact. Maturity: real adapter."""
     perms = _extract_permissions(
@@ -513,6 +751,7 @@ def sbom_cmd(
             "output_path": output_path,
             "overwrite": overwrite,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -531,6 +770,7 @@ def sbom_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def fix(
     path: Path,
     dry_run: bool,
@@ -543,6 +783,9 @@ def fix(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Safely auto-remediate formatting and linter issues across engines."""
     perms = _extract_permissions(
@@ -560,6 +803,7 @@ def fix(
         as_json=as_json,
         permissions=perms,
         extra_kwargs={"dry_run": dry_run, "force": force},
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -581,13 +825,60 @@ def mcp() -> None:
         "capability is read from RUSH_MEMORY_CAPABILITY, never a CLI argument."
     ),
 )
-def serve(memory_session: str | None) -> None:
+@click.option(
+    "--project",
+    "project",
+    default=None,
+    help=(
+        "Bind this server to one registered project (ID or registered root): its "
+        "root anchors every relative path. Unknown projects fail at startup."
+    ),
+)
+@click.option(
+    "--session",
+    "session",
+    default=None,
+    help="Default session_id for project and scan tools when a caller omits it.",
+)
+@click.option(
+    "--profile",
+    default=None,
+    metavar="[core|full]",
+    callback=lambda _ctx, _param, value: _validate_mcp_profile(value),
+    help=(
+        "Tool set: core (status, check, lint, review, security, test, memory) or "
+        "full (every tool). Default: full. Ignored with --memory-session."
+    ),
+)
+def serve(
+    memory_session: str | None,
+    project: str | None,
+    session: str | None,
+    profile: str | None,
+) -> None:
     """Start the rush MCP server on stdio (for coding agents)."""
     import asyncio
 
-    from .mcp import run_stdio
+    from .mcp import ServerBindingError, resolve_server_binding, run_stdio
 
-    asyncio.run(run_stdio(memory_session))
+    try:
+        binding = resolve_server_binding(project, session)
+    except ServerBindingError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--project'") from exc
+    asyncio.run(run_stdio(memory_session, binding=binding, profile=profile))
+
+
+# Mirrors `rush.mcp.PROFILES`; checked here so a bad value never imports
+# (and so never constructs) any server.
+_MCP_PROFILES = ("core", "full")
+
+
+def _validate_mcp_profile(value: str | None) -> str | None:
+    if value is not None and value not in _MCP_PROFILES:
+        raise click.BadParameter(
+            f"{value!r} is not a profile; valid profiles: {', '.join(_MCP_PROFILES)}"
+        )
+    return value
 
 
 # --- Cache CLI commands ---------------------------------------------------
@@ -603,19 +894,46 @@ def cache_stats() -> None:
     """Display cache entry count, file size, and location."""
     from .cache import ResultCache
 
-    c = ResultCache()
-    stats_data = c.stats()
-    click.echo(json.dumps(stats_data, indent=2))
+    # T10 (S10.6): read-only, anchored at the logical root; a missing DB is
+    # reported with its path and never created.
+    from .memory.store import MemoryStoreUnreadableError
+
+    try:
+        stats_data = ResultCache.stats_readonly(_logical_cache_db())
+    except MemoryStoreUnreadableError as exc:
+        raise click.ClickException(f"{exc.code}: {exc}") from exc
+    echo(json.dumps(stats_data, indent=2))
 
 
 @cache.command(name="clean")
 def cache_clean() -> None:
-    """Purge all cached results from .rush/cache.db."""
+    """Purge all cached results: .rush/cache.db entries and stored compact
+    results in .rush/cache/ccr.db (context-pack chunks are kept)."""
     from .cache import ResultCache
+    from .delivery.compact import purge_compact_results
 
-    c = ResultCache()
-    count = c.clear()
-    click.echo(f"Purged {count} cached result(s).")
+    db = _logical_cache_db()
+    count = ResultCache(db).clear() if db.is_file() else 0
+    # T16 R16.8/finding 28: only T16 storage objects leave ccr.db; a missing
+    # database is never created.
+    purged, retained = purge_compact_results(db.parent.parent)
+    echo(f"Purged {count} cached result(s).")
+    echo(
+        json.dumps(
+            {
+                "result_cache": count,
+                "compact_results": purged,
+                "context_packs_retained": retained,
+            }
+        )
+    )
+
+
+def _logical_cache_db() -> Path:
+    """T10: the result cache under the logical root of the cwd, never the cwd."""
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(Path.cwd()) / ".rush" / "cache.db"
 
 
 # --- Setup & Init CLI commands ---------------------------------------------
@@ -626,15 +944,79 @@ def cache_clean() -> None:
 @click.option(
     "--non-interactive/--interactive",
     "non_interactive",
-    default=True,
-    help="Select prompting behavior; does not by itself suppress an explicitly granted --install.",
+    default=None,
+    help=(
+        "--non-interactive previews only; --interactive forces the review-and-confirm "
+        "flow (needs a terminal on stdin). Default: interactive when stdin and stdout "
+        "are terminals, otherwise preview only."
+    ),
 )
 @click.option(
     "--install",
     is_flag=True,
     help=(
-        "Build and apply the engine provision plan for recommended toolchains. "
-        "Requires the relevant --allow-* grants; without them the plan is previewed only."
+        "Accepted for compatibility: engine provisioning is always part of the "
+        "reviewed setup plan."
+    ),
+)
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    help="Apply a saved setup review without prompting (with --yes, --plan-file, --plan-id).",
+)
+@click.option("--yes", is_flag=True, help="Confirm a non-interactive --apply.")
+@click.option(
+    "--plan-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Saved JSON output of `rush setup PATH --json`.",
+)
+@click.option(
+    "--plan-id",
+    help="The saved plan's setup_plan_id (or a T24 review's review_id).",
+)
+@click.option(
+    "--agent",
+    "host",
+    type=click.Choice(["claude", "codex"]),
+    default=None,
+    help="The LLM CLI to connect to this project (Claude Code or Codex CLI).",
+)
+@click.option(
+    "--save-plan",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        "Save the complete reviewed setup plan here (needs --allow-artifact-write) "
+        "and print the exact --apply command. Saving applies nothing."
+    ),
+)
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help="Also write the Rush instruction block into CLAUDE.md/AGENTS.md.",
+)
+@click.option(
+    "--enable-agent-hooks",
+    is_flag=True,
+    help="Also enable the host's Rush hooks.",
+)
+@click.option(
+    "--verify-host",
+    is_flag=True,
+    help=(
+        "Launch the host once to verify it calls Rush for this project (uses the "
+        "network and model tokens on your host account)."
+    ),
+)
+@click.option(
+    "--run-check",
+    is_flag=True,
+    help=(
+        "With --agent: after setup, run a representative `rush check` on a "
+        "Rush-owned fixture (a known faulty file) using the engines setup "
+        "installed for this project, with the build and cache_write grants, "
+        "and report its result."
     ),
 )
 @permission_options
@@ -642,12 +1024,22 @@ def cache_clean() -> None:
     "--json",
     "as_json",
     is_flag=True,
-    help="Print detected stacks and installation summary as JSON.",
+    help="Print the setup preview or result as JSON; JSON output never prompts.",
 )
 def setup_cmd(
     path: Path,
-    non_interactive: bool,
+    non_interactive: bool | None,
     install: bool,
+    apply_: bool,
+    yes: bool,
+    plan_file: Path | None,
+    plan_id: str | None,
+    host: str | None,
+    save_plan: Path | None,
+    install_guidance: bool,
+    enable_agent_hooks: bool,
+    verify_host: bool,
+    run_check: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -657,50 +1049,45 @@ def setup_cmd(
     allow_browser: bool,
     as_json: bool,
 ) -> None:
-    """Inspect repository stacks and set up recommended quality toolchains."""
-    from .tools.setup_wizard import run_setup_wizard
+    """Preview project setup (config, registration, engines) and apply it after consent."""
+    from .tools.setup_wizard import render_setup_result, run_setup_command
 
-    permissions = (
-        _extract_permissions(
-            allow_network=allow_network,
-            allow_download=allow_download,
-            allow_cache_write=allow_cache_write,
-            allow_build=allow_build,
-            allow_slow=allow_slow,
-            allow_artifact_write=allow_artifact_write,
-            allow_browser=allow_browser,
-        )
-        if install
-        else None
+    del install  # compatibility flag; provisioning is always reviewed
+    permissions = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
     )
-    res = run_setup_wizard(
+    payload, code = run_setup_command(
         path.resolve(),
         non_interactive=non_interactive,
-        install=install,
+        apply=apply_,
+        yes=yes,
+        plan_file=plan_file,
+        plan_id=plan_id,
         permissions=permissions,
+        as_json=as_json,
+        stdin_tty=sys.stdin.isatty(),
+        stdout_tty=sys.stdout.isatty(),
+        host=host,
+        save_plan=save_plan,
+        install_guidance=install_guidance,
+        enable_hooks=enable_agent_hooks,
+        verify_host=verify_host,
+        run_check=run_check,
     )
-    if as_json:
-        click.echo(json.dumps(res, indent=2, default=str))
-    else:
-        click.echo(f"Detected stacks: {', '.join(res['stacks']) or 'none'}")
-        if res["skipped"]:
-            click.echo(f"Recommended engines: {', '.join(res['skipped'])}")
-        provision = res.get("provision")
-        if provision and provision.get("plan_only"):
-            click.echo(
-                f"Provision plan {res['plan_id'][:12]} built (preview only); "
-                "pass --allow-network --allow-download --allow-cache-write (and --allow-build "
-                "where required) to apply it."
-            )
-        elif provision:
-            if provision["applied"]:
-                click.echo(f"Installed: {', '.join(provision['applied'])}")
-            if provision["failed"]:
-                click.echo(f"Failed: {', '.join(sorted(provision['failed']))}")
-            if provision["permission_blocked"]:
-                click.echo(
-                    f"Permission blocked: {', '.join(sorted(provision['permission_blocked']))}"
-                )
+    echo(
+        json.dumps(payload, indent=2, default=str)
+        if as_json
+        else render_setup_result(payload)
+    )
+    if code == 130:
+        echo("rush setup: interrupted; nothing was changed", err=True)
+    sys.exit(code)
 
 
 @cli.command(name="init")
@@ -713,16 +1100,14 @@ def init_cmd(path: Path, force: bool) -> None:
     root = path.resolve()
     target_cfg = (root if root.is_dir() else root.parent) / "rush.toml"
     if target_cfg.is_file() and not force:
-        click.echo(
-            f"rush.toml already exists at {target_cfg}. Pass --force to overwrite."
-        )
+        echo(f"rush.toml already exists at {target_cfg}. Pass --force to overwrite.")
         sys.exit(1)
 
     cfg_content = generate_initial_config(root)
     from .safety.redactor import sanitize_value
 
     target_cfg.write_text(sanitize_value(cfg_content).value, encoding="utf-8")
-    click.echo(f"Created rush.toml at {target_cfg}")
+    echo(f"Created rush.toml at {target_cfg}")
 
 
 @cli.group(name="config")
@@ -737,11 +1122,11 @@ def config_check(path: Path) -> None:
     try:
         cfg = load_config(start=path.resolve())
         if cfg.source:
-            click.echo(f"Valid configuration loaded from {cfg.source}")
+            echo(f"Valid configuration loaded from {cfg.source}")
         else:
-            click.echo("No rush.toml found; using default built-in configuration.")
+            echo("No rush.toml found; using default built-in configuration.")
     except Exception as exc:  # noqa: BLE001
-        click.echo(f"Configuration error: {exc}", err=True)
+        echo(f"Configuration error: {exc}", err=True)
         sys.exit(1)
 
 
@@ -779,39 +1164,118 @@ def _run_suite_cli(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
+    # T8: the suite walks the user's own input once from the invocation cwd.
     result = run_workflow_suite(
         suite=suite,
-        path=path.resolve(),
+        path=path,
         permissions=perms,
         fail_fast=fail_fast,
+        original_requested_targets=None if _path_param_defaulted() else (str(path),),
+        invocation_start_cwd=Path.cwd(),
     )
     if as_json:
-        click.echo(json.dumps(result, indent=2))
+        echo(json.dumps(result, indent=2))
     else:
-        status_color = (
-            "green"
-            if result["status"] == "ok"
-            else ("yellow" if result["status"] == "warn" else "red")
-        )
-        click.secho(
-            f"[{suite.name.upper()}] Status: {result['status']}",
-            fg=status_color,
-            bold=True,
-        )
-        click.echo(result["summary"])
-        for finding in result.get("findings") or []:
-            click.echo(
-                f"  - [{finding.get('severity', 'info')}] {finding.get('message', '')}"
-            )
+        _echo_suite_human(result, suite.name)
     sys.exit(exit_code_for(result["status"]))
 
 
+def _suite_child_line(item: tuple[int, Mapping[str, Any]]) -> str:
+    index, child = item
+    line = (
+        f"  {index}. {child.get('tool')!s:<9} {child.get('status')!s:<7} "
+        f"{child.get('summary') or ''}"
+    )
+    cause = (child.get("execution") or {}).get("cause")
+    return f"{line} ({cause})" if cause else line
+
+
+def _echo_suite_human(result: Mapping[str, Any], suite_name: str) -> None:
+    """The status line and summary, then one line per step (T17 S17.4):
+    number, step, status and summary, plus the cause of a step that did not
+    execute (not_run/cancelled)."""
+    status = result.get("status")
+    status_color = (
+        "green" if status == "ok" else ("yellow" if status == "warn" else "red")
+    )
+    secho(f"[{suite_name.upper()}] Status: {status}", fg=status_color, bold=True)
+    echo(result.get("summary", ""))
+    children = (result.get("metadata") or {}).get("children") or []
+    echo_rows(
+        list(enumerate(children, start=1)),
+        _suite_child_line,
+        noun="steps",
+        empty="the suite ran no steps",
+    )
+    echo_rows(
+        result.get("findings") or [],
+        lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message', '')}",
+        cap=FINDINGS_CAP,
+        noun="findings",
+        empty="no step reported a finding",
+    )
+
+
+def _run_check_cli(
+    path: Path,
+    permissions: ExecutionPermissions,
+    fail_fast: bool,
+    view: ViewOptions,
+    as_json: bool,
+) -> None:
+    """T17: `rush check` runs the shared `CheckTool`. The suite walks `path`
+    once from the invocation cwd (T8), so a rejected input is each step's
+    error child; only the compact view selects the root first, to store the
+    full result under it."""
+    from .delivery import compact
+    from .safety.redactor import sanitize_value
+    from .tools.check import CheckTool
+
+    anchor = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+
+    def run() -> Any:
+        return CheckTool().run(
+            path,
+            permissions=permissions,
+            fail_fast=fail_fast,
+            original_requested_targets=original,
+            invocation_start_cwd=anchor,
+        )
+
+    def prepare() -> compact.Prepared | dict[str, Any]:
+        if not view.compact:
+            return anchor, run
+        try:
+            return select_cli_target(path, anchor=anchor).root, run
+        except InvocationError:
+            return run()
+
+    result = compact.deliver(
+        "check",
+        view,
+        cache_write=permissions.cache_write,
+        prepare=prepare,
+        serialize=compact.cli_size,
+    )
+    clean = sanitize_value(result).value
+    if as_json:
+        echo(json.dumps(clean, indent=2, default=str))
+    else:
+        _echo_suite_human(clean, "check")
+    sys.exit(exit_code_for(result))
+
+
+@collection_route("metadata.children", "findings")
 @cli.command(name="check")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
-    "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
+    "--fail-fast/--no-fail-fast",
+    default=False,
+    help="Stop at the first failing step; later steps are reported as not run.",
 )
 @permission_options
+@result_view_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def check_cmd(
     path: Path,
@@ -823,26 +1287,32 @@ def check_cmd(
     allow_slow: bool,
     allow_artifact_write: bool,
     allow_browser: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
     as_json: bool,
 ) -> None:
-    """Run fast inner-loop quality check suite (format, lint, typecheck, dead, slop)."""
-    _run_suite_cli(
-        "check",
-        path,
-        as_json,
-        fail_fast,
-        allow_network,
-        allow_download,
-        allow_cache_write,
-        allow_build,
-        allow_slow,
-        allow_artifact_write,
-        allow_browser,
+    """Run the check suite: format (check-only), lint, typecheck, dead, slop, test.
+
+    Every step runs and is reported by default; the test step runs project
+    test code and needs --allow-build."""
+    perms = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    _run_check_cli(
+        path, perms, fail_fast, ViewOptions(result_view, limit, max_bytes), as_json
     )
 
 
+@collection_route("metadata.children", "findings")
 @cli.command(name="audit")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=False, help="Stop on first tool failure."
 )
@@ -876,8 +1346,9 @@ def audit_cmd(
     )
 
 
+@collection_route("metadata.children", "findings")
 @cli.command(name="gate")
-@click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
+@click.argument("path", type=TargetPath(path_type=Path), default=Path("."))
 @click.option(
     "--fail-fast/--no-fail-fast", default=True, help="Stop on first tool failure."
 )
@@ -968,37 +1439,51 @@ def watch_cmd(
         allow_browser=allow_browser,
     )
     suite_map = {"check": CHECK_SUITE, "audit": AUDIT_SUITE, "gate": GATE_SUITE}
+    # T8: one ROOT-ENTRY walk from the invocation cwd, before anything is
+    # watched or run; every later trigger reuses its selection.
+    invocation_start_cwd = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+    try:
+        selection = select_cli_target(path, anchor=invocation_start_cwd)
+    except InvocationError as exc:
+        echo(str(exc), err=True)
+        sys.exit(2)
 
     def on_change_handler(changed_paths: list[Path]) -> None:
-        click.echo(
+        echo(
             f"\n[WATCH] Changes detected in {len(changed_paths)} file(s). Triggering evaluation..."
         )
         if tool_name:
             tools_map = {t.name: t for t in ALL_TOOLS}
             t = tools_map.get(tool_name)
             if t:
-                from .invocation import InvocationExecutor, resolve_invocation
+                from .invocation import InvocationExecutor
 
-                target = path.resolve()
+                try:
+                    context = cli_invocation_context(
+                        t.name, selection, original=original, permissions=perms
+                    )
+                except RushConfigError as exc:
+                    echo(str(exc), err=True)
+                    return
                 executor = InvocationExecutor()
                 executor.register(t.name, t.__call__)
-                context = resolve_invocation(
-                    {"operation_id": t.name, "path": str(target)},
-                    transport="cli",
-                    workspace_root=target if target.is_dir() else target.parent,
-                    permissions=perms,
-                )
                 res = executor.execute(context)
-                click.echo(res.get("summary", "Done."))
+                echo(res.get("summary", "Done."))
         else:
             suite = suite_map.get(suite_name, CHECK_SUITE)
             res = run_workflow_suite(
-                suite=suite, path=path.resolve(), permissions=perms, fail_fast=False
+                suite=suite,
+                path=path,
+                permissions=perms,
+                fail_fast=False,
+                original_requested_targets=original,
+                invocation_start_cwd=invocation_start_cwd,
             )
-            click.echo(res.get("summary", "Done."))
+            echo(res.get("summary", "Done."))
 
     watcher = FileWatcher(
-        root=path.resolve(), debounce_ms=debounce_ms, on_change=on_change_handler
+        root=selection.target, debounce_ms=debounce_ms, on_change=on_change_handler
     )
     watcher.watch_blocking()
 
@@ -1013,6 +1498,17 @@ def _stdout_is_tty() -> bool:
     return sys.stdout.isatty()
 
 
+def _stdin_is_tty() -> bool:
+    """Test seam (T28-A), same contract as `_stdout_is_tty`: the raw-terminal
+    key loop reads stdin, so interactive mode requires it to be a TTY too."""
+    return sys.stdin.isatty()
+
+
+def _interactive_terminal() -> bool:
+    """T28-A: interactive mode requires both stdin and stdout to be TTYs."""
+    return _stdin_is_tty() and _stdout_is_tty()
+
+
 @cli.command(name="ui")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True, path_type=Path))
 @click.option(
@@ -1021,7 +1517,7 @@ def _stdout_is_tty() -> bool:
     is_flag=True,
     default=False,
     help=(
-        "Print each project's check-suite result as JSON and exit, "
+        "Print each project's read-only status (`rush status`) as JSON and exit, "
         "instead of opening the interactive interface."
     ),
 )
@@ -1041,11 +1537,11 @@ def ui_cmd(
 
     Accepts one or more project paths (`rush ui path1 path2 ...`) to open
     and switch between multiple projects; defaults to the current directory
-    when none are given. The interface starts immediately and runs each
-    project's initial check suite as a background job it attaches to,
-    rather than blocking startup on it. With `--json`, or when stdout is
-    not a terminal, prints each project's check-suite result and exits
-    instead of opening the interface.
+    when none are given. The interface starts immediately on a read-only
+    Overview; the initial analysis is an explicit Start action (F5 refreshes
+    the Overview). With `--json`, or when stdin or stdout is not a
+    terminal, prints each project's read-only status and exits instead of
+    opening the interface.
     """
     from .tui import ProjectSeed, default_scan_actions, run_interactive_tui
 
@@ -1058,36 +1554,67 @@ def ui_cmd(
         allow_artifact_write=allow_artifact_write,
         allow_browser=allow_browser,
     )
-    resolved_paths = [p.resolve() for p in paths] or [Path.cwd()]
+    # T8 (5.1)/(5.4): one ROOT-ENTRY walk per input from the invocation cwd,
+    # in place of `p.resolve()`; with no paths the invocation cwd is the
+    # lexical path and the original input is unavailable (None). A rejected
+    # input fails before any seed is built or any suite runs.
+    anchor = Path.cwd()
+    inputs: list[str | None] = [str(p) for p in paths] or [None]
+    entries: list[tuple[str | None, RootSelection]] = []
+    for typed in inputs:
+        try:
+            selected = select_root("." if typed is None else typed, anchor=anchor)
+            assert_contained(selected)
+        except InvocationError as exc:
+            echo(str(exc), err=True)
+            sys.exit(2)
+        entries.append((typed, selected))
 
-    if json_output or not _stdout_is_tty():
-        from .workflows.suites import CHECK_SUITE, run_workflow_suite
+    if json_output or not _interactive_terminal():
+        # Phase 66 §3.8: without an interactive terminal `rush ui` reports the
+        # zero-write `rush status` of each project; it never runs checks.
+        from .tools.status import StatusTool
 
         snapshots = []
-        for resolved in resolved_paths:
-            res = run_workflow_suite(
-                suite=CHECK_SUITE, path=resolved, permissions=perms
-            )
+        summaries = []
+        for _raw, selection in entries:
+            status = StatusTool()(selection.target)
             snapshots.append(
                 {
-                    "project": resolved.name or str(resolved),
-                    "path": str(resolved),
-                    "result": res,
+                    "project": selection.target.name or str(selection.target),
+                    "path": str(selection.target),
+                    "status": status.get("raw"),
                 }
             )
+            summaries.append(status.get("summary", ""))
         if json_output:
-            click.echo(json.dumps(snapshots))
+            echo(json.dumps(snapshots))
         else:
-            for snap in snapshots:
-                result = snap["result"] if isinstance(snap["result"], dict) else {}
-                click.echo(f"{snap['project']}: {result.get('summary', 'done')}")
+            import shlex
+
+            for snap, summary in zip(snapshots, summaries, strict=True):
+                # Names and summaries come from the filesystem and producers:
+                # terminal-escaped by `echo`; the paths in the commands are
+                # shell-quoted so a path with spaces or metacharacters stays
+                # copyable.
+                quoted = shlex.quote(str(snap["path"]))
+                echo(f"{snap['project']}: {summary}")
+                echo(f"Next: rush status {quoted} --json")
+                echo(f"      rush check {quoted}")
         return
 
     seeds = [
-        ProjectSeed(name=resolved.name or str(resolved), root=resolved)
-        for resolved in resolved_paths
+        ProjectSeed(
+            name=selection.target.name or str(selection.target),
+            root=selection.target,
+            lexical_path=selection.lexical,
+            original_input=raw,
+        )
+        for raw, selection in entries
     ]
-    run_interactive_tui(seeds, actions=default_scan_actions(permissions=perms))
+    run_interactive_tui(
+        seeds, actions=default_scan_actions(permissions=perms), permissions=perms
+    )
 
 
 def _dashboard_descriptor_path(server_id: str) -> Path:
@@ -1242,9 +1769,9 @@ def _reconnect_existing_dashboard(
 
     launch_url = f"{base_url}/#token={new_token}"
     if json_output:
-        click.echo(json.dumps({"ready": True, "url": launch_url}))
+        echo(json.dumps({"ready": True, "url": launch_url}))
     else:
-        click.echo(f"Reconnected: {launch_url}")
+        echo(f"Reconnected: {launch_url}")
     if not no_open:
         try:
             webbrowser.open(launch_url)
@@ -1325,8 +1852,19 @@ def dashboard_cmd(
         allow_browser=allow_browser,
     )
 
-    resolved_path = path.resolve()
-    record = register_project(resolved_path)
+    # T8 (4)(d): one ROOT-ENTRY walk in place of `path.resolve()`, rejected
+    # before registration, server start, or any scan; the registered root is
+    # the only root used after it.
+    anchor = Path.cwd()
+    original = None if _path_param_defaulted() else (str(path),)
+    try:
+        selection = select_root(str(path), anchor=anchor)
+        assert_contained(selection)
+    except InvocationError as exc:
+        echo(str(exc), err=True)
+        sys.exit(2)
+    record = register_project(selection.target)
+    registered_root = Path(record.root)
     empty_snapshot = {
         "schema_version": 1,
         "project_id": record.project_id,
@@ -1348,12 +1886,10 @@ def dashboard_cmd(
     descriptor_path = _write_dashboard_descriptor(ctx)
 
     if json_output:
-        click.echo(
-            json.dumps({"ready": True, "url": launch_url, "server_id": ctx.server_id})
-        )
+        echo(json.dumps({"ready": True, "url": launch_url, "server_id": ctx.server_id}))
     else:
-        click.echo(f"Dashboard running at: {launch_url}")
-        click.echo("Press Ctrl+C to stop.")
+        echo(f"Dashboard running at: {launch_url}")
+        echo("Press Ctrl+C to stop.")
 
     if not no_open:
         try:
@@ -1366,7 +1902,7 @@ def dashboard_cmd(
         # single tool runs -- the same guarantee execute_scan/resume_scan_run/
         # rescan_project_run already give via _write_attempt_header.
         run_id, attempt_id = capture_initial_scan_provenance(
-            resolved_path, record.project_id
+            registered_root, record.project_id
         )
         # P69-03m: this launch's ordering number is allocated here, at
         # acceptance, before a single tool runs -- this bare thread is outside
@@ -1386,25 +1922,27 @@ def dashboard_cmd(
         # `_dispatch_check_suite`).
         check_suite_snapshots: dict[str, dict[str, dict[str, object]]] = {}
 
-        def _on_tool_complete(child: dict[str, object]) -> None:
+        def _on_tool_complete(child: ToolResult) -> None:
             tool_name = str(child.get("tool") or "")
             if tool_name:
                 check_suite_snapshots[tool_name] = _capture_artifact_snapshots(
-                    resolved_path, run_id, attempt_id, tool_name, child
+                    registered_root, run_id, attempt_id, tool_name, child
                 )
 
         aggregate = run_workflow_suite(
             suite=CHECK_SUITE,
-            path=resolved_path,
+            path=registered_root,
             permissions=perms,
             owner_instance_id=ctx.owner_instance_id,
             run_id=run_id,
             on_tool_complete=_on_tool_complete,
+            original_requested_targets=original,
+            invocation_start_cwd=anchor,
         )
         publish_check_suite_scan(
             ctx,
             record.project_id,
-            resolved_path,
+            registered_root,
             aggregate,
             run_id=run_id,
             attempt_id=attempt_id,
@@ -1418,7 +1956,7 @@ def dashboard_cmd(
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        click.echo("\nStopping dashboard.")
+        echo("\nStopping dashboard.")
     finally:
         server.shutdown()
         server.server_close()
@@ -1460,7 +1998,7 @@ def trust_cmd(
     if target == "plugin":
         plugin_name = extra
         if not plugin_name:
-            click.echo(
+            echo(
                 "Error: Plugin name required when using 'rush trust plugin <name>'",
                 err=True,
             )
@@ -1474,16 +2012,14 @@ def trust_cmd(
         if revoke:
             revoked = trust_store.revoke_trust(plugin_name)
             if revoked:
-                click.echo(f"Revoked trust for plugin: {plugin_name}")
+                echo(f"Revoked trust for plugin: {plugin_name}")
             else:
-                click.echo(f"Plugin '{plugin_name}' was not found in trust ledger.")
+                echo(f"Plugin '{plugin_name}' was not found in trust ledger.")
         else:
             plugins = discover_plugins(repo_root)
             matched = next((p for p in plugins if p.name == plugin_name), None)
             if not matched:
-                click.echo(
-                    f"Plugin '{plugin_name}' not found in configuration.", err=True
-                )
+                echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
                 sys.exit(1)
 
             exec_path = (
@@ -1506,17 +2042,21 @@ def trust_cmd(
                 closure=closure, plugin_root=plugin_root
             )
             trust_store.grant_trust(plugin_name, closure.closure_digest, snapshot_dir)
-            click.echo(
+            echo(
                 f"Approved plugin as trusted: {plugin_name} (digest: {closure.closure_digest[:12]}...)"
             )
     else:
         root = repo_path.resolve()
         if revoke:
             revoke_trust(root)
-            click.echo(f"Revoked trust for repository: {root}")
+            echo(f"Revoked trust for repository: {root}")
         else:
+            if not root.exists():
+                raise click.BadParameter(
+                    f"Path '{repo_path}' does not exist.", param_hint="'TARGET'"
+                )
             trust_repo(root)
-            click.echo(f"Approved repository as trusted: {root}")
+            echo(f"Approved repository as trusted: {root}")
 
 
 @cli.group(name="plugin")
@@ -1524,21 +2064,30 @@ def plugin_grp() -> None:
     """Manage and execute custom quality plugins."""
 
 
+@collection_route("rows")
 @plugin_grp.command(name="list")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def plugin_list(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def plugin_list(path: Path, as_json: bool) -> None:
     """List all custom plugins configured in rush.toml."""
     from .plugins.loader import discover_plugins
 
     plugins = discover_plugins(path.resolve())
-    if not plugins:
-        click.echo("No custom plugins configured.")
+    if as_json:
+        echo_json({"rows": plugins, "total": len(plugins)})
         return
-    click.echo(f"Discovered {len(plugins)} plugin(s):")
-    for p in plugins:
-        click.echo(f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})")
+    if not plugins:
+        echo("No custom plugins configured.")
+    else:
+        echo(f"Discovered {len(plugins)} plugin(s):")
+    echo_rows(
+        plugins,
+        lambda p: f"  - {p.name}: {p.description} (cmd: {' '.join(p.command)})",
+        empty="no plugins are configured",
+    )
 
 
+@collection_route("findings")
 @plugin_grp.command(name="run")
 @click.argument("plugin_name", type=str)
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
@@ -1557,7 +2106,7 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
     plugins = discover_plugins(repo_root)
     matched = next((p for p in plugins if p.name == plugin_name), None)
     if not matched:
-        click.echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
+        echo(f"Plugin '{plugin_name}' not found in configuration.", err=True)
         sys.exit(1)
 
     exec_path = (
@@ -1603,19 +2152,22 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
     result = executor.execute(spec, paths=paths)
 
     if as_json:
-        click.echo(json.dumps(result.to_dict(), indent=2))
+        echo(json.dumps(result.to_dict(), indent=2))
     else:
         status_color = (
             "green"
             if result.status == "ok"
             else ("yellow" if result.status == "warn" else "red")
         )
-        click.secho(
-            f"[{result.tool}] Status: {result.status}", fg=status_color, bold=True
+        secho(f"[{result.tool}] Status: {result.status}", fg=status_color, bold=True)
+        echo(result.summary)
+        echo_rows(
+            result.findings,
+            lambda f: f"  - [{f.severity}] {f.message}",
+            cap=FINDINGS_CAP,
+            noun="findings",
+            empty="the plugin reported no findings",
         )
-        click.echo(result.summary)
-        for finding in result.findings:
-            click.echo(f"  - [{finding.severity}] {finding.message}")
 
     adapter = AdminOperationAdapter(
         operation_id="cli.plugin_run",
@@ -1626,7 +2178,9 @@ def plugin_run(plugin_name: str, path: Path, as_json: bool) -> None:
 
 
 for _catalog_tool in ALL_TOOLS:
+    # T17 R17.2: `check` keeps its handwritten command (fail-fast flags).
     if _catalog_tool.name not in {
+        "check",
         "review",
         "format",
         "commit-msg",
@@ -1635,6 +2189,7 @@ for _catalog_tool in ALL_TOOLS:
         "benchmark",
         "memory",
         "patch-apply",
+        "status",
     }:
         cli.add_command(build_catalog_path_command(_catalog_tool))
 
@@ -1644,22 +2199,32 @@ def workspace_group() -> None:
     """Monorepo workspace discovery, topological execution, and boundary enforcement."""
 
 
+@collection_route("rows")
 @workspace_group.command(name="list")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_list_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_list_cmd(path: Path, as_json: bool) -> None:
     """List discovered monorepo packages."""
     from rush.workspaces.discovery import WorkspaceDiscovery
 
     discovery = WorkspaceDiscovery(path)
     packages = discovery.discover_all()
-    click.echo(f"Discovered {len(packages)} workspace package(s):")
-    for p in packages:
-        click.echo(f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})")
+    if as_json:
+        echo_json({"rows": packages, "total": len(packages)})
+        return
+    echo(f"Discovered {len(packages)} workspace package(s):")
+    echo_rows(
+        packages,
+        lambda p: f"  - [{p.kind.upper():6}] {p.name} ({p.relative_path})",
+        empty="no workspace packages were found",
+    )
 
 
+@collection_route("rows")
 @workspace_group.command(name="affected")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_affected_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_affected_cmd(path: Path, as_json: bool) -> None:
     """List affected packages based on current working tree changes."""
     from rush.discovery.git import get_changed_files
     from rush.workspaces.affected import AffectedCalculator
@@ -1672,16 +2237,23 @@ def workspace_affected_cmd(path: Path) -> None:
     graph = DependencyGraphBuilder.build_graph(packages)
     calc = AffectedCalculator(repo_root, graph)
     changed = get_changed_files(repo_root)
-    affected = calc.get_affected_packages(changed)
+    affected = list(calc.get_affected_packages(changed))
+    if as_json:
+        echo_json({"rows": affected, "total": len(affected)})
+        return
+    echo(f"Affected package(s) ({len(affected)}):")
+    echo_rows(
+        affected,
+        lambda name: f"  - {name}",
+        empty="no workspace package is affected by the changed files",
+    )
 
-    click.echo(f"Affected package(s) ({len(affected)}):")
-    for name in affected:
-        click.echo(f"  - {name}")
 
-
+@collection_route("findings")
 @workspace_group.command(name="boundary")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_boundary_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_boundary_cmd(path: Path, as_json: bool) -> None:
     """Check workspace boundaries against illegal cross-package relative imports."""
     from rush.workspaces.boundary import WorkspaceBoundaryGuard
     from rush.workspaces.discovery import WorkspaceDiscovery
@@ -1691,26 +2263,45 @@ def workspace_boundary_cmd(path: Path) -> None:
     packages = discovery.discover_all()
     guard = WorkspaceBoundaryGuard(repo_root)
     result = guard.check_package_boundaries(packages)
-    click.echo(result["summary"])
-    for f in result.get("findings") or []:
-        click.echo(
-            f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} {f.get('message')}"
+    if as_json:
+        echo_json(result)
+    else:
+        echo(result["summary"])
+        echo_rows(
+            result.get("findings") or [],
+            lambda f: (
+                f"  - [{f.get('severity', 'info')}] {f.get('path')}:{f.get('line')} "
+                f"{f.get('message')}"
+            ),
+            cap=FINDINGS_CAP,
+            noun="findings",
+            empty="no package boundary violations were found",
         )
     if result["status"] == "fail":
         sys.exit(1)
 
 
+@collection_route("findings")
 @workspace_group.command(name="locks")
 @click.argument("path", type=click.Path(exists=True, path_type=Path), default=Path("."))
-def workspace_locks_cmd(path: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def workspace_locks_cmd(path: Path, as_json: bool) -> None:
     """Validate monorepo lockfile consistency."""
     from rush.workspaces.locks import WorkspaceLockValidator
 
     validator = WorkspaceLockValidator(path.resolve())
     result = validator.validate_lockfiles()
-    click.echo(result["summary"])
-    for f in result.get("findings") or []:
-        click.echo(f"  - [{f.get('severity', 'info')}] {f.get('message')}")
+    if as_json:
+        echo_json(result)
+        return
+    echo(result["summary"])
+    echo_rows(
+        result.get("findings") or [],
+        lambda f: f"  - [{f.get('severity', 'info')}] {f.get('message')}",
+        cap=FINDINGS_CAP,
+        noun="findings",
+        empty="no lockfile issues were found",
+    )
 
 
 @cli.group(name="patch")
@@ -1733,25 +2324,38 @@ def patch_group() -> None:
 @click.option(
     "--allow-artifact-write", is_flag=True, help="Permit verified patch promotion."
 )
+@click.option(
+    "--allow-cache-write",
+    is_flag=True,
+    help="Explicitly authorize local cache modification (compact result view).",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print ToolResult JSON.")
+@result_view_options
 def patch_apply_cmd(
     patch_file: Path,
     dry_run: bool,
     circuit_breaker: bool,
     allow_artifact_write: bool,
+    allow_cache_write: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Verify PATH as a unified diff in isolation; explicitly grant promotion."""
     _run_tool(
         "patch-apply",
         Path.cwd(),
         as_json=as_json,
-        permissions=ExecutionPermissions(artifact_write=allow_artifact_write),
+        permissions=ExecutionPermissions(
+            artifact_write=allow_artifact_write, cache_write=allow_cache_write
+        ),
         extra_kwargs={
             "patch_file": patch_file,
             "dry_run": dry_run,
             "circuit_breaker": circuit_breaker,
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
@@ -1759,36 +2363,63 @@ def patch_apply_cmd(
 @click.argument("patch_file", type=click.Path(exists=True, path_type=Path))
 def patch_test_cmd(patch_file: Path) -> None:
     """Apply and verify a unified diff in an ephemeral worktree sandbox."""
+    from rush.io.physical_paths import ContainmentError
     from rush.patch.applier import PatchApplier
+    from rush.patch.contracts import DirtyWorkspaceError, PatchVerificationError
     from rush.patch.sandbox import PatchSandboxManager
 
     repo_root = Path.cwd()
     diff_content = patch_file.read_text(encoding="utf-8")
     mgr = PatchSandboxManager(repo_root)
-    sandbox = mgr.create_sandbox()
     try:
-        ok, msg = PatchApplier.apply_patch_to_dir(sandbox, diff_content)
-        if ok:
-            click.echo(f"[PASS] {msg}")
-        else:
-            click.echo(f"[FAIL] {msg}", err=True)
-            sys.exit(1)
-    finally:
-        mgr.cleanup_sandbox(sandbox)
+        sandbox = mgr.create_sandbox()
+        try:
+            ok, msg = PatchApplier.apply_patch_to_dir(sandbox, diff_content)
+        finally:
+            mgr.cleanup_sandbox(sandbox)
+    except (DirtyWorkspaceError, PatchVerificationError, ContainmentError) as exc:
+        # T27: an unusable sandbox (no git, dirty workspace, failed
+        # worktree) is an error outcome with its cause, never a traceback.
+        echo(f"[ERROR] {exc}", err=True)
+        sys.exit(2)
+    if ok:
+        echo(f"[PASS] {msg}")
+    else:
+        echo(f"[FAIL] {msg}", err=True)
+        sys.exit(1)
 
 
+@collection_route("rows")
 @patch_group.command(name="memory")
-def patch_memory_list_cmd() -> None:
-    """List historical AI patch memory records."""
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def patch_memory_list_cmd(as_json: bool) -> None:
+    """List historical AI patch memory records (read-only; creates nothing)."""
     from rush.patch.memory import PatchMemoryStore
 
-    store = PatchMemoryStore(Path.cwd())
-    records = store.list_records()
-    click.echo(f"Stored Patch Records ({len(records)}):")
-    for r in records:
-        click.echo(
-            f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
+    records = PatchMemoryStore.read_records(Path.cwd())
+    unavailable = records if isinstance(records, str) else None
+    rows = [] if isinstance(records, str) else records
+    if as_json:
+        echo_json(
+            {
+                "status": "skipped" if unavailable else "ok",
+                "reason": unavailable,
+                "rows": rows,
+                "total": len(rows),
+            }
         )
+        return
+    if unavailable:
+        echo(f"Patch memory unavailable: {unavailable}")
+    else:
+        echo(f"Stored Patch Records ({len(rows)}):")
+    echo_rows(
+        rows,
+        lambda r: (
+            f"  - [{r.error_signature[:8]}] {r.target_file} (Successes: {r.success_count})"
+        ),
+        empty="no successful patches are remembered",
+    )
 
 
 @cli.group(name="release")
@@ -1796,15 +2427,24 @@ def release_group() -> None:
     """Packaging, versioning, and release artifact generation."""
 
 
+@collection_route("rows")
 @release_group.command(name="check")
-def release_check_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def release_check_cmd(as_json: bool) -> None:
     """Check version parity across manifests."""
     from rush.release.semver import SemVerValidator
 
     versions = SemVerValidator.check_manifest_parity(Path.cwd())
-    click.echo("Discovered Manifest Versions:")
-    for manifest, ver in versions.items():
-        click.echo(f"  - {manifest}: {ver}")
+    rows = [{"manifest": m, "version": v} for m, v in versions.items()]
+    if as_json:
+        echo_json({"rows": rows, "total": len(rows)})
+        return
+    echo("Discovered Manifest Versions:")
+    echo_rows(
+        rows,
+        lambda row: f"  - {row['manifest']}: {row['version']}",
+        empty="no version manifests were found",
+    )
 
 
 @cli.group(name="ci")
@@ -1818,7 +2458,7 @@ def ci_init_cmd() -> None:
     from rush.release.ci_generator import CIWorkflowGenerator
 
     ci_file = CIWorkflowGenerator.generate_ci_workflow(Path.cwd())
-    click.echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
+    echo(f"Generated hardened GitHub Actions workflow at {ci_file}")
 
 
 @cli.group(name="guard")
@@ -1834,9 +2474,9 @@ def guard_check_cmd(command_str: str) -> None:
 
     safe, reason = DangerousCommandInterceptor.inspect_command(command_str)
     if safe:
-        click.echo("[SAFE] Command authorized for agent execution.")
+        echo("[SAFE] Command authorized for agent execution.")
     else:
-        click.echo(f"[BLOCKED] {reason}", err=True)
+        echo(f"[BLOCKED] {reason}", err=True)
         sys.exit(1)
 
 
@@ -1848,13 +2488,13 @@ def guard_check_path(file_path: str) -> None:
 
     guard = AgentSafetyGuard(Path.cwd())
     if guard.is_file_protected(file_path):
-        click.echo(
+        echo(
             f"[PROTECTED] Target path '{file_path}' is an immutable governance file.",
             err=True,
         )
         sys.exit(1)
     else:
-        click.echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
+        echo(f"[ALLOWED] Target path '{file_path}' is safe for modification.")
 
 
 @cli.group(name="token")
@@ -1870,13 +2510,13 @@ def token_count_cmd(target_path: Path) -> None:
 
     if target_path.is_file():
         count = FastBPETokenCounter.count_file_tokens(target_path)
-        click.echo(f"{target_path}: {count} tokens")
+        echo(f"{target_path}: {count} tokens")
     else:
         total = 0
         for p in target_path.rglob("*"):
             if p.is_file() and p.suffix in (".py", ".ts", ".js", ".rs", ".go", ".md"):
                 total += FastBPETokenCounter.count_file_tokens(p)
-        click.echo(f"{target_path} (recursive): {total} tokens")
+        echo(f"{target_path} (recursive): {total} tokens")
 
 
 @token_group.command(name="outline")
@@ -1888,9 +2528,9 @@ def token_outline_cmd(file_path: Path) -> None:
     source = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix == ".py":
         compressed = PythonAstOutlineCompressor.compress_source(source)
-        click.echo(compressed)
+        echo(compressed)
     else:
-        click.echo(source)
+        echo(source)
 
 
 @token_group.command(name="cache-advisor")
@@ -1901,7 +2541,7 @@ def token_cache_advisor_cmd(file_path: Path) -> None:
 
     text = file_path.read_text(encoding="utf-8", errors="replace")
     suggestion = PromptCacheAdvisor.analyze_prefix(text)
-    click.echo(
+    echo(
         f"Cache Advisor Analysis: {suggestion.reason} (Est. Savings: {suggestion.estimated_cache_savings_percent}%)"
     )
 
@@ -1915,9 +2555,9 @@ def outline_cmd(file_path: Path) -> None:
     source = file_path.read_text(encoding="utf-8", errors="replace")
     if file_path.suffix == ".py":
         compressed = PythonAstOutlineCompressor.compress_source(source)
-        click.echo(compressed)
+        echo(compressed)
     else:
-        click.echo(source)
+        echo(source)
 
 
 @cli.group(name="sync")
@@ -1942,28 +2582,41 @@ def sync_openapi_cmd(openapi_file: Path, output_ts: Path | None) -> None:
         from .safety.redactor import sanitize_value
 
         output_ts.write_text(sanitize_value(ts_code).value, encoding="utf-8")
-        click.echo(f"Wrote generated TypeScript interfaces to {output_ts}")
+        echo(f"Wrote generated TypeScript interfaces to {output_ts}")
     else:
-        click.echo(ts_code)
+        echo(ts_code)
 
 
+@collection_route("rows")
 @sync_group.command(name="env")
-@click.argument("env_example", default=".env.example", type=click.Path(path_type=Path))
-@click.argument("env_actual", default=".env", type=click.Path(path_type=Path))
-def sync_env_cmd(env_example: Path, env_actual: Path) -> None:
+@click.argument(
+    "env_example",
+    default=".env.example",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.argument(
+    "env_actual",
+    default=".env",
+    type=click.Path(dir_okay=False, path_type=Path),
+)
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def sync_env_cmd(env_example: Path, env_actual: Path, as_json: bool) -> None:
     """Check environment variable synchronization between .env.example and .env."""
     from rush.sync.env_sync import EnvironmentVariableSynchronizer
 
-    missing = EnvironmentVariableSynchronizer.find_missing_keys(env_example, env_actual)
-    if missing:
-        click.echo(f"Missing environment variables in {env_actual} ({len(missing)}):")
-        for k in missing:
-            click.echo(f"  - {k}")
-        sys.exit(1)
+    missing = list(
+        EnvironmentVariableSynchronizer.find_missing_keys(env_example, env_actual)
+    )
+    if as_json:
+        echo_json({"passed": not missing, "rows": missing, "total": len(missing)})
+    elif missing:
+        echo(f"Missing environment variables in {env_actual} ({len(missing)}):")
     else:
-        click.echo(
-            f"All environment variables in {env_example} are present in {env_actual}."
-        )
+        echo(f"All environment variables in {env_example} are present in {env_actual}.")
+    if not as_json:
+        echo_rows(missing, lambda k: f"  - {k}", empty="no keys are missing")
+    if missing:
+        sys.exit(1)
 
 
 @cli.group(name="hygiene")
@@ -1971,16 +2624,24 @@ def hygiene_group() -> None:
     """Polyglot codebase hygiene and dead code elimination."""
 
 
+@collection_route("rows")
 @hygiene_group.command(name="dead-code")
-def hygiene_dead_code_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hygiene_dead_code_cmd(as_json: bool) -> None:
     """Scan project for unreferenced symbols and dead exports."""
     from rush.hygiene.dead_code import PolyglotDeadCodeDetector
 
     detector = PolyglotDeadCodeDetector(Path.cwd())
     findings = detector.scan_python()
-    click.echo(f"Dead Code Findings ({len(findings)}):")
-    for f in findings:
-        click.echo(f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}")
+    if as_json:
+        echo_json({"rows": findings, "total": len(findings)})
+        return
+    echo(f"Dead Code Findings ({len(findings)}):")
+    echo_rows(
+        findings,
+        lambda f: f"  - [{f.file_path}:{f.line_number}] {f.symbol_name}",
+        empty="no unreferenced symbols were found",
+    )
 
 
 @hygiene_group.command(name="clean-imports")
@@ -1992,9 +2653,9 @@ def hygiene_clean_imports_cmd(target_file: Path) -> None:
     cleaned, count = UnusedImportCleaner.clean_file(target_file)
     if count > 0:
         target_file.write_text(cleaned, encoding="utf-8")
-        click.echo(f"Cleaned {count} unused import(s) in {target_file}")
+        echo(f"Cleaned {count} unused import(s) in {target_file}")
     else:
-        click.echo(f"No unused imports found in {target_file}")
+        echo(f"No unused imports found in {target_file}")
 
 
 @cli.group(name="conflict")
@@ -2013,9 +2674,9 @@ def conflict_solve_cmd(file_a: Path, file_b: Path) -> None:
     source_b = file_b.read_text(encoding="utf-8")
     ok, result = ASTConflictMerger.merge_source_files("", source_a, source_b)
     if ok:
-        click.echo(result)
+        echo(result)
     else:
-        click.echo(f"[MERGE FAILED] {result}", err=True)
+        echo(f"[MERGE FAILED] {result}", err=True)
         sys.exit(1)
 
 
@@ -2024,35 +2685,95 @@ def codegraph_group() -> None:
     """Polyglot AST code property graph exploration and verbatim slicing."""
 
 
+def _codegraph_store() -> Any:
+    """The existing code graph index opened read-only, or the reason it is
+    unavailable. T27: a read never creates `.codegraph/` or its database."""
+    from rush.codegraph.store import CodeGraphStore
+
+    db = Path.cwd() / ".codegraph" / "graph.db"
+    if not db.is_file():
+        return f"no code graph index at {db}"
+    return CodeGraphStore(db, read_only=True)
+
+
+def _emit_codegraph(
+    title: str,
+    rows: list[Any],
+    unavailable: str | None,
+    as_json: bool,
+    line: Any,
+    empty: str,
+) -> None:
+    if as_json:
+        echo_json(
+            {
+                "status": "skipped" if unavailable else "ok",
+                "reason": unavailable,
+                "rows": rows,
+                "total": len(rows),
+            }
+        )
+        return
+    echo(f"Code graph unavailable: {unavailable}" if unavailable else title)
+    echo_rows(rows, line, empty=unavailable or empty)
+
+
+def _require_indexed_symbol(store: Any, symbol_name: str) -> None:
+    """T27: with an index available, an unknown symbol is an invalid input;
+    a known symbol with no callers stays an honest empty result."""
+    if isinstance(store, str) or store.find_nodes_by_symbol(symbol_name):
+        return
+    raise click.BadParameter(
+        f"no symbol named {symbol_name!r} is in the code graph",
+        param_hint="'SYMBOL_NAME'",
+    )
+
+
+@collection_route("rows")
 @codegraph_group.command(name="slice")
 @click.argument("symbol_name")
-def codegraph_slice_cmd(symbol_name: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def codegraph_slice_cmd(symbol_name: str, as_json: bool) -> None:
     """Extract verbatim source code slice for target symbol."""
     from rush.codegraph.slicer import VerbatimAstSlicer
-    from rush.codegraph.store import CodeGraphStore
 
-    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
-    slicer = VerbatimAstSlicer(store)
-    slices = slicer.slice_symbol(symbol_name)
-    for s in slices:
-        click.echo(s)
+    store = _codegraph_store()
+    unavailable = store if isinstance(store, str) else None
+    _require_indexed_symbol(store, symbol_name)
+    slices = [] if unavailable else VerbatimAstSlicer(store).slice_symbol(symbol_name)
+    _emit_codegraph(
+        f"Slices of '{symbol_name}' ({len(slices)}):",
+        slices,
+        unavailable,
+        as_json,
+        str,
+        f"no symbol named '{symbol_name}' is in the code graph",
+    )
 
 
+@collection_route("rows")
 @codegraph_group.command(name="callers")
 @click.argument("symbol_name")
-def codegraph_callers_cmd(symbol_name: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def codegraph_callers_cmd(symbol_name: str, as_json: bool) -> None:
     """Trace all reverse callers of target symbol."""
-    from rush.codegraph.store import CodeGraphStore
     from rush.codegraph.traverser import CallGraphTraverser
 
-    store = CodeGraphStore(Path.cwd() / ".codegraph" / "graph.db")
-    traverser = CallGraphTraverser(store)
-    steps = traverser.trace_callers(symbol_name)
-    click.echo(f"Callers of '{symbol_name}' ({len(steps)}):")
-    for s in steps:
-        click.echo(
-            f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} -> calls -> {s.callee.symbol_name} (depth: {s.depth})"
-        )
+    store = _codegraph_store()
+    unavailable = store if isinstance(store, str) else None
+    _require_indexed_symbol(store, symbol_name)
+    steps = [] if unavailable else CallGraphTraverser(store).trace_callers(symbol_name)
+    _emit_codegraph(
+        f"Callers of '{symbol_name}' ({len(steps)}):",
+        steps,
+        unavailable,
+        as_json,
+        lambda s: (
+            f"  - [{s.caller.file_path}:{s.caller.start_line}] {s.caller.symbol_name} "
+            f"-> calls -> {s.callee.symbol_name} (depth: {s.depth})"
+        ),
+        f"no callers of '{symbol_name}' are in the code graph",
+    )
 
 
 @cli.group(name="bundle")
@@ -2060,23 +2781,34 @@ def bundle_group() -> None:
     """Frontend asset and build bundle optimization."""
 
 
+@collection_route("rows")
 @bundle_group.command(name="analyze")
 @click.argument("dist_dir", type=click.Path(exists=True, path_type=Path))
-def bundle_analyze_cmd(dist_dir: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def bundle_analyze_cmd(dist_dir: Path, as_json: bool) -> None:
     """Measure build chunk transfer sizes (raw, gzip, brotli)."""
     from rush.bundle.chunk_calculator import BundleChunkCalculator
 
     reports = BundleChunkCalculator.measure_directory(dist_dir)
-    click.echo(f"Analyzed Build Chunks ({len(reports)}):")
-    for r in reports:
-        click.echo(
-            f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, brotli: ~{r.brotli_est_bytes} B)"
-        )
+    if as_json:
+        echo_json({"rows": reports, "total": len(reports)})
+        return
+    echo(f"Analyzed Build Chunks ({len(reports)}):")
+    echo_rows(
+        reports,
+        lambda r: (
+            f"  - {r.file_name}: {r.raw_bytes} B (gzip: {r.gzip_bytes} B, "
+            f"brotli: ~{r.brotli_est_bytes} B)"
+        ),
+        empty="no bundle files were found",
+    )
 
 
+@collection_route("rows")
 @bundle_group.command(name="dead-assets")
 @click.argument("assets_dir", type=click.Path(exists=True, path_type=Path))
-def bundle_dead_assets_cmd(assets_dir: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def bundle_dead_assets_cmd(assets_dir: Path, as_json: bool) -> None:
     """Scan public/assets directories for unreferenced images and media."""
     from rush.bundle.dead_assets import OrphanedAssetScanner
 
@@ -2086,9 +2818,11 @@ def bundle_dead_assets_cmd(assets_dir: Path) -> None:
         for asset in OrphanedAssetScanner(Path.cwd()).find_orphaned_assets()
         if asset.is_relative_to(assets_root)
     ]
-    click.echo(f"Unreferenced Assets ({len(unused)}):")
-    for u in unused:
-        click.echo(f"  - {u}")
+    if as_json:
+        echo_json({"rows": unused, "total": len(unused)})
+        return
+    echo(f"Unreferenced Assets ({len(unused)}):")
+    echo_rows(unused, lambda u: f"  - {u}", empty="no unused assets were found")
 
 
 @cli.group(name="hotspots")
@@ -2096,32 +2830,49 @@ def hotspots_group() -> None:
     """Git commit churn, defect risk matrix, and developer velocity analytics."""
 
 
+@collection_route("rows")
 @hotspots_group.command(name="analyze")
-def hotspots_analyze_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hotspots_analyze_cmd(as_json: bool) -> None:
     """Compute composite defect risk scores across files."""
     from rush.hotspots.risk_matrix import RiskMatrixCalculator
 
     calculator = RiskMatrixCalculator(Path.cwd())
     scores = calculator.analyze_hotspots()
-    click.echo(f"Analyzed Hotspots ({len(scores)}):")
-    for s in scores[:10]:
-        click.echo(
-            f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} (Churn: {s.churn_score}, Complexity: {s.complexity_score})"
-        )
+    if as_json:
+        echo_json({"rows": scores, "total": len(scores)})
+        return
+    echo(f"Analyzed Hotspots ({len(scores)}):")
+    echo_rows(
+        scores,
+        lambda s: (
+            f"  - [{s.risk_tier}] {s.file_path}: Risk {s.composite_risk} "
+            f"(Churn: {s.churn_score}, Complexity: {s.complexity_score})"
+        ),
+        empty="no files have git churn to score",
+    )
 
 
+@collection_route("rows")
 @hotspots_group.command(name="bus-factor")
-def hotspots_bus_factor_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hotspots_bus_factor_cmd(as_json: bool) -> None:
     """Calculate module knowledge distribution and bus factor risks."""
     from rush.hotspots.bus_factor import BusFactorAssessor
 
     reports = BusFactorAssessor(Path.cwd()).assess_ownership()
-    click.echo(f"Bus Factor Analysis ({len(reports)} files):")
-    for r in reports[:10]:
-        click.echo(
-            f"  - {r.file_path}: {r.total_authors} authors, ownership entropy {r.author_entropy} "
-            f"(Primary author: {r.primary_owner} {r.ownership_percent}%)"
-        )
+    if as_json:
+        echo_json({"rows": reports, "total": len(reports)})
+        return
+    echo(f"Bus Factor Analysis ({len(reports)} files):")
+    echo_rows(
+        reports,
+        lambda r: (
+            f"  - {r.file_path}: {r.total_authors} authors, ownership entropy "
+            f"{r.author_entropy} (Primary author: {r.primary_owner} {r.ownership_percent}%)"
+        ),
+        empty="no files have git authorship to report",
+    )
 
 
 @cli.group(name="governance")
@@ -2129,33 +2880,51 @@ def governance_group() -> None:
     """Agent governance and multi-IDE rule synchronization."""
 
 
+@collection_route("rows")
 @governance_group.command(name="sync")
-def governance_sync_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def governance_sync_cmd(as_json: bool) -> None:
     """Compile canonical AGENTS.md to .cursorrules, .clinerules, etc."""
     from rush.governance.synchronizer import AgentsMdSynchronizer
 
     syncer = AgentsMdSynchronizer(Path.cwd())
     results = syncer.sync_all()
-    click.echo(f"Synchronized Governance Files ({len(results)}):")
-    for r in results:
-        click.echo(f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})")
+    if as_json:
+        echo_json({"rows": results, "total": len(results)})
+        return
+    echo(f"Synchronized Governance Files ({len(results)}):")
+    echo_rows(
+        results,
+        lambda r: f"  - [{r.action}] {r.target_path} (SHA: {r.sha256[:8]})",
+        empty="no IDE rule files needed syncing",
+    )
 
 
+@collection_route("rows")
 @governance_group.command(name="check")
-def governance_check_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def governance_check_cmd(as_json: bool) -> None:
     """Check that multi-IDE rule files are synchronized with AGENTS.md."""
     from rush.governance.parity_checker import RuleParityChecker
 
     drifted = RuleParityChecker(Path.cwd()).check_parity()
-    if not drifted:
-        click.echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
+    if as_json:
+        echo_json({"passed": not drifted, "rows": drifted, "total": len(drifted)})
+    elif not drifted:
+        echo("[OK] All multi-IDE governance rule files match AGENTS.md.")
     else:
-        click.echo(
+        echo(
             f"[DRIFT DETECTED] Unsynchronized governance files ({len(drifted)}):",
             err=True,
         )
-        for d in drifted:
-            click.echo(f"  - {d.target_path}: {d.reason}", err=True)
+    if not as_json:
+        echo_rows(
+            drifted,
+            lambda d: f"  - {d.target_path}: {d.reason}",
+            err=True,
+            empty="no IDE rule files have drifted",
+        )
+    if drifted:
         sys.exit(1)
 
 
@@ -2164,15 +2933,21 @@ def scaffold_group() -> None:
     """Repository governance and configuration scaffolding."""
 
 
+@collection_route("rows")
 @scaffold_group.command(name="init")
-def scaffold_init_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def scaffold_init_cmd(as_json: bool) -> None:
     """Initialize repository with AGENTS.md and rush.toml templates."""
     from rush.governance.scaffolder import RepoScaffolder
 
     created = RepoScaffolder.init_repository(Path.cwd())
-    click.echo(f"Scaffolded Files ({len(created)}):")
-    for c in created:
-        click.echo(f"  - {c.name}")
+    if as_json:
+        echo_json({"rows": created, "total": len(created)})
+        return
+    echo(f"Scaffolded Files ({len(created)}):")
+    echo_rows(
+        created, lambda c: f"  - {c.name}", empty="no scaffold files were created"
+    )
 
 
 @cli.group(name="hook")
@@ -2192,17 +2967,17 @@ def hook_run_cmd() -> None:
     guard = BranchProtectionGuard(Path.cwd())
     ok, err = guard.check_current_branch()
     if not ok:
-        click.echo(f"[HOOK BLOCKED] {err}", err=True)
+        echo(f"[HOOK BLOCKED] {err}", err=True)
         sys.exit(1)
 
     scanner = StagedFileScanner(Path.cwd())
     try:
         entries = scanner.get_staged_entries()
     except RuntimeError:
-        click.echo("[INDEX ERROR] Cannot read staged index.", err=True)
+        echo("[INDEX ERROR] Cannot read staged index.", err=True)
         sys.exit(1)
     if not entries:
-        click.echo("No staged files to check.")
+        echo("No staged files to check.")
         return
 
     invalid = [
@@ -2214,7 +2989,7 @@ def hook_run_cmd() -> None:
                 f"stage {stage.stage}: {stage.mode} {stage.object_id}"
                 for stage in entry.stages
             )
-            click.echo(
+            echo(
                 f"[INDEX ERROR] {entry.status}: {entry.relative_path} ({stages})",
                 err=True,
             )
@@ -2224,7 +2999,7 @@ def hook_run_cmd() -> None:
     deleted_count = sum(entry.status == "deleted" for entry in entries)
     ast_errs = FastIncrementalAstLinter.lint_staged_entries(staged)
     if ast_errs:
-        click.echo("\n".join(f"[AST ERROR] {e}" for e in ast_errs), err=True)
+        echo("\n".join(f"[AST ERROR] {e}" for e in ast_errs), err=True)
         sys.exit(1)
 
     for entry in staged:
@@ -2235,10 +3010,10 @@ def hook_run_cmd() -> None:
         ):
             errors = detector.inspect_content(entry.path, entry.content)
             if errors:
-                click.echo("\n".join(f"[{label} ERROR] {e}" for e in errors), err=True)
+                echo("\n".join(f"[{label} ERROR] {e}" for e in errors), err=True)
                 sys.exit(1)
 
-    click.echo(
+    echo(
         f"Pre-commit checks passed across {len(staged)} staged files "
         f"({deleted_count} staged deletions)."
     )
@@ -2290,7 +3065,7 @@ def score_compute_cmd(
         governance=governance,
     )
     report = CompositeScorecardCalculator.compute_scorecard(pillars)
-    click.echo(report.summary)
+    echo(report.summary)
 
     if export_svg:
         svg = SvgBadgeGenerator.generate_badge_svg(
@@ -2298,13 +3073,24 @@ def score_compute_cmd(
         )
         from .safety.redactor import sanitize_value
 
-        export_svg.write_text(sanitize_value(svg).value, encoding="utf-8")
-        click.echo(f"Wrote SVG badge to {export_svg}")
+        _write_export(export_svg, sanitize_value(svg).value)
+        echo(f"Wrote SVG badge to {export_svg}")
 
     if export_html:
         html = HtmlReportGenerator.generate_html_report(report)
-        export_html.write_text(html, encoding="utf-8")
-        click.echo(f"Wrote HTML report to {export_html}")
+        _write_export(export_html, html)
+        echo(f"Wrote HTML report to {export_html}")
+
+
+def _write_export(path: Path, text: str) -> None:
+    """Write an export, creating its parent folder; an unwritable path is an
+    error outcome (exit 2), never a traceback."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        echo(f"[ERROR] cannot write {path}: {exc.strerror or exc}", err=True)
+        sys.exit(2)
 
 
 @cli.group(name="consensus")
@@ -2312,6 +3098,15 @@ def consensus_group() -> None:
     """Multi-model AI code review reconciliation."""
 
 
+def _consensus_line(c: Any) -> str:
+    return (
+        f"  - [{c.severity.upper()}] {c.file_path}:{c.line_number} {c.rule_id} "
+        f"({c.description}) [Confidence: {int(c.confidence * 100)}%, "
+        f"Models: {', '.join(c.agreeing_models)}]"
+    )
+
+
+@collection_route("rows")
 @consensus_group.command(name="reconcile")
 @click.argument(
     "findings_files", nargs=-1, type=click.Path(exists=True, path_type=Path)
@@ -2319,8 +3114,9 @@ def consensus_group() -> None:
 @click.option(
     "--min-agreement", default=0.5, help="Minimum model agreement ratio (0.0 - 1.0)."
 )
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
 def consensus_reconcile_cmd(
-    findings_files: tuple[Path, ...], min_agreement: float
+    findings_files: tuple[Path, ...], min_agreement: float, as_json: bool
 ) -> None:
     """Reconcile findings from multi-model reviews using weighted consensus."""
     import json
@@ -2349,17 +3145,25 @@ def consensus_reconcile_cmd(
                     )
                 )
         except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as e:
-            click.echo(f"Warning: Could not parse '{f_path}': {e}", err=True)
+            echo(f"Warning: Could not parse '{f_path}': {e}", err=True)
 
     total_models = max(len(models), 1)
     consensus = reconciler.reconcile_findings(all_findings, total_models=total_models)
-    click.echo(
-        f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% of {total_models} models):"
-    )
-    for c in consensus:
-        click.echo(
-            f"  - [{c.severity.upper()}] {c.file_path}:{c.line_number} {c.rule_id} ({c.description}) [Confidence: {int(c.confidence * 100)}%, Models: {', '.join(c.agreeing_models)}]"
+    if as_json:
+        echo_json(
+            {
+                "min_agreement": min_agreement,
+                "total_models": total_models,
+                "rows": consensus,
+                "total": len(consensus),
+            }
         )
+        return
+    echo(
+        f"Consensus Findings ({len(consensus)} agreed by >={int(min_agreement * 100)}% "
+        f"of {total_models} models):"
+    )
+    echo_rows(consensus, _consensus_line, empty="no review findings to reconcile")
 
 
 # -----------------------------------------------------------------------------
@@ -2531,9 +3335,110 @@ def session_resume_cmd(
 # -----------------------------------------------------------------------------
 
 
-@cli.group(name="memory")
-def memory_group() -> None:
-    """Query, write, and promote cross-tool memory artifacts."""
+def _memory_logical_root() -> Path:
+    """R20.2: the one project root every `rush memory` command (overview and
+    subcommands) reads and writes, chosen by T8's `select_root` walk from the
+    cwd (deepest marked or registered directory, else the deepest existing
+    one), so a write from a subdirectory lands in the store the project-root
+    overview shows."""
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(".", anchor=Path(os.path.abspath(Path.cwd())))
+
+
+_MEMORY_OVERVIEW_OPTIONS = ("offset", "generation", "include_internal", "as_json")
+
+
+def _echo_memory_overview(result: dict[str, Any]) -> None:
+    """T20 plain-line rendering (not `render_result`, which drops `raw.data` rows)."""
+    from datetime import UTC, datetime
+
+    raw = result.get("raw") or {}
+    data = raw.get("data") or {}
+    if raw.get("code") != "OK":
+        echo(f"memory: {raw.get('code')}: {data.get('message')}")
+        return
+    rows = data["rows"]
+    label = "record(s)" if data["include_internal"] else "useful record(s)"
+    shown = (
+        f"showing {data['offset'] + 1}-{data['offset'] + len(rows)}"
+        if rows
+        else "showing none"
+    )
+    echo(f"memory: {data['total']} {label} in {data['project_root']} ({shown})")
+    for row in rows:
+        owner = row["owner_scope"]
+        created = datetime.fromtimestamp(row["created_at"], tz=UTC).isoformat()
+        echo(
+            f"{row['id']}  {row['subject']}  {row['source']}  "
+            f"owner {owner['kind']}:{owner['id']}  {created}  {row['trust_tier']}"
+        )
+    if data["next_offset"] is not None:
+        echo(
+            f"next: rush memory --offset {data['next_offset']} "
+            f"--generation {data['generation_token']}"
+        )
+    if data.get("reason"):
+        echo(data["reason"])
+
+
+@cli.group(name="memory", invoke_without_command=True)
+@click.option(
+    "--offset",
+    type=click.IntRange(min=0),
+    default=0,
+    help="Overview only: skip this many rows (requires --generation when > 0).",
+)
+@click.option(
+    "--generation",
+    default=None,
+    help="Overview only: the continuation token the previous page printed.",
+)
+@click.option(
+    "--include-internal",
+    is_flag=True,
+    help="Overview only: also show internal bookkeeping rows.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Overview only: print raw JSON.")
+@click.pass_context
+def memory_group(
+    ctx: click.Context,
+    offset: int,
+    generation: str | None,
+    include_internal: bool,
+    as_json: bool,
+) -> None:
+    """Query, write, and promote cross-tool memory artifacts.
+
+    With no subcommand, shows this project's 20 most recent useful memory records
+    (newest first, read-only; archived, expired and internal rows hidden)."""
+    if ctx.invoked_subcommand is not None:
+        given = [
+            name
+            for name in _MEMORY_OVERVIEW_OPTIONS
+            if ctx.get_parameter_source(name) != click.core.ParameterSource.DEFAULT
+        ]
+        if given:
+            raise click.UsageError(
+                "--offset/--generation/--include-internal/--json before a memory "
+                "subcommand apply only to the bare `rush memory` overview"
+            )
+        return
+    from .tools.memory import memory_overview
+
+    result = dict(
+        memory_overview(
+            _memory_logical_root(),
+            offset=offset,
+            generation=generation,
+            include_internal=include_internal,
+        )
+    )
+    if as_json:
+        echo(json.dumps(result, indent=2, default=str))
+    else:
+        _echo_memory_overview(result)
+    raise click.exceptions.Exit(exit_code_for(result))
 
 
 @memory_group.command(name="ask")
@@ -2545,22 +3450,30 @@ def memory_group() -> None:
     multiple=True,
     help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_ask_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
+    task_id: str | None,
     as_json: bool,
 ) -> None:
     """Ask the memory store a question, scoped to an explicit session allowlist."""
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="ask",
         subject=subject,
         query=query,
         session_allowlist=list(session_allowlist) or None,
+        task_id=task_id,
     )
     _render_session_result(dict(result), as_json)
 
@@ -2574,60 +3487,191 @@ def memory_ask_cmd(
     multiple=True,
     help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_recall_cmd(
     subject: MemorySubject,
     query: str,
     session_allowlist: tuple[str, ...],
+    task_id: str | None,
     as_json: bool,
 ) -> None:
     """Recall memory artifacts, scoped to an explicit session allowlist."""
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="recall",
         subject=subject,
         query=query,
         session_allowlist=list(session_allowlist) or None,
+        task_id=task_id,
     )
     _render_session_result(dict(result), as_json)
 
 
+_MEMORY_OWNER_KINDS = ("user", "project", "session", "agent")
+
+
 @memory_group.command(name="list")
-@click.argument("subject", type=click.Choice(_MEMORY_SUBJECTS))
-@click.argument("query")
+@click.argument(
+    "subject",
+    required=False,
+    type=click.Choice(_MEMORY_SUBJECTS),
+    metavar="[{" + "|".join(_MEMORY_SUBJECTS) + "}]",
+)
+@click.argument("query", required=False)
 @click.option(
-    "--session",
-    "session_allowlist",
+    "--subject",
+    "subjects",
     multiple=True,
-    help="Source to scope this query to; repeat for multiple. Fail-closed if omitted.",
+    type=click.Choice(_MEMORY_SUBJECTS),
+    help="Subject to browse; repeat for several. Default: all seven subjects.",
+)
+@click.option(
+    "--query", "query_option", default=None, help="Text to search for (default: none)."
+)
+@click.option(
+    "--owner",
+    default=None,
+    metavar="KIND:ID",
+    help="Owner to browse, KIND one of user, project, session, agent.",
+)
+@click.option(
+    "--source",
+    "--session",
+    "sources",
+    multiple=True,
+    help="Source to browse; repeat for several. Default: the sources your grant names.",
+)
+@click.option(
+    "--cursor", default=None, help="Continue from the page a previous list printed."
 )
 @click.option(
     "--include-archived",
     is_flag=True,
     help="Also return artifacts a `memory archive` call has excluded from normal recall.",
 )
+@click.option(
+    "--task-id",
+    "task_id",
+    default=None,
+    help="Task context (72-T05): task-bound memory is usable only under its own task.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def memory_list_cmd(
-    subject: MemorySubject,
-    query: str,
-    session_allowlist: tuple[str, ...],
+    subject: MemorySubject | None,
+    query: str | None,
+    subjects: tuple[MemorySubject, ...],
+    query_option: str | None,
+    owner: str | None,
+    sources: tuple[str, ...],
+    cursor: str | None,
     include_archived: bool,
+    task_id: str | None,
     as_json: bool,
 ) -> None:
-    """List defended memory artifacts scoped to explicit sessions."""
+    """Browse memory records: every subject unless SUBJECT or --subject names some.
+
+    Prints each record's exact reference, then how to open the next page, inspect,
+    see history, follow related records, explain and correct the first record."""
     from .tools.memory import MemoryTool
 
+    if subject is not None and subjects:
+        raise click.UsageError(
+            "give the subject once: the SUBJECT argument or --subject"
+        )
+    if query is not None and query_option is not None:
+        raise click.UsageError("give the query once: the QUERY argument or --query")
+    owner_scope: dict[str, str] | None = None
+    if owner is not None:
+        kind, sep, owner_id = owner.partition(":")
+        if not sep or kind not in _MEMORY_OWNER_KINDS or not owner_id.strip():
+            raise click.BadParameter(
+                "expected KIND:ID with KIND one of user, project, session, agent",
+                param_hint="--owner",
+            )
+        owner_scope = {"kind": kind, "id": owner_id}
+    request: dict[str, Any] = {
+        "schema_version": 2,
+        "subjects": list(dict.fromkeys(subjects))
+        or ([subject] if subject else list(_MEMORY_SUBJECTS)),
+        "query": query_option if query_option is not None else (query or ""),
+    }
+    if owner_scope is not None:
+        request["owner_scope"] = owner_scope
+    if sources:
+        request["sources"] = list(dict.fromkeys(sources))
+    if cursor is not None:
+        request["cursor"] = cursor
+    if include_archived:
+        request["archive_mode"] = "historical"
+    extra: dict[str, Any] = {} if task_id is None else {"task_id": task_id}
     result = MemoryTool().run(
-        Path.cwd(),
-        operation="list",
-        subject=subject,
-        query=query,
-        session_allowlist=list(session_allowlist) or None,
-        include_archived=include_archived,
+        _memory_logical_root(), operation="list", request=request, **extra
     )
     _render_session_result(dict(result), as_json)
+
+
+def _run_memory_v2(
+    operation: Literal["history", "explain"],
+    request: dict[str, Any],
+    task_id: str | None,
+    as_json: bool,
+) -> None:
+    """72-T06: run one schema-2 read through the shared `MemoryTool` path; `task_id`
+    is forwarded as the top-level task context only when given."""
+    from .tools.memory import MemoryTool
+
+    extra: dict[str, Any] = {} if task_id is None else {"task_id": task_id}
+    result = MemoryTool().run(
+        _memory_logical_root(), operation=operation, request=request, **extra
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@memory_group.command(name="history")
+@click.argument("artifact_id")
+@click.option(
+    "--historical",
+    is_flag=True,
+    help="Include archived and expired versions (needs the history grant).",
+)
+@click.option("--task-id", "task_id", default=None, help="Task context for this read.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_history_cmd(
+    artifact_id: str, historical: bool, task_id: str | None, as_json: bool
+) -> None:
+    """Show the immutable versions of one memory artifact, oldest first."""
+    request: dict[str, Any] = {"schema_version": 2, "artifact_id": artifact_id}
+    if historical:
+        request["archive_mode"] = "historical"
+    _run_memory_v2("history", request, task_id, as_json)
+
+
+@memory_group.command(name="explain")
+@click.argument("artifact_id", required=False)
+@click.option("--query", default=None, help="Explain the artifacts this query selects.")
+@click.option("--task-id", "task_id", default=None, help="Task context for this read.")
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_explain_cmd(
+    artifact_id: str | None, query: str | None, task_id: str | None, as_json: bool
+) -> None:
+    """Show recorded supporting, contrary and attempted evidence for one artifact or
+    query; never generated rationale."""
+    if (artifact_id is None) == (query is None):
+        raise click.UsageError("give exactly one of ARTIFACT_ID or --query")
+    request: dict[str, Any] = {"schema_version": 2}
+    if artifact_id is not None:
+        request["artifact_id"] = artifact_id
+    else:
+        request["query"] = query
+    _run_memory_v2("explain", request, task_id, as_json)
 
 
 @memory_group.command(name="write")
@@ -2666,7 +3710,7 @@ def memory_write_cmd(
     from .tools.memory import MemoryTool
 
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="write",
         subject=subject,
         content=_json.loads(content),
@@ -2684,6 +3728,21 @@ def memory_write_cmd(
         ),
     )
     _render_session_result(dict(result), as_json)
+
+
+def _parse_candidate_refs(
+    _ctx: click.Context, _param: click.Parameter, values: tuple[str, ...]
+) -> list[dict[str, object]]:
+    """72-T04: `--candidate-ref ID@VERSION@SOURCE` values as reviewed corroborator refs."""
+    from .memory.trust import parse_candidate_ref
+
+    refs: list[dict[str, object]] = []
+    for value in values:
+        ref = parse_candidate_ref(value)
+        if ref is None:
+            raise click.BadParameter(f"{value!r} is not ID@VERSION@SOURCE")
+        refs.append(ref)
+    return refs
 
 
 @memory_group.command(name="promote")
@@ -2706,7 +3765,14 @@ def memory_write_cmd(
     "--candidate-source",
     "candidate_sources",
     multiple=True,
-    help="Corroborating source id; repeat for multiple.",
+    help="Corroborating source id; repeat for multiple. Requires --candidate-ref.",
+)
+@click.option(
+    "--candidate-ref",
+    "candidate_refs",
+    multiple=True,
+    callback=_parse_candidate_refs,
+    help="Reviewed corroborator as ID@VERSION@SOURCE; repeat for multiple.",
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
@@ -2718,6 +3784,7 @@ def memory_promote_cmd(
     source_kind: SourceKind,
     user_stated: bool,
     candidate_sources: tuple[str, ...],
+    candidate_refs: list[dict[str, object]],
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -2733,8 +3800,15 @@ def memory_promote_cmd(
 
     from .tools.memory import MemoryTool
 
+    # 72-T04 (D8): reviewed corroborators travel as `request.candidate_refs`; raw
+    # `candidate_sources` without refs is refused (`E_INPUT`) by `MemoryTool`.
+    refs_request: dict[str, Any] = (
+        {"request": {"apply": True, "candidate_refs": candidate_refs}}
+        if candidate_refs
+        else {}
+    )
     result = MemoryTool().run(
-        Path.cwd(),
+        _memory_logical_root(),
         operation="promote",
         subject=subject,
         content=_json.loads(content),
@@ -2743,6 +3817,7 @@ def memory_promote_cmd(
         source_kind=source_kind,
         user_stated=user_stated,
         candidate_sources=list(candidate_sources) or None,
+        **refs_request,
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -2767,10 +3842,17 @@ def memory_promote_cmd(
 )
 @click.option(
     "--batch-size",
-    type=int,
+    type=click.IntRange(1, 1000),
     default=500,
     show_default=True,
-    help="Max rows processed in one sweep.",
+    help="Max rows processed in one sweep (1-1000).",
+)
+@click.option(
+    "--source",
+    "sources",
+    multiple=True,
+    help="Memory source id to maintain; repeat for multiple. Required without a "
+    "memory policy; with a policy, narrows the granted sources.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 @click.option(
@@ -2780,8 +3862,8 @@ def memory_promote_cmd(
     "--owner-kind",
     type=click.Choice(["project", "user", "agent", "session"]),
     default=None,
-    help="Explicit owner_scope kind. Defaults to this root's registered project "
-    "id, or its legacy path owner if unregistered.",
+    help="Explicit owner_scope kind. Defaults to the memory grant's owner, or this "
+    "root's legacy path owner without a memory policy.",
 )
 @click.option(
     "--owner-id",
@@ -2791,30 +3873,25 @@ def memory_promote_cmd(
 def memory_maintain_cmd(
     task: MaintenanceTask,
     batch_size: int,
+    sources: tuple[str, ...],
     as_json: bool,
     allow_cache_write: bool,
-    owner_kind: str | None,
+    owner_kind: OwnerScopeKind | None,
     owner_id: str | None,
 ) -> None:
     """Run a bounded memory-store maintenance sweep (Phase 62 §6.2)."""
     from .tools.memory import MemoryTool
-    from .workflows.projects import ProjectNotFoundError, resolve_project
 
-    root = Path.cwd()
+    root = _memory_logical_root()
+    # 72-T04 (D3): an owner is passed only when declared; otherwise the memory
+    # grant (policy mode) or `legacy_owner_scope(root)` (legacy mode) decides it.
+    owner_scope: OwnerScope | None = None
     if owner_kind is not None:
         if not owner_id:
             raise click.UsageError("--owner-kind requires --owner-id")
         owner_scope = OwnerScope(owner_kind, owner_id)
     elif owner_id is not None:
         raise click.UsageError("--owner-id requires --owner-kind")
-    else:
-        # M09: this CLI entry point's own explicitly-supported legacy fallback
-        # (M08 bullet 3) -- an unregistered root still maintains under its
-        # path-form owner rather than failing outright.
-        try:
-            owner_scope = OwnerScope("project", resolve_project(root)["project_id"])
-        except ProjectNotFoundError:
-            owner_scope = legacy_owner_scope(root)
 
     result = MemoryTool().run(
         root,
@@ -2822,9 +3899,856 @@ def memory_maintain_cmd(
         task=task,
         batch_size=batch_size,
         owner_scope=owner_scope,
+        sources=list(sources) or None,
         permissions=ExecutionPermissions(cache_write=allow_cache_write),
     )
     _render_session_result(dict(result), as_json)
+
+
+# 73-T02/BOOTSTRAP-CONSENT: the CLI-only consent surface. `memory grant`, `memory
+# revoke` and `agent connect --memory-binding` are the only routes that create, revoke
+# or bind a grant; `memory bind-store` is the D41 store-binding leaf. Each preview is
+# read-only; each `--approve` needs --allow-cache-write (PR8) and calls the existing
+# keyword-only policy writer with consent=True.
+_CONSENT_DEFAULT_OPS = ("ask", "bootstrap", "expand", "history", "list", "write")
+_CONSENT_REASON_CODES = {
+    "owner_not_granted": "E_OWNER",
+    "source_not_granted": "E_SCOPE",
+    "owner_required": "E_INPUT",
+}
+
+
+class _ConsentProject(click.Path):
+    """An existing directory; a NUL or a symlink loop is "does not exist" too."""
+
+    def __init__(self) -> None:
+        super().__init__(exists=True, file_okay=False, path_type=Path)
+
+    def convert(self, value: Any, param: Any, ctx: Any) -> Any:
+        try:
+            return super().convert(value, param, ctx)
+        except ValueError:  # an embedded NUL byte
+            self.fail(f"Directory {value!r} does not exist.", param, ctx)
+
+
+class _OwnerScopeType(click.ParamType):
+    """`KIND:ID`, split on the first `:` (the ID keeps every remaining byte)."""
+
+    name = "KIND:ID"
+
+    def convert(self, value: Any, param: Any, ctx: Any) -> OwnerScope:
+        if isinstance(value, OwnerScope):
+            return value
+        kind, sep, ident = str(value).partition(":")
+        if not sep:
+            self.fail(f"{value!r} is not KIND:ID", param, ctx)
+        try:
+            return OwnerScope(kind, ident)  # type: ignore[arg-type]
+        except ValueError as exc:
+            self.fail(str(exc), param, ctx)
+
+
+def _consent_result(
+    operation: str,
+    code: str,
+    data: dict[str, Any],
+    next_action: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The MemoryTool envelope (`{schema_version, operation, code, data}`) of one
+    consent command; `next_action` also ends the summary (D19)."""
+    from .tools.memory import _CODE_STATUS
+
+    summary = f"memory {operation} returned {code}."
+    raw: dict[str, Any] = {
+        "schema_version": 1,
+        "operation": operation,
+        "code": code,
+        "data": data,
+    }
+    if next_action is not None:
+        raw["next_action"] = next_action
+        summary += f" Next: {next_action['command'] or next_action['text']}"
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": _CODE_STATUS.get(code, "error"),
+        "duration_ms": 0,
+        "summary": summary,
+        "findings": [],
+        "raw": raw,
+        "metadata": {"operation": operation},
+    }
+
+
+def _consent_error(operation: str, exc: Any) -> dict[str, Any]:
+    """A `MemoryPolicyError` as its own code and reason."""
+    return _consent_result(
+        operation, exc.code, {"reason": exc.reason, "message": str(exc)}
+    )
+
+
+def _consent_skipped(command: str, operation: str) -> dict[str, Any]:
+    """PR8: `--approve` without --allow-cache-write; decided before any read."""
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": "skipped",
+        "duration_ms": 0,
+        "summary": f"memory {command} --approve requires --allow-cache-write.",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": operation,
+            "skipped": {"permission": "cache_write", "flag": "--allow-cache-write"},
+        },
+        "metadata": {"operation": operation},
+    }
+
+
+def _consent_command(argv: list[str]) -> tuple[str | None, str | None]:
+    """`(command, None)`, or `(None, repr(<refused element>))` (§3 H2)."""
+    from .memory.authorization import _render_command
+
+    try:
+        return _render_command(argv), None
+    except ValueError as exc:
+        return None, repr(exc.args[0])
+
+
+def _consent_store_error(
+    prefix: str, state: str
+) -> tuple[str, dict[str, Any], dict[str, Any] | None]:
+    """A2.6: an unusable `open_readonly_view` state as code, data and next action."""
+    from .memory.store import readonly_view_reason
+
+    message = readonly_view_reason(state)
+    code = {
+        "migration_required": "E_MIGRATION",
+        "corrupt": "E_STORE_CORRUPT",
+    }.get(state, "E_STORE_BUSY")
+    upgrade = (
+        {"text": message, "command": None} if state == "migration_required" else None
+    )
+    return code, {"reason": f"{prefix}{state}", "message": message}, upgrade
+
+
+def _stated_rows(conn: Any) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM memory_artifacts WHERE trust_tier = 'STATED'"
+    ).fetchone()
+    return int(row[0])
+
+
+def _consent_preview_validate(
+    project: Path,
+    owner: OwnerScope,
+    overlay: bool,
+    operations: list[str],
+    sources: list[str],
+    all_current_sources: bool,
+    expires_at: float | None,
+    expected: int,
+) -> tuple[Path, OwnerScope | None]:
+    """The grant preview's pure validators, in the writer's order: `(root,
+    overlay_owner)`, or `MemoryPolicyError`."""
+    from .memory import authorization as auth
+
+    auth._require_revision(expected)
+    if auth._owner_tuple(owner) is None:
+        raise auth.MemoryPolicyError("E_INPUT", "owner_scope")
+    if not all_current_sources:
+        auth._require_sources(sources)
+    auth._require_operations(operations)
+    auth._require_expiry(expires_at)
+    overlay_owner = (
+        auth.user_overlay_owner_scope()
+        if overlay or "overlay_read" in operations
+        else None
+    )
+    if (
+        "overlay_read" in operations
+        and overlay_owner is not None
+        and auth._owner_tuple(owner) != (overlay_owner.kind, overlay_owner.id)
+    ):
+        raise auth.MemoryPolicyError("E_INPUT", "overlay_read_requires_overlay_owner")
+    return auth._canonical_project(project), overlay_owner
+
+
+def _consent_open_views(
+    root: Path, overlay_root: Path | None
+) -> tuple[Any, Any, dict[str, Any] | None]:
+    """`(view, overlay_view, failure)`: the read-only views of the project store and
+    (when `overlay_root`) the overlay store; an unusable state is the `failure`."""
+    from .memory.store import TypedArtifactStore
+
+    view, state = TypedArtifactStore.open_readonly_view(root)
+    if state is not None:
+        code, data, upgrade = _consent_store_error("store_", state)
+        return None, None, _consent_result("grant", code, data, upgrade)
+    overlay_view = None
+    if overlay_root is not None:
+        overlay_view, state = TypedArtifactStore.open_readonly_view(overlay_root)
+        if state is not None:
+            if view is not None:
+                view.close()
+            code, data, upgrade = _consent_store_error("overlay_store_", state)
+            return None, None, _consent_result("grant", code, data, upgrade)
+    return view, overlay_view, None
+
+
+def _consent_preview_read(
+    root: Path, overlay_root: Path | None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """`(reads, None)` or `(None, failure)`: the only reads of the project and overlay
+    stores. A `DatabaseError` is `store_corrupt` (H8); a cleanup failure never hides
+    the primary one, and both are named when both happen."""
+    import sqlite3
+
+    from .memory.store import readonly_view_reason, store_binding
+
+    view, overlay_view, failed = _consent_open_views(root, overlay_root)
+    if failed is not None:
+        return None, failed
+    primary: str | None = None
+    cleanup: list[str] = []
+    reads: dict[str, Any] = {}
+    conn = view._readonly_conn if view is not None else None
+    overlay_conn = overlay_view._readonly_conn if overlay_view is not None else None
+    try:
+        reads["groups"] = view.consent_inventory() if view is not None else []
+        reads["binding"] = store_binding(conn, root) if conn is not None else None
+        reads["stated"] = _stated_rows(conn) if conn is not None else 0
+        reads["overlay_binding"] = (
+            store_binding(overlay_conn, overlay_root)
+            if overlay_conn is not None and overlay_root is not None
+            else None
+        )
+        reads["overlay_stated"] = (
+            _stated_rows(overlay_conn) if overlay_conn is not None else 0
+        )
+    except sqlite3.DatabaseError as exc:
+        primary = str(exc)
+    finally:
+        for opened in (view, overlay_view):
+            if opened is None:
+                continue
+            try:
+                opened.close()
+            except sqlite3.DatabaseError as exc:
+                cleanup.append(str(exc))
+    if primary is None and not cleanup:
+        return reads, None
+    failure: dict[str, Any] = {
+        "reason": "store_corrupt",
+        "message": readonly_view_reason("corrupt"),
+    }
+    if cleanup:
+        failure["errors"] = [*([primary] if primary else []), *cleanup]
+    return None, _consent_result("grant", "E_STORE_CORRUPT", failure)
+
+
+def _consent_source_views(
+    groups: list[dict[str, Any]], catalog_items: list[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """The preview's `catalog`, `other_sources` and per-owner row totals."""
+    from .memory import authorization as auth
+
+    def granted_by_catalog(group: dict[str, Any]) -> bool:
+        return any(auth.source_granted(group["source"], [i]) for i in catalog_items)
+
+    def owner_of(group: dict[str, Any]) -> dict[str, Any] | None:
+        kind, ident = group["owner_scope_kind"], group["owner_scope_id"]
+        return None if kind is None and ident is None else {"kind": kind, "id": ident}
+
+    catalog = [
+        {
+            "source": item,
+            "rows": sum(
+                g["rows"] for g in groups if auth.source_granted(g["source"], [item])
+            ),
+        }
+        for item in catalog_items
+    ]
+    other_sources = [
+        {"owner_scope": owner_of(g), "source": g["source"], "rows": g["rows"]}
+        for g in groups
+        if not granted_by_catalog(g)
+    ]
+    owners: list[dict[str, Any]] = []
+    for g in groups:
+        scope = owner_of(g)
+        found = next((o for o in owners if o["owner_scope"] == scope), None)
+        if found is None:
+            owners.append({"owner_scope": scope, "rows": g["rows"]})
+        else:
+            found["rows"] += g["rows"]
+    return catalog, other_sources, owners
+
+
+def _consent_all_current_sources(
+    root: Path,
+    owner: OwnerScope,
+    groups: list[dict[str, Any]],
+    catalog_items: list[str],
+) -> list[str]:
+    """`--all-current-sources`: the writer catalog plus the owner's stored sources."""
+    from .memory import authorization as auth
+
+    legacy = owner == legacy_owner_scope(root)
+
+    def owned(group: dict[str, Any]) -> bool:
+        pair = (group["owner_scope_kind"], group["owner_scope_id"])
+        return pair == (owner.kind, owner.id) or (legacy and not all(pair))
+
+    extra = {
+        g["source"]
+        for g in groups
+        if owned(g)
+        and not any(auth.source_granted(g["source"], [i]) for i in catalog_items)
+    }
+    return sorted({*catalog_items, *extra})
+
+
+def _consent_grant_argv(
+    root_text: str,
+    owner: OwnerScope,
+    owner_given: bool,
+    overlay: bool,
+    operations: list[str],
+    command_sources: list[str],
+    expires_at: float | None,
+    policy_revision: int,
+) -> list[str]:
+    """The `rush memory grant ... --approve` argv a preview prints."""
+    argv = ["rush", "memory", "grant", "--project", root_text]
+    if overlay:
+        argv.append("--overlay")
+    elif owner_given:
+        argv += ["--owner", f"{owner.kind}:{owner.id}"]
+    for op in sorted(operations):
+        argv += ["--operation", op]
+    for source in sorted(command_sources):
+        argv += ["--source", source]
+    if expires_at is not None:
+        argv += ["--expires-at", repr(expires_at)]
+    argv += [
+        "--expected-policy-revision",
+        str(policy_revision),
+        "--approve",
+        "--allow-cache-write",
+    ]
+    return argv
+
+
+def _memory_consent_preview(
+    *,
+    project: Path,
+    owner: OwnerScope,
+    owner_given: bool,
+    overlay: bool,
+    operations: list[str],
+    sources: list[str],
+    all_current_sources: bool,
+    expires_at: float | None,
+    expected: int,
+) -> dict[str, Any]:
+    """Item 2: the read-only grant preview. The writer's pure validators run first,
+    in the writer's order; then the policy, then one read-only view per store (the
+    only reads of the project and overlay stores). Writes, locks and directories:
+    none."""
+    from .memory import authorization as auth
+
+    try:
+        root, overlay_owner = _consent_preview_validate(
+            project,
+            owner,
+            overlay,
+            operations,
+            sources,
+            all_current_sources,
+            expires_at,
+            expected,
+        )
+    except auth.MemoryPolicyError as exc:
+        return _consent_error("grant", exc)
+    policy = auth.load_policy_readonly()
+    if policy["state"] in ("invalid", "unavailable"):
+        return _consent_error(
+            "grant", auth.MemoryPolicyError("E_POLICY_INVALID", policy["reason"])
+        )
+    root_text = str(root)
+    overlay_root = Path(overlay_owner.id) if overlay and overlay_owner else None
+    reads, failed = _consent_preview_read(root, overlay_root)
+    if failed is not None:
+        return failed
+    assert reads is not None
+    groups = reads["groups"]
+    binding, stated = reads["binding"], reads["stated"]
+    overlay_binding, overlay_stated = (
+        reads["overlay_binding"],
+        reads["overlay_stated"],
+    )
+
+    catalog_items = auth.writer_source_catalog(root)
+    catalog, other_sources, owners = _consent_source_views(groups, catalog_items)
+    command_sources = (
+        _consent_all_current_sources(root, owner, groups, catalog_items)
+        if all_current_sources
+        else list(sources)
+    )
+    argv = _consent_grant_argv(
+        root_text,
+        owner,
+        owner_given,
+        overlay,
+        operations,
+        command_sources,
+        expires_at,
+        policy["policy_revision"],
+    )
+    command, refused = _consent_command(argv)
+    identity = auth.project_identity(root)  # type: ignore[attr-defined]  # 73-T09/CODEC
+    data = {
+        "project_root": root_text,
+        "project_id": identity["project_id"],
+        "owner_scope": owner.as_dict(),
+        "overlay": overlay,
+        "operations": sorted(operations),
+        "sources": command_sources,
+        "all_current_sources": all_current_sources,
+        "expires_at": expires_at,
+        "expected_policy_revision": expected,
+        "policy_revision": policy["policy_revision"],
+        "policy_state": policy["state"],
+        "catalog": catalog,
+        "other_sources": other_sources,
+        "owners": owners,
+        "store_binding": binding,
+        "stated_rows": stated,
+        "approve_command": command,
+        "approve_command_refused": refused,
+    }
+    bind_argv = ["rush", "memory", "bind-store", "--project", root_text]
+    next_action = None
+    if binding == "unbound":
+        next_action = {
+            "text": "this project's memory store is unbound; preview binding it",
+            "command": _consent_command(bind_argv)[0],
+        }
+    if overlay:
+        data["overlay_store_binding"] = overlay_binding
+        data["overlay_stated_rows"] = overlay_stated
+        if next_action is None and overlay_binding == "unbound":
+            next_action = {
+                "text": "the personal overlay store is unbound; preview binding it",
+                "command": _consent_command([*bind_argv, "--overlay"])[0],
+            }
+    return _consent_result("grant", "OK", data, next_action)
+
+
+def _grant_check_usage(
+    owner: OwnerScope | None,
+    overlay: bool,
+    sources: tuple[str, ...],
+    all_current_sources: bool,
+    approve: bool,
+) -> None:
+    """`rush memory grant`'s Click usage rules, before any permission or read."""
+    if owner is not None and overlay:
+        raise click.UsageError("--owner and --overlay are mutually exclusive")
+    if sources and all_current_sources:
+        raise click.UsageError(
+            "--source and --all-current-sources are mutually exclusive"
+        )
+    if not sources and not all_current_sources:
+        raise click.UsageError("--source or --all-current-sources is required")
+    if approve and all_current_sources:
+        raise click.UsageError("--all-current-sources is preview-only")
+
+
+@memory_group.command(name="grant")
+@click.option(
+    "--project",
+    "project",
+    type=_ConsentProject(),
+    default=".",
+    show_default=True,
+    help="Project root the grant covers.",
+)
+@click.option(
+    "--owner",
+    type=_OwnerScopeType(),
+    default=None,
+    help="Owner scope KIND:ID (split on the first ':'). Defaults to the project's "
+    "legacy path owner.",
+)
+@click.option(
+    "--overlay",
+    is_flag=True,
+    help="Grant the personal overlay owner (adds overlay_read by default).",
+)
+@click.option(
+    "--source", "sources", multiple=True, help="Approved source label (repeatable)."
+)
+@click.option(
+    "--all-current-sources",
+    is_flag=True,
+    help="Preview only: list the writer catalog plus the owner's stored sources.",
+)
+@click.option(
+    "--operation",
+    "operations",
+    multiple=True,
+    type=click.Choice(sorted(GRANT_OPERATIONS)),
+    help="Allowed operation (repeatable). Defaults to ask, bootstrap, expand, "
+    "history, list and write.",
+)
+@click.option(
+    "--expires-at",
+    type=float,
+    default=None,
+    help="Expiry as epoch seconds.",
+)
+@click.option(
+    "--expected-policy-revision",
+    type=click.IntRange(min=0),
+    required=True,
+    help="The policy revision the preview showed.",
+)
+@click.option(
+    "--approve", is_flag=True, help="Write the grant. Needs --allow-cache-write."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_grant_cmd(
+    project: Path,
+    owner: OwnerScope | None,
+    overlay: bool,
+    sources: tuple[str, ...],
+    all_current_sources: bool,
+    operations: tuple[str, ...],
+    expires_at: float | None,
+    expected_policy_revision: int,
+    approve: bool,
+    as_json: bool,
+    **grants: bool,
+) -> None:
+    """Preview, or with --approve write, one memory authorization grant."""
+    from .memory import authorization as auth
+
+    _grant_check_usage(owner, overlay, sources, all_current_sources, approve)
+    if approve and not _extract_permissions(**grants).cache_write:
+        _render_session_result(_consent_skipped("grant", "grant"), as_json)
+    ops = sorted(operations) if operations else list(_CONSENT_DEFAULT_OPS)
+    if overlay and not operations:
+        ops = sorted([*ops, "overlay_read"])
+    try:
+        scope = (
+            auth.user_overlay_owner_scope()
+            if overlay
+            else owner or legacy_owner_scope(project.resolve())
+        )
+    except auth.MemoryPolicyError as exc:
+        _render_session_result(_consent_error("grant", exc), as_json)
+    if not approve:
+        result = _memory_consent_preview(
+            project=project,
+            owner=scope,
+            owner_given=owner is not None,
+            overlay=overlay,
+            operations=list(operations) if operations else ops,
+            sources=list(sources),
+            all_current_sources=all_current_sources,
+            expires_at=expires_at,
+            expected=expected_policy_revision,
+        )
+        _render_session_result(result, as_json)
+    try:
+        granted = auth.grant_memory_scope(
+            project_root=project,
+            owner_scope=scope,
+            approved_sources=list(sources),
+            allowed_operations=list(operations) if operations else ops,
+            expected_policy_revision=expected_policy_revision,
+            consent=True,
+            expires_at=expires_at,
+        )
+    except auth.MemoryPolicyError as exc:
+        next_action = None
+        if exc.reason == "project_not_registered":
+            next_action = auth.memory_next_action(
+                reason="project_not_registered",
+                project_root=project.resolve(),
+                operations=ops,
+            )
+        result = _consent_result(
+            "grant", exc.code, {"reason": exc.reason, "message": str(exc)}, next_action
+        )
+        _render_session_result(result, as_json)
+    _render_session_result(_consent_result("grant", "OK", granted), as_json)
+
+
+@memory_group.command(name="revoke")
+@click.option("--grant-id", required=True, help="The grant to revoke.")
+@click.option(
+    "--expected-policy-revision",
+    type=click.IntRange(min=0),
+    required=True,
+    help="The policy revision the preview showed.",
+)
+@click.option("--approve", is_flag=True, help="Revoke. Needs --allow-cache-write.")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_revoke_cmd(
+    grant_id: str,
+    expected_policy_revision: int,
+    approve: bool,
+    as_json: bool,
+    **grants: bool,
+) -> None:
+    """Preview, or with --approve revoke, one grant and every binding on it."""
+    from .memory import authorization as auth
+
+    if approve and not _extract_permissions(**grants).cache_write:
+        _render_session_result(_consent_skipped("revoke", "revoke"), as_json)
+    try:
+        if approve:
+            revoked = auth.revoke_memory_scope(
+                grant_id=grant_id,
+                expected_policy_revision=expected_policy_revision,
+                consent=True,
+            )
+            _render_session_result(_consent_result("revoke", "OK", revoked), as_json)
+        if not grant_id:
+            raise auth.MemoryPolicyError("E_INPUT", "grant_id")
+        loaded = auth.load_policy_readonly()
+        if loaded["state"] in ("invalid", "unavailable"):
+            raise auth.MemoryPolicyError("E_POLICY_INVALID", loaded["reason"])
+        grant = loaded["grants"].get(grant_id)
+        if grant is None:
+            raise auth.MemoryPolicyError("E_GRANT_NOT_FOUND", grant_id)
+        if grant["principal"] != auth._writer_principal():
+            raise auth.MemoryPolicyError("E_PRINCIPAL", "principal_mismatch")
+    except auth.MemoryPolicyError as exc:
+        _render_session_result(_consent_error("revoke", exc), as_json)
+    revision = loaded["policy_revision"]
+    command, _refused = _consent_command(
+        [
+            "rush",
+            "memory",
+            "revoke",
+            "--grant-id",
+            grant_id,
+            "--expected-policy-revision",
+            str(revision),
+            "--approve",
+            "--allow-cache-write",
+        ]
+    )
+    data = {
+        "grant": grant,
+        "bindings": sorted(
+            (b for b in loaded["bindings"].values() if b["grant_id"] == grant_id),
+            key=lambda b: b["binding_id"],
+        ),
+        "policy_revision": revision,
+        "expected_policy_revision": expected_policy_revision,
+        "approve_command": command,
+    }
+    _render_session_result(_consent_result("revoke", "OK", data), as_json)
+
+
+def _bind_store_usage(approve: bool, expected_digest: str | None) -> None:
+    """`rush memory bind-store`'s Click usage rules (A9.1)."""
+    if approve and expected_digest is None:
+        raise click.UsageError("--approve requires --expected-digest")
+    if expected_digest is not None and not approve:
+        raise click.UsageError("--expected-digest requires --approve")
+
+
+def _bind_store_overlay_owner(
+    root: Path, overlay: bool, approve: bool, deny: Callable[..., None]
+) -> OwnerScope | None:
+    """The overlay owner, or a denial: no data root (when it is needed) or a project
+    root under the overlay storage root (A9.3)."""
+    from .memory import authorization as auth
+
+    try:
+        overlay_owner: OwnerScope | None = auth.user_overlay_owner_scope()
+    except auth.MemoryPolicyError:
+        overlay_owner = None
+    if overlay_owner is None:
+        if overlay or approve:
+            deny("E_PERMISSION", "data_root_unavailable")
+    else:
+        storage = Path(overlay_owner.id)
+        if root == storage or storage in root.parents:
+            deny("E_PERMISSION", "overlay_storage_root")
+    return overlay_owner
+
+
+def _bind_store_access(
+    root: Path,
+    overlay: bool,
+    approve: bool,
+    overlay_owner: OwnerScope | None,
+    deny: Callable[..., None],
+) -> Any:
+    """The `MemoryAccess` an overlay or approve bind runs under (H7), or a denial."""
+    from .memory import authorization as auth
+    from .memory.retrieval import (
+        MemoryAccess,
+        memory_policy_decision,
+        required_operation_set,
+    )
+
+    access: Any = None
+    if not (overlay or approve):
+        return access
+    mode, mode_reason = ("policy", None) if overlay else memory_policy_decision(root)
+    owner = overlay_owner if overlay else legacy_owner_scope(root)
+    operation = "write" if approve else "list"
+    required = required_operation_set(operation, apply=approve, overlay=overlay)
+    if mode == "unavailable":
+        why: str = mode_reason or "policy_invalid"
+    elif mode == "policy":
+        access, why = MemoryAccess.resolve_with_reason(
+            root,
+            operation=operation,
+            apply=approve,
+            overlay=overlay,
+            owner_scope=owner,
+        )
+    if mode != "legacy" and access is None:
+        deny(
+            _CONSENT_REASON_CODES.get(why, "E_PERMISSION"),
+            why,
+            auth.memory_next_action(
+                reason=why,
+                project_root=root,
+                operations=required,
+                owner_scope=owner,
+            ),
+        )
+    return access
+
+
+def _bind_store_target(
+    root: Path,
+    overlay: bool,
+    approve: bool,
+    overlay_owner: OwnerScope | None,
+    deny: Callable[..., None],
+    as_json: bool,
+) -> None:
+    """Target existence (A9.4), read-only: an absent store binds nothing and an
+    unusable one keeps its readonly code and reason (A2.6)."""
+    from .memory.store import TypedArtifactStore
+
+    store_root = Path(overlay_owner.id) if overlay and overlay_owner else root
+    view, state = TypedArtifactStore.open_readonly_view(store_root)
+    if view is not None:
+        view.close()
+    if state is not None:
+        code, failure, upgrade = _consent_store_error(
+            "overlay_store_" if overlay else "store_", state
+        )
+        _render_session_result(
+            _consent_result("bind_store", code, failure, upgrade), as_json
+        )
+    if view is None:
+        if approve:
+            deny("E_VERSION", "store_changed")
+        data = {
+            "project_root": str(root),
+            "overlay": overlay,
+            "store": "absent",
+            "approve_command": None,
+        }
+        _render_session_result(_consent_result("bind_store", "OK", data), as_json)
+
+
+@memory_group.command(name="bind-store")
+@click.option(
+    "--project",
+    "project",
+    type=_ConsentProject(),
+    default=".",
+    show_default=True,
+    help="Project whose memory store to bind.",
+)
+@click.option("--overlay", is_flag=True, help="Bind the personal overlay store.")
+@click.option("--approve", is_flag=True, help="Bind. Needs --expected-digest.")
+@click.option(
+    "--expected-digest", default=None, help="The binding_digest the preview showed."
+)
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_bind_store_cmd(
+    project: Path,
+    overlay: bool,
+    approve: bool,
+    expected_digest: str | None,
+    as_json: bool,
+    **grants: bool,
+) -> None:
+    """Preview, or with --approve bind, this project's (or the overlay) memory store
+    to this root under the local key (D41)."""
+    from .memory.store import TypedArtifactStore
+
+    _bind_store_usage(approve, expected_digest)
+    if approve and not _extract_permissions(**grants).cache_write:
+        _render_session_result(_consent_skipped("bind-store", "bind_store"), as_json)
+    root = project.resolve()
+    root_text = str(root)
+
+    def deny(code: str, reason: str, next_action: Any = None) -> None:
+        result = _consent_result(
+            "bind_store",
+            code,
+            {"reason": reason, "message": f"memory bind-store denied: {reason}."},
+            next_action,
+        )
+        _render_session_result(result, as_json)
+
+    overlay_owner = _bind_store_overlay_owner(root, overlay, approve, deny)
+    access = _bind_store_access(root, overlay, approve, overlay_owner, deny)
+    _bind_store_target(root, overlay, approve, overlay_owner, deny, as_json)
+
+    result = dict(
+        TypedArtifactStore.bind_store(
+            root,
+            approve=approve,
+            expected_binding_digest=expected_digest,
+            access=access,
+            overlay=overlay,
+        )
+    )
+    code = str(result.pop("code"))
+    if approve and code == "E_NOT_FOUND":
+        deny("E_VERSION", "store_changed")
+    if code != "OK" or approve:
+        _render_session_result(_consent_result("bind_store", code, result), as_json)
+    argv = ["rush", "memory", "bind-store", "--project", root_text]
+    if overlay:
+        argv.append("--overlay")
+    argv += [
+        "--approve",
+        "--expected-digest",
+        str(result.get("binding_digest")),
+        "--allow-cache-write",
+        "--json",
+    ]
+    data = {
+        "project_root": root_text,
+        "overlay": overlay,
+        **result,
+        "store": "present",
+        "approve_command": _consent_command(argv)[0],
+    }
+    _render_session_result(_consent_result("bind_store", "OK", data), as_json)
 
 
 # MC14 (Phase 63 §9.1): the 13 new memory operations added by MC02-MC12 (expand, link,
@@ -2855,6 +4779,12 @@ _MEMORY_OPERATION_HELP: dict[str, str] = {
         "require --allow-cache-write."
     ),
     "plan_checks": "Rank required checks by evidence without dropping required membership.",
+    "preference": (
+        "Resolve, record, correct, end a task's, or migrate layered preferences "
+        "(task > project > personal; explicit before inferred). Previews by default; "
+        "apply requires --allow-cache-write, and explicit writes and corrections also "
+        "require user_stated=true."
+    ),
     "last_success_diagnose": "Compare a current failure to the last successful behavior.",
     "handoff": (
         "Prepare a bounded cross-tool memory handoff (action=prepare). Requires "
@@ -2884,11 +4814,37 @@ def _memory_input_request(input_file: Path) -> dict[str, Any]:
     by every new memory CLI leaf (Phase 63 plan §9.1's per-operation request schema)."""
     try:
         data = json.loads(input_file.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"--input must be UTF-8 JSON: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise click.ClickException(f"--input must be valid JSON: {exc}") from exc
+    except RecursionError as exc:
+        # 72-T06 G15: untrusted nesting is a controlled error, never a traceback.
+        raise click.ClickException("--input JSON is nested too deeply.") from exc
     if not isinstance(data, dict):
         raise click.ClickException("--input JSON must decode to an object.")
     return data
+
+
+_MEMORY_OWNER_OPERATIONS = frozenset({"link", "related", "consolidate"})
+_MEMORY_OWNER_KINDS = ("project", "user", "agent", "session")
+
+
+def _memory_owner_selector(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> dict[str, str] | None:
+    """72-T03 R3: parse `--owner KIND:ID` before the tool runs (exit 2 when malformed)."""
+    if value is None:
+        return None
+    kind, sep, ident = value.partition(":")
+    if not sep or kind not in _MEMORY_OWNER_KINDS or not ident.strip():
+        raise click.BadParameter(
+            f"expected KIND:ID with KIND one of {', '.join(_MEMORY_OWNER_KINDS)} "
+            f"and a non-blank ID, got {value!r}.",
+            ctx=ctx,
+            param=param,
+        )
+    return {"kind": kind, "id": ident}
 
 
 def _build_memory_operation_command(operation: str):
@@ -2897,6 +4853,7 @@ def _build_memory_operation_command(operation: str):
     def _cmd(
         input_file: Path,
         session_allowlist: tuple[str, ...],
+        task_id: str | None,
         allow_network: bool,
         allow_download: bool,
         allow_cache_write: bool,
@@ -2905,11 +4862,25 @@ def _build_memory_operation_command(operation: str):
         allow_artifact_write: bool,
         allow_browser: bool,
         as_json: bool,
+        result_view: str | None,
+        limit: int | None,
+        max_bytes: int | None,
+        owner: dict[str, str] | None = None,
     ) -> None:
         request = _memory_input_request(input_file)
+        extra: dict[str, Any] = {"operation": operation, "request": request}
+        # 72-T06: `session_allowlist` is passed only when `--session` is given, so
+        # a schema-2 request body is not refused as a mixed legacy form.
+        if session_allowlist:
+            extra["session_allowlist"] = list(session_allowlist)
+        if owner is not None:
+            extra["owner_scope"] = owner
+        if task_id is not None:
+            # 72-T05: forwarded only when given (omitted == MCP omitted).
+            extra["task_id"] = task_id
         _run_tool(
             "memory",
-            Path.cwd(),
+            _memory_logical_root(),
             as_json=as_json,
             permissions=_extract_permissions(
                 allow_network=allow_network,
@@ -2920,11 +4891,8 @@ def _build_memory_operation_command(operation: str):
                 allow_artifact_write=allow_artifact_write,
                 allow_browser=allow_browser,
             ),
-            extra_kwargs={
-                "operation": operation,
-                "request": request,
-                "session_allowlist": list(session_allowlist) or None,
-            },
+            extra_kwargs=extra,
+            view=ViewOptions(result_view, limit, max_bytes),
         )
 
     _cmd.__name__ = f"memory_{operation}_cmd"
@@ -2933,6 +4901,7 @@ def _build_memory_operation_command(operation: str):
         "--json", "as_json", is_flag=True, help="Print raw ToolResult JSON."
     )(_cmd)
     _cmd = permission_options(_cmd)
+    _cmd = result_view_options(_cmd)
     _cmd = click.option(
         "--session",
         "session_allowlist",
@@ -2940,8 +4909,28 @@ def _build_memory_operation_command(operation: str):
         help=(
             "Source to scope this operation to; repeat for multiple. Only consulted by "
             "operations that read session_allowlist (expand/related/consolidate/prepare/"
-            "resume); ignored otherwise."
+            "resume/preference); ignored otherwise."
         ),
+    )(_cmd)
+    if operation in _MEMORY_OWNER_OPERATIONS:
+        # 72-T03 R3: the owner this route resolves its grant for, forwarded as
+        # `owner_scope` (a project with two granted owners needs it).
+        _cmd = click.option(
+            "--owner",
+            "owner",
+            default=None,
+            callback=_memory_owner_selector,
+            metavar="KIND:ID",
+            help=(
+                "Owner scope this operation acts for: KIND is project, user, agent "
+                "or session."
+            ),
+        )(_cmd)
+    _cmd = click.option(
+        "--task-id",
+        "task_id",
+        default=None,
+        help="Task context (72-T05): task-bound memory is usable only under its own task.",
     )(_cmd)
     _cmd = click.option(
         "--input",
@@ -2964,6 +4953,7 @@ for _memory_op, _memory_cli_name in (
     ("intent", "intent"),
     ("recipe", "recipe"),
     ("plan_checks", "plan-checks"),
+    ("preference", "preference"),
     ("last_success_diagnose", "last-success-diagnose"),
     ("handoff", "handoff"),
     ("receive", "receive"),
@@ -2975,6 +4965,587 @@ for _memory_op, _memory_cli_name in (
         _build_memory_operation_command(_memory_op)
     )
 del _memory_op, _memory_cli_name
+
+
+# 73-T09/CODEC: `rush memory capsule` -- portable capsule preview/export/import over
+# `MemoryTool` operation `capsule`, plus the CLI-only mapping consent subgroup.
+
+
+def _owner_kind_id(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+) -> dict[str, str] | None:
+    """`--owner KIND:ID`: split on the first `:` and keep the rest as the ID. A
+    missing separator or an invalid `OwnerScope` is a Click parameter error."""
+    if value is None:
+        return None
+    kind, separator, owner_id = value.partition(":")
+    if not separator:
+        raise click.BadParameter("expected KIND:ID", ctx=ctx, param=param)
+    try:
+        OwnerScope.from_value({"kind": kind, "id": owner_id})
+    except (TypeError, ValueError):
+        raise click.BadParameter(
+            "not a valid owner scope", ctx=ctx, param=param
+        ) from None
+    return {"kind": kind, "id": owner_id}
+
+
+def _capsule_task_ref(
+    ctx: click.Context | None, param: click.Parameter | None, value: str | None
+) -> dict[str, Any] | None:
+    """`--task-ref ID:VERSION`: split on the last `:`; VERSION must parse as int."""
+    if value is None:
+        return None
+    artifact_id, separator, version = value.rpartition(":")
+    if not separator:
+        raise click.BadParameter("expected ID:VERSION", ctx=ctx, param=param)
+    try:
+        number = int(version)
+    except ValueError:
+        raise click.BadParameter(
+            "VERSION must be an integer", ctx=ctx, param=param
+        ) from None
+    return {"artifact_id": artifact_id, "version": number}
+
+
+def _capsule_root(project: Path) -> Path:
+    from .invocation.targets import resolve_logical_root
+
+    return resolve_logical_root(project, anchor=Path(os.path.abspath(Path.cwd())))
+
+
+@memory_group.group(name="capsule")
+def memory_capsule_group() -> None:
+    """Preview, export and import portable memory capsules (rush_v1, pas_v1)."""
+
+
+_CAPSULE_LEAVES: dict[str, tuple[str, str]] = {
+    "preview-export": (
+        "preview_export",
+        "Preview a capsule export of this project's open task (read-only).",
+    ),
+    "export": (
+        "export",
+        (
+            "Write a previewed capsule export (--expected-digest). Requires "
+            "--allow-artifact-write."
+        ),
+    ),
+    "preview-import": ("preview_import", "Preview a capsule import (read-only)."),
+    "import": (
+        "import",
+        (
+            "Import a previewed capsule (--apply, --expected-digest, "
+            "--expected-store-revision). Requires --allow-cache-write."
+        ),
+    ),
+    "bridge": ("bridge", "Reserved capsule bridge action; not available."),
+}
+
+
+def _capsule_selectors(
+    task_ref: dict[str, Any] | None,
+    owner: dict[str, str] | None,
+    sources: tuple[str, ...],
+    include_personal: bool,
+) -> dict[str, Any]:
+    """The capsule `selectors` request object; omitted options stay absent."""
+    selectors: dict[str, Any] = {}
+    if task_ref is not None:
+        selectors["task_ref"] = task_ref
+    if owner is not None:
+        selectors["owner_scope"] = owner
+    if sources:
+        selectors["sources"] = list(sources)
+    if include_personal:
+        selectors["include_personal"] = True
+    return selectors
+
+
+def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
+    """One `rush memory capsule <leaf>`: builds the same `request` an MCP call sends
+    (omitted options stay absent) and runs `MemoryTool` operation `capsule`."""
+
+    def _cmd(
+        project: Path,
+        input_path: str | None,
+        output_path: str | None,
+        capsule_format: str | None,
+        max_bytes: int | None,
+        max_tokens: int | None,
+        mapping_id: str | None,
+        expected_digest: str | None,
+        expected_store_revision: int | None,
+        confirm_constraint_ids: tuple[str, ...],
+        invocation_id: str | None,
+        task_ref: dict[str, Any] | None,
+        owner: dict[str, str] | None,
+        sources: tuple[str, ...],
+        include_personal: bool,
+        apply: bool,
+        allow_network: bool,
+        allow_download: bool,
+        allow_cache_write: bool,
+        allow_build: bool,
+        allow_slow: bool,
+        allow_artifact_write: bool,
+        allow_browser: bool,
+        as_json: bool,
+    ) -> None:
+        from .tools.memory import MemoryTool
+
+        request: dict[str, Any] = {"action": action}
+        for key, value in (
+            ("format", capsule_format),
+            ("input", None if input_path is None else os.path.abspath(input_path)),
+            ("output", None if output_path is None else os.path.abspath(output_path)),
+            ("max_bytes", max_bytes),
+            ("max_tokens", max_tokens),
+            ("mapping_id", mapping_id),
+            ("expected_digest", expected_digest),
+            ("expected_store_revision", expected_store_revision),
+            ("invocation_id", invocation_id),
+        ):
+            if value is not None:
+                request[key] = value
+        if confirm_constraint_ids:
+            request["confirm_constraint_ids"] = list(confirm_constraint_ids)
+        if apply:
+            request["apply"] = True
+        selectors = _capsule_selectors(task_ref, owner, sources, include_personal)
+        if selectors:
+            request["selectors"] = selectors
+        result = MemoryTool().run(
+            _capsule_root(project),
+            operation="capsule",
+            request=request,
+            permissions=_extract_permissions(
+                allow_network=allow_network,
+                allow_download=allow_download,
+                allow_cache_write=allow_cache_write,
+                allow_build=allow_build,
+                allow_slow=allow_slow,
+                allow_artifact_write=allow_artifact_write,
+                allow_browser=allow_browser,
+            ),
+        )
+        _render_session_result(dict(result), as_json)
+
+    _cmd.__name__ = f"memory_capsule_{action}_cmd"
+    _cmd.__doc__ = help_text
+    command: Callable[..., None] = click.option(
+        "--json", "as_json", is_flag=True, help="Print raw ToolResult JSON."
+    )(_cmd)
+    command = permission_options(command)
+    for decorator in (
+        click.option("--apply", is_flag=True, help="Apply the reviewed import."),
+        click.option(
+            "--include-personal",
+            is_flag=True,
+            help="Export: also read evidence from the personal overlay store.",
+        ),
+        click.option(
+            "--source",
+            "sources",
+            multiple=True,
+            help="Export: narrow to this granted source; repeat for multiple.",
+        ),
+        click.option(
+            "--owner",
+            default=None,
+            callback=_owner_kind_id,
+            help="Owner scope as KIND:ID (split on the first ':').",
+        ),
+        click.option(
+            "--task-ref",
+            default=None,
+            callback=_capsule_task_ref,
+            help="Export: the checkpoint artifact as ID:VERSION.",
+        ),
+        click.option(
+            "--invocation-id",
+            default=None,
+            help="Canonical lowercase UUID binding a preview to its apply.",
+        ),
+        click.option(
+            "--confirm-constraint-id",
+            "confirm_constraint_ids",
+            multiple=True,
+            help="Import: confirm one previewed constraint id; repeat for multiple.",
+        ),
+        click.option(
+            "--expected-store-revision",
+            type=int,
+            default=None,
+            help="Import: the store revision the preview reported.",
+        ),
+        click.option(
+            "--expected-digest",
+            default=None,
+            help="Export/import: the digest the preview reported.",
+        ),
+        click.option(
+            "--mapping-id",
+            default=None,
+            help="Import: an approved capsule origin mapping id.",
+        ),
+        click.option("--max-tokens", type=int, default=None, help="Token budget."),
+        click.option("--max-bytes", type=int, default=None, help="Byte budget."),
+        click.option(
+            "--format",
+            "capsule_format",
+            default=None,
+            help="Capsule format: rush_v1 (default) or pas_v1.",
+        ),
+        click.option(
+            "--output", "output_path", default=None, help="Export: output file."
+        ),
+        click.option(
+            "--input", "input_path", default=None, help="Import: capsule file."
+        ),
+        click.option(
+            "--project",
+            type=click.Path(file_okay=False, path_type=Path),
+            default=Path("."),
+            help="Project directory (default: the current directory).",
+        ),
+    ):
+        command = decorator(command)
+    return command
+
+
+for _capsule_leaf, (_capsule_action, _capsule_help) in _CAPSULE_LEAVES.items():
+    memory_capsule_group.command(name=_capsule_leaf)(
+        _build_capsule_command(_capsule_action, _capsule_help)
+    )
+del _capsule_leaf, _capsule_action, _capsule_help
+
+
+@memory_capsule_group.group(name="mapping")
+def memory_capsule_mapping_group() -> None:
+    """Approve or revoke a capsule origin mapping (CLI-only consent)."""
+
+
+_CAPSULE_FILE_MAX = 1 << 20  # the capsule codec's hard input cap (1 MiB)
+_CAPSULE_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+)
+_MAPPING_INPUT_FIELDS = frozenset(
+    {"capsule_origin", "expected_policy_revision", "mapping_id", "owner_scope"}
+)
+
+
+def _capsule_json(path: Path) -> Any:
+    with open(path, "rb") as handle:
+        data = handle.read(_CAPSULE_FILE_MAX + 1)
+    if len(data) > _CAPSULE_FILE_MAX:
+        raise ValueError("capsule file exceeds the hard cap")
+    return json.loads(data.decode("utf-8"))
+
+
+def _capsule_origin_pair(path: Path) -> dict[str, Any] | None:
+    """The `{project_id, worktree_id}` pair a capsule file claims: a `rush_v1` file's
+    `origin`, else a `pas_v1` file's sidecar capsule `origin`. None when unreadable or
+    when the file carries no Rush origin (a standalone `pas_v1` file)."""
+    try:
+        value = _capsule_json(path)
+        if isinstance(value, dict) and value.get("format") == "rush_v1":
+            origin = value.get("origin")
+        else:
+            sidecar = _capsule_json(Path(str(path) + ".rush-manifest.json"))
+            capsule = sidecar.get("capsule") if isinstance(sidecar, dict) else None
+            origin = capsule.get("origin") if isinstance(capsule, dict) else None
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(origin, dict):
+        return None
+    return {
+        "project_id": origin.get("project_id"),
+        "worktree_id": origin.get("worktree_id"),
+    }
+
+
+def _capsule_mapping_result(
+    started: float, sub: str, code: str, data: dict[str, Any]
+) -> dict[str, Any]:
+    from .tools.memory import _CODE_STATUS
+
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": _CODE_STATUS.get(code, "error"),
+        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+        "summary": f"memory capsule mapping {sub} returned {code}.",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": "capsule_mapping",
+            "code": code,
+            "data": data,
+        },
+        "metadata": {"operation": "capsule_mapping"},
+    }
+
+
+def _capsule_mapping_error(
+    started: float, sub: str, code: str, reason: str | None, field: str | None = None
+) -> dict[str, Any]:
+    data: dict[str, Any] = {"reason": reason}
+    if field is None and code == "E_INPUT" and reason in _MAPPING_INPUT_FIELDS:
+        field = reason
+    if field is not None:
+        data["field"] = field
+    data["message"] = f"memory capsule mapping {sub} refused: {reason}."
+    return _capsule_mapping_result(started, sub, code, data)
+
+
+def _capsule_mapping_skipped(
+    started: float, sub: str, granted: ExecutionPermissions
+) -> dict[str, Any] | None:
+    from .permissions import check_permissions
+
+    allowed, missing = check_permissions(
+        ExecutionPermissions(cache_write=True), granted
+    )
+    if allowed:
+        return None
+    return {
+        "tool": "memory",
+        "engine": None,
+        "engine_version": None,
+        "status": "skipped",
+        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+        "summary": f"memory capsule mapping {sub} requires {', '.join(missing)}.",
+        "findings": [],
+        "raw": {
+            "schema_version": 1,
+            "operation": "capsule_mapping",
+            "missing_permissions": missing,
+        },
+        "metadata": {"operation": "capsule_mapping"},
+    }
+
+
+def _mapping_denial_code(reason: str, owner_given: bool) -> tuple[str, str | None]:
+    """The capsule denial mapping (G8-T10) for a `resolve_memory_scope` reason."""
+    if reason == "owner_not_granted":
+        return ("E_OWNER" if owner_given else "E_PERMISSION"), None
+    if reason == "source_not_granted":
+        return "E_SCOPE", None
+    if reason == "owner_required" and not owner_given:
+        return "E_INPUT", "owner_scope"
+    return "E_PERMISSION", None
+
+
+def _capsule_mapping_create_preview(
+    started: float,
+    root: Path,
+    origin: dict[str, Any],
+    owner: OwnerScope | None,
+) -> dict[str, Any]:
+    """The exact pair, target and scope `--approve` would record; writes nothing."""
+    from .memory import authorization as auth
+
+    project_id, worktree_id = origin["project_id"], origin["worktree_id"]
+    if not (
+        isinstance(project_id, str)
+        and project_id
+        and isinstance(worktree_id, str)
+        and re.fullmatch(r"[0-9a-f]{64}", worktree_id)
+    ):
+        return _capsule_mapping_error(started, "create", "E_INPUT", "capsule_origin")
+    loaded = auth.load_policy_readonly()
+    if loaded["state"] == "invalid":
+        return _capsule_mapping_error(
+            started, "create", "E_POLICY_INVALID", loaded["reason"]
+        )
+    resolved = auth.resolve_memory_scope(
+        project_root=root, operation="write", owner_scope=owner
+    )
+    if resolved["access"] != "write":
+        code, field = _mapping_denial_code(resolved["reason"], owner is not None)
+        return _capsule_mapping_error(
+            started, "create", code, resolved["reason"], field
+        )
+    return _capsule_mapping_result(
+        started,
+        "create",
+        "OK",
+        {
+            "origin": {"project_id": project_id, "worktree_id": worktree_id},
+            "target": auth.project_identity(root),
+            "target_owner_scope": resolved["owner_scope"],
+            "grant_id": resolved["grant_id"],
+            "policy_revision": loaded["policy_revision"],
+        },
+    )
+
+
+@memory_capsule_mapping_group.command(name="create")
+@click.option(
+    "--input",
+    "input_path",
+    required=True,
+    help="The capsule file whose origin pair to map onto this project.",
+)
+@click.option(
+    "--project",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("."),
+    help="Destination project directory (default: the current directory).",
+)
+@click.option(
+    "--owner",
+    default=None,
+    callback=_owner_kind_id,
+    help="Destination owner scope as KIND:ID (split on the first ':').",
+)
+@click.option(
+    "--expected-policy-revision",
+    type=int,
+    required=True,
+    help="The memory policy revision this approval is based on.",
+)
+@click.option("--approve", is_flag=True, help="Record the mapping (else preview).")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_capsule_mapping_create_cmd(
+    input_path: str,
+    project: Path,
+    owner: dict[str, str] | None,
+    expected_policy_revision: int,
+    approve: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Map a capsule's origin pair onto this project and owner. Preview by default;
+    --approve records it and requires --allow-cache-write."""
+    from .memory import authorization as auth
+
+    started = time.monotonic()
+    granted = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = _capsule_mapping_skipped(started, "create", granted) if approve else None
+    if result is None:
+        origin = _capsule_origin_pair(Path(os.path.abspath(input_path)))
+        owner_scope = None if owner is None else OwnerScope.from_value(owner)
+        root = _capsule_root(project)
+        if origin is None:
+            result = _capsule_mapping_error(
+                started, "create", "E_INPUT", "capsule_invalid", "input"
+            )
+        elif not approve:
+            result = _capsule_mapping_create_preview(started, root, origin, owner_scope)
+        else:
+            try:
+                view = auth.approve_capsule_mapping(
+                    capsule_origin=origin,
+                    project_root=root,
+                    owner_scope=owner_scope,
+                    expected_policy_revision=expected_policy_revision,
+                    consent=True,
+                )
+            except auth.MemoryPolicyError as exc:
+                result = _capsule_mapping_error(started, "create", exc.code, exc.reason)
+            else:
+                result = _capsule_mapping_result(
+                    started, "create", "OK", {"mapping": view}
+                )
+    _render_session_result(result, as_json)
+
+
+@memory_capsule_mapping_group.command(name="revoke")
+@click.option("--mapping-id", required=True, help="The capsule mapping id to revoke.")
+@click.option(
+    "--expected-policy-revision",
+    type=int,
+    required=True,
+    help="The memory policy revision this revocation is based on.",
+)
+@click.option("--approve", is_flag=True, help="Revoke the mapping (else preview).")
+@permission_options
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def memory_capsule_mapping_revoke_cmd(
+    mapping_id: str,
+    expected_policy_revision: int,
+    approve: bool,
+    allow_network: bool,
+    allow_download: bool,
+    allow_cache_write: bool,
+    allow_build: bool,
+    allow_slow: bool,
+    allow_artifact_write: bool,
+    allow_browser: bool,
+    as_json: bool,
+) -> None:
+    """Revoke an approved capsule mapping. Preview by default; --approve revokes it
+    and requires --allow-cache-write."""
+    from .memory import authorization as auth
+
+    started = time.monotonic()
+    granted = _extract_permissions(
+        allow_network=allow_network,
+        allow_download=allow_download,
+        allow_cache_write=allow_cache_write,
+        allow_build=allow_build,
+        allow_slow=allow_slow,
+        allow_artifact_write=allow_artifact_write,
+        allow_browser=allow_browser,
+    )
+    result = _capsule_mapping_skipped(started, "revoke", granted) if approve else None
+    if result is None and approve:
+        try:
+            view = auth.revoke_capsule_mapping(
+                mapping_id=mapping_id,
+                expected_policy_revision=expected_policy_revision,
+                consent=True,
+            )
+        except auth.MemoryPolicyError as exc:
+            result = _capsule_mapping_error(started, "revoke", exc.code, exc.reason)
+        else:
+            result = _capsule_mapping_result(started, "revoke", "OK", {"mapping": view})
+    elif result is None:
+        loaded = auth.load_policy_readonly()
+        mappings = loaded.get("mappings") or {}
+        if not _CAPSULE_UUID_RE.fullmatch(mapping_id):
+            result = _capsule_mapping_error(started, "revoke", "E_INPUT", "mapping_id")
+        elif loaded["state"] == "invalid":
+            result = _capsule_mapping_error(
+                started, "revoke", "E_POLICY_INVALID", loaded["reason"]
+            )
+        elif loaded["state"] != "ok":
+            result = _capsule_mapping_error(
+                started, "revoke", "E_PERMISSION", loaded["reason"]
+            )
+        elif mapping_id not in mappings:
+            result = _capsule_mapping_error(
+                started, "revoke", "E_PERMISSION", "mapping_unknown"
+            )
+        else:
+            result = _capsule_mapping_result(
+                started,
+                "revoke",
+                "OK",
+                {
+                    "mapping": mappings[mapping_id],
+                    "policy_revision": loaded["policy_revision"],
+                },
+            )
+    _render_session_result(result, as_json)
 
 
 # P65-03.3 CONNECT (Phase 65 §3.2): CLI surface over `rush.workflows.projects` via
@@ -3564,7 +6135,8 @@ def scan_rescan_cmd(
 ) -> None:
     """Re-execute RUN_ID's own staged plan against current source and
     compare fixed/persisting/new/unverified findings against RUN_ID."""
-    from .workflows.project_run import ScanError, rescan_project_run
+    from .workflows.project_run import rescan_project_run
+    from .workflows.projects import ProjectError
 
     permissions = _extract_permissions(
         allow_network=allow_network,
@@ -3577,7 +6149,7 @@ def scan_rescan_cmd(
     )
     try:
         data = rescan_project_run(project, run_id, permissions=permissions)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-rescan",
@@ -3596,9 +6168,12 @@ def scan_rescan_cmd(
         )
         return
 
+    from .tools.scan import executed_work_status
+
     comparison = data["comparison"]
+    status = executed_work_status(data)  # T27: the re-executed run's outcome
     summary = (
-        f"scan rescan {run_id}: {len(comparison['resolved'])} resolved, "
+        f"scan rescan {run_id}: {status}; {len(comparison['resolved'])} resolved, "
         f"{len(comparison['persisting'])} persisting, "
         f"{len(comparison['new'])} new, "
         f"{len(comparison['unverified'])} unverified"
@@ -3606,7 +6181,7 @@ def scan_rescan_cmd(
     _render_session_result(
         {
             "tool": "scan-rescan",
-            "status": "ok",
+            "status": status,
             "duration_ms": 0,
             "summary": summary,
             "findings": [],
@@ -3631,11 +6206,12 @@ def scan_cancel_cmd(run_id: str, project: str, as_json: bool) -> None:
     allowed files) -- calls the workflow function directly, exactly like
     `scan rescan` above.
     """
-    from .workflows.project_run import ScanError, cancel_scan_run
+    from .workflows.project_run import cancel_scan_run
+    from .workflows.projects import ProjectError
 
     try:
         data = cancel_scan_run(project, run_id)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-cancel",
@@ -3654,12 +6230,27 @@ def scan_cancel_cmd(run_id: str, project: str, as_json: bool) -> None:
         )
         return
 
+    from .workflows.project_run import load_run_manifest
+    from .workflows.projects import resolve_project
+
+    # T27: an attempt with a terminal manifest has nothing left to stop; the
+    # idempotent marker is recorded, but the result says so.
+    manifest = load_run_manifest(
+        Path(resolve_project(project)["root"]), run_id, attempt_id=data["attempt_id"]
+    )
+    if manifest is not None:
+        state = manifest.get("run_state", "finished")
+        summary = f"scan cancel {run_id}: attempt already finished ({state}); nothing to cancel"
+        data = {**data, "already_finished": True, "run_state": state}
+    else:
+        summary = f"scan cancel {run_id}: requested"
+        data = {**data, "already_finished": False}
     _render_session_result(
         {
             "tool": "scan-cancel",
             "status": "ok",
             "duration_ms": 0,
-            "summary": f"scan cancel {run_id}: requested",
+            "summary": summary,
             "findings": [],
             "raw": data,
         },
@@ -3693,7 +6284,8 @@ def scan_resume_cmd(
     since the run's last attempt started. Requires --allow-cache-write and
     --allow-artifact-write (same write gate as `scan --full`/`scan rescan`).
     """
-    from .workflows.project_run import ScanError, resume_scan_run
+    from .workflows.project_run import resume_scan_run
+    from .workflows.projects import ProjectError
 
     permissions = _extract_permissions(
         allow_network=allow_network,
@@ -3706,7 +6298,7 @@ def scan_resume_cmd(
     )
     try:
         run = resume_scan_run(project, run_id, permissions=permissions)
-    except ScanError as exc:
+    except ProjectError as exc:  # T27: ScanError and an unknown project
         _render_session_result(
             {
                 "tool": "scan-resume",
@@ -3725,17 +6317,21 @@ def scan_resume_cmd(
         )
         return
 
+    from .tools.scan import executed_work_status
+
+    resumed = run.to_dict()
+    status = executed_work_status(resumed)  # T27: the attempt's own outcome
     _render_session_result(
         {
             "tool": "scan-resume",
-            "status": "ok",
+            "status": status,
             "duration_ms": 0,
             "summary": (
-                f"scan resume {run_id}: new attempt {run.attempt_id}, "
+                f"scan resume {run_id}: {status}; new attempt {run.attempt_id}, "
                 f"state={run.run_state}"
             ),
             "findings": [],
-            "raw": run.to_dict(),
+            "raw": resumed,
         },
         as_json,
     )
@@ -3784,6 +6380,76 @@ def agent_list_cmd(as_json: bool) -> None:
     is_flag=True,
     help="Confirm the agent actually picked up the connection; required for connected=true.",
 )
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help=(
+        "Write the Rush instruction block into the project's CLAUDE.md/AGENTS.md "
+        "without prompting. Without it, a terminal asks [y/N] and a "
+        "non-interactive run leaves guidance pending."
+    ),
+)
+@click.option(
+    "--profile",
+    default=None,
+    metavar="[core|full]",
+    callback=lambda _ctx, _param, value: _validate_mcp_profile(value),
+    help=(
+        "Migrate this agent's existing Rush MCP entry to a server profile. "
+        "Always prints a preview; applies only after an explicit y or --yes."
+    ),
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    help="Apply the previewed --profile migration without prompting.",
+)
+@click.option(
+    "--enable-agent-hooks",
+    "enable_hooks",
+    is_flag=True,
+    help=(
+        "Opt in to Rush's post-edit check for this host and --project: after "
+        "each edit the Rush plugin's hook runs `rush check` with no grants and "
+        "shows the result to the model."
+    ),
+)
+@click.option(
+    "--disable-agent-hooks",
+    "disable_hooks",
+    is_flag=True,
+    help="Remove this host's Rush post-edit hook activation for --project.",
+)
+@click.option(
+    "--hook-result-cache",
+    is_flag=True,
+    help=(
+        "With --enable-agent-hooks: store each hook check's full result in the "
+        "project's .rush/cache so the model gets a result_handle."
+    ),
+)
+@click.option(
+    "--memory-binding",
+    is_flag=True,
+    help=(
+        "Bind this session to a memory grant (needs --memory-grant-id, "
+        "--expected-policy-revision and --project); previews unless "
+        "--approve-memory-binding."
+    ),
+)
+@click.option("--memory-grant-id", default=None, help="The grant to bind.")
+@click.option(
+    "--expected-policy-revision",
+    type=click.IntRange(min=0),
+    default=None,
+    help="The policy revision the grant preview showed.",
+)
+@click.option(
+    "--approve-memory-binding",
+    is_flag=True,
+    help="Register the binding after a successful connect.",
+)
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def agent_connect_cmd(
@@ -3793,6 +6459,16 @@ def agent_connect_cmd(
     rush_binary: str | None,
     consent: bool,
     acknowledge: bool,
+    install_guidance: bool,
+    profile: str | None,
+    assume_yes: bool,
+    enable_hooks: bool,
+    disable_hooks: bool,
+    hook_result_cache: bool,
+    memory_binding: bool,
+    memory_grant_id: str | None,
+    expected_policy_revision: int | None,
+    approve_memory_binding: bool,
     allow_network: bool,
     allow_download: bool,
     allow_cache_write: bool,
@@ -3804,10 +6480,51 @@ def agent_connect_cmd(
 ) -> None:
     """Register Rush with AGENT_ID and activate its scoped memory.
 
-    Requires --allow-cache-write and --allow-artifact-write.
+    Requires --allow-cache-write and --allow-artifact-write. The project
+    instruction block is written only with --install-guidance or an explicit
+    "y" at the terminal prompt; --consent and --acknowledge never imply it.
+
+    Without --profile an existing Rush entry keeps its args (only a stale
+    command path is repaired) and a new one runs `mcp serve --profile core`.
+    With --profile the entry's migration is previewed first and applied only
+    after "y" at the terminal prompt or --yes.
+
+    Post-edit hooks run only after --enable-agent-hooks for this host and
+    --project (a registered project); --disable-agent-hooks or `rush agent
+    disconnect` removes that activation.
+
+    --memory-binding binds this session to a memory grant after every check the
+    binding writer repeats passes before connect; it registers the binding only
+    with --approve-memory-binding and only after a successful connect.
     """
+    from .integrations.agent_hooks import HOOK_AGENTS
+    from .integrations.agents import installed_plugin_roots
     from .tools.agent_connection import AgentConnectionTool
 
+    if enable_hooks and disable_hooks:
+        raise click.UsageError(
+            "--enable-agent-hooks and --disable-agent-hooks are mutually exclusive"
+        )
+    binding = _connect_binding_preview(
+        memory_binding,
+        memory_grant_id,
+        expected_policy_revision,
+        approve_memory_binding,
+        project_path,
+        session_id,
+        agent_id,
+        as_json,
+    )
+    interactive = not as_json and os.isatty(0) and _is_terminal(sys.stdout)
+    hook_only_native = (
+        (enable_hooks or disable_hooks)
+        and agent_id in HOOK_AGENTS
+        and profile is None
+        and not install_guidance
+        and not consent
+        and not acknowledge
+        and bool(installed_plugin_roots(HOOK_AGENTS[agent_id]))
+    )
     result = AgentConnectionTool().run(
         agent_id,
         action="connect",
@@ -3815,7 +6532,13 @@ def agent_connect_cmd(
         rush_binary=rush_binary,
         consent=consent,
         acknowledge=acknowledge,
+        install_guidance=install_guidance,
+        confirm_guidance=_confirm_guidance
+        if interactive and not hook_only_native
+        else None,
         project_root=project_path,
+        profile=profile,
+        confirm_profile=_profile_consent(assume_yes, interactive, as_json),
         permissions=_extract_permissions(
             allow_network=allow_network,
             allow_download=allow_download,
@@ -3825,8 +6548,365 @@ def agent_connect_cmd(
             allow_artifact_write=allow_artifact_write,
             allow_browser=allow_browser,
         ),
+        agent_hooks="enable" if enable_hooks else "disable" if disable_hooks else None,
+        hook_result_cache=hook_result_cache,
+    )
+    if binding is not None:
+        binding = _memory_binding_step(result, binding, approve=approve_memory_binding)
+    if not as_json:
+        _echo_connect_state(result.get("raw") or {}, binding)
+    _render_session_result(dict(result), as_json)
+
+
+def _connect_binding_preview(
+    memory_binding: bool,
+    memory_grant_id: str | None,
+    expected_policy_revision: int | None,
+    approve_memory_binding: bool,
+    project_path: Path | None,
+    session_id: str,
+    agent_id: str,
+    as_json: bool,
+) -> dict[str, Any] | None:
+    """`agent connect`'s memory-binding options: the `preview` binding (or a
+    pre-connect refusal, which ends the command), `None` without --memory-binding."""
+    if not memory_binding:
+        for flag, given in (
+            ("--memory-grant-id", memory_grant_id is not None),
+            ("--expected-policy-revision", expected_policy_revision is not None),
+            ("--approve-memory-binding", approve_memory_binding),
+        ):
+            if given:
+                raise click.UsageError(f"{flag} requires --memory-binding")
+        return None
+    if (
+        memory_grant_id is None
+        or expected_policy_revision is None
+        or project_path is None
+    ):
+        raise click.UsageError(
+            "--memory-binding requires --memory-grant-id, "
+            "--expected-policy-revision and --project"
+        )
+    refusal = _memory_binding_precheck(
+        project_path, memory_grant_id, session_id, agent_id, expected_policy_revision
+    )
+    if refusal is not None:
+        refused = _memory_binding_refusal(*refusal)
+        if not as_json:
+            echo(_memory_binding_line(refused["raw"]["memory_binding"]))
+        _render_session_result(refused, as_json)
+    return {
+        "state": "preview",
+        "grant_id": memory_grant_id,
+        "session_id": session_id,
+        "host_id": agent_id,
+        "expected_policy_revision": expected_policy_revision,
+    }
+
+
+def _echo_connect_state(raw: dict[str, Any], binding: dict[str, Any] | None) -> None:
+    """The text-mode lines `agent connect` prints before its result."""
+    migration = raw.get("migration")
+    if isinstance(migration, dict) and migration.get("state") == "pending":
+        _echo_migration_preview(migration)  # not shown by a consent prompt
+    guidance = raw.get("guidance")
+    if isinstance(guidance, dict):
+        echo(f"guidance: {guidance['state']}")
+    hooks = raw.get("hooks")
+    if isinstance(hooks, dict):
+        echo(f"agent hooks: {hooks['state']}")
+        if hooks.get("note"):
+            echo(f"  {hooks['note']}")
+    if binding is not None:
+        echo(_memory_binding_line(binding))
+
+
+def _memory_binding_step(
+    result: Any, binding: dict[str, Any], *, approve: bool
+) -> dict[str, Any]:
+    """After connect: with approval and a successful connect (ok/warn with an
+    applied `raw.apply`), register the binding; a writer refusal never changes the
+    connect's own status, summary or effects (A5.5, A5.6)."""
+    from .memory import authorization as auth
+
+    raw = result.get("raw")
+    if not isinstance(raw, dict):
+        raw = {}
+        result["raw"] = raw
+    connected = result.get("status") in ("ok", "warn") and isinstance(
+        raw.get("apply"), dict
+    )
+    if approve and connected:
+        try:
+            binding = auth.register_memory_binding(
+                grant_id=binding["grant_id"],
+                session_id=binding["session_id"],
+                host_id=binding["host_id"],
+                expected_policy_revision=binding["expected_policy_revision"],
+                consent=True,
+            )
+        except auth.MemoryPolicyError as exc:
+            binding = (
+                {"state": "conflict", "code": exc.code}
+                if exc.code == "E_VERSION"
+                else {"state": "refused", "code": exc.code, "reason": exc.reason}
+            )
+    raw["memory_binding"] = binding
+    return binding
+
+
+def _binding_precheck_grant_state(grant: dict[str, Any]) -> tuple[str, str] | None:
+    """The precheck's principal, revoked and expiry checks on one grant."""
+    from .memory import authorization as auth
+
+    try:
+        principal = auth._writer_principal()
+    except auth.MemoryPolicyError:
+        return "E_PERMISSION", "principal_unavailable"
+    if grant["principal"] != principal:
+        return "E_PERMISSION", "principal_mismatch"
+    if grant["revoked"]:
+        return "E_PERMISSION", "revoked"
+    if grant["expires_at"] is not None and not auth._now() < grant["expires_at"]:
+        return "E_PERMISSION", "expired"
+    return None
+
+
+def _binding_precheck_inputs(
+    grant_id: str, session_id: str, agent_id: str
+) -> tuple[str, str] | None:
+    """The precheck's grant ID, session label and host label (the writer's own
+    validators), in the writer's order."""
+    from .memory import authorization as auth
+
+    try:
+        if not grant_id:
+            raise auth.MemoryPolicyError("E_INPUT", "grant_id")
+        auth._require_label(session_id, "session_id")
+        auth._require_label(agent_id, "host_id")
+    except auth.MemoryPolicyError as exc:
+        return exc.code, str(exc.reason)
+    return None
+
+
+def _binding_precheck_identity_matches(
+    project_path: Path, grant: dict[str, Any]
+) -> bool:
+    """True when the project's complete identity is the grant's scope."""
+    from .memory import authorization as auth
+
+    try:
+        identity = auth.project_identity(project_path)  # type: ignore[attr-defined]  # 73-T09/CODEC
+    except Exception:  # noqa: BLE001 - no identity never matches a grant
+        return False
+    return not (
+        identity["project_id"] is None
+        or identity["worktree_id"] is None
+        or grant["project_id"] != identity["project_id"]
+        or grant["worktree_id"] != identity["worktree_id"]
+        or grant["project_root"] != identity["canonical_root"]
+    )
+
+
+def _memory_binding_precheck(
+    project_path: Path, grant_id: str, session_id: str, agent_id: str, expected: int
+) -> tuple[str, str] | None:
+    """73-T02 item 5 (§3 H5): every check `register_memory_binding` repeats after
+    connect, decided before connect writes anything; `(code, reason)` of the first
+    failure, else `None`. Order: grant ID, session label, host label (the writer's
+    own validators), policy, revision, grant, principal, revoked, expired, identity,
+    then resolve."""
+    from .memory import authorization as auth
+
+    refusal = _binding_precheck_inputs(grant_id, session_id, agent_id)
+    if refusal is not None:
+        return refusal
+    loaded = auth.load_policy_readonly()
+    if loaded["state"] == "missing":
+        return "E_PERMISSION", "policy_missing"
+    if loaded["state"] != "ok":
+        return "E_PERMISSION", "policy_invalid"
+    current = loaded["policy_revision"]
+    if current != expected:
+        return "E_VERSION", f"expected revision {expected}, found {current}"
+    grant = loaded["grants"].get(grant_id)
+    if grant is None:
+        return "E_PERMISSION", "no_grant"
+    refusal = _binding_precheck_grant_state(grant)
+    if refusal is not None:
+        return refusal
+    if not _binding_precheck_identity_matches(project_path, grant):
+        return "E_PERMISSION", "binding_scope_mismatch"
+    resolved = auth.resolve_memory_scope(
+        project_root=project_path,
+        operation=grant["allowed_operations"][0],
+        owner_scope=OwnerScope.from_value(grant["owner_scope"]),
+    )
+    if resolved["access"] == "denied":
+        return "E_PERMISSION", str(resolved["reason"])
+    if resolved["grant_id"] != grant_id:
+        return "E_PERMISSION", "binding_scope_mismatch"
+    return None
+
+
+def _memory_binding_refusal(code: str, reason: str) -> dict[str, Any]:
+    """A pre-connect refusal: nothing connected, configured or bound (A5.2)."""
+    from .tools.memory import _CODE_STATUS
+
+    state = "conflict" if code == "E_VERSION" else "refused"
+    return {
+        "tool": "agent_connection",
+        "engine": None,
+        "engine_version": None,
+        "status": _CODE_STATUS.get(code, "error"),
+        "duration_ms": 0,
+        "summary": (
+            f"agent connect: memory binding {state} ({code}: {reason}); nothing written"
+        ),
+        "findings": [],
+        "raw": {"memory_binding": {"state": state, "code": code, "reason": reason}},
+        "metadata": {},
+    }
+
+
+def _memory_binding_line(binding: dict[str, Any]) -> str:
+    """A5.7: the one text-mode line for `raw["memory_binding"]`."""
+    state = binding.get("state")
+    if state == "preview":
+        return "memory binding: preview"
+    if state == "conflict":
+        return f"memory binding: conflict {binding['code']}"
+    if state == "refused":
+        return f"memory binding: refused {binding['code']} {binding['reason']}"
+    return f"memory binding: bound {binding['binding_id']}"
+
+
+def _profile_consent(
+    assume_yes: bool, interactive: bool, as_json: bool
+) -> bool | Callable[[dict[str, Any]], bool]:
+    """T4: `--yes` applies and a terminal asks [y/N], each after printing the
+    preview; any other run answers no, leaving the migration pending."""
+    if not (assume_yes or interactive):
+        return False
+
+    def consent(preview: dict[str, Any]) -> bool:
+        if not as_json:
+            _echo_migration_preview(preview)
+        if assume_yes:
+            return True
+        return _ask_yes("Apply this MCP profile migration? [y/N]: ")
+
+    return consent
+
+
+def _echo_migration_preview(preview: dict[str, Any]) -> None:
+    echo(f"Rush MCP profile migration for {preview['agent_id']}:")
+    echo(f"  config: {preview['config_path']} ({preview['method']})")
+    echo(
+        f"  current: {preview['current_command']} {preview['current_args']} "
+        f"(profile: {preview['current_profile']})"
+    )
+    echo(f"  new:     {preview['new_command']} {preview['new_args']}")
+    echo(f"  current sha256: {preview['current_sha256']}")
+
+
+def _is_terminal(stream: Any) -> bool:
+    try:
+        return os.isatty(stream.fileno())
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _confirm_guidance(plan: Any) -> bool:
+    """Show the exact target and diff, then ask [y/N]; only y/yes applies.
+
+    The answer is read straight from the terminal on fd 0 (the stream the
+    TTY check above inspected), so a replaced `sys.stdin` object cannot
+    answer for the user. EOF (Ctrl-D) or Ctrl-C declines.
+    """
+    echo(f"Rush instruction block for {plan.target_path}:")
+    echo(plan.diff)
+    return _ask_yes("Write this Rush instruction block? [y/N]: ")
+
+
+def _ask_yes(question: str) -> bool:
+    """Ask `question` on the terminal; only y/yes read from fd 0 is a yes."""
+    echo(question, nl=False)
+    answer = b""
+    try:
+        while not answer.endswith(b"\n"):
+            chunk = os.read(0, 1024)
+            if not chunk:
+                break
+            answer += chunk
+    except KeyboardInterrupt:
+        answer = b""
+    if not answer.endswith(b"\n"):
+        echo("")
+        return False  # EOF or Ctrl-C before a complete answer line
+    return answer.decode("utf-8", errors="replace").strip().lower() in ("y", "yes")
+
+
+@agent_group.command(name="disconnect")
+@click.argument("agent_id")
+@click.option(
+    "--project",
+    "project_path",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Project whose connection to remove; omit for the user-scope connection.",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+def agent_disconnect_cmd(
+    agent_id: str, project_path: Path | None, as_json: bool
+) -> None:
+    """Remove Rush's own, unchanged components for AGENT_ID.
+
+    Removes the MCP entry, the instruction block (or this agent from a
+    shared block), and Rush skill/hook resources recorded as Rush-owned.
+    Anything changed since Rush wrote it is kept and reported as a conflict.
+    Running it again is a no-op.
+    """
+    from .tools.agent_connection import AgentConnectionTool
+
+    result = AgentConnectionTool().run(
+        agent_id, action="disconnect", project_root=project_path
     )
     _render_session_result(dict(result), as_json)
+
+
+@agent_group.command(name="hook")
+@click.argument("host", type=click.Choice(["claude", "codex"]))
+def agent_hook_cmd(host: str) -> None:
+    """Post-edit hook entrypoint the Rush Claude Code/Codex plugins run.
+
+    Reads the host's JSON event on stdin. Prints nothing and runs no check
+    unless agent hooks are enabled for this host and project (`rush agent
+    connect AGENT --project P --enable-agent-hooks`); then prints the check
+    summary in the host's context field. Always exits 0 so a hook never
+    changes the edit's result.
+    """
+    # Both streams are bound before anything runs (the adapter module is
+    # imported with this one, so nothing yields first): the result goes to
+    # the stream this event arrived with.
+    stdin = click.get_binary_stream("stdin")
+    stdout = click.get_text_stream("stdout")
+    payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
+    if len(payload) > MAX_PAYLOAD_BYTES:
+        while stdin.read(65536):  # drain, so the host's write never fails
+            pass
+    # Unless a log level was asked for, stderr carries only the hook's own
+    # diagnostics and errors; the check's warnings are in the context text.
+    source = click.get_current_context().find_root().get_parameter_source("log_level")
+    with (
+        quiet_logging()
+        if source == click.core.ParameterSource.DEFAULT
+        else nullcontext()
+    ):
+        output = run_agent_hook(host, payload)
+    if output:
+        echo(output, file=stdout)
 
 
 @agent_group.command(name="doctor")
@@ -3837,7 +6917,7 @@ def agent_connect_cmd(
     "--project",
     "project_path",
     default=None,
-    type=click.Path(path_type=Path),
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Project root for project-scoped memory.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
@@ -3905,6 +6985,60 @@ def agent_doctor_cmd(
     default=None,
     help="Pin an exact release version instead of latest.",
 )
+@click.option(
+    "--install-guidance",
+    is_flag=True,
+    help=(
+        "Write the Rush instruction block into the selected project's "
+        "CLAUDE.md/AGENTS.md; without it the block is only previewed."
+    ),
+)
+@click.option(
+    "--agent-plugin",
+    "agent_plugins",
+    multiple=True,
+    type=click.Choice(["claude", "codex"]),
+    help=(
+        "Install (or upgrade) the native Rush plugin for this host through "
+        "its own plugin CLI instead of a manual MCP entry. Repeatable."
+    ),
+)
+@click.option(
+    "--convert-manual-entry",
+    is_flag=True,
+    help=(
+        "With --agent-plugin: consent to removing an existing 'rush' MCP entry "
+        "Rush did not record (shown as a diff in the result) so the plugin is "
+        "the only Rush server. Without it that host is left unchanged."
+    ),
+)
+@click.option(
+    "--agent",
+    "agent",
+    type=click.Choice(["claude", "codex"]),
+    default=None,
+    help=(
+        "Connect exactly this LLM CLI (overrides --agents all). With --setup, the "
+        "host that guided setup connects to --project."
+    ),
+)
+@click.option(
+    "--setup",
+    "guided_setup",
+    is_flag=True,
+    help=(
+        "After installing (connecting no agent itself), run `rush setup` for "
+        "--project (default: the current directory) and --agent, asking consent "
+        "on the terminal."
+    ),
+)
+@click.option(
+    "--non-interactive",
+    is_flag=True,
+    help="With --setup: never prompt; print the full setup preview instead.",
+)
+@click.option("--handoff-archive", type=click.Path(path_type=Path), hidden=True)
+@click.option("--handoff-sums", type=click.Path(path_type=Path), hidden=True)
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
 def install_cmd(
     agents: str,
@@ -3915,27 +7049,48 @@ def install_cmd(
     init_git: bool,
     session_id: str,
     version: str | None,
+    install_guidance: bool,
+    agent_plugins: tuple[str, ...],
+    convert_manual_entry: bool,
+    agent: str | None,
+    guided_setup: bool,
+    non_interactive: bool,
+    handoff_archive: Path | None,
+    handoff_sums: Path | None,
     as_json: bool,
 ) -> None:
     """Download/verify/install the release binary, connect agents, and optionally set up a project."""
-    from .tools.install import InstallTool
+    if agent is not None and agents == "none" and not guided_setup:
+        raise click.UsageError(
+            "--agent conflicts with --agents none: --agent HOST connects exactly "
+            "that host, --agents none connects none"
+        )
+    from .tools.install import run_install_command
 
-    result = InstallTool().run(
-        agents=agents,  # type: ignore[arg-type]
-        memory=memory,  # type: ignore[arg-type]
-        project=project_path,
+    outcome = run_install_command(
+        setup=guided_setup,
+        agent=agent,
+        project_path=project_path,
+        interactive=not (as_json or non_interactive),
+        agents=agents,
+        memory=memory,
         create_name=create_name,
         create_parent=create_parent,
         init_git=init_git,
         session_id=session_id,
         version=version,
-        permissions=ExecutionPermissions(
-            network=True, download=True, cache_write=True, artifact_write=True
-        ),
+        install_guidance=install_guidance,
+        agent_plugins=agent_plugins,
+        convert_manual_entry=convert_manual_entry,
+        handoff_archive=handoff_archive,
+        handoff_sums=handoff_sums,
     )
-    _render_session_result(dict(result), as_json)
-    if result["status"] != "ok":
-        raise click.exceptions.Exit(1)
+    try:
+        _render_session_result(dict(outcome["install"]), as_json)
+    except click.exceptions.Exit as done:
+        if outcome["followup"] and not as_json:
+            echo(outcome["followup"])
+        raise click.exceptions.Exit(done.exit_code or outcome["setup_exit"]) from None
 
 
 @cli.group(name="ship")
@@ -3963,55 +7118,73 @@ def ship_clean_cmd(apply: bool, allow_artifact_write: bool) -> None:
     )
     if res["status"] in {"error", "skipped", "warn"}:
         detail = res.get("error") or f"refused {res['refused_count']} artifacts"
-        click.echo(f"Ship Clean: {res['status']}: {detail}", err=True)
+        echo(f"Ship Clean: {res['status']}: {detail}", err=True)
         raise click.exceptions.Exit(1)
     mode = "Removed" if apply else "Would remove"
-    click.echo(
+    echo(
         f"Ship Clean: {mode} "
         f"{res['removed_count'] if apply else res['preview_count']} items "
         f"({res['bytes_freed'] if apply else res['preview_bytes']} bytes)."
     )
 
 
+@collection_route("missing_in_example")
 @ship_group.command(name="env")
-def ship_env_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_env_cmd(as_json: bool) -> None:
     """Lint codebase environment variable usage against .env.example."""
     from rush.tools.ship.env_linter import EnvParityLinter
 
-    linter = EnvParityLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo(
-            "Ship Env: All codebase environment variables declared in .env.example."
-        )
+    res = EnvParityLinter().lint()
+    rows = res.get("missing_in_example") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Env: All codebase environment variables declared in .env.example.")
     else:
-        click.echo(
+        echo(
             f"Ship Env: FAIL - {len(res['missing_in_example'])} undeclared variables in .env.example:",
             err=True,
         )
-        for var in res["missing_in_example"]:
-            click.echo(f"  - {var}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  - {item}",
+            err=True,
+            empty="no environment keys are missing",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("broken_links")
 @ship_group.command(name="docs")
-def ship_docs_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_docs_cmd(as_json: bool) -> None:
     """Audit documentation links and CLI reference parity."""
     from rush.tools.ship.docs_linter import DocsLinter
 
-    linter = DocsLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo(
+    res = DocsLinter().lint()
+    rows = res.get("broken_links") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo(
             f"Ship Docs: Audited {res['checked_docs']} markdown docs. All links valid."
         )
     else:
-        click.echo(
+        echo(
             f"Ship Docs: FAIL - {res['broken_links_count']} broken relative links found:",
             err=True,
         )
-        for link in res["broken_links"]:
-            click.echo(f"  - {link['file']} -> {link['target']}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  - {item['file']} -> {item['target']}",
+            err=True,
+            empty="no documentation links are stale",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4023,71 +7196,100 @@ def ship_gate_cmd() -> None:
     cockpit = ShipCockpit()
     verdict = cockpit.evaluate_gate()
     status_str = "PASSED" if verdict.all_passed else "FAILED"
-    click.echo(f"Ship Gate Verdict: {status_str} ({verdict.score_pct}% score)")
+    echo(f"Ship Gate Verdict: {status_str} ({verdict.score_pct}% score)")
     for v in verdict.vectors:
         mark = "[OK]" if v.passed else "[FAIL]"
-        click.echo(f"  {mark} {v.name.upper()}: {v.details} ({v.duration_ms}ms)")
+        echo(f"  {mark} {v.name.upper()}: {v.details} ({v.duration_ms}ms)")
     if not verdict.all_passed:
         sys.exit(1)
 
 
+@collection_route("findings")
 @ship_group.command(name="migration")
-def ship_migration_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_migration_cmd(as_json: bool) -> None:
     """Lint database migrations for table-locking hazards."""
     from rush.tools.ship.migration_linter import MigrationLinter
 
-    linter = MigrationLinter()
-    res = linter.lint_migrations()
-    if res["passed"]:
-        click.echo("Ship Migration: No dangerous table locks detected.")
+    res = MigrationLinter().lint_migrations()
+    rows = res.get("findings") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Migration: No dangerous table locks detected.")
     else:
-        click.echo(
+        echo(
             f"Ship Migration: FAIL - {res['findings_count']} migration hazards:",
             err=True,
         )
-        for item in res["findings"]:
-            click.echo(f"  {item['file']}: {', '.join(item['hazards'])}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: {', '.join(item['hazards'])}",
+            err=True,
+            cap=FINDINGS_CAP,
+            noun="findings",
+            empty="no dangerous migrations were found",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("rows")
 @ship_group.command(name="semver")
 @click.argument("old_file", type=click.Path(exists=True, path_type=Path))
 @click.argument("new_file", type=click.Path(exists=True, path_type=Path))
-def ship_semver_cmd(old_file: Path, new_file: Path) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_semver_cmd(old_file: Path, new_file: Path, as_json: bool) -> None:
     """Check for breaking API signature changes between file versions."""
     from rush.tools.ship.semver_linter import SemverLinter
 
     linter = SemverLinter()
     old_code = old_file.read_text(encoding="utf-8", errors="ignore")
     new_code = new_file.read_text(encoding="utf-8", errors="ignore")
-    breaking = linter.diff_apis(old_code, new_code)
-    if not breaking:
-        click.echo(
+    breaking = list(linter.diff_apis(old_code, new_code))
+    if as_json:
+        echo_json({"passed": not breaking, "rows": breaking, "total": len(breaking)})
+    elif not breaking:
+        echo(
             f"Ship SemVer: Public API signatures compatible ({old_file.name} -> {new_file.name})."
         )
     else:
-        click.echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
-        for b in breaking:
-            click.echo(f"  - {b}", err=True)
+        echo(f"Ship SemVer: FAIL - {len(breaking)} breaking changes:", err=True)
+    if not as_json:
+        echo_rows(
+            breaking,
+            lambda b: f"  - {b}",
+            err=True,
+            empty="no breaking changes were found",
+        )
+    if breaking:
         sys.exit(1)
 
 
+@collection_route("leaks")
 @ship_group.command(name="pack")
-def ship_pack_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def ship_pack_cmd(as_json: bool) -> None:
     """Audit source tree for secret leaks before packaging."""
     from rush.tools.ship.package_linter import PackageLinter
 
-    linter = PackageLinter()
-    res = linter.lint()
-    if res["passed"]:
-        click.echo("Ship Pack: Source package clean of sensitive keys and env files.")
+    res = PackageLinter().lint()
+    rows = res.get("leaks") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("Ship Pack: Source package clean of sensitive keys and env files.")
     else:
-        click.echo(
+        echo(
             f"Ship Pack: FAIL - {res['leaks_count']} sensitive files detected:",
             err=True,
         )
-        for leak in res["leaks"]:
-            click.echo(f"  - {leak}", err=True)
+    if not as_json:
+        echo_rows(
+            rows, lambda item: f"  - {item}", err=True, empty="no files were packed"
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4103,32 +7305,76 @@ def context_group() -> None:
 
 @context_group.command(name="retrieve")
 @click.argument("chunk_hash")
+@click.option(
+    "--view",
+    type=click.Choice(["result", "bytes"]),
+    default=None,
+    help="Read a stored compact result: a findings page (result) or a byte "
+    "slice (bytes). Omit for the legacy full chunk.",
+)
+@click.option("--cursor", default=None, help="next_cursor from the previous page.")
+@click.option(
+    "--offset",
+    type=int,
+    default=None,
+    help="Start finding (result) or byte (bytes); not with --cursor.",
+)
+@click.option("--limit", type=int, default=None, help="Findings per page, 1-50.")
+@click.option(
+    "--max-bytes",
+    "max_bytes",
+    type=int,
+    default=None,
+    help="Size budget of the whole printed page, 4096-65536 bytes.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Emit canonical ToolResult JSON.")
-def context_retrieve_cmd(chunk_hash: str, as_json: bool) -> None:
+def context_retrieve_cmd(
+    chunk_hash: str,
+    view: str | None,
+    cursor: str | None,
+    offset: int | None,
+    limit: int | None,
+    max_bytes: int | None,
+    as_json: bool,
+) -> None:
     """Retrieve a CCR chunk through the shared continuity contract."""
     from rush.tools.continuity import SessionContinuityTool
 
     _render_session_result(
         SessionContinuityTool().run(
-            Path.cwd(), operation="context_retrieve", context_handle=chunk_hash
+            Path.cwd(),
+            operation="context_retrieve",
+            context_handle=chunk_hash,
+            view=view,
+            cursor=cursor,
+            offset=offset,
+            limit=limit,
+            max_bytes=max_bytes,
         ),
         as_json,
     )
 
 
+@collection_route("rows")
 @context_group.command(name="mistakes")
-def context_mistakes_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def context_mistakes_cmd(as_json: bool) -> None:
     """List historical Git-revert mistake guardrails."""
     from rush.memory.mistake_miner import MistakeMiner
 
-    miner = MistakeMiner()
-    mistakes = miner.mine_mistakes()
-    if not mistakes:
-        click.echo("No historical mistake patterns found in git revert history.")
+    mistakes = MistakeMiner().mine_mistakes()
+    if as_json:
+        echo_json({"rows": mistakes, "total": len(mistakes)})
         return
-    click.echo(f"Mistake Guardrails ({len(mistakes)}):")
-    for m in mistakes:
-        click.echo(f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}")
+    if not mistakes:
+        echo("No historical mistake patterns found in git revert history.")
+    else:
+        echo(f"Mistake Guardrails ({len(mistakes)}):")
+    echo_rows(
+        mistakes,
+        lambda m: f"  - [AVOID] {m.get('reverted_subject')}: {m.get('rationale')}",
+        empty="no reverted mistakes are recorded",
+    )
 
 
 @context_group.command(name="pack")
@@ -4168,7 +7414,7 @@ def context_align_prompt_cmd(system: str) -> None:
 
     aligner = CacheAligner()
     aligned = aligner.align_prompt(system)
-    click.echo(
+    echo(
         f"Aligned tokens: {aligned['system']['aligned_tokens']} (Padded: {aligned['system']['padded']})"
     )
 
@@ -4190,6 +7436,11 @@ def _run_gain_live_panel(
     from rush.token_economy.tui_gain import build_gain_panel
 
     console = console or Console()
+    if max_updates is None and not console.is_terminal:
+        # T27: redirected/piped output cannot host a live HUD and nothing
+        # can deliver Ctrl+C to it -- print one read-only snapshot and exit.
+        console.print(build_gain_panel())
+        return
     with Live(build_gain_panel(), console=console, refresh_per_second=4) as live:
         updates = 0
         try:
@@ -4225,15 +7476,48 @@ def context_gain_cmd() -> None:
 )
 def context_persona_cmd(set_persona: str | None) -> None:
     """View or configure agent terse response persona style."""
-    from rush.memory.preference_store import PreferenceStore
+    from rush.memory.migration import PreferenceError
+    from rush.memory.preference_store import PreferenceStore, get_preference_readonly
+    from rush.memory.retrieval import RouteDenial, route_access
 
-    prefs = PreferenceStore()
+    # 72-T01 D1: the persona preference is memory (`migration:preference_store`);
+    # its read and its write are authorized before any store is touched.
+    cwd = Path.cwd().resolve()
+    sources = ["migration:preference_store"]
+
+    def unavailable(code: str, reason: str) -> None:
+        echo(f"Persona style unavailable: {code} ({reason})")
+        raise click.exceptions.Exit(1)
+
     if set_persona:
-        prefs.set("persona_style", set_persona)
-        click.echo(f"Persona style set to: {set_persona}")
-    else:
-        current = prefs.get("persona_style", "terse")
-        click.echo(f"Current persona style: {current}")
+        # 72-T05 D10 (persona): `PreferenceStore.set` authorizes itself (legacy,
+        # unavailable or policy mode); a refusal is a skipped result, exit 0.
+        try:
+            PreferenceStore().set("persona_style", set_persona)
+        except PreferenceError as error:
+            hint = (
+                " (grant source migration:preference_store)"
+                if error.reason == "source_not_granted"
+                else ""
+            )
+            echo(f"skipped: {error.code} {error.reason}{hint}")
+            return
+        echo(f"Persona style set to: {set_persona}")
+        return
+    access = route_access(cwd, "ask", session_allowlist=sources)
+    if isinstance(access, RouteDenial):
+        unavailable(access.code, access.reason)
+        return
+    rush_dir = cwd / ".rush"
+    if (
+        not (rush_dir / "preferences.json").exists()
+        and not (rush_dir / "memory.db").exists()
+    ):
+        # T27: a read never creates the preference or memory store.
+        echo("Current persona style: terse (default; no preference store in .rush/)")
+        return
+    current = get_preference_readonly(rush_dir.parent, "persona_style", "terse")
+    echo(f"Current persona style: {current}")
 
 
 @cli.command(name="blast-radius")
@@ -4244,38 +7528,50 @@ def blast_radius_cmd(path: str, depth: int) -> None:
     from rush.tools.blast_radius import BlastRadiusAnalyzer
 
     analyzer = BlastRadiusAnalyzer()
-    report = analyzer.analyze([Path(path)], max_depth=depth)
-    click.echo(f"Blast Radius Impact: Risk={report.risk_score}")
-    click.echo(
+    try:
+        report = analyzer.analyze([Path(path)], max_depth=depth)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--path'") from exc
+    echo(f"Blast Radius Impact: Risk={report.risk_score}")
+    echo(
         f"  Affected Files ({len(report.affected_files)}): {', '.join(report.affected_files) or 'None'}"
     )
-    click.echo(
+    echo(
         f"  Affected Routes ({len(report.affected_routes)}): {', '.join(report.affected_routes) or 'None'}"
     )
-    click.echo(
+    echo(
         f"  Recommended Tests ({len(report.recommended_tests)}): {', '.join(report.recommended_tests) or 'None'}"
     )
 
 
+@collection_route("violations")
 @cli.command(name="arch-guard")
-def arch_guard_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def arch_guard_cmd(as_json: bool) -> None:
     """Evaluate codebase against architectural layer boundary rules."""
     from rush.tools.arch_guard import ArchGuard
 
-    guard = ArchGuard()
-    res = guard.evaluate_boundaries()
-    if res["passed"]:
-        click.echo("ArchGuard: All layer boundaries respected.")
+    res = ArchGuard().evaluate_boundaries()
+    rows = res.get("violations") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("ArchGuard: All layer boundaries respected.")
     else:
-        click.echo(
+        echo(
             f"ArchGuard: FAIL - {res['violations_count']} architectural boundary violations:",
             err=True,
         )
-        for v in res["violations"]:
-            click.echo(
-                f"  {v['source_file']} ({v['source_layer']}) imports illegal layer {v['illegal_target_layer']}",
-                err=True,
-            )
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: (
+                f"  {item['source_file']} ({item['source_layer']}) imports illegal layer {item['illegal_target_layer']}"
+            ),
+            err=True,
+            empty="no illegal layer imports were found",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4331,66 +7627,88 @@ def test_heal_cmd(
         allow_build=allow_build,
     )
     if "error" in res or res.get("status") == "error":
-        click.echo(
+        echo(
             f"Error: {res.get('error', res.get('summary', 'test healing failed'))}",
             err=True,
         )
-        sys.exit(1)
+        sys.exit(2)
     if res.get("status") == "skipped":
-        click.echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
+        echo(res.get("summary", res.get("diagnosis", "Test healing skipped")))
         return
-    click.echo(f"Test Heal Diagnostic: {res['test_path']}")
-    click.echo(
+    echo(f"Test Heal Diagnostic: {res['test_path']}")
+    echo(
         f"  Runs: {res['runs']} (Passes: {res['passes']}, Failures: {res['failures']})"
     )
-    click.echo(
+    echo(
         f"  Status: {'FLAKY' if res['is_flaky'] else 'DETERMINISTIC'} - {res['diagnosis']}"
     )
     if res["suggested_fix"]:
-        click.echo(f"  Fix:\n{res['suggested_fix']}")
+        echo(f"  Fix:\n{res['suggested_fix']}")
 
 
+@collection_route("breaking_changes")
 @cli.command(name="api-diff")
 @click.option("--base", "-b", default="main", help="Base Git ref to compare against.")
-def api_diff_cmd(base: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def api_diff_cmd(base: str, as_json: bool) -> None:
     """Detect breaking public API signature changes against base Git ref."""
     from rush.tools.api_diff import ApiDiffer
 
-    differ = ApiDiffer()
-    res = differ.diff_public_api(base_ref=base)
-    if res["passed"]:
-        click.echo(
-            f"ApiDiff: No breaking public API changes detected against '{base}'."
-        )
+    try:
+        res = ApiDiffer().diff_public_api(base_ref=base)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="'--base'") from exc
+    rows = res.get("breaking_changes") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo(f"ApiDiff: No breaking public API changes detected against '{base}'.")
     else:
-        click.echo(
+        echo(
             f"ApiDiff: FAIL - {res['breaking_changes_count']} breaking API changes against '{base}':",
             err=True,
         )
-        for b in res["breaking_changes"]:
-            click.echo(f"  {b['file']}: [{b['type']}] {b['details']}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: [{item['type']}] {item['details']}",
+            err=True,
+            empty="no public API changes were found",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("drift_issues")
 @cli.command(name="db-drift")
-def db_drift_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def db_drift_cmd(as_json: bool) -> None:
     """Audit ORM models against SQL migrations to detect unmigrated schema drift."""
     from rush.tools.db_drift import DbDriftAuditor
 
-    auditor = DbDriftAuditor()
-    res = auditor.audit_drift()
-    if res["passed"]:
-        click.echo("DbDrift: All ORM models are synchronized with migrations.")
+    res = DbDriftAuditor().audit_drift()
+    rows = res.get("drift_issues") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("DbDrift: All ORM models are synchronized with migrations.")
     else:
-        click.echo(
+        echo(
             f"DbDrift: FAIL - {res['drift_count']} schema drift hazards found:",
             err=True,
         )
-        for issue in res["drift_issues"]:
-            click.echo(f"  {issue['model']}: {issue['details']}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['model']}: {item['details']}",
+            err=True,
+            empty="no schema drift was found",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
+@collection_route("candidates")
 @cli.command(name="simplify")
 @click.option(
     "--file",
@@ -4406,29 +7724,40 @@ def db_drift_cmd() -> None:
     type=int,
     help="Maximum allowed cognitive complexity score.",
 )
-def simplify_cmd(file_path: str, max_complexity: int) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def simplify_cmd(file_path: str, max_complexity: int, as_json: bool) -> None:
     """Decompose high-complexity functions into clean helper sub-functions."""
     from rush.tools.simplify import ComplexityDecomposer
 
     decomposer = ComplexityDecomposer()
     res = decomposer.decompose_file(Path(file_path), max_complexity=max_complexity)
-    if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
-        sys.exit(1)
-    if not res["needs_simplification"]:
-        click.echo(
+    if as_json:
+        echo_json(res)
+    elif "error" in res:
+        echo(f"Error: {res['error']}", err=True)
+    elif not res["needs_simplification"]:
+        echo(
             f"Simplify: File '{file_path}' has clean complexity (<= {max_complexity})."
         )
     else:
-        click.echo(
-            f"Simplify: {res['complex_functions_count']} functions exceed complexity threshold ({max_complexity}):"
+        echo(
+            f"Simplify: {res['complex_functions_count']} functions exceed complexity "
+            f"threshold ({max_complexity}):"
         )
-        for c in res["candidates"]:
-            click.echo(
-                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): {c['recommendation']}"
-            )
+    if "error" in res:
+        sys.exit(1)
+    if not as_json:
+        echo_rows(
+            res.get("candidates") or [],
+            lambda c: (
+                f"  Line {c['line']} - '{c['function']}' (complexity {c['complexity']}): "
+                f"{c['recommendation']}"
+            ),
+            empty="no functions exceed the complexity threshold",
+        )
 
 
+@collection_route("untyped_arguments")
 @cli.command(name="strictify")
 @click.option(
     "--file",
@@ -4437,64 +7766,138 @@ def simplify_cmd(file_path: str, max_complexity: int) -> None:
     required=True,
     help="File path to analyze for untyped parameters.",
 )
-def strictify_cmd(file_path: str) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def strictify_cmd(file_path: str, as_json: bool) -> None:
     """Synthesize runtime type guards for unvalidated function arguments."""
     from rush.tools.strictify import TypeSynthesizer
 
     synth = TypeSynthesizer()
     res = synth.audit_and_synthesize(Path(file_path))
+    if as_json:
+        echo_json(res)
+    elif "error" in res:
+        echo(f"Error: {res['error']}", err=True)
+    else:
+        echo(
+            f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
+        )
     if "error" in res:
-        click.echo(f"Error: {res['error']}", err=True)
         sys.exit(1)
-    click.echo(
-        f"Strictify: Found {res['untyped_count']} untyped parameters in '{file_path}':"
-    )
-    for u in res["untyped_arguments"]:
-        click.echo(
-            f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' -> Guard: {u['suggested_guard']}"
+    if not as_json:
+        echo_rows(
+            res["untyped_arguments"],
+            lambda u: (
+                f"  Line {u['line']} - '{u['function']}' arg '{u['argument']}' "
+                f"-> Guard: {u['suggested_guard']}"
+            ),
+            empty="no untyped arguments were found",
         )
 
 
+@collection_route("matrix")
 @cli.command(name="trace")
-def trace_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def trace_cmd(as_json: bool) -> None:
     """Scan codebase and specs to output requirement-to-test traceability matrix."""
     from rush.tools.trace import TraceScanner
 
-    scanner = TraceScanner()
-    res = scanner.scan_traceability()
-    click.echo(
-        f"Traceability Matrix: {res['total_requirements']} requirements tracked."
+    res = TraceScanner().scan_traceability()
+    if as_json:
+        echo_json(res)
+        return
+    echo(f"Traceability Matrix: {res['total_requirements']} requirements tracked.")
+    echo_rows(
+        res["matrix"],
+        lambda item: (
+            f"  {item['requirement']}: [{item['status']}] "
+            f"Impls={len(item['implementations'])} Tests={len(item['tests'])}"
+        ),
+        empty="no requirement IDs were found",
     )
-    for item in res["matrix"]:
-        click.echo(
-            f"  {item['requirement']}: [{item['status']}] Impls={len(item['implementations'])} Tests={len(item['tests'])}"
-        )
 
 
+@collection_route("rows")
 @cli.command(name="flight-recorder")
 @click.option(
     "--replay", "-r", "session_id", default=None, help="Replay a specific session ID."
 )
-def flight_recorder_cmd(session_id: str | None) -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def flight_recorder_cmd(session_id: str | None, as_json: bool) -> None:
     """Record and replay agent JSON-RPC sessions."""
+    from rush.invocation.targets import resolve_logical_root
+
+    # T10 (S10.5): status and replay are read-only and anchored at the logical root.
+    from rush.memory.retrieval import RouteDenial, route_access
     from rush.tools.flight_recorder import FlightRecorder
 
-    recorder = FlightRecorder()
+    logical_root = resolve_logical_root(Path.cwd())
+    # 72-T01 D1: replaying recorded memory is an `ask` read of the recorder's own
+    # sources; a denial replays nothing (the empty reader result).
+    access = route_access(
+        Path(logical_root),
+        "ask",
+        session_allowlist=["flight_recorder:record_event", "migration:flight_recorder"],
+    )
+    if session_id and isinstance(access, RouteDenial):
+        if as_json:
+            echo_json({"session_id": session_id, "rows": [], "total": 0})
+        else:
+            echo(
+                f"Flight Recorder: replay unavailable ({access.code} {access.reason})."
+            )
+        return
+    recorder = FlightRecorder(logical_root, create=False)
+    events: list[Any] = []
     if session_id:
-        events = recorder.replay_session(session_id)
-        click.echo(
+        from rush.memory.store import MemoryStoreUnreadableError
+
+        try:
+            events = recorder.replay_session(session_id)
+        except MemoryStoreUnreadableError as exc:
+            raise click.ClickException(f"{exc.code}: {exc}") from exc
+        recorded = (recorder.flights_dir / f"{session_id}.jsonl").exists()
+        if not events and not recorded:
+            # T27: an unknown session is not an empty recording.
+            raise click.BadParameter(
+                f"no recorded session {session_id!r}", param_hint="'--replay'"
+            )
+        title = (
             f"Flight Recorder: Replaying session '{session_id}' ({len(events)} events):"
         )
-        for e in events:
-            click.echo(f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}")
+    elif recorder.flights_dir.is_dir():
+        title = f"Flight Recorder: Active (recording to {recorder.flights_dir})."
     else:
-        click.echo("Flight Recorder: Active (recording to .rush/sessions/flights/).")
+        title = f"Flight Recorder: No recordings yet ({recorder.flights_dir} does not exist)."
+    if as_json:
+        echo_json({"session_id": session_id, "rows": events, "total": len(events)})
+        return
+    echo(title)
+    echo_rows(
+        events,
+        lambda e: f"  [{e['timestamp']}] {e['event_type']}: {e['payload']}",
+        empty="no events are recorded",
+    )
 
 
 @cli.command(name="swarm-merge")
-@click.option("--base", required=True, help="Path to base file.")
-@click.option("--ours", required=True, help="Path to ours file.")
-@click.option("--theirs", required=True, help="Path to theirs file.")
+@click.option(
+    "--base",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to base file.",
+)
+@click.option(
+    "--ours",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to ours file.",
+)
+@click.option(
+    "--theirs",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Path to theirs file.",
+)
 def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
     """Execute 3-way AST merge conflict resolution across concurrent agent changes."""
     from rush.tools.swarm_merge import SwarmMergeSolver
@@ -4505,11 +7908,11 @@ def swarm_merge_cmd(base: str, ours: str, theirs: str) -> None:
     t_code = Path(theirs).read_text(encoding="utf-8")
     res = solver.merge_3way(b_code, o_code, t_code)
     if res["success"]:
-        click.echo(
+        echo(
             f"SwarmMerge: Success - reconciled {res['functions_merged']} functions cleanly."
         )
     else:
-        click.echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
+        echo(f"SwarmMerge: FAIL - {res['error']}", err=True)
         sys.exit(1)
 
 
@@ -4526,12 +7929,14 @@ def simulate_ci_cmd(workflow: str) -> None:
 
     sim = SimulateCi()
     res = sim.run_workflow(workflow_name=workflow)
+    if res.get("not_found"):
+        raise click.BadParameter(res["error"], param_hint="'--workflow'")
     if res["passed"]:
-        click.echo(
+        echo(
             f"SimulateCI: Workflow '{workflow}' passed ({res['steps_executed']} steps)."
         )
     else:
-        click.echo(
+        echo(
             f"SimulateCI: FAIL at step '{res['failed_step']}': {res['error']}", err=True
         )
         sys.exit(1)
@@ -4540,7 +7945,7 @@ def simulate_ci_cmd(workflow: str) -> None:
 @cli.command(name="attest")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4585,6 +7990,7 @@ def simulate_ci_cmd(workflow: str) -> None:
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def attest_cmd(
     path: Path,
     artifact_path: Path | None,
@@ -4601,6 +8007,9 @@ def attest_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Generate in-toto Statement v1 / SLSA Provenance v1 draft attestations."""
     perms = _extract_permissions(
@@ -4625,18 +8034,20 @@ def attest_cmd(
             "trusted_roots": tuple(trusted_roots) if trusted_roots else (),
             "allowed_signers": tuple(allowed_signers) if allowed_signers else (),
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
 @cli.command(name="license-matrix")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def license_matrix_cmd(
     path: Path,
     allow_network: bool,
@@ -4647,6 +8058,9 @@ def license_matrix_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Audit project dependencies for copyleft and license risks."""
     perms = _extract_permissions(
@@ -4663,13 +8077,14 @@ def license_matrix_cmd(
         path,
         as_json=as_json,
         permissions=perms,
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
 @cli.command(name="iam-audit")
 @click.argument(
     "path",
-    type=click.Path(exists=True, path_type=Path),
+    type=TargetPath(path_type=Path),
     default=Path("."),
     required=False,
 )
@@ -4683,6 +8098,7 @@ def license_matrix_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@result_view_options
 def iam_audit_cmd(
     path: Path,
     output_policy_file: Path | None,
@@ -4694,6 +8110,9 @@ def iam_audit_cmd(
     allow_artifact_write: bool,
     allow_browser: bool,
     as_json: bool,
+    result_view: str | None,
+    limit: int | None,
+    max_bytes: int | None,
 ) -> None:
     """Audit AWS SDK calls in source code and synthesize least-privilege IAM policy."""
     perms = _extract_permissions(
@@ -4715,27 +8134,38 @@ def iam_audit_cmd(
                 str(output_policy_file) if output_policy_file else None
             ),
         },
+        view=ViewOptions(result_view, limit, max_bytes),
     )
 
 
+@collection_route("findings")
 @cli.command(name="hallu-guard")
-def hallu_guard_cmd() -> None:
+@click.option("--json", "as_json", is_flag=True, help=_JSON_LIST_HELP)
+def hallu_guard_cmd(as_json: bool) -> None:
     """Audit codebase for hallucinated or phantom package imports."""
     from rush.tools.hallu_guard import HalluGuard
 
-    guard = HalluGuard()
-    res = guard.audit_codebase()
-    if res["passed"]:
-        click.echo(
-            "HalluGuard: All AST imports grounded in installed packages or stdlib."
-        )
+    res = HalluGuard().audit_codebase()
+    rows = res.get("findings") or []
+    if as_json:
+        echo_json(res)
+    elif res["passed"]:
+        echo("HalluGuard: All AST imports grounded in installed packages or stdlib.")
     else:
-        click.echo(
+        echo(
             f"HalluGuard: FAIL - {res['findings_count']} hallucinated import findings:",
             err=True,
         )
-        for f in res["findings"]:
-            click.echo(f"  {f['file']}: {', '.join(f['violations'])}", err=True)
+    if not as_json:
+        echo_rows(
+            rows,
+            lambda item: f"  {item['file']}: {', '.join(item['violations'])}",
+            err=True,
+            cap=FINDINGS_CAP,
+            noun="findings",
+            empty="no ungrounded imports were found",
+        )
+    if not res["passed"]:
         sys.exit(1)
 
 
@@ -4756,7 +8186,7 @@ def _resolve_cli_capability(
 
     # 1. Reject argv capability token
     if capability_argv is not None:
-        click.echo(
+        echo(
             "Error: Passing capabilities via argv (--capability) is rejected. "
             "Capabilities must only be supplied via protected channels (stdin or descriptor).",
             err=True,
@@ -4766,7 +8196,7 @@ def _resolve_cli_capability(
     # 2. Reject environment variables
     env_cap = os.environ.get("RUSH_LOCK_CAPABILITY") or os.environ.get("CAPABILITY")
     if env_cap:
-        click.echo(
+        echo(
             "Error: Passing capabilities via environment variables is rejected. "
             "Capabilities must only be supplied via protected channels (stdin or descriptor).",
             err=True,
@@ -4786,7 +8216,7 @@ def _resolve_cli_capability(
                 token,
             )
         except OSError as exc:
-            click.echo(
+            echo(
                 f"Error: Failed to read capability from descriptor {descriptor}: {exc}",
                 err=True,
             )
@@ -4804,7 +8234,7 @@ def _resolve_cli_capability(
                     token,
                 )
         except OSError as exc:
-            click.echo(f"Error: Failed to read capability from stdin: {exc}", err=True)
+            echo(f"Error: Failed to read capability from stdin: {exc}", err=True)
             sys.exit(2)
 
     # 5. If no channel provided, generate new capability
@@ -4822,6 +8252,21 @@ def _resolve_project_root(path: Path) -> Path:
         ):
             return parent
     return curr
+
+
+def _held_lock_manager(path: Path, verb: str) -> Any:
+    """T27: release/renew act only on an existing lock store; with none there
+    is no lock to act on, so fail without creating `.rush/locks`."""
+    from rush.mcp_mesh.lock_manager import MeshLockManager
+
+    root = _resolve_project_root(path)
+    locks_dir = root / ".rush" / "locks"
+    if not locks_dir.is_dir():
+        echo(
+            f"Failed to {verb} lock for {path}: no lock store at {locks_dir}", err=True
+        )
+        sys.exit(1)
+    return MeshLockManager(project_root=root)
 
 
 @lock_cmd_group.command(name="acquire")
@@ -4880,10 +8325,10 @@ def lock_acquire_cmd(
         path, agent_id=agent_id, capability=cap_input, timeout_s=timeout_s, ttl_s=ttl_s
     )
     if ok:
-        click.echo(f"Lock acquired for {path}")
+        echo(f"Lock acquired for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to acquire lock for {path}", err=True)
+        echo(f"Failed to acquire lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -4916,19 +8361,16 @@ def lock_release_cmd(
     from_stdin: bool,
 ) -> None:
     """Release a coordination lock lease using protected caller capability."""
-    from rush.mcp_mesh.lock_manager import MeshLockManager
-
     cap_input, _raw_token = _resolve_cli_capability(
         agent_id, capability_argv, descriptor, from_stdin
     )
-    root = _resolve_project_root(path)
-    mgr = MeshLockManager(project_root=root)
+    mgr = _held_lock_manager(path, "release")
     ok = mgr.release(path, capability=cap_input, agent_id=agent_id)
     if ok:
-        click.echo(f"Lock released for {path}")
+        echo(f"Lock released for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to release lock for {path}", err=True)
+        echo(f"Failed to release lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -4969,19 +8411,16 @@ def lock_renew_cmd(
     ttl_s: float,
 ) -> None:
     """Renew a coordination lock lease using protected caller capability."""
-    from rush.mcp_mesh.lock_manager import MeshLockManager
-
     cap_input, _raw_token = _resolve_cli_capability(
         agent_id, capability_argv, descriptor, from_stdin
     )
-    root = _resolve_project_root(path)
-    mgr = MeshLockManager(project_root=root)
+    mgr = _held_lock_manager(path, "renew")
     ok = mgr.renew(path, capability=cap_input, ttl_s=ttl_s)
     if ok:
-        click.echo(f"Lock renewed for {path}")
+        echo(f"Lock renewed for {path}")
         sys.exit(0)
     else:
-        click.echo(f"Failed to renew lock for {path}", err=True)
+        echo(f"Failed to renew lock for {path}", err=True)
         sys.exit(1)
 
 
@@ -4993,7 +8432,10 @@ def lock_inspect_cmd(path: Path) -> None:
 
     root = _resolve_project_root(path)
     res = MeshLockManager.inspect(root, path)
-    click.echo(json.dumps(res, indent=2))
+    echo(json.dumps(res, indent=2))
+
+
+cli.add_command(build_help_command(cli))
 
 
 if __name__ == "__main__":

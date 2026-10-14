@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import io
 import json
-import os
 import tarfile
 from pathlib import Path
 
@@ -587,7 +586,7 @@ def test_non_interactive_install_never_prompts(
 # --- The installed executable is genuinely standalone -----------------------
 
 
-@pytest.mark.skipif(os.name != "posix", reason="fixture binary is a POSIX shell script")
+@pytest.mark.posix_only
 def test_global_executable_runs_from_two_unrelated_directories(tmp_path: Path) -> None:
     import subprocess
 

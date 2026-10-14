@@ -46,6 +46,7 @@ class PatchSandboxManager:
             for line in proc.stdout.splitlines()
             if not line.strip().endswith(".rush/")
             and not line.strip().endswith(".rush")
+            and line[3:] != ".rush/.gitignore"
         ]
         if dirty_lines:
             raise DirtyWorkspaceError(

@@ -48,6 +48,25 @@ check = true
 
 ---
 
+## `[tools.memory]` (Phase 63 MC05, Phase 72 hybrid retrieval)
+
+```toml
+[tools.memory]
+record = false
+embedding_endpoint = "http://127.0.0.1:11434"
+embedding_model = "nomic-embed-text"
+embedding_model_digest = "0123456789ab"
+```
+
+- `record`: when `true`, a completed tool invocation that was also granted `cache_write` is captured as a redacted memory observation. Default `false`.
+- `embedding_endpoint`: `http` URL of a local embedding engine on `127.0.0.1`, `::1` or `localhost`, with an explicit port from 1 to 65535 and no user info, path (other than `/`), query or fragment. Any other configured value makes a hybrid read fall back to lexical retrieval labelled `endpoint_not_loopback`, and that endpoint is never contacted. Default unset.
+- `embedding_model`: the embedding model the engine serves. Default unset.
+- `embedding_model_digest`: 12 to 64 lowercase hex characters of the model digest; the engine's `/api/tags` entry for `embedding_model` must report a digest starting with them. Default unset.
+
+Hybrid retrieval stays optional. A compact `ask`, `recall` or `list` read uses it when the request sets `retrieval = "hybrid"`, or without a `retrieval` field only when all three embedding options are set and equal the model and digest of a committed Phase 72 evaluation verdict of `benefit`, and the engine's `/api/tags` check passes. `retrieval = "lexical"` always reads lexically. The request fields `embedding_endpoint`, `embedding_model` and `embedding_model_digest` override these options one field at a time. Every hybrid read also needs the per-call network grant (`--allow-network`, or `allow_network: true` over MCP); `rush.toml` cannot grant it. A hybrid read that cannot rank is served lexically and labelled, never reported as hybrid: `retrieval = "lexical"`, `embedding_status = "skipped"`, one `embedding_fallback_code` (such as `network_not_granted`, `no_engine_configured`, `endpoint_not_loopback`, `model_digest_mismatch`, `engine_unreachable`, `engine_timeout` or `invalid_vectors`) and its fixed `hybrid_unavailable_reason`. Vectors are stored in `.rush/memory.db` only for a read granted `cache_write` whose owner also holds a `write`-capable memory grant (or a legacy explicit allowlist).
+
+---
+
 ## 3. Related Documentation
 
 - [Configuration Reference](reference/configuration-reference.md): Full field-by-field specification and type constraints.

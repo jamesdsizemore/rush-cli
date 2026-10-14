@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from pathlib import Path
 
 from rush.plugins.loader import PluginSpec
 
@@ -21,26 +22,48 @@ class AgentSkillGenerator:
         # registered in sys.modules, rush.memory.store's own `from rush.hook.trojan_source import
         # BIDI_CHARS` resolves as a plain submodule lookup instead of re-entering the cycle.
         import rush.hook  # noqa: F401
-        from rush.memory.store import MemoryArtifact, TypedArtifactStore
+        from rush.memory.retrieval import (
+            RouteDenial,
+            authorize_writer,
+            recheck_failure,
+            writer_owner,
+        )
+        from rush.memory.store import (
+            MemoryAccessChanged,
+            MemoryArtifact,
+            TypedArtifactStore,
+        )
         from rush.plugins.trust_store import PluginTrustStore
 
         closure_digest = plugin.closure.closure_digest if plugin.closure else None
-        TypedArtifactStore().write(
-            MemoryArtifact(
-                id=str(uuid.uuid4()),
-                family="skill",
-                subject="skill_pattern",
-                trust_tier="DERIVED",
-                content={
-                    "plugin_name": plugin.name,
-                    "description": plugin.description,
-                    "closure_digest": closure_digest,
-                },
-                source="skills_generator:generate_skill_markdown",
-                created_at=time.time(),
-                promoted_at=None,
-            )
-        )
+        # 72-T01 D4: the skill row is recorded only when the memory policy allows the
+        # write at the working directory; the markdown is returned either way.
+        root = Path.cwd().resolve()
+        with authorize_writer(
+            root, "skills_generator:generate_skill_markdown"
+        ) as granted:
+            if not isinstance(granted, RouteDenial):
+                try:
+                    TypedArtifactStore(root).write(
+                        MemoryArtifact(
+                            id=str(uuid.uuid4()),
+                            family="skill",
+                            subject="skill_pattern",
+                            trust_tier="DERIVED",
+                            content={
+                                "plugin_name": plugin.name,
+                                "description": plugin.description,
+                                "closure_digest": closure_digest,
+                            },
+                            source="skills_generator:generate_skill_markdown",
+                            created_at=time.time(),
+                            promoted_at=None,
+                            owner_scope=writer_owner(granted),
+                        ),
+                        commit_check=lambda: recheck_failure(granted),
+                    )
+                except MemoryAccessChanged:
+                    pass
 
         trusted = plugin.closure is not None and PluginTrustStore().is_trusted(
             plugin.name, plugin.closure.closure_digest

@@ -24,17 +24,7 @@ uv run --directory /absolute/path/to/rush-cli rush governance sync
 
 Rush includes a built-in stdio FastMCP server. Configure clients with an absolute Rush source-checkout path.
 
-### A. Cursor Setup
-1. Open Cursor **Settings** (`Cmd+,` or `Ctrl+,`).
-2. Navigate to **Features** → **MCP Servers** → **Add New MCP Server**.
-3. Fill in:
-   - **Name**: `rush`
-   - **Type**: `command`
-   - **Command**: `uv run --directory /absolute/path/to/rush-cli rush mcp serve`
-
----
-
-### B. Claude Code / Claude Desktop Setup
+### A. Claude Code / Claude Desktop Setup
 Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_config.json`):
 
 ```json
@@ -50,7 +40,7 @@ Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_confi
 
 ---
 
-### C. Cline / Roo Code Setup
+### B. Cline / Roo Code Setup
 1. In the Cline extension panel in VS Code, click the **MCP Servers** icon.
 2. Click **Configure MCP Servers**.
 3. Add the following entry:
@@ -68,7 +58,7 @@ Add Rush to your Claude configuration (`~/.claude.json` or `claude_desktop_confi
 
 ---
 
-### D. Windsurf / Cascade AI Setup
+### C. Windsurf / Cascade AI Setup
 Add Rush to your Windsurf Cascade MCP settings (`~/.codeium/windsurf/mcp_config.json`):
 
 ```json

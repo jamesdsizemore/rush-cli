@@ -39,7 +39,7 @@ uv run rush security .
 ```
 
 ### What Rush Invokes:
-- **Python**: Coordinates `pip-audit` to check packages against the PyPA advisory database.
+- **Python**: `uv.lock` and `requirements*.txt` (at the project root and nested, each `-r`/`-c` include resolved against the file that includes it) are audited offline by `osv-scanner` — no network is needed. Dependencies declared directly in `pyproject.toml`'s `[project.dependencies]` are instead audited by a gated `pip-audit` project-mode pass, which requires `--allow-network --allow-download --allow-cache-write --allow-build` together; without all four it is skipped. Each audited dependency input's `metadata.scope.dependencies` entry carries a `state`: `pending` (queued for osv-scanner), `audited` (osv-scanner ran against it), `unresolved` (editable/VCS/URL requirement, or a `pyproject.toml` dependency awaiting the gated pass), `scanner_unavailable` or `db_unavailable` (osv-scanner or its offline database could not run), or `malformed` (unreadable, invalid TOML, or an include escaping the project root).
 - **Node.js**: Coordinates `npm audit` to check `package-lock.json`.
 - **Containers**: Coordinates `Trivy` and `Grype` to scan base container images.
 - **Static Security (SAST)**: Coordinates `Semgrep` and `Bearer` to find SQL injection, Cross-Site Scripting (XSS), and unauthenticated API endpoints.

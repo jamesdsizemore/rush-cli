@@ -1,0 +1,15 @@
+{
+  "name": "rush-local",
+  "description": "Local marketplace written by rush install --agent-plugin for this machine's installed Rush.",
+  "owner": {
+    "name": "Rush"
+  },
+  "plugins": [
+    {
+      "name": "rush",
+      "source": "./rush",
+      "description": "Rush code-quality checks: the core Rush MCP tools, the rush skill and opt-in post-edit checks.",
+      "version": "@RUSH_VERSION@"
+    }
+  ]
+}

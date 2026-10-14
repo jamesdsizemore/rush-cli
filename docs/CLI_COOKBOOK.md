@@ -28,7 +28,7 @@ Run deterministic review, linters, non-mutating format checks, and unit tests:
 rush review .
 rush lint .
 rush format . --check
-rush test .
+rush test . --allow-build
 ```
 
 ### Review Changed Files Only (with Git Scope)
@@ -217,12 +217,12 @@ rush watch . --tool lint --debounce 500
 
 ### Terminal UI and web dashboard
 
-At a TTY, `ui` starts a persistent Rich UI with background checks and keyboard navigation; `--json` runs checks once, emits JSON, and exits, and redirected stdout without `--json` runs checks once and prints a text summary. `dashboard` starts an authenticated, CSRF-hardened HTTP server on `127.0.0.1` behind a single-use bootstrap URL, per server instance; mutations require an explicit grant per action. See the [dashboard/TUI review](reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings.
+At a TTY, `ui` starts a persistent Rich UI with background checks and keyboard navigation; `--json` prints read-only status JSON and exits, and redirected stdout without `--json` prints read-only status and next-action hints. Neither noninteractive route starts analysis. `dashboard` starts an authenticated, CSRF-hardened HTTP server on `127.0.0.1` behind a single-use bootstrap URL, per server instance; mutations require an explicit grant per action. See the [dashboard/TUI review](reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings.
 ```bash
 # Persistent interactive terminal UI
 rush ui .
 
-# Non-TTY: one-shot JSON
+# Non-TTY: read-only status JSON
 rush ui . --json
 
 # Launch authenticated local web dashboard on 127.0.0.1
@@ -335,7 +335,7 @@ rush hotspots analyze
 
 ### Synchronize Multi-IDE Agent Governance & Scaffold Projects
 ```bash
-# Compile canonical AGENTS.md to .cursorrules, .clinerules, etc.
+# Compile canonical AGENTS.md to .clinerules, etc.
 rush governance sync
 
 # Initialize new repository with canonical AI governance templates

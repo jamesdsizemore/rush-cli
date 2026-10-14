@@ -27,7 +27,7 @@
 ## 1. Executive Summary & Curation Methodology
 
 ### 1.1 The Vibecoder Dilemma & Core Challenge
-Modern software engineering has pivoted toward **Vibecoding**—developers, solo founders, and agile teams building full-stack applications at 10x velocity using iterative natural language prompts with AI coding agents (Claude Code, Cursor Composer, Windsurf, Cline, Gemini CLI).
+Modern software engineering has pivoted toward **Vibecoding**—developers, solo founders, and agile teams building full-stack applications at 10x velocity using iterative natural language prompts with AI coding agents (Claude Code, Windsurf, Cline, Gemini CLI).
 
 While code generation speed has exploded, it has created six critical failure modes:
 1. **Agent Context Amnesia & Attention Degradation**: Agents lose state between prompt turns, forgetting past architectural decisions, repeatedly trying failed patches, and thrashing token budgets with repetitive full-file dumps.
@@ -88,7 +88,7 @@ A resilient memory system cannot rely solely on advanced cognitive heuristics or
 flowchart TB
     subgraph Client["Developer & AI Agent Inputs"]
         CLI["Rush CLI Commands"]
-        FastMCP["FastMCP JSON-RPC Stdio (Claude Code, Cursor, Windsurf)"]
+        FastMCP["FastMCP JSON-RPC Stdio (Claude Code, Windsurf)"]
     end
 
     subgraph DualMemory["Unified Dual-Layer Memory Engine (src/rush/memory/)"]
@@ -106,7 +106,7 @@ flowchart TB
             T2_2["2. Causal Invariant Graph (Architecture Decision Records)"]
             T2_3["3. Failure Ledger & Anti-Pattern Sieve (Failed Patch ASTs)"]
             T2_4["4. Adaptive XML Token-Budgeted Compilation (<200 tokens)"]
-            T2_5["5. Multi-Agent Stdio WAL Synchronization (Cursor + Claude)"]
+            T2_5["5. Multi-Agent Stdio WAL Synchronization (Claude + Windsurf)"]
         end
     end
 
@@ -133,7 +133,7 @@ flowchart TB
 - **Causal Decision Graph**: Enforces architectural invariants and halts unauthorized service imports in $<5\text{ ms}$.
 - **Negative Knowledge Failure Ledger**: Records AST Merkle fingerprints of failed patches and test traces to stop repeat errors immediately.
 - **AST-Merkle Reactive Invalidation**: Binds memories to AST hashes and auto-transitions changed code to `stale`.
-- **Multi-Agent FastMCP WAL Mesh**: Shared SQLite database connecting Claude Code, Cursor, and Windsurf concurrently.
+- **Multi-Agent FastMCP WAL Mesh**: Shared SQLite database connecting Claude Code and Windsurf concurrently.
 - **Token-Budgeted Adaptive XML Compilation (`rush memory inject`)**: Injects $<200$-token prompt summaries into system prompts.
 
 ---
@@ -343,7 +343,7 @@ Below are the complete technical specifications, architectural designs, CLI/MCP 
 ---
 
 ### Feature 23: `rush mcp mesh` — Local Multi-Agent FastMCP Mesh Daemon & Coordinated Lock Manager
-- **Persona:** Multi-Agent Workflows running Claude Code, Cursor, and Windsurf concurrently.
+- **Persona:** Multi-Agent Workflows running Claude Code and Windsurf concurrently.
 - **Problem Solved:** Multiple agents connecting to local tools execute redundant scans, thrash caches, and overwrite files without mutual exclusion.
 - **Deep Mechanics:** Background daemon over domain sockets / named pipes; federates the SQLite cache across agent instances; manages mutual exclusion file locks during patch applications; broadcasts real-time AST mutation events to peer agents.
 - **CLI & MCP Surface:** `rush mcp mesh [--port 8765] [--socket-path <PATH>]`
@@ -491,7 +491,7 @@ Below is the complete, exhaustive catalog of every command in the Rush CLI ecosy
 - `rush guard check-path`: Enforces strict workspace path confinement.
 - `rush patch apply`: Applies candidate AI diffs in an isolated ephemeral Git worktree sandbox.
 - `rush score`: Computes 6-pillar repository health grade (0–100%) and generates SVG badges.
-- `rush governance sync`: Compiles canonical `AGENTS.md` into `.cursorrules`, `.clinerules`, and Copilot rules.
+- `rush governance sync`: Compiles canonical `AGENTS.md` into `.clinerules` and Copilot rules.
 
 ---
 
@@ -1116,16 +1116,15 @@ An exhaustive audit of the entire `docs/` tree (216 files across all subdirector
 | 16 | `docs/MIGRATION_GUIDE.md` | Document v0.2.0 $\rightarrow$ v0.3.0 configuration changes and new SQLite database paths (`.rush/memory.db`). | Phase 41–46 |
 | 17 | `docs/agentic-rush/memory.md` | Detail the 4-tier taxonomy, SQLite FTS5 search, and AST Merkle reactive invalidation mechanics. | Phase 41A–41B |
 | 18 | `docs/agentic-rush/workflows.md` | Detail the 6 end-to-end autonomous agent workflows (Swarm merge, pre-flight, self-heal). | Phase 41–46 |
-| 19 | `docs/integrations/cursor.md` | Update Cursor Composer rules and FastMCP mesh socket configuration instructions. | Phase 41, 46 |
-| 20 | `docs/integrations/claude.md` | Update Claude Code project setup, MCP registration, and prompt memory injection. | Phase 41, 42 |
-| 21 | `docs/integrations/windsurf.md` | Update Windsurf Cascade tool integration and shared SQLite cache protocols. | Phase 41, 46 |
-| 22 | `docs/integrations/cline.md` | Update Cline MCP configuration and mutual exclusion file locking behavior. | Phase 41, 46 |
-| 23 | `docs/vibecoding/README.md` | Update VibeCoder ecosystem overview with pre-flight cockpit and instant feedback loops. | Phase 41–46 |
-| 24 | `docs/vibecoding/fast-loop.md` | Document sub-second AST hallucination guards and real-time environment sync. | Phase 41–42 |
-| 25 | `docs/vibecoding/tools.md` | Detail the complete VibeCoder tool suite including `rush simplify` and `rush strictify`. | Phase 43–44 |
-| 26 | `docs/maintainers/release-checklist.md` | Update the maintainer release checklist to require `rush ship gate` and SLSA attestation. | Phase 41C, 45 |
-| 27 | `docs/maintainers/adr/README.md` | Update maintainer ADR index to cross-reference ADR-0030 through ADR-0037. | Dependencies |
-| 28 | `docs/adr/README.md` | Update root ADR implementation cross-reference table. | Dependencies |
+| 19 | `docs/integrations/claude.md` | Update Claude Code project setup, MCP registration, and prompt memory injection. | Phase 41, 42 |
+| 20 | `docs/integrations/windsurf.md` | Update Windsurf Cascade tool integration and shared SQLite cache protocols. | Phase 41, 46 |
+| 21 | `docs/integrations/cline.md` | Update Cline MCP configuration and mutual exclusion file locking behavior. | Phase 41, 46 |
+| 22 | `docs/vibecoding/README.md` | Update VibeCoder ecosystem overview with pre-flight cockpit and instant feedback loops. | Phase 41–46 |
+| 23 | `docs/vibecoding/fast-loop.md` | Document sub-second AST hallucination guards and real-time environment sync. | Phase 41–42 |
+| 24 | `docs/vibecoding/tools.md` | Detail the complete VibeCoder tool suite including `rush simplify` and `rush strictify`. | Phase 43–44 |
+| 25 | `docs/maintainers/release-checklist.md` | Update the maintainer release checklist to require `rush ship gate` and SLSA attestation. | Phase 41C, 45 |
+| 26 | `docs/maintainers/adr/README.md` | Update maintainer ADR index to cross-reference ADR-0030 through ADR-0037. | Dependencies |
+| 27 | `docs/adr/README.md` | Update root ADR implementation cross-reference table. | Dependencies |
 
 ---
 

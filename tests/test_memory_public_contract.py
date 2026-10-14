@@ -38,6 +38,7 @@ from rush.dashboard.server import (
     _s04_effect_ids,
     _validate_memory_owner_scope,
 )
+from rush.dashboard.state import ProjectRecord
 from rush.governance.public_operations import build_operations_inventory
 from rush.invocation import InvocationExecutor
 from rush.mcp_support.tool_registry import make_tool_wrapper
@@ -173,7 +174,10 @@ _SESSION_SCOPED_OPERATIONS = {"expand", "related", "prepare", "resume"}
 
 
 def _mcp_call(
-    root: Path, operation: str, request: dict[str, Any], **permission_kwargs: bool
+    root: Path,
+    operation: str,
+    request: dict[str, Any],
+    **permission_kwargs: bool | str,
 ) -> dict[str, Any]:
     tool = MemoryTool()
     executor = InvocationExecutor()
@@ -222,8 +226,26 @@ def _cli_call(
     return json.loads(result.output)
 
 
+# Phase 70 T16: the executor's default scope names each transport's own
+# root (cli_root vs mcp_root); only those root-bearing fields are dropped.
+_ROOT_BEARING_SCOPE_FIELDS = (
+    "logical_root",
+    "invocation_start_cwd",
+    "original_requested_targets",
+    "execution_cwds",
+)
+
+
 def _normalized(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     normalized = {k: v for k, v in payload.items() if k != "duration_ms"}
+    metadata = normalized.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("scope"), dict):
+        scope = {
+            k: v
+            for k, v in metadata["scope"].items()
+            if k not in _ROOT_BEARING_SCOPE_FIELDS
+        }
+        normalized["metadata"] = {**metadata, "scope": scope}
     volatile = _NONDETERMINISTIC_DATA_FIELDS.get(operation)
     if volatile and isinstance(normalized.get("raw"), dict):
         raw = dict(normalized["raw"])
@@ -286,7 +308,13 @@ def test_all_memory_operations_in_public_manifest() -> None:
     admin operations."""
     inventory = build_operations_inventory()
     by_cli = {op.cli_command: op for op in inventory if op.cli_command}
-    for _operation, cli_name in _NEW_OPERATIONS:
+    # 72-T06: `history` and `explain` are positional leaves, not `--input` leaves, so they
+    # are listed here rather than in `_NEW_OPERATIONS` (which drives `_request_for`).
+    for _operation, cli_name in (
+        *_NEW_OPERATIONS,
+        ("history", "history"),
+        ("explain", "explain"),
+    ):
         full_name = f"memory {cli_name}"
         assert full_name in by_cli, (
             f"{full_name} missing from public operations inventory"
@@ -473,6 +501,7 @@ def test_stdio_stdout_contains_only_jsonrpc(tmp_path: Path) -> None:
         tool_payload = json.loads(call_response["result"]["content"][0]["text"])
         assert tool_payload["raw"]["operation"] == "plan_checks"
     finally:
+        assert proc.stdin is not None
         proc.stdin.close()
         try:
             proc.wait(timeout=10)
@@ -501,7 +530,9 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         source="csv-helper",
         allow_cache_write=True,
     )
-    artifact_id = write_result["raw"]["id"]
+    write_raw = write_result["raw"]
+    assert write_raw is not None
+    artifact_id = write_raw["id"]
     recall_result = tool(
         path=tmp_path,
         operation="recall",
@@ -511,7 +542,9 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         session_allowlist=["csv-helper"],
     )
     assert recall_result["status"] == "ok", recall_result
-    items = recall_result["raw"]["data"]["items"]
+    recall_raw = recall_result["raw"]
+    assert recall_raw is not None
+    items = recall_raw["data"]["items"]
     assert any(item["id"] == artifact_id for item in items)
 
     expand_out = _cli_call(
@@ -565,6 +598,7 @@ def test_documented_examples_execute(tmp_path: Path) -> None:
         {
             "action": "prepare",
             "receiver_audience": "agent_b",
+            "receiver_namespace": "csv-helper",
             "goal": "share the csv helper evidence",
             "selected_refs": [{"id": artifact_id, "version": 1}],
         },
@@ -613,6 +647,12 @@ def _registered_ctx(
     return ctx, record.project_id, root
 
 
+def _project(ctx: DashboardContext, project_id: str) -> ProjectRecord:
+    record = ctx.projects.get(project_id)
+    assert record is not None
+    return record
+
+
 def test_memory_edit_immediately_updates_map_content_and_generation(
     tmp_path, _isolated_projects_data_root
 ) -> None:
@@ -630,7 +670,7 @@ def test_memory_edit_immediately_updates_map_content_and_generation(
             owner_scope=owner,
         )
     )
-    before = ctx.projects.get(project_id)
+    before = _project(ctx, project_id)
     assert before.memory_generation == 0
     assert before.sequence == 1
 
@@ -650,7 +690,7 @@ def test_memory_edit_immediately_updates_map_content_and_generation(
     assert status_code == 200
     assert body["status"] == "ok"
 
-    after = ctx.projects.get(project_id)
+    after = _project(ctx, project_id)
     assert after.memory_generation > before.memory_generation
     assert after.sequence > before.sequence
     memories_by_id = {m["id"]: m for m in after.snapshot["memories"]}
@@ -676,7 +716,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
                 owner_scope=owner,
             )
         )
-    generation_before = ctx.projects.get(project_id).memory_generation
+    generation_before = _project(ctx, project_id).memory_generation
 
     _, body = _dispatch_memory_archive(
         ctx,
@@ -692,7 +732,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_archive = ctx.projects.get(project_id).memory_generation
+    gen_after_archive = _project(ctx, project_id).memory_generation
     assert gen_after_archive > generation_before
 
     _, body = _dispatch_memory_delete(
@@ -708,7 +748,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_delete = ctx.projects.get(project_id).memory_generation
+    gen_after_delete = _project(ctx, project_id).memory_generation
     assert gen_after_delete > gen_after_archive
 
     _, body = _dispatch_memory_promote(
@@ -723,7 +763,7 @@ def test_memory_archive_delete_promote_each_publish_a_new_generation(
         {"cache_write": True},
     )
     assert body["status"] == "ok"
-    gen_after_promote = ctx.projects.get(project_id).memory_generation
+    gen_after_promote = _project(ctx, project_id).memory_generation
     assert gen_after_promote > gen_after_delete
 
 
@@ -854,7 +894,7 @@ def test_promotion_denial_after_candidate_write_still_refreshes_the_real_candida
 ) -> None:
     ctx, project_id, _root = _registered_ctx(tmp_path, _isolated_projects_data_root)
     owner = OwnerScope("project", project_id)
-    generation_before = ctx.projects.get(project_id).memory_generation
+    generation_before = _project(ctx, project_id).memory_generation
 
     _, body = _dispatch_memory_promote(
         ctx,
@@ -873,7 +913,7 @@ def test_promotion_denial_after_candidate_write_still_refreshes_the_real_candida
         "promotion for this assertion to be meaningful"
     )
 
-    after = ctx.projects.get(project_id)
+    after = _project(ctx, project_id)
     assert after.memory_generation > generation_before
     memory_ids = {m["id"] for m in after.snapshot["memories"]}
     assert body["raw"]["artifact"]["id"] in memory_ids
@@ -901,7 +941,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
         {},
     )
     assert not (root / ".rush" / "memory.db").exists()
-    record = ctx.projects.get(project_id)
+    record = _project(ctx, project_id)
     assert record.memory_generation == 0
     assert record.sequence == 1
 
@@ -922,7 +962,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
     )
     assert body["status"] == "ok"
     artifact_id = body["raw"]["artifact"]["id"]
-    seeded = ctx.projects.get(project_id)
+    seeded = _project(ctx, project_id)
     generation_before = seeded.memory_generation
     sequence_before = seeded.sequence
 
@@ -940,7 +980,7 @@ def test_preview_and_zero_write_failure_publish_no_fabricated_sequence_bump(
         {"cache_write": True},
     )
     assert body["raw"]["code"] == "E_VERSION"
-    record_after = ctx.projects.get(project_id)
+    record_after = _project(ctx, project_id)
     assert record_after.memory_generation == generation_before
     assert record_after.sequence == sequence_before
 
@@ -973,13 +1013,23 @@ def test_write_edit_promote_archive_delete_reject_omitted_or_incomplete_owner_be
     _ctx, project_id, root = _registered_ctx(tmp_path, _isolated_projects_data_root)
     arguments = {"owner_scope": bad_owner}
 
-    with pytest.raises(_ActionDenied):
+    if operation == "memory_maintain" and bad_owner is None:
+        # 72-T04 (D3): an omitted maintain owner is decided by the memory grant (policy
+        # mode) or the project's legacy owner, never refused here.
         _validate_memory_owner_scope(
             operation,
             arguments,
             project_id=project_id,
             session_owner_scope_id="sess-1",
         )
+    else:
+        with pytest.raises(_ActionDenied):
+            _validate_memory_owner_scope(
+                operation,
+                arguments,
+                project_id=project_id,
+                session_owner_scope_id="sess-1",
+            )
     assert not (root / ".rush" / "memory.db").exists()
 
 
@@ -1043,7 +1093,9 @@ def test_arbitrary_nonempty_user_agent_labels_accepted_structurally_and_persist_
         permissions=ExecutionPermissions(cache_write=True),
     )
     assert result["status"] == "ok"
-    stored_id = result["raw"]["id"]
+    result_raw = result["raw"]
+    assert result_raw is not None
+    stored_id = result_raw["id"]
 
     with sqlite3.connect(TypedArtifactStore(root).db_path) as conn:
         row = conn.execute(
@@ -1051,3 +1103,206 @@ def test_arbitrary_nonempty_user_agent_labels_accepted_structurally_and_persist_
             (stored_id,),
         ).fetchone()
     assert row == ("agent", "some-arbitrary-agent-label-123")
+
+
+# --- 72-T05: `--task-id` / `task_id` parity ------------------------------------------
+
+
+def _policy_task_roots(tmp_path: Path) -> tuple[Path, Path]:
+    """Two identically-seeded registered projects (one per transport) with a project
+    grant: `A1`/`A2` plain rows and a task-bound row `T1` for task "A"."""
+    from rush.memory import authorization as auth
+    from rush.setup.provision import default_data_root
+
+    data_root = default_data_root()
+    roots: list[Path] = []
+    for name in ("mcp_policy_root", "cli_policy_root"):
+        root = tmp_path / name
+        root.mkdir()
+        register_project(root, data_root=data_root)
+        root = root.resolve()
+        _seed_store(root)
+        revision = int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        )
+        issued = auth.grant_memory_scope(
+            project_root=root,
+            owner_scope=OwnerScope("project", str(root)),
+            approved_sources=["s1"],
+            allowed_operations=["ask", "expand", "list", "write"],
+            expected_policy_revision=revision,
+            consent=True,
+            data_root=data_root,
+        )
+        TypedArtifactStore(root).write(
+            MemoryArtifact(
+                id="T1",
+                family="memory",
+                subject="domain_knowledge",
+                trust_tier="DERIVED",
+                content={"body": "seed task"},
+                source="s1",
+                created_at=time.time(),
+                task_project_id=issued["project_id"],
+                task_worktree_id=issued["worktree_id"],
+                task_id="A",
+            )
+        )
+        roots.append(root)
+    return roots[0], roots[1]
+
+
+def _cli_dedicated(
+    root: Path, leaf: str, *args: str, flags: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    old_cwd = os.getcwd()
+    os.chdir(root)
+    try:
+        result = CliRunner().invoke(
+            cli, ["memory", leaf, "domain_knowledge", "seed", "--json", *flags]
+        )
+    finally:
+        os.chdir(old_cwd)
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        result.output
+    )
+    return json.loads(result.output)  # type: ignore[no-any-return]
+
+
+def _mcp_dedicated(root: Path, operation: str, **kwargs: Any) -> dict[str, Any]:
+    tool = MemoryTool()
+    executor = InvocationExecutor()
+    executor.register("memory", tool.__call__)
+    wrapper = make_tool_wrapper(tool, executor)
+    if operation == "list":
+        # 72-T07: `rush memory list SUBJECT QUERY` sends the schema-2 query, so its MCP
+        # twin is the same schema-2 request (the legacy `subject`/`query` form is gone).
+        return dict(
+            wrapper(
+                path=root,
+                operation=operation,
+                request={
+                    "schema_version": 2,
+                    "subjects": ["domain_knowledge"],
+                    "query": "seed",
+                },
+                **kwargs,
+            )
+        )
+    return dict(
+        wrapper(
+            path=root,
+            operation=operation,
+            subject="domain_knowledge",
+            query="seed",
+            **kwargs,
+        )
+    )
+
+
+# `_policy_task_roots` seeds the two transports' projects separately, so these differ by
+# construction: row timestamps, the root path in `owner_scope.id`, the project and
+# worktree ids on a task-bound row, and the MCP-only `metadata.scope`.
+_SEEDED_ROOT_FIELDS = (
+    "created_at",
+    "task_project_id",
+    "task_worktree_id",
+    "project_id",
+    "worktree_id",
+)
+
+
+def _seeded_root_view(operation: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """`_normalized` minus what two separately seeded roots legitimately differ in."""
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, dict):
+            out = {
+                k: scrub(v) for k, v in value.items() if k not in _SEEDED_ROOT_FIELDS
+            }
+            if {"bytes", "tokens", "encoding"} <= out.keys():
+                # A schema-2 page's size meter counts the root path and the ids above.
+                del out["bytes"], out["tokens"]
+            owner = out.get("owner_scope")
+            if isinstance(owner, dict):
+                out["owner_scope"] = {k: v for k, v in owner.items() if k != "id"}
+            return out
+        if isinstance(value, list):
+            return [scrub(v) for v in value]
+        return value
+
+    view: dict[str, Any] = scrub(_normalized(operation, payload))
+    view["metadata"] = {
+        k: v for k, v in (view.get("metadata") or {}).items() if k != "scope"
+    }
+    return view
+
+
+def _delivered_ids(payload: dict[str, Any]) -> set[str]:
+    """Item ids of a dedicated-leaf result: `raw` is a list for the legacy `ask` and a
+    page dict (`raw.data.items`) for the others."""
+    raw = payload["raw"]
+    if isinstance(raw, list):
+        items = raw
+    elif "items" in raw:
+        # A schema-2 page names a row by its reference and also lists the rows it
+        # does not deliver as current (`usable_as_current: false`, `task_mismatch`).
+        items = [i for i in raw["items"] if i.get("usable_as_current", True)]
+    else:
+        items = raw["data"]["items"]
+    return {i["id"] if "id" in i else i["reference"]["artifact_id"] for i in items}
+
+
+def test_cli_mcp_task_id_parity(tmp_path: Path) -> None:
+    """`--task-id A` on every task-aware leaf equals MCP `task_id="A"`, and omitting it
+    equals MCP with `task_id` omitted; the task-bound row `T1` is delivered only with
+    "A"."""
+    mcp_root, cli_root = _policy_task_roots(tmp_path)
+
+    for leaf in ("ask", "recall", "list"):
+        with_task_cli = _cli_dedicated(cli_root, leaf, flags=("--task-id", "A"))
+        with_task_mcp = _mcp_dedicated(mcp_root, leaf, task_id="A")
+        assert _seeded_root_view(leaf, with_task_cli) == _seeded_root_view(
+            leaf, with_task_mcp
+        ), leaf
+        without_cli = _cli_dedicated(cli_root, leaf)
+        without_mcp = _mcp_dedicated(mcp_root, leaf)
+        assert _seeded_root_view(leaf, without_cli) == _seeded_root_view(
+            leaf, without_mcp
+        ), leaf
+        delivered = _delivered_ids(with_task_cli)
+        plain = _delivered_ids(without_cli)
+        assert "T1" in delivered and "T1" in _delivered_ids(with_task_mcp), leaf
+        assert "T1" not in plain, leaf
+        assert plain <= delivered, leaf
+
+    leaves = (
+        ("expand", "expand", {"id": "T1", "version": 1}),
+        ("related", "related", {"id": "T1", "version": 1}),
+        ("resume", "resume", _request_for("resume")),
+        ("intent", "intent", _request_for("intent")),
+        ("recipe", "recipe", _request_for("recipe")),
+    )
+    for operation, cli_name, request in leaves:
+        cli_a = _cli_call(
+            cli_root, cli_name, operation, request, flags=("--task-id", "A")
+        )
+        mcp_a = _mcp_call(mcp_root, operation, request, task_id="A")
+        assert _seeded_root_view(operation, cli_a) == _seeded_root_view(
+            operation, mcp_a
+        ), operation
+        cli_none = _cli_call(cli_root, cli_name, operation, request)
+        mcp_none = _mcp_call(mcp_root, operation, request)
+        assert _seeded_root_view(operation, cli_none) == _seeded_root_view(
+            operation, mcp_none
+        ), operation
+    expand_a = _cli_call(
+        cli_root,
+        "expand",
+        "expand",
+        {"id": "T1", "version": 1},
+        flags=("--task-id", "A"),
+    )
+    expand_none = _cli_call(cli_root, "expand", "expand", {"id": "T1", "version": 1})
+    assert expand_a["raw"]["code"] == "OK"
+    assert expand_none["raw"]["code"] == "E_NOT_VISIBLE"

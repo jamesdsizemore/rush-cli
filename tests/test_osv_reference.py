@@ -76,6 +76,7 @@ def test_osv_normalizes_json_vulnerabilities_and_nonzero_findings_exit() -> None
             "rule": "GHSA-example",
             "severity": "error",
             "message": "PyPI example==1.0.0: fixed in 1.1.0",
+            "evidence": {"input": "poetry.lock"},
         }
     ]
     assert result["metadata"]["database_freshness"] == "unknown-offline"

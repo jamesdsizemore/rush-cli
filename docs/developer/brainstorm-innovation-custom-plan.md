@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary & The "Vibe-Engineering Standard"
 
-Vibe-coding—rapidly iterating on features using AI coding models (Claude Code, Cursor, Copilot, Aider, Devin, Hermes)—has unlocked unprecedented developer velocity. However, it introduces acute, unique failure modes:
+Vibe-coding—rapidly iterating on features using AI coding models (Claude Code, Copilot, Aider, Devin, Hermes)—has unlocked unprecedented developer velocity. However, it introduces acute, unique failure modes:
 1. **Hallucinated Dependencies**: AI agents importing nonexistent or typo-squatted libraries.
 2. **Context Window Token Bloat**: Sprawling debug files, mammoth JSON dumps, and unpruned agent transcripts wasting expensive model context.
 3. **Cross-Language Type Drift**: Backend Pydantic models diverging silently from frontend TypeScript/Zod interfaces.
@@ -139,7 +139,7 @@ flowchart TD
 - **Problem**: AI coding sessions leave large temporary JSON logs, memory dumps, and 10,000-line scratch files that get sucked into LLM context windows, blowing token limits and slowing agent responses.
 - **Implementation**:
   - Scans workspace for high-token files (>20,000 tokens) not listed in `.gitignore`.
-  - Analyzes `.cursorrules`, `CLAUDE.md`, and agent memory directories for duplicate instructions.
+  - Analyzes `CLAUDE.md` and agent memory directories for duplicate instructions.
   - Offers single-turn `--prune` command to compress or gitignore token-heavy assets.
 - **FastMCP Tool**: `rush_context_diet(path)`
 - **Sample Finding**:
@@ -160,7 +160,7 @@ flowchart TD
 ---
 
 #### 5. `rush prompt-linter` (System Prompt & Agent Instructions Quality Linter)
-- **Problem**: `CLAUDE.md`, `.cursorrules`, and `AGENTS.md` files often suffer from contradictory rules, ambiguous phrasing, excessive token length, and lack of testable exit criteria.
+- **Problem**: `CLAUDE.md` and `AGENTS.md` files often suffer from contradictory rules, ambiguous phrasing, excessive token length, and lack of testable exit criteria.
 - **Implementation**:
   - Markdown AST parser that evaluates instruction files against the Anthropic/OpenAI prompt engineering rubric.
   - Flags conflicting directives (e.g., "always use type annotations" alongside "keep code ultra minimal").
@@ -439,7 +439,7 @@ flowchart TD
 ---
 
 #### 27. `rush agent-compact` (Multi-Turn Agent Memory & Scratchpad Optimizer)
-- **Problem**: Agent memory logs (`.rush/session_memory.json`, `.claude/`, `.cursor/`) grow unbounded, consuming memory and degrading response quality.
+- **Problem**: Agent memory logs (`.rush/session_memory.json`, `.claude/`) grow unbounded, consuming memory and degrading response quality.
 - **Implementation**:
   - Deduplicates identical past findings, summarizes repetitive tool runs into compact statistical summaries, and prunes resolved issues.
   - Enforces strict XML boundary tags and keeps total history under a 2,000-token budget.
@@ -641,6 +641,6 @@ All 37 tools natively inherit the core architecture and security invariants of R
 ## 5. Summary of Value to Developers & Vibe-Coders
 
 - **Zero-Friction Adoption**: Built directly into Rush—no extra Python/Node packages to configure.
-- **AI Agent Native**: Accessible via FastMCP stdio transport (`rush_<tool_name>`), enabling Claude, Cursor, and Hermes to self-diagnose and self-repair codebases in single-turn loops.
+- **AI Agent Native**: Accessible via FastMCP stdio transport (`rush_<tool_name>`), enabling Claude and Hermes to self-diagnose and self-repair codebases in single-turn loops.
 - **Deterministic & Offline**: Runs instantaneously on local hardware without API keys, telemetry, or remote dependencies.
 - **Actionable Remediation**: Every finding comes with a concrete, syntax-checked `suggested_fix` or unified diff patch.

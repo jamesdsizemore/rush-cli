@@ -59,7 +59,12 @@ def test_doctor_tool_run(tmp_path: Path) -> None:
     tool = DoctorTool()
     res = tool.run(tmp_path, permissions=ExecutionPermissions())
     assert res["tool"] == "doctor"
-    assert res["status"] in {"ok", "warn"}
+    # T15: readiness is reported per-engine (build_engine_inventory), not the
+    # old audit_environment_health/resolve_binary_secure heuristic -- an
+    # unmarked tmp_path has no detected stack, so the inventory is empty and
+    # status is "ok".
+    assert res["status"] == "ok"
+    assert res["findings"] == []
     assert "doctor:" in res["summary"]
 
 

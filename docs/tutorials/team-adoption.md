@@ -10,7 +10,7 @@
 Stage 1: Local Developer Pilot -> Install Rush locally and test CLI commands beside existing scripts.
 Stage 2: Standardize Pre-Commit -> Add rush review and rush lint to Git hooks.
 Stage 3: CI Quality Gate -> Add single-step Rush verification jobs in GitHub Actions/GitLab CI.
-Stage 4: AI Agent Enablement -> Connect Rush FastMCP stdio server to Cursor, Windsurf, or Claude Code.
+Stage 4: AI Agent Enablement -> Connect Rush FastMCP stdio server to Windsurf or Claude Code.
 ```
 
 ---

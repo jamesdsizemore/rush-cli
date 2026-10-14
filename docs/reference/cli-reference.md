@@ -2,6 +2,32 @@
 
 Current authority: generated Click metadata from `uv run rush --help` and `uv run rush COMMAND --help` at source baseline `997b56e`. Examples assume the editable source checkout and therefore use `uv run rush`. Phase 65 owns standalone installation and the integrated beginner workflow; Phase 66 owns the persistent TUI and complete web workflow.
 
+## Discovering commands
+
+`rush --help` lists the everyday set — `status`, `check`, `lint`, `review`, `security`, `test`, `memory`, `setup`, `install`, `agent`, `mcp` — plus a category index. Registered commands fall under one of seven categories: `quality`, `security`, `test`, `workflow`, `memory`, `services`, `administration`. Use `rush help` to list the categories, `rush help CATEGORY` to list the commands in one, and `rush --help-all` to list all registered command names at once (including everyday-set members and category-only names).
+
+Example, listing one category:
+
+```console
+$ rush help memory
+memory:
+  context
+  flight-recorder
+  session
+```
+
+An unknown category is refused with exit code 2 and the list of valid categories, so the fix is to re-run with one of the names it prints:
+
+```console
+$ rush help nosuchcat
+Usage: rush help [OPTIONS] [CATEGORY]
+Try 'rush help --help' for help.
+
+Error: Unknown category 'nosuchcat'. Valid categories: quality, security, test, workflow, memory, services, administration
+```
+
+On a narrow terminal (for example `COLUMNS=40`) the help keeps the start of every description and wraps the rest onto the next line; with `NO_COLOR` set it emits no escape sequences.
+
 ## `session resume`
 
 `rush session resume NAME --provider {claude_code|codex_cli|antigravity_cli|9router_cli|omniroute_api} --allow-network [--json]` projects a bounded checkpoint receipt to an installed user-owned CLI or fixed loopback provider route. `9router_cli` starts Codex with fixed local 9Router environment variables and no model argument; it requires `RUSH_9ROUTER_API_KEY` but never retains it. Z.AI is intentionally deferred; `9router_api` returns canonical `skipped`.
@@ -12,7 +38,53 @@ Current authority: generated Click metadata from `uv run rush --help` and `uv ru
 
 ## Memory (Phase 61)
 
-`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY` and require `--session SOURCE`; all apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
+`rush memory ask|write|promote|list|recall|maintain` queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`). `ask`, `list`, and `recall` take positional `SUBJECT QUERY`. In a project with a memory grant they read what the grant approves and `--session SOURCE` only narrows it; a revoked or expired grant, or an invalid policy, is denied. A project that was never enrolled keeps the legacy rule: the read needs a `--session SOURCE`, and without one it is skipped and reads nothing. All apply signature, staleness, and Trojan Source checks. `write`, `promote`, and `maintain` require `--allow-cache-write`. Approved promotions persist the `STATED` tier and checksum. For expiry maintenance, run `rush memory maintain --task expiry_sweep --allow-cache-write --json` from the repository.
+
+Bare `rush memory [--offset N --generation TOKEN] [--include-internal] [--json]` (no subcommand) is a read-only overview: this project's 20 most recent useful memory records, newest first (archived, expired, and internal bookkeeping rows hidden by default; pass `--include-internal` to also show them). `--offset`/`--generation` page through older rows — `--offset` above 0 requires the `--generation` continuation token the previous page printed. A store needing migration reports `migration_required`; an unreadable store reports `corrupt`.
+
+### Memory command leaves
+
+Every `rush memory` leaf, the operation it runs, and what it does. Each leaf accepts `--json` and `--help`. A leaf that changes the store applies only with `--allow-cache-write`; every permission flag is per call and never implied.
+
+| Command | Operation | What it does |
+|---|---|---|
+| `rush memory ask` | `ask` | Asks the memory store a question about a subject. |
+| `rush memory recall` | `recall` | Recalls memory artifacts for a subject and query. |
+| `rush memory list` | `list` | Lists defended memory artifacts for a subject. |
+| `rush memory expand` | `expand` | Expands the exact stored bytes of one artifact version by id and version, as `base64` or `utf8`. |
+| `rush memory history` | `history` | Shows the version history of one artifact; `--historical` includes archived and superseded versions. |
+| `rush memory explain` | `explain` | Explains the retrieval decision for one artifact id or for a `--query`. |
+| `rush memory related` | `related` | Traverses the authorized relations from one seed artifact, bounded. |
+| `rush memory write` | `write` | Writes a memory artifact. |
+| `rush memory promote` | `promote` | Evaluates and persists a candidate artifact for `STATED` promotion. |
+| `rush memory edit` | `edit` | Edits one artifact under compare-and-swap; previews unless applied. |
+| `rush memory archive` | `archive` | Sets or clears the archived marker on one artifact; previews unless applied. |
+| `rush memory delete` | `delete` | Batch-deletes artifacts by id, revision and scope; previews unless applied. |
+| `rush memory link` | `link` | Adds a versioned evidence edge between two artifacts. |
+| `rush memory consolidate` | `consolidate` | Consolidates duplicate episodes into one summary. |
+| `rush memory maintain` | `maintain` | Runs a bounded maintenance sweep, for example `--task expiry_sweep`. |
+| `rush memory preference` | `preference` | Resolves, records, corrects, ends or migrates preferences (actions `resolve`, `record`, `correct`, `end_task`, `migrate`) from an `--input` file. |
+| `rush memory intent` | `intent` | Creates, confirms, supersedes or checks confirmed user intent. |
+| `rush memory recipe` | `recipe` | Records, resolves or records the outcome of a reusable recipe. |
+| `rush memory plan-checks` | `plan_checks` | Ranks required checks by evidence without dropping required membership. |
+| `rush memory last-success-diagnose` | `last_success_diagnose` | Compares a current failure with the last successful behavior. |
+| `rush memory prepare` | `prepare` | Prepares bounded repair evidence for a failing task; executes no commands. |
+| `rush memory resume` | `resume` | Resumes bounded repair evidence for a failing task; executes no commands. |
+| `rush memory verify-attempt` | `verify_attempt` | Runs a real sandboxed check against a proposed patch. |
+| `rush memory handoff` | `handoff` | Prepares a bounded cross-tool memory handoff. |
+| `rush memory receive` | `receive` | Receives a bounded delta as a restricted handoff receiver. |
+| `rush memory capsule preview-export` | `capsule` | Previews a portable memory capsule export and writes nothing. |
+| `rush memory capsule export` | `capsule` | Exports a portable memory capsule to a file, with the `--expected-digest` the preview printed. |
+| `rush memory capsule preview-import` | `capsule` | Previews importing a capsule from `--input FILE` and writes nothing. |
+| `rush memory capsule import` | `capsule` | Imports a previewed capsule with `--apply`, after you confirm each constraint with `--confirm-constraint-id` and pass the preview's `--expected-digest`. Imported rows are `IMPORTED`, never `STATED`. |
+| `rush memory capsule bridge` | `capsule` | Reserved for the bridge action; until the bridge ships it returns `E_INPUT` with reason `bridge_not_available` and changes nothing. |
+| `rush memory capsule mapping create` | `capsule` | Previews or, with `--approve`, records a capsule owner mapping. |
+| `rush memory capsule mapping revoke` | `capsule` | Previews or, with `--approve`, revokes a capsule owner mapping. |
+| `rush memory grant` | none | Previews or, with `--approve`, writes a memory grant for the project; `--overlay` grants the personal overlay. |
+| `rush memory revoke` | none | Previews or, with `--approve`, revokes a memory grant; the next call on every route is denied. |
+| `rush memory bind-store` | none | Previews or, with `--approve --expected-digest`, binds the existing store to its grant. |
+
+`grant`, `revoke` and `bind-store` change the memory policy and run only from the CLI; no MCP operation writes a grant. In a project with a grant, every read resolves through it and `--session SOURCE` only narrows what the grant approves. A revoked grant, an expired grant and an invalid policy deny every route with `E_PERMISSION` and a `next_action`.
 
 Use `rush --help` and `rush COMMAND --help` as the generated source of truth. Global options are `--version`, `--log-level debug|info|warn|error`, and `--help`. `RUSH_LOG_LEVEL` sets the log-level default.
 
@@ -31,6 +103,8 @@ Need workflow inspection?          -> commit-msg / ci / release
 
 Command parameters are command-specific. Check generated help before invocation. `review` takes required `PATH`, `--llm`, `--use-graft`, repeatable `--changed-file`, permission flags, and `--json`; `format` also exposes `--check`.
 
+Most catalog commands also accept `--result-view [full|compact]` (full, the default, prints the whole result and writes nothing; compact stores the full redacted result in `.rush/cache/ccr.db`, requires `--allow-cache-write`, and is not allowed with `--no-cache`), `--limit N` (compact view: findings per page, 1-50, default 50), `--max-bytes N` (compact view: size budget of the whole printed result, 4096-65536 bytes, default 32768), and `--no-cache` (bypass and do not write to the result cache).
+
 ```bash
 uv run rush COMMAND --help
 uv run rush review PATH [--llm] [--use-graft] [--changed-file RELATIVE_PATH]... [--json]
@@ -48,9 +122,9 @@ uv run rush mcp serve
 | `review PATH` | Deterministic Python heuristics before review or after edits. | PR-Agent, local Graft with `--use-graft`; `--llm` is a no-call stub; repeat `--changed-file` for target-contained scope only. | `ok`/`warn`; read-only; no Git-diff inference. |
 | `lint PATH` | Source linting. | Ruff, ESLint, Stylelint, ast-grep, Flake8-Bugbear, MegaLinter, Comby, Prisma-lint, Vale, CSpell, Alex, RedPen, No-Jargon, Markdown-Unfluff, Buf, wasm-tools, Git-Guard. | May `fail` on findings; read-only. |
 | `format PATH --check` | Verify formatter conformance. | Ruff format, Prettier, Squoosh, Critical, Font-Spider, PyClean. | Check-only with `--check`; omit only when you intentionally allow formatting. |
-| `test PATH` | Run applicable project tests. | pytest, Vitest, Newman. | `fail` on test failures; test code may have project-defined side effects. |
+| `test PATH` | Run applicable project tests. Python pytest keeps the explicit file/directory target; the ancestor project supplies the interpreter and working directory. | pytest, Vitest, Newman. | Requires `--allow-build`; `fail` on test failures; test code may have project-defined side effects. |
 | `security PATH` | Dependency vulnerability, privacy SAST, container and env checks. | pip-audit, npm audit, OSV-Scanner, Semgrep, Trivy, Grype, Bearer, Horusec, Pa11y, OWASP ZAP, Deadfinder, A11yWatch, Dockle, Safe-Env, NCU. | Read-only normalization; scanner behavior depends on installed tool. |
-| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`. | Read-only; missing helper skips. |
+| `typecheck PATH` | Static type checks. | mypy, TypeScript `tsc`; `--environment project\|isolated` selects which interpreter analyzes Python (`project` uses `.venv` and requires `--allow-build`; default prefers `project`, falling back to `isolated` without `--allow-build`), `--typecheck-config FILE` names an explicit tsconfig/mypy/pyrefly config inside the project root. | Read-only; missing helper skips. |
 | `dead PATH` | Find unused code and dependencies. | Vulture, Knip, FawltyDeps, Ts-prune. | Advisory/read-only. |
 | `complexity PATH` | Complexity, bundle weight, binary footprint and memory evidence. | Radon, jscpd, Depcruise, Scaphandre, Readability, Memray, Statoscope, Bloaty. | Metrics/findings; read-only. |
 | `slop PATH` | Deterministic code-noise and AI filler signals. | sloppylint, Markdown-Unfluff plus JS/TS fallback. | Advisory; no authorship inference. |
@@ -110,21 +184,91 @@ Evaluation commands expose permission flags according to their own generated hel
 
 | Command | Purpose | Options | Modification |
 |---|---|---|---|
-| `check PATH` | Fast inner-loop workflow suite (lint, format --check, typecheck). | Permissions | none |
+| `check PATH` | Run the check suite: format (check-only), lint, typecheck, dead, slop, test; the test step needs `--allow-build`. | `--fail-fast`/`--no-fail-fast` (default: every step runs and is reported), `--result-view`, `--limit`, `--max-bytes`, Permissions, `--json` | none |
+| `status [PATH]` | Show the project's status without changing anything. | `--session`, `--result HANDLE` (read a stored result), `--view [result\|bytes]`, `--cursor`, `--offset`, `--limit`, `--max-bytes`, `--json` | none |
 | `audit PATH` | Deep security, dependency, secret, and supply chain suite. | Permissions | none |
 | `gate PATH` | Strict pre-merge gating suite (lint, format, typecheck, test, security). | `--fail-fast`, Permissions | none |
 | `fix PATH` | [Bounded Ruff remediation](../phase-plans/phase-64-implementation-evidence.md#p64-01--preserve-checkoutindex-during-fixes-f01) for selected Python targets. | `--dry-run`, `--force`, `--allow-artifact-write` | Dry-run preview; apply is denied without artifact-write permission. |
-| `setup [PATH]` | Current stack inspection/setup prototype. Integrated, verified installation remains planned in [P65-02](../phase-plans/phase-65-project-provisioning-scan-and-agent-workflow-plan.md#p65-02--install-complete-applicable-toolchains-f3031). | `--non-interactive`, `--json` | Current package-manager identities and execution branches are not accepted installation evidence |
+| `setup [PATH]` | Preview project setup (config, registration, engine provisioning) and apply it after consent: `rush setup PATH` previews; `--save-plan FILE --allow-artifact-write` writes the reviewed plan and prints the exact apply command; `--apply --yes --plan-file FILE --plan-id ID` (plus the plan's own `--allow-*` grants) applies it non-interactively. | `--interactive`/`--non-interactive`, `--apply`, `--yes`, `--plan-file`, `--plan-id`, `--save-plan`, `--agent claude\|codex`, `--install-guidance`, `--enable-agent-hooks`, `--verify-host`, `--allow-*`, `--json`, `--install` (accepted for compatibility, no effect) | Preview writes nothing; `--save-plan` writes the plan file; `--apply` performs the reviewed config/registration/engine writes |
 | `init [PATH]` | Generate starter `rush.toml` for detected project stacks. | `--force` | Writes `rush.toml` |
 | `config check PATH` | Validate `rush.toml` schema and tool configuration keys. | none | none |
 | `doctor PATH` | Audit environment health, toolchain integrity, and anti-shadowing. | none | none |
 | `watch PATH` | Real-time file system watcher with debouncing. | `--suite`, `--tool`, `--debounce` | none |
-| `ui [PATH ...]` | At a TTY, persistent Rich UI with background checks and keyboard navigation. `--json` runs checks once, emits JSON, and exits; redirected stdout without `--json` runs checks once and prints a text summary. | `--json`, Permissions | none |
+| `ui [PATH ...]` | Opens the interactive terminal UI on a read-only Overview for one or more projects; the interface starts immediately, and analysis is an explicit Start action (F5 refreshes the Overview), never automatic. With `--json`, or when stdin/stdout is not a terminal, prints each project's read-only `rush status` snapshot instead of opening the interface (JSON with `--json`; otherwise a one-line summary plus the next `rush status --json`/`rush check` commands) — it never runs checks. | `--json`, Permissions | none |
 | `dashboard [PATH]` | Authenticated, CSRF-hardened local web dashboard on `127.0.0.1` behind a single-use bootstrap URL; mutations require an explicit grant per action. See [the dashboard/TUI review](../reports/69-dashboard-tui-codex-implementation-review.md) for unresolved findings. | `--port`, `--reconnect`, Permissions | starts local server, opens browser to a per-server session URL |
 | `gain` | Live-updating Rich HUD of token compression and dollar savings; re-renders until Ctrl+C. `context gain` is a live alias for the same command, not a one-shot summary. | none | none |
 | `trust PATH` | Authorize repository in local trust ledger to allow custom plugins. | `--revoke` | Updates `~/.rush/trusted_repositories.json` |
 | `plugin list PATH` | List configured custom plugins in `rush.toml`. | none | none |
 | `plugin run NAME PATH` | Execute custom plugin against target path. | `--json` | Executes declared command if trusted |
+
+### `rush status` and bare `rush`
+
+`rush status [PATH]` and bare `rush` (no subcommand) print the same read-only view: project root, registration/config state, detected engines, current activity, latest attempt, published result, agent registration/activation state, and useful memory count. Neither writes anything. On an unregistered project, the summary opens with a one-line banner (`warn -- unregistered project /path/to/project; no analysis has run; project is not registered.`) followed by:
+
+```text
+Project
+  root: /path/to/project
+  registration: unregistered
+  configured: no
+Config
+  rush.toml: missing
+Engines
+  none detected
+Activity
+  idle
+Latest attempt
+  none
+Published result
+  none
+Agents
+  claude-desktop: not_detected, activation unverified
+  claude-code: not_detected, activation unverified
+  windsurf: not_detected, activation unverified
+  zed: not_detected, activation unverified
+  codex: not_detected, activation unverified
+Memory
+  absent
+Next actions
+  project is not registered: rush setup /path/to/project
+```
+
+`rush status --json` returns the canonical `ToolResult`; `--result HANDLE` with `--view result|bytes`, `--cursor`, `--offset`, `--limit`, `--max-bytes` retrieves a stored result page, the same contract as `rush context retrieve`.
+
+### `rush check`'s six steps
+
+`rush check PATH` runs `format` (check-only), `lint`, `typecheck`, `dead`, `slop`, then `test` in that order; every step runs and is reported by default (`--fail-fast` stops at the first failing step and reports the rest not run). The `test` step needs `--allow-build`; without it, `test` is `skipped` with the permission reason. Example against a project with one unused function and no test config:
+
+```text
+[CHECK] Status: warn
+check: executed 5 tool(s) with status 'warn'
+  1. format    ok      format [ruff]: all formatted
+  2. lint      ok      lint [ruff]: clean
+  3. typecheck ok      typecheck [mypy+pyrefly]: 0 finding(s)
+  4. dead      warn    dead [vulture]: 1 finding(s)
+  5. slop      skipped skipped: requires permission: --allow-download (aislop's npm package is not in the local npm cache) (permission_denied)
+  6. test      skipped test: no pyproject.toml or package.json found above /path/to/project
+6/6 steps
+  - [warn] unused function 'f' (60% confidence)
+1/1 findings
+```
+
+### Deduplicated diagnostics
+
+`lint` and `check` collapse identical repeated findings emitted by the same producer at the same physical file (matched by inode identity, falling back to the lexical path when the file is missing) into one; a finding that differs in end location, message, fix, evidence, or producer stays separate, and results spanning multiple engines/languages keep each engine's own counts distinct.
+
+### Memory contribution in scan/check summaries
+
+When a scan or check run's tools actually read or wrote memory records, its summary line ends with one clause built from that run's own `metadata.memory` union: `memory: read {N} prior record(s), wrote {M} record(s)`, for example `"probe-suite: executed 2 tool(s) with status 'ok'; memory: read 1 prior record, wrote 1 record"`. The clause is omitted entirely when neither happened; the record ids are in `metadata.memory.used`/`.written` for `--json`/detail output.
+
+## `rush agent list|connect|disconnect|doctor|hook` (Phase 65 P65-05)
+
+- `rush agent list [--json]` reports every supported client's (`claude-desktop`, `claude-code`, `windsurf`, `zed`, `codex`) exact discovered state without writing anything.
+- `rush agent connect AGENT_ID --session ID [--project PATH] [--rush-binary PATH] [--consent] [--acknowledge] [--install-guidance] [--profile core|full] [--yes] --allow-cache-write --allow-artifact-write [--json]` registers Rush into that agent's own config file (format-preserving, backed up first) and activates a Phase 63 memory scope for `(project-or-user, session, agent)`.
+- `rush agent disconnect AGENT_ID [--project PATH] [--json]` removes Rush's own, unchanged components for `AGENT_ID` — the MCP entry, the instruction block (or this agent from a shared block), and Rush skill/hook resources recorded as Rush-owned. Anything changed since Rush wrote it is kept and reported as a conflict. Running it again is a no-op.
+- `rush agent doctor [--session ID] [--project PATH] [--json]` re-probes every client's real on-disk config and the memory scope's current state, without writing anything.
+- `rush agent hook {claude|codex}` is the post-edit hook entrypoint the Rush Claude Code/Codex plugins run. It reads the host's JSON event on stdin, prints nothing, and runs no check unless agent hooks are enabled for this host and project; it always exits 0 so a hook never changes the edit's result.
+
+Registered MCP reaches `rush_agent_connection(request)`, the single-`dict` envelope over `AgentConnectionTool.handle_request` (`src/rush/tools/agent_connection.py`).
 
 ## Advanced Autonomous Agent, Hygiene & Governance Commands (Phases 29–40)
 
@@ -141,7 +285,7 @@ Evaluation commands expose permission flags according to their own generated hel
 | `codegraph slice SYMBOL` | Extract verbatim symbol source slice with line numbers from CPG database. | none | none |
 | `bundle analyze DIST_DIR` | Measure build chunk transfer sizes (raw, gzip, brotli) and evaluate budget gates. | none | none |
 | `hotspots analyze` | Compute composite defect risk scores combining commit churn and McCabe complexity. | none | none |
-| `governance sync` | Compile canonical `AGENTS.md` into multi-IDE rule files (`.cursorrules`, `.clinerules`, etc.). | none | Writes IDE rule files |
+| `governance sync` | Compile canonical `AGENTS.md` into multi-IDE rule files (`.clinerules`, etc.). | none | Writes IDE rule files |
 | `scaffold init` | Initialize repository with canonical `AGENTS.md` and `rush.toml` templates. | none | Writes scaffold templates |
 | `hook run` | Sub-second pre-commit intelligence suite across staged files (AST lint, Trojan Source, conflict markers). | none | none |
 | `score compute` | Calculate deterministic 0–100% 6-pillar repository health score and letter grade. | `--type-safety`, `--test-coverage`, `--code-health`, `--security`, `--token-economy`, `--governance` | none |
@@ -179,11 +323,11 @@ These flags exist on selected commands only. `uv run rush COMMAND --help` is aut
 
 ## MCP
 
-`uv run rush mcp serve` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. See [MCP overview](../integrations/mcp-overview.md).
+`uv run rush mcp serve [--project ID_OR_PATH] [--session SOURCE] [--memory-session SESSION] [--profile core|full]` starts a local stdio server and blocks until stdin closes. It opens no HTTP port. `--project` anchors every relative path to that one registered project (an unknown project fails at startup); `--session` supplies the default `session_id` for project/scan tools when a caller omits it. `--profile core` registers exactly seven agent tools (`rush_status`, `rush_check`, `rush_lint`, `rush_review`, `rush_security`, `rush_test`, `rush_memory`); `--profile full` (the default) registers every tool, and a call outside the running profile's registered set returns "Unknown tool". `--profile` is ignored with `--memory-session`. See [MCP overview](../integrations/mcp-overview.md).
 
 ## Result and exit behavior
 
-`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](result-reference.md).
+`ok` and `skipped` exit 0; `warn` and `fail` exit 1; `error` exits 2. A mandatory check that skips must be rejected by inspecting JSON, because exit code 0 alone is intentionally non-fatal. See [Result reference](result-reference.md). For example, `rush lint /no/such/path` (no such target) returns `error` and exits 2; `rush check` with only an advisory finding returns `warn` and exits 1.
 
 
 ### `rush provenance-ai`

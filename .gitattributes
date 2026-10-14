@@ -1,0 +1,7 @@
+# The dashboard serves these modules as LF text (load_dashboard_asset reads
+# them with universal newlines); keep the checkout byte-identical on Windows.
+src/rush/dashboard/*.js text eol=lf
+
+# The capsule fixture sidecar records the sha256 of the PAS session file, so a CRLF
+# checkout (Windows core.autocrlf=true) must not rewrite these bytes.
+tests/fixtures/memory_capsule/* -text

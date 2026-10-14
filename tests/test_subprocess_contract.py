@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -20,12 +21,14 @@ from contextlib import suppress
 from pathlib import Path
 
 import pytest
+from _process_children import spawn_child
 
 # `rush.tools.common` is imported first on purpose: importing the
 # `rush.runtime` package first partially initializes it and raises a circular
 # ImportError (pre-existing import topology, not introduced here).
 import rush.tools.common  # noqa: F401
 from rush.runtime import subprocesses
+from rush.setup import provision as provision_module
 from rush.tools import common
 
 
@@ -132,13 +135,9 @@ def _pattern_pids(pattern: str) -> list[int]:
 
 
 def _fork_and_run(target, *args) -> int:
-    pid = os.fork()
-    if pid == 0:  # pragma: no cover -- child process, never reported by pytest
-        try:
-            target(*args)
-        finally:
-            os._exit(0)
-    return pid
+    json_args = [str(a) if isinstance(a, Path) else a for a in args]
+    proc = spawn_child(target.__module__, target.__name__, json_args)
+    return proc.pid
 
 
 def _kill_and_reap(pid: int) -> None:
@@ -146,6 +145,46 @@ def _kill_and_reap(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
     with suppress(ChildProcessError):
         os.waitpid(pid, 0)
+
+
+def _child_owner_hangs_before_release(
+    binary: str, pgid_file: str, data_root: str
+) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+
+    def hang(owner_instance_id: str, run_id: str, pgid: int) -> None:
+        Path(pgid_file).write_text(str(pgid))
+        time.sleep(300)
+
+    subprocesses._record_owned_process = hang  # type: ignore[assignment]
+    subprocesses.run_subprocess(
+        [binary], owner_instance_id="owner-dies-a", run_id="run-dies-a"
+    )
+
+
+def _child_owner_hangs_inside_popen(binary: str, token: str, data_root: str) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+    real_popen = subprocess.Popen
+
+    def hanging_popen(*args, **kwargs):
+        real_popen(*args, **kwargs)
+        time.sleep(300)
+
+    subprocesses.subprocess.Popen = hanging_popen  # type: ignore[assignment]
+    subprocesses.run_subprocess(
+        [binary, token],
+        owner_instance_id="owner-dies-b",
+        run_id="run-dies-b",
+    )
+
+
+def _child_run_owned_subprocess(
+    binary: str, owner_id: str, run_id: str, data_root: str
+) -> None:
+    provision_module.default_data_root = lambda: Path(data_root)
+    subprocesses.run_subprocess(
+        [binary], owner_instance_id=owner_id, run_id=run_id, timeout=600
+    )
 
 
 def test_owned_subprocess_real_engine_binary_never_execs_before_the_procs_record_is_durably_persisted_and_the_gate_is_released(
@@ -197,6 +236,52 @@ def test_release_payload_actually_causes_the_real_engine_binary_to_launch_not_me
     assert "fake-engine 1.2.3" in result.stdout
 
 
+def test_gate_releases_under_dash_even_when_the_gate_pipe_fd_is_multi_digit(
+    tmp_path: Path, monkeypatch, owned_data_root: Path
+) -> None:
+    """Ubuntu's `/bin/sh` is dash, which rejects any multi-digit fd in a
+    redirection (`<&12` -> "Bad fd number"). A gate that names its pipe by
+    fd number then never execs the engine once the owner has 10+ fds open,
+    as pytest and any long-lived coordinator do. macOS's `/bin/sh` (bash)
+    accepts it, which hid this locally. Falls back to `/bin/sh` only where
+    dash itself is not installed."""
+    monkeypatch.setattr(subprocesses, "_GATE_SHELL", shutil.which("dash") or "/bin/sh")
+    sentinel = tmp_path / "engine-started"
+    binary = _sentinel_binary(tmp_path, sentinel)
+    # Fill the lowest free descriptors so the gate's `os.pipe()` is >= 10.
+    fillers = [os.open(os.devnull, os.O_RDONLY) for _ in range(10)]
+    try:
+        result = subprocesses.run_subprocess(
+            [str(binary)], owner_instance_id="owner-dash", run_id="run-dash"
+        )
+    finally:
+        for fd in fillers:
+            os.close(fd)
+
+    assert sentinel.exists(), result.stderr
+    assert result.returncode == 0
+    assert "fake-engine 1.2.3" in result.stdout
+
+
+def test_gated_engine_stdin_is_devnull_not_the_gate_pipe(
+    tmp_path: Path, owned_data_root: Path
+) -> None:
+    """The owned path's `stdin=DEVNULL` contract survives the gate: the real
+    engine reads immediate EOF, never the gate pipe."""
+    script = tmp_path / f"stdin-probe-{uuid.uuid4().hex}.sh"
+    script.write_text(
+        '#!/bin/sh\nif read -r line; then echo "stdin:$line"; else echo stdin-eof; fi\n'
+    )
+    script.chmod(0o755)
+
+    result = subprocesses.run_subprocess(
+        [str(script)], owner_instance_id="owner-stdin", run_id="run-stdin", timeout=10
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "stdin-eof"
+
+
 def test_owner_death_before_gate_release_including_before_popen_returns_means_the_real_engine_binary_never_launches_at_all(
     tmp_path: Path, owned_data_root: Path
 ) -> None:
@@ -206,17 +291,9 @@ def test_owner_death_before_gate_release_including_before_popen_returns_means_th
     binary_a = _sentinel_binary(tmp_path, sentinel_a)
     pgid_file = tmp_path / "gate-pgid"
 
-    def _owner_hangs_before_release() -> None:
-        def hang(owner_instance_id: str, run_id: str, pgid: int) -> None:
-            pgid_file.write_text(str(pgid))
-            time.sleep(300)
-
-        subprocesses._record_owned_process = hang  # type: ignore[assignment]
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id="owner-dies-a", run_id="run-dies-a"
-        )
-
-    owner_pid = _fork_and_run(_owner_hangs_before_release)
+    owner_pid = _fork_and_run(
+        _child_owner_hangs_before_release, binary_a, pgid_file, owned_data_root
+    )
     try:
         assert _wait_until(pgid_file.exists), "gate process was never spawned"
         gate_pgid = int(pgid_file.read_text())
@@ -235,21 +312,9 @@ def test_owner_death_before_gate_release_including_before_popen_returns_means_th
     binary_b = _sentinel_binary(tmp_path, sentinel_b)
     token = f"rush-gate-probe-{uuid.uuid4().hex}"
 
-    def _owner_hangs_inside_popen() -> None:
-        real_popen = subprocess.Popen
-
-        def hanging_popen(*args, **kwargs):
-            real_popen(*args, **kwargs)
-            time.sleep(300)
-
-        subprocesses.subprocess.Popen = hanging_popen  # type: ignore[assignment]
-        subprocesses.run_subprocess(
-            [str(binary_b), token],
-            owner_instance_id="owner-dies-b",
-            run_id="run-dies-b",
-        )
-
-    owner_pid_b = _fork_and_run(_owner_hangs_inside_popen)
+    owner_pid_b = _fork_and_run(
+        _child_owner_hangs_inside_popen, binary_b, token, owned_data_root
+    )
     try:
         assert _wait_until(lambda: bool(_pattern_pids(token))), (
             "gate process was never spawned for the before-Popen-returns variant"
@@ -445,15 +510,9 @@ def test_parent_death_during_blocking_owned_subprocess_call_is_reaped_by_recover
     binary = _sentinel_binary(tmp_path, sentinel, sleep_seconds=300)
     owner_id = "owner-crashes-mid-scan"
 
-    def _owner_runs_slow_engine_child() -> None:
-        subprocesses.run_subprocess(
-            [str(binary)],
-            owner_instance_id=owner_id,
-            run_id="run-crashes",
-            timeout=600,
-        )
-
-    owner_pid = _fork_and_run(_owner_runs_slow_engine_child)
+    owner_pid = _fork_and_run(
+        _child_run_owned_subprocess, binary, owner_id, "run-crashes", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: bool(subprocesses.read_owned_process_records(owner_id))
@@ -769,18 +828,13 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
     binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
     binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
 
-    def _run_a() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
-        )
-
-    def _run_b() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
-        )
-
-    pid_a = _fork_and_run(_run_a)
-    pid_b = _fork_and_run(_run_b)
+    started_pgids: list[int] = []
+    pid_a = _fork_and_run(
+        _child_run_owned_subprocess, binary_a, owner_id, "run-a", owned_data_root
+    )
+    pid_b = _fork_and_run(
+        _child_run_owned_subprocess, binary_b, owner_id, "run-b", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2
@@ -790,6 +844,7 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
             for r in subprocesses.read_owned_process_records(owner_id)
         }
         pgid_a, pgid_b = records["run-a"], records["run-b"]
+        started_pgids = [pgid_a, pgid_b]
         assert _wait_until(sentinel_a.exists)
         assert _wait_until(sentinel_b.exists)
         assert _group_alive(pgid_a)
@@ -810,6 +865,19 @@ def test_reap_owner_processes_accepts_optional_run_id_filter_and_only_signals_ma
     finally:
         _kill_and_reap(pid_a)
         _kill_and_reap(pid_b)
+        # run-b was deliberately left running above; its engine group lives
+        # in its own session, so killing the owner alone never ends it.
+        for pgid in started_pgids:
+            with suppress(ProcessLookupError):
+                os.killpg(pgid, signal.SIGKILL)
+
+    # Nothing this test started may outlive it.
+    for pgid in started_pgids:
+        assert _wait_until(lambda pgid=pgid: not _group_alive(pgid)), (
+            f"process group {pgid} started by this test is still alive"
+        )
+        with pytest.raises(ProcessLookupError):
+            os.kill(pgid, 0)
 
 
 def test_reap_owner_processes_with_no_run_id_filter_keeps_existing_owner_wide_behavior_for_dead_owner_recovery(
@@ -824,18 +892,12 @@ def test_reap_owner_processes_with_no_run_id_filter_keeps_existing_owner_wide_be
     binary_a = _sentinel_binary(tmp_path, sentinel_a, sleep_seconds=300)
     binary_b = _sentinel_binary(tmp_path, sentinel_b, sleep_seconds=300)
 
-    def _run_a() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_a)], owner_instance_id=owner_id, run_id="run-a", timeout=600
-        )
-
-    def _run_b() -> None:
-        subprocesses.run_subprocess(
-            [str(binary_b)], owner_instance_id=owner_id, run_id="run-b", timeout=600
-        )
-
-    owner_pid_a = _fork_and_run(_run_a)
-    owner_pid_b = _fork_and_run(_run_b)
+    owner_pid_a = _fork_and_run(
+        _child_run_owned_subprocess, binary_a, owner_id, "run-a", owned_data_root
+    )
+    owner_pid_b = _fork_and_run(
+        _child_run_owned_subprocess, binary_b, owner_id, "run-b", owned_data_root
+    )
     try:
         assert _wait_until(
             lambda: len(subprocesses.read_owned_process_records(owner_id)) == 2
@@ -919,8 +981,11 @@ def test_security_tool_all_four_run_engine_sites_carry_owner_instance_id_and_run
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
     (tmp_path / "requirements.txt").write_text("")
 
+    # T14: requirements.txt now routes through osv-scanner (offline), not
+    # pip-audit -- pip-audit's security-dispatch route is gated project mode
+    # for pyproject-declared dependencies only (R14.1).
     _assert_ambient_ownership_reaches_run_subprocess(
-        monkeypatch, "rush.engines.pip_audit", lambda: SecurityTool().run(tmp_path)
+        monkeypatch, "rush.engines.osv", lambda: SecurityTool().run(tmp_path)
     )
 
 
@@ -940,14 +1005,53 @@ def test_format_tool_run_engine_call_carries_owner_instance_id_and_run_id(
 def test_test_tool_run_engine_call_carries_owner_instance_id_and_run_id(
     tmp_path: Path, monkeypatch
 ) -> None:
+    """S17.3: once TestTool is build-gated, the real spawn this ownership
+    check depends on only happens with an explicit build grant."""
+    from rush.permissions import ExecutionPermissions
     from rush.tools.test import TestTool
 
     monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
 
     _assert_ambient_ownership_reaches_run_subprocess(
-        monkeypatch, "rush.engines.pytest", lambda: TestTool().run(tmp_path)
+        monkeypatch,
+        "rush.engines.pytest",
+        lambda: TestTool().run(tmp_path, permissions=ExecutionPermissions(build=True)),
     )
+
+
+def test_test_tool_direct_call_without_build_grant_gives_zero_runner_spawns(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S17.3 (Phase 70 T17): TestTool is build-gated before any runner
+    subprocess spawn -- denial gives 0 calls to the real pytest engine's
+    bound `run_subprocess`, counted per this module's own established
+    convention (spy on the engine module's own attribute, not a shared
+    name -- see `_assert_ambient_ownership_reaches_run_subprocess` above
+    and design-gate finding 26)."""
+    import importlib
+
+    from rush.permissions import ExecutionPermissions
+    from rush.tools.test import TestTool
+
+    monkeypatch.setattr("rush.tools.common.engine_on_path", lambda binary: True)
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+
+    module = importlib.import_module("rush.engines.pytest")
+    calls: list[object] = []
+
+    def _spy(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(module, "run_subprocess", _spy)
+
+    result = TestTool().run(tmp_path, permissions=ExecutionPermissions())
+
+    assert calls == [], (
+        f"expected 0 runner spawns without --allow-build, got {len(calls)}"
+    )
+    assert result["status"] == "skipped"
 
 
 def test_coverage_tool_run_engine_call_carries_owner_instance_id_and_run_id(
@@ -1006,6 +1110,145 @@ def test_windows_job_name_is_namespaced_and_pid_scoped() -> None:
     assert name_a != name_b, "each call mints its own unique suffix"
 
 
+def _mock_windows_identity_kernel(monkeypatch, fault: str):
+    import ctypes
+    from types import SimpleNamespace
+
+    closed: list[int] = []
+    error = {
+        "absent": 87,
+        "access_denied": 5,
+        "unknown": 0,
+        "query_failed": 6,
+        "same_process": 0,
+        "reused_pid": 0,
+    }[fault]
+
+    def open_process(*_args):
+        return 77 if fault in ("query_failed", "same_process", "reused_pid") else 0
+
+    def get_process_times(_handle, creation, *_times):
+        creation._obj.dwHighDateTime = 2
+        creation._obj.dwLowDateTime = 4 if fault == "reused_pid" else 3
+        return fault != "query_failed"
+
+    def open_job(*_args):
+        return 0
+
+    def close_handle(handle):
+        closed.append(handle)
+
+    kernel = SimpleNamespace(
+        OpenProcess=open_process,
+        GetProcessTimes=get_process_times,
+        OpenJobObjectW=open_job,
+        CloseHandle=close_handle,
+    )
+
+    def load(name, *, use_last_error):
+        assert (name, use_last_error) == ("kernel32", True)
+        return kernel
+
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(kernel32=kernel), raising=False
+    )
+    monkeypatch.setattr(ctypes, "WinDLL", load, raising=False)
+    monkeypatch.setattr(ctypes, "get_last_error", lambda: error, raising=False)
+    return closed
+
+
+@pytest.mark.parametrize(
+    "fault,confirmed",
+    [
+        ("absent", True),
+        ("access_denied", False),
+        ("unknown", False),
+        ("query_failed", False),
+        ("same_process", False),
+        ("reused_pid", True),
+    ],
+)
+def test_windows_identity_confirmation_keeps_uncertain_durable_records(
+    monkeypatch, owned_data_root: Path, fault: str, confirmed: bool
+) -> None:
+    from types import SimpleNamespace
+
+    closed = _mock_windows_identity_kernel(monkeypatch, fault)
+    monkeypatch.setattr(subprocesses, "sys", SimpleNamespace(platform="win32"))
+    subprocesses._record_owned_process(
+        "windows-owner",
+        "run-a",
+        4242,
+        windows_job_name="Local\\RushJob-test",
+        windows_creation_time=(2 << 32) | 3,
+        windows_job_assigned=True,
+    )
+    record = subprocesses.read_owned_process_records("windows-owner")[0]
+    outcome = subprocesses.reap_owner_processes("windows-owner", timeout=0)
+    assert outcome == {
+        "owner_instance_id": "windows-owner",
+        "run_id": None,
+        "terminated": [4242] if confirmed else [],
+        "termination_unconfirmed": [] if confirmed else [4242],
+        "reconcilable": confirmed,
+    }
+    assert subprocesses.read_owned_process_records("windows-owner") == (
+        [] if confirmed else [{**record, "termination_unconfirmed": True}]
+    )
+    assert closed == (
+        [77] if fault in ("query_failed", "same_process", "reused_pid") else []
+    )
+
+
+def test_windows_launch_identity_query_error_never_releases_gate_and_cleans_up(
+    monkeypatch, owned_data_root: Path
+) -> None:
+    import sys
+    from types import SimpleNamespace
+
+    _mock_windows_identity_kernel(monkeypatch, "access_denied")
+    monkeypatch.setattr(
+        subprocesses,
+        "sys",
+        SimpleNamespace(
+            platform="win32",
+            executable=sys.executable,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules, "msvcrt", SimpleNamespace(get_osfhandle=lambda fd: fd)
+    )
+    monkeypatch.setattr(subprocess, "STARTUPINFO", SimpleNamespace, raising=False)
+    proc = SimpleNamespace(pid=4242)
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(subprocesses, "_create_kill_on_close_job", lambda _name: 88)
+    monkeypatch.setattr(subprocesses, "_assign_process_to_job", lambda *_args: True)
+    reaped = []
+    monkeypatch.setattr(subprocesses, "_reap_gate_process", reaped.append)
+    closed = []
+    real_close = subprocesses._close_fd
+
+    def close(fd):
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(subprocesses, "_close_fd", close)
+    with pytest.raises(OSError, match="OpenProcess"):
+        subprocesses._launch_gated_process_windows(
+            ["engine"],
+            popen_kwargs={},
+            env={},
+            owner_instance_id="windows-owner",
+            run_id="run-a",
+        )
+    assert reaped == [proc]
+    assert len(closed) == 2
+    for fd in closed:
+        with pytest.raises(OSError):
+            os.fstat(fd)
+    assert subprocesses.read_owned_process_records("windows-owner") == []
+
+
 # S03's remaining 9 named regression tests (mutex acquire/release,
 # abandoned-mutex dead-owner detection, gate-wrapper blocking, job-object
 # tree kill/nesting/PID-reuse/recovery-restart) all require real WinAPI
@@ -1016,3 +1259,35 @@ def test_windows_job_name_is_namespaced_and_pid_scoped() -> None:
 # in full, in this task's own receipt as an explicit, unverified platform
 # gap for a future Windows session to create and run for real -- never
 # silently omitted, never claimed as checked on that platform.
+
+
+def test_t14_denied_pyproject_project_mode_spawns_no_real_subprocess(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """T14 zero-spawn correction: a permission-denied pyproject project-mode
+    audit must never reach the OS process boundary -- patch
+    `subprocess.Popen`/`subprocess.run` directly (what `run_subprocess` and
+    any future engine ultimately call), not only the `run_subprocess` seam."""
+    from rush.tools.security import SecurityTool
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname='x'\ndependencies=['requests==2.6.0']\n"
+    )
+    monkeypatch.setattr(
+        "rush.tools.common.engine_on_path", lambda binary: binary != "medusa"
+    )
+
+    def _fail_popen(*_args, **_kwargs):
+        pytest.fail("no real subprocess.Popen should have been spawned")
+
+    def _fail_run(*_args, **_kwargs):
+        pytest.fail("no real subprocess.run should have been spawned")
+
+    monkeypatch.setattr(subprocess, "Popen", _fail_popen)
+    monkeypatch.setattr(subprocess, "run", _fail_run)
+
+    result = SecurityTool().run(tmp_path)
+
+    deps = result["metadata"]["scope"]["dependencies"]
+    entry = next(d for d in deps if d["kind"] == "pyproject")
+    assert entry["state"] != "resolved-for-this-audit"

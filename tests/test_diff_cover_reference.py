@@ -121,9 +121,7 @@ def test_conflicting_positional_or_option_args_are_rejected_and_the_binary_is_no
     monkeypatch.setattr(diff_cover, "resolve_binary", lambda _b: "/bin/diff-cover")
     monkeypatch.setattr(diff_cover, "run_subprocess", fake_run)
 
-    override = DiffCoverEngine().run(
-        tmp_path, ["--compare-branch=other"], cwd=tmp_path
-    )
+    override = DiffCoverEngine().run(tmp_path, ["--compare-branch=other"], cwd=tmp_path)
     assert override["exit_code"] == 1
     assert "rejected caller override" in override["summary"]
 
@@ -150,17 +148,13 @@ def test_temp_directory_is_cleaned_up_on_success_error_timeout_and_cancellation(
     monkeypatch.setattr(
         diff_cover,
         "run_subprocess",
-        lambda argv, **_k: subprocess.CompletedProcess(
-            argv, 0, stdout="{}", stderr=""
-        ),
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, stdout="{}", stderr=""),
     )
     DiffCoverEngine().run(tmp_path, [], cwd=tmp_path)
     assert _rush_diff_cover_tempdirs() == before
 
     def _raiser(exc: Exception):
-        def _fake(
-            argv: list[str], **_k: object
-        ) -> subprocess.CompletedProcess[str]:
+        def _fake(argv: list[str], **_k: object) -> subprocess.CompletedProcess[str]:
             raise exc
 
         return _fake
@@ -189,19 +183,13 @@ def test_changed_coverage_bytes_alone_change_the_folded_provenance_identity(
     monkeypatch.setattr(
         diff_cover,
         "run_subprocess",
-        lambda argv, **_k: subprocess.CompletedProcess(
-            argv, 0, stdout="{}", stderr=""
-        ),
+        lambda argv, **_k: subprocess.CompletedProcess(argv, 0, stdout="{}", stderr=""),
     )
 
-    (tmp_path / "coverage.xml").write_text(
-        '<coverage version="a"/>', encoding="utf-8"
-    )
+    (tmp_path / "coverage.xml").write_text('<coverage version="a"/>', encoding="utf-8")
     first = DiffCoverEngine().run(tmp_path, [], cwd=tmp_path)
 
-    (tmp_path / "coverage.xml").write_text(
-        '<coverage version="b"/>', encoding="utf-8"
-    )
+    (tmp_path / "coverage.xml").write_text('<coverage version="b"/>', encoding="utf-8")
     second = DiffCoverEngine().run(tmp_path, [], cwd=tmp_path)
 
     assert first["provenance"]["digest"] is not None

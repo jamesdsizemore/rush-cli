@@ -16,11 +16,22 @@ def test_cli_slop_clean_file(tmp_path: Path) -> None:
     test_file.write_text("def hello() -> str:\n    return 'world'\n", encoding="utf-8")
 
     runner = CliRunner()
+    # No grant: provisioned aislop runs offline from the npm cache; a
+    # genuinely uncached npm package is reported skipped with its install
+    # reason, never an engine error.
     result = runner.invoke(cli, ["slop", str(tmp_path), "--json"])
     assert result.exit_code in (0, 1, 2)
     payload = json.loads(result.output)
     assert payload["tool"] == "slop"
     assert "findings" in payload
+    assert payload["status"] in ("ok", "warn", "skipped"), payload["summary"]
+    if payload["status"] == "skipped":
+        assert (
+            "requires permission: --allow-download" in payload["summary"]
+            or "not on PATH" in payload["summary"]
+        ), payload["summary"]
+    else:
+        assert payload["engine"] == "aislop", payload["summary"]
 
 
 def test_cli_tdd_missing_tests(tmp_path: Path) -> None:

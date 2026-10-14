@@ -11,6 +11,7 @@ real (deduplicated, opt-in-gated) retrieval/expansion/packing/handoff costs.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -27,6 +28,29 @@ from rush.tools.memory import MemoryTool
 from rush.tools.review import ReviewTool
 
 GRANTED = ExecutionPermissions(cache_write=True)
+
+
+def _git_baseline(root: Path, *files: str) -> None:
+    """72-T01: a `main` commit holding `files`, so `ApiDiffer` has a baseline. Without
+    one the API diff is `"unknown"`, which the shared decision never treats as current."""
+    for args in (
+        ["init", "--initial-branch=main"],
+        ["add", *files],
+        ["commit", "-m", "baseline"],
+    ):
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                *args,
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+        )
 
 
 def _write_artifact(
@@ -60,6 +84,7 @@ def test_cache_and_review_do_one_defended_search(tmp_path: Path) -> None:
     `search()`-then-`recall()` double query), and returned evidence stays correct."""
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n", encoding="utf-8")
+    _git_baseline(tmp_path, "module.py")
     file_hash = MerkleInvalidator(tmp_path).hash_content(target.read_text())
     store = TypedArtifactStore(tmp_path)
     for artifact_id in ("cache-a", "cache-b"):
@@ -145,6 +170,7 @@ def test_shared_source_validated_once_per_request(tmp_path: Path) -> None:
     API-diffs that file exactly once per call, not once per candidate."""
     target = tmp_path / "shared.py"
     target.write_text("def shared():\n    return 1\n", encoding="utf-8")
+    _git_baseline(tmp_path, "shared.py")
     file_hash = MerkleInvalidator(tmp_path).hash_content(target.read_text())
     store = TypedArtifactStore(tmp_path)
     for artifact_id in ("s1", "s2", "s3"):
@@ -188,6 +214,7 @@ def test_same_size_source_edit_invalidates_next_request(tmp_path: Path) -> None:
     edited_body = "def hello():\n    return 2\n"
     assert len(original_body) == len(edited_body)
     target.write_text(original_body, encoding="utf-8")
+    _git_baseline(tmp_path, "module.py")
 
     first = pack_context(
         time.monotonic(), tmp_path, "module.py", "hello", 10_000, GRANTED
@@ -211,6 +238,7 @@ def test_cache_key_changes_with_budget_scope_and_tokenizer(tmp_path: Path) -> No
     (the literal `cache_key`) are unchanged."""
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n", encoding="utf-8")
+    _git_baseline(tmp_path, "module.py")
     pack_context(time.monotonic(), tmp_path, "module.py", "hello", 10_000, GRANTED)
 
     assert (
@@ -328,6 +356,7 @@ def test_read_only_recall_never_persists_telemetry(tmp_path: Path) -> None:
     and a subsequent cache hit records nothing further."""
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n", encoding="utf-8")
+    _git_baseline(tmp_path, "module.py")
 
     check_memory_before_pack("module.py", "hello", project_root=tmp_path)
     ReviewTool().run(target)
@@ -349,6 +378,7 @@ def test_cache_view_dimension_is_compared_when_supplied(tmp_path: Path) -> None:
     it, but the comparison itself is real."""
     target = tmp_path / "module.py"
     target.write_text("def hello():\n    return 1\n", encoding="utf-8")
+    _git_baseline(tmp_path, "module.py")
     pack_context(
         time.monotonic(), tmp_path, "module.py", "hello", 10_000, GRANTED, as_v1=True
     )

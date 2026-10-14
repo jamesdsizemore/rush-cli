@@ -676,3 +676,75 @@ def test_handle_request_denies_relink_without_artifact_write_scope(
 
     assert result["status"] == "skipped"
     assert result["raw"]["error"]["code"] == "SCOPE_DENIED"
+
+
+# --- Phase 70 T24 / design gate X5: strict registry reads -------------------
+
+
+def test_corrupt_registry_is_never_overwritten_by_mutations(tmp_path: Path) -> None:
+    from rush.workflows.projects import (
+        ProjectRegistryCorruptError,
+        read_registry_strict,
+    )
+
+    data_root = _data_root(tmp_path)
+    data_root.mkdir(parents=True)
+    root = tmp_path / "proj"
+    root.mkdir()
+    registry_path = data_root / "projects.json"
+    registry_path.write_bytes(b'{"projects": [not json')
+    before = registry_path.read_bytes()
+
+    strict = read_registry_strict(data_root)
+    assert strict["state"] == "corrupt"
+    assert strict["registry"] is None
+    assert strict["sha256"] is not None
+
+    with pytest.raises(ProjectRegistryCorruptError) as excinfo:
+        register_project(root, data_root=data_root)
+    assert excinfo.value.path == str(registry_path)
+    with pytest.raises(ProjectRegistryCorruptError):
+        configure_project(
+            "any", {}, expected_revision=1, apply=True, plan_id="x", data_root=data_root
+        )
+    with pytest.raises(ProjectRegistryCorruptError):
+        select_project("session-1", "any", data_root=data_root)
+
+    assert registry_path.read_bytes() == before
+    assert not (root / ".rush").exists()
+
+
+def test_register_rolls_back_entry_when_descriptor_write_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import rush.workflows.projects as projects_module
+
+    data_root = _data_root(tmp_path)
+    root = tmp_path / "proj"
+    root.mkdir()
+
+    def _fail(*_args: object, **_kwargs: object) -> None:
+        raise OSError("descriptor write failed")
+
+    monkeypatch.setattr(projects_module, "_write_project_descriptor", _fail)
+    with pytest.raises(OSError):
+        register_project(root, data_root=data_root)
+    assert list_projects(data_root=data_root) == []
+
+
+def test_unregister_project_removes_only_the_expected_revision(tmp_path: Path) -> None:
+    from rush.workflows.projects import unregister_project
+
+    data_root = _data_root(tmp_path)
+    root = tmp_path / "proj"
+    root.mkdir()
+    record = register_project(root, data_root=data_root)
+    _apply_settings(record.project_id, {}, data_root=data_root, expected_revision=1)
+
+    with pytest.raises(ProjectRevisionConflictError):
+        unregister_project(record.project_id, expected_revision=1, data_root=data_root)
+    assert len(list_projects(data_root=data_root)) == 1
+
+    unregister_project(record.project_id, expected_revision=2, data_root=data_root)
+    assert list_projects(data_root=data_root) == []
+    assert not (root / ".rush" / "project.json").exists()

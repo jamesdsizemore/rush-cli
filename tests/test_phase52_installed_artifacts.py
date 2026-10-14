@@ -54,29 +54,17 @@ def test_verify_package_origin_flags_checkout_root() -> None:
     assert verify_package_origin(out_of_tree, PROJECT_ROOT) is True
 
 
-def test_wheel_and_sdist_pass_every_safe_probe(tmp_path: Path) -> None:
-    """Verify that both built wheel and sdist pass clean installation and external-CWD probes."""
-    import tomllib
-
-    pyproject_data = tomllib.loads(
-        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )
-    expected_version = pyproject_data["project"]["version"]
-
-    dist_dir = PROJECT_ROOT / "dist"
-    wheels = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.whl"))
-    sdists = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.tar.gz"))
-
-    assert wheels, (
-        f"No wheel for v{expected_version} found in {dist_dir}. Build artifacts first."
-    )
-    assert sdists, (
-        f"No sdist for v{expected_version} found in {dist_dir}. Build artifacts first."
-    )
+def test_wheel_and_sdist_pass_every_safe_probe(
+    tmp_path: Path, distribution_artifacts: tuple[Path, Path]
+) -> None:
+    """Verify that both built wheel and sdist pass clean installation and external-CWD
+    probes. `distribution_artifacts` (conftest.py) builds both from the current source
+    once per session."""
+    wheel, sdist = distribution_artifacts
 
     # Probe wheel
     wheel_result = probe_installed_artifact(
-        wheels[0], PROJECT_ROOT, tmp_path / "wheel_test"
+        wheel, PROJECT_ROOT, tmp_path / "wheel_test"
     )
     assert wheel_result.status == "passed", f"Wheel probe failed: {wheel_result.stderr}"
     assert wheel_result.origin_verified is True
@@ -84,7 +72,7 @@ def test_wheel_and_sdist_pass_every_safe_probe(tmp_path: Path) -> None:
 
     # Probe sdist
     sdist_result = probe_installed_artifact(
-        sdists[0], PROJECT_ROOT, tmp_path / "sdist_test"
+        sdist, PROJECT_ROOT, tmp_path / "sdist_test"
     )
     assert sdist_result.status == "passed", f"Sdist probe failed: {sdist_result.stderr}"
     assert sdist_result.origin_verified is True
@@ -117,7 +105,9 @@ def test_artifact_imports_never_resolve_to_checkout_or_src(tmp_path: Path) -> No
     assert verify_package_origin(external_site_packages, PROJECT_ROOT) is True
 
 
-def test_artifact_version_matches_distribution_metadata() -> None:
+def test_artifact_version_matches_distribution_metadata(
+    distribution_artifacts: tuple[Path, Path],
+) -> None:
     """Verify that built wheel distribution metadata version matches pyproject.toml."""
     import tomllib
     import zipfile
@@ -127,11 +117,10 @@ def test_artifact_version_matches_distribution_metadata() -> None:
     )
     expected_version = pyproject_data["project"]["version"]
 
-    dist_dir = PROJECT_ROOT / "dist"
-    wheels = sorted(dist_dir.glob(f"rush_cli-{expected_version}*.whl"))
-    assert wheels, f"No wheel found for v{expected_version} in dist/"
+    wheel, _sdist = distribution_artifacts
+    assert wheel.name.startswith(f"rush_cli-{expected_version}-")
 
-    with zipfile.ZipFile(wheels[0]) as zf:
+    with zipfile.ZipFile(wheel) as zf:
         metadata_content = zf.read(
             f"rush_cli-{expected_version}.dist-info/METADATA"
         ).decode("utf-8")
@@ -173,29 +162,33 @@ def test_windows_and_posix_jobs_cover_both_artifacts() -> None:
     )
 
 
-def test_native_artifact_needs_no_checkout_python_or_uv(tmp_path: Path) -> None:
+def test_native_artifact_needs_no_checkout_python_or_uv(
+    tmp_path: Path, native_release_archive: Path
+) -> None:
     """Verify the extracted native release archive proves origin, version and a real MCP
     initialize handshake from a clean external directory with checkout/Python/uv absent
-    from PATH (Phase 65: P65-01.3)."""
+    from PATH (Phase 65: P65-01.3). `native_release_archive` (conftest.py) builds the
+    archive from the current source once per session."""
+    import json
+    import os
     import platform
+    import queue
+    import subprocess
+    import threading
     import tomllib
+    import urllib.parse
+    import urllib.request
 
     pyproject_data = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
     expected_version = pyproject_data["project"]["version"]
 
-    asset_name = select_platform_asset(platform.system(), platform.machine())
-    archive_path = PROJECT_ROOT / "dist" / asset_name
-    checksums_path = PROJECT_ROOT / "dist" / "SHA256SUMS"
-
-    if not archive_path.is_file():
-        pytest.skip(
-            f"No native release archive at {archive_path} for this platform. CI does not "
-            "build PyInstaller archives yet; build one first with "
-            "scripts.probe_installed_artifacts.build_release_archive to exercise this "
-            "probe locally."
-        )
+    archive_path = native_release_archive
+    checksums_path = archive_path.parent / "SHA256SUMS"
+    assert archive_path.name == select_platform_asset(
+        platform.system(), platform.machine()
+    )
 
     assert verify_archive_checksum(archive_path, checksums_path) is True, (
         "Native archive bytes do not match its recorded SHA256SUMS entry."
@@ -207,3 +200,157 @@ def test_native_artifact_needs_no_checkout_python_or_uv(tmp_path: Path) -> None:
     assert result.origin_verified is True
     assert result.mcp_initialized is True
     assert result.stdout.strip() == expected_version
+
+    # Bundled Python/MCP alone does not prove the native dashboard's JS
+    # resources survived PyInstaller's data collection.
+    home = tmp_path / "dashboard-home"
+    home.mkdir()
+    env = {
+        "PATH": "C:\\Windows\\System32" if os.name == "nt" else "/usr/bin:/bin",
+        "HOME": str(home),
+        "USERPROFILE": str(home),
+        "LOCALAPPDATA": str(home / "local"),
+        "XDG_DATA_HOME": str(home / "data"),
+    }
+    if os.name == "nt":
+        env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
+        env["windir"] = env["SystemRoot"]
+    binary = tmp_path / "extracted" / ("rush.exe" if os.name == "nt" else "rush")
+    with (tmp_path / "dashboard.stderr").open("w") as stderr:
+        proc = subprocess.Popen(
+            [str(binary), "dashboard", "--port", "0", "--no-open", "--json"],
+            cwd=tmp_path / "cwd_native",
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+        )
+        assert proc.stdout is not None
+        ready_lines: queue.Queue[str] = queue.Queue()
+        reader = threading.Thread(
+            target=lambda: ready_lines.put(proc.stdout.readline()), daemon=True
+        )
+        reader.start()
+        try:
+            readiness = json.loads(ready_lines.get(timeout=20))
+            assert readiness["ready"] is True
+            # Bootstrap fragment is private: retain only the public origin.
+            url = urllib.parse.urlsplit(readiness["url"])
+            origin = f"{url.scheme}://{url.netloc}"
+            for asset in ("application.js", "project_map.js"):
+                with urllib.request.urlopen(
+                    f"{origin}/assets/{asset}", timeout=5
+                ) as response:
+                    assert response.status == 200
+                    assert (
+                        response.read()
+                        == (
+                            PROJECT_ROOT / "src" / "rush" / "dashboard" / asset
+                        ).read_bytes()
+                    )
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+            reader.join(timeout=5)
+            proc.stdout.close()
+
+
+@pytest.mark.parametrize("failure", ["checksum", "probe"])
+def test_native_install_failure_restores_previous_executable(
+    tmp_path: Path, native_release_archive: Path, failure: str
+) -> None:
+    """Exercise real native execution and rollback with a controlled candidate fault."""
+    import os
+    import platform
+    import subprocess
+    import tarfile
+    import zipfile
+
+    from rush.tools.install import InstallError, InstallTool
+
+    archive = native_release_archive
+    sums = (archive.parent / "SHA256SUMS").read_text(encoding="utf-8")
+    assert archive.name == select_platform_asset(platform.system(), platform.machine())
+    assert verify_archive_checksum(archive, archive.parent / "SHA256SUMS") is True
+    binary_name = "rush.exe" if os.name == "nt" else "rush"
+    if archive.suffix == ".zip":
+        with zipfile.ZipFile(archive) as packed:
+            previous_bytes = packed.read(binary_name)
+    else:
+        with tarfile.open(archive, "r:gz") as packed:
+            member = packed.extractfile(binary_name)
+            assert member is not None
+            with member:
+                previous_bytes = member.read()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    previous = bin_dir / binary_name
+    previous.write_bytes(previous_bytes)
+    previous.chmod(0o755)
+    env = scrub_environment(
+        {
+            "PATH": "C:\\Windows\\System32" if os.name == "nt" else "/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
+            "TEMP": str(tmp_path),
+            "TMP": str(tmp_path),
+            "TMPDIR": str(tmp_path),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_DATA_HOME": str(tmp_path / "data"),
+        }
+    )
+    if os.name == "nt":
+        env["SystemRoot"] = os.environ.get("SystemRoot", "C:\\Windows")
+        env["windir"] = env["SystemRoot"]
+    observed: list[subprocess.CompletedProcess[str]] = []
+
+    def execute(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            args,
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+    before = execute([str(previous), "--version"])
+    assert before.returncode == 0, before.stderr
+
+    def failed_probe(args: list[str]) -> subprocess.CompletedProcess[str]:
+        assert args == [str(previous), "--version"]
+        healthy = execute(args)
+        assert healthy.returncode == 0, healthy.stderr
+        assert healthy.stdout == before.stdout
+        rejected = execute([args[0], "--rush-invalid-install-verification-option"])
+        assert rejected.returncode == 2, rejected.stderr
+        observed.extend((healthy, rejected))
+        # Both real processes ended; damage only this freshly installed candidate.
+        previous.write_bytes(b"broken candidate")
+        return rejected
+
+    if failure == "checksum":
+        sums = "0" * 64 + f"  {archive.name}\n"
+    with pytest.raises(InstallError) as raised:
+        InstallTool()._install_binary(
+            bin_dir=bin_dir,
+            asset_name=archive.name,
+            os_name=platform.system(),
+            archive_bytes=archive.read_bytes(),
+            sums_text=sums,
+            prober=failed_probe,
+        )
+    expected = "CHECKSUM_MISMATCH" if failure == "checksum" else "BINARY_VERIFY_FAILED"
+    assert raised.value.code == expected
+    assert len(observed) == (0 if failure == "checksum" else 2)
+    assert previous.read_bytes() == previous_bytes
+    restored = execute([str(previous), "--version"])
+    assert restored.returncode == 0, restored.stderr
+    assert restored.stdout == before.stdout

@@ -22,7 +22,39 @@
       "privacy_url": "https://openai.com/policies/privacy-policy",
       "credential_boundary": "local Codex OAuth profile",
       "redaction_patterns": ["sk-[A-Za-z0-9_-]{20,}"],
-      "timeout_s": 90.0
+      "timeout_s": 90.0,
+      "decision_protocol": {
+        "format": "codex_exec_jsonl",
+        "help_args": [
+          "exec",
+          "--help"
+        ],
+        "argv": {
+          "dataset_answer": [
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules"
+          ],
+          "episode": [
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules"
+          ]
+        },
+        "instruction_files": [
+          "$CODEX_HOME/AGENTS.md"
+        ]
+      }
     },
     {
       "provider_id": "anthropic",
@@ -46,7 +78,38 @@
       "privacy_url": "https://anthropic.com/privacy",
       "credential_boundary": "local Claude Code OAuth profile",
       "redaction_patterns": ["sk-ant-[A-Za-z0-9_-]{20,}"],
-      "timeout_s": 90.0
+      "timeout_s": 90.0,
+      "decision_protocol": {
+        "format": "claude_print_json",
+        "help_args": [
+          "--help"
+        ],
+        "argv": {
+          "dataset_answer": [
+            "-p",
+            "--tools",
+            "",
+            "--output-format",
+            "json",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--no-session-persistence"
+          ],
+          "episode": [
+            "-p",
+            "--tools",
+            "Read,Grep,Glob",
+            "--permission-mode",
+            "plan",
+            "--output-format",
+            "json",
+            "--safe-mode",
+            "--strict-mcp-config",
+            "--no-session-persistence"
+          ]
+        },
+        "instruction_files": []
+      }
     },
     {
       "provider_id": "antigravity",

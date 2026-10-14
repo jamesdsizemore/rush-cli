@@ -133,7 +133,8 @@ def test_continuity_context_retrieve_returns_or_explicitly_misses_handle(
         "state": "recovered",
         "handle": handle,
     }
-    assert missing["status"] == "skipped"
+    # Phase 70 T27 (R27.1): an unknown handle is an input error, not a skip.
+    assert missing["status"] == "error"
     assert missing["metadata"]["context_envelope"]["recovery"] == {
         "state": "not_found",
         "handle": "f" * 64,

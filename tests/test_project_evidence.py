@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, MemorySubject, TypedArtifactStore
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 from rush.workflows.projects import (
@@ -25,6 +25,12 @@ from rush.workflows.projects import (
     project_snapshot,
     register_project,
 )
+
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
 
 _WRITE = ExecutionPermissions(cache_write=True)
 
@@ -73,6 +79,23 @@ def _write_manifest(
     manifest_dir.mkdir(parents=True, exist_ok=True)
     (manifest_dir / "manifest.json").write_text(
         json.dumps(manifest, indent=2), encoding="utf-8"
+    )
+    # T23: the chronology reader orders attempts by a validated `attempt.json`
+    # header (identities, positive generation, UTC `started_at`), exactly the
+    # shape `project_run._write_attempt_header` persists.
+    descriptor = json.loads((root / ".rush" / "project.json").read_text("utf-8"))
+    (manifest_dir / "attempt.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "attempt_id": attempt_id,
+                "plan_id": f"plan-{run_id}",
+                "project_id": descriptor["project_id"],
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "attempt_generation": 1,
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -124,15 +147,17 @@ def test_two_projects_with_identical_filenames_do_not_mix_findings_or_memory(
         root_a,
         run_id="run-a",
         scheduled=[_scheduled_item("typecheck", "quality")],
-        findings=[{"finding_id": "fa1", "path": "app.py", "severity": "error"}],
+        findings=[
+            {"finding_id": "finding-alpha-1", "path": "app.py", "severity": "error"}
+        ],
     )
     _write_manifest(
         root_b,
         run_id="run-b",
         scheduled=[_scheduled_item("typecheck", "quality")],
         findings=[
-            {"finding_id": "fb1", "path": "app.py", "severity": "warn"},
-            {"finding_id": "fb2", "path": "app.py", "severity": "warn"},
+            {"finding_id": "finding-beta-1", "path": "app.py", "severity": "warn"},
+            {"finding_id": "finding-beta-2", "path": "app.py", "severity": "warn"},
         ],
     )
 
@@ -173,8 +198,8 @@ def test_two_projects_with_identical_filenames_do_not_mix_findings_or_memory(
     serialized_b = json.dumps(snapshot_b)
     assert "beta unrelated notes" not in serialized_a
     assert "alpha secret finding notes" not in serialized_b
-    assert "fb1" not in serialized_a and "fb2" not in serialized_a
-    assert "fa1" not in serialized_b
+    assert "finding-beta-1" not in serialized_a and "finding-beta-2" not in serialized_a
+    assert "finding-alpha-1" not in serialized_b
 
 
 def test_known_profiling_export_and_unrecognized_categories_all_discoverable(
@@ -298,7 +323,18 @@ def test_project_snapshot_has_overview_runs_memory_tokens_git_and_artifacts(
         "tokenizer_counted",
         "cache_hits",
         "estimated_avoided",
+        "unscoped",
+        "interval",
     }
+    assert set(snapshot["tokens"]["unscoped"]) >= {
+        "event_count",
+        "provider_events",
+        "tokenizer_packets",
+        "telemetry_events",
+        "identity_keys",
+    }
+    assert isinstance(snapshot["tokens"]["unscoped"]["event_count"], int)
+    assert set(snapshot["tokens"]["interval"]) == {"earliest", "latest"}
     assert snapshot["git"]["has_git"] is False
     assert snapshot["artifacts"]["project_id"] == project_id
 
@@ -309,7 +345,7 @@ def test_project_snapshot_has_overview_runs_memory_tokens_git_and_artifacts(
 
 
 def _seed_one(
-    root: Path, *, artifact_id: str = "e1", subject: str = "domain_knowledge"
+    root: Path, *, artifact_id: str = "e1", subject: MemorySubject = "domain_knowledge"
 ) -> None:
     TypedArtifactStore(root).write(
         MemoryArtifact(
@@ -337,10 +373,10 @@ def test_edit_preview_never_writes(tmp_path: Path) -> None:
             "apply": False,
         },
     )
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"]["applied"] is False
+    assert _nn(result["raw"])["code"] == "OK"
+    assert _nn(result["raw"])["data"]["applied"] is False
     store = TypedArtifactStore(tmp_path)
-    assert store.get_current("e1").content == {"body": "original"}
+    assert _nn(store.get_current("e1")).content == {"body": "original"}
 
 
 def test_edit_apply_updates_content_under_compare_and_swap(tmp_path: Path) -> None:
@@ -357,12 +393,12 @@ def test_edit_apply_updates_content_under_compare_and_swap(tmp_path: Path) -> No
         },
         permissions=_WRITE,
     )
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"]["applied"] is True
+    assert _nn(result["raw"])["code"] == "OK"
+    assert _nn(result["raw"])["data"]["applied"] is True
     store = TypedArtifactStore(tmp_path)
     current = store.get_current("e1")
-    assert current.content == {"body": "edited"}
-    assert current.artifact_version == 2
+    assert _nn(current).content == {"body": "edited"}
+    assert _nn(current).artifact_version == 2
 
 
 def test_edit_stale_version_conflict_refuses_the_edit(tmp_path: Path) -> None:
@@ -379,9 +415,9 @@ def test_edit_stale_version_conflict_refuses_the_edit(tmp_path: Path) -> None:
         },
         permissions=_WRITE,
     )
-    assert result["raw"]["code"] == "E_VERSION"
+    assert _nn(result["raw"])["code"] == "E_VERSION"
     store = TypedArtifactStore(tmp_path)
-    assert store.get_current("e1").content == {"body": "original"}
+    assert _nn(store.get_current("e1")).content == {"body": "original"}
 
 
 def test_edit_cross_scope_refuses_the_edit(tmp_path: Path) -> None:
@@ -398,15 +434,15 @@ def test_edit_cross_scope_refuses_the_edit(tmp_path: Path) -> None:
         },
         permissions=_WRITE,
     )
-    assert result["raw"]["code"] == "E_SCOPE"
+    assert _nn(result["raw"])["code"] == "E_SCOPE"
     store = TypedArtifactStore(tmp_path)
-    assert store.get_current("e1").content == {"body": "original"}
+    assert _nn(store.get_current("e1")).content == {"body": "original"}
 
 
 def test_edit_resets_promoted_trust_to_candidate(tmp_path: Path) -> None:
     _seed_one(tmp_path)
     store = TypedArtifactStore(tmp_path)
-    promoted, _ = store.promote("e1", user_stated=True, candidate_sources=["s1"])
+    promoted, _ = store.promote("e1", user_stated=True)
     assert promoted.trust_tier == "STATED"
 
     result = MemoryTool().run(
@@ -421,12 +457,43 @@ def test_edit_resets_promoted_trust_to_candidate(tmp_path: Path) -> None:
         },
         permissions=_WRITE,
     )
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"]["trust_tier"] != "STATED"
+    assert _nn(result["raw"])["code"] == "OK"
+    assert _nn(result["raw"])["data"]["trust_tier"] != "STATED"
     current = store.get_current("e1")
-    assert current.trust_tier != "STATED"
-    assert current.signature is None
-    assert current.promoted_at is None
+    assert _nn(current).trust_tier != "STATED"
+    assert _nn(current).signature is None
+    assert _nn(current).promoted_at is None
+
+    # 72-T04 (D8): once the data root holds a policy, an in-process promote with no
+    # resolved access is refused instead of reading rows without a grant.
+    from rush.memory import authorization as auth
+    from rush.memory.store import OwnerScope
+    from rush.setup.provision import default_data_root
+
+    data_root = default_data_root()
+    project_id = register_project(
+        tmp_path, name=tmp_path.name, data_root=data_root
+    ).project_id
+    auth.grant_memory_scope(
+        project_root=tmp_path,
+        owner_scope=OwnerScope("project", project_id),
+        approved_sources=["s1"],
+        allowed_operations=["ask", "expand", "list", "write"],
+        expected_policy_revision=int(
+            auth.load_policy_readonly(data_root=data_root)["policy_revision"] or 0
+        ),
+        consent=True,
+        data_root=data_root,
+    )
+    try:
+        store.promote("e1", user_stated=True)
+    except auth.MemoryPolicyError as refused:
+        assert (refused.code, refused.reason) == (
+            "E_PERMISSION",
+            "policy_grant_required",
+        )
+    else:
+        raise AssertionError("policy-mode promote without access was not refused")
 
 
 def test_archive_preview_never_writes(tmp_path: Path) -> None:
@@ -441,8 +508,8 @@ def test_archive_preview_never_writes(tmp_path: Path) -> None:
             "apply": False,
         },
     )
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"]["applied"] is False
+    assert _nn(result["raw"])["code"] == "OK"
+    assert _nn(result["raw"])["data"]["applied"] is False
     listing = MemoryTool().run(
         tmp_path,
         operation="list",
@@ -450,7 +517,7 @@ def test_archive_preview_never_writes(tmp_path: Path) -> None:
         query="original",
         session_allowlist=["s1"],
     )
-    assert len(listing["raw"]) == 1
+    assert len(_nn(listing["raw"])) == 1
 
 
 def test_archive_excludes_artifact_from_default_recall(tmp_path: Path) -> None:
@@ -466,8 +533,8 @@ def test_archive_excludes_artifact_from_default_recall(tmp_path: Path) -> None:
         },
         permissions=_WRITE,
     )
-    assert result["raw"]["code"] == "OK"
-    assert result["raw"]["data"]["archived"] is True
+    assert _nn(result["raw"])["code"] == "OK"
+    assert _nn(result["raw"])["data"]["archived"] is True
 
     listing = MemoryTool().run(
         tmp_path,
@@ -508,8 +575,8 @@ def test_archive_include_archived_reveals_it_for_authorized_inspection(
         session_allowlist=["s1"],
         include_archived=True,
     )
-    assert len(listing["raw"]) == 1
-    assert listing["raw"][0]["id"] == "a1"
+    assert len(_nn(listing["raw"])) == 1
+    assert _nn(listing["raw"])[0]["id"] == "a1"
 
 
 def test_archive_is_reversible_via_unarchive_with_expected_version(
@@ -527,7 +594,7 @@ def test_archive_is_reversible_via_unarchive_with_expected_version(
         },
         permissions=_WRITE,
     )
-    archived_version = archived["raw"]["data"]["revision"]
+    archived_version = _nn(archived["raw"])["data"]["revision"]
 
     unarchived = MemoryTool().run(
         tmp_path,
@@ -541,8 +608,8 @@ def test_archive_is_reversible_via_unarchive_with_expected_version(
         },
         permissions=_WRITE,
     )
-    assert unarchived["raw"]["code"] == "OK"
-    assert unarchived["raw"]["data"]["archived"] is False
+    assert _nn(unarchived["raw"])["code"] == "OK"
+    assert _nn(unarchived["raw"])["data"]["archived"] is False
 
     listing = MemoryTool().run(
         tmp_path,
@@ -551,7 +618,7 @@ def test_archive_is_reversible_via_unarchive_with_expected_version(
         query="original",
         session_allowlist=["s1"],
     )
-    assert len(listing["raw"]) == 1
+    assert len(_nn(listing["raw"])) == 1
 
 
 def test_archive_stale_version_and_cross_scope_refuse_atomically(
@@ -569,7 +636,7 @@ def test_archive_stale_version_and_cross_scope_refuse_atomically(
         },
         permissions=_WRITE,
     )
-    assert stale["raw"]["code"] == "E_VERSION"
+    assert _nn(stale["raw"])["code"] == "E_VERSION"
 
     cross_scope = MemoryTool().run(
         tmp_path,
@@ -582,11 +649,13 @@ def test_archive_stale_version_and_cross_scope_refuse_atomically(
         },
         permissions=_WRITE,
     )
-    assert cross_scope["raw"]["code"] == "E_SCOPE"
+    assert _nn(cross_scope["raw"])["code"] == "E_SCOPE"
 
     store = TypedArtifactStore(tmp_path)
     current = store.get_current("a1")
-    assert current.artifact_version == 1  # neither refused attempt advanced the row
+    assert (
+        _nn(current).artifact_version == 1
+    )  # neither refused attempt advanced the row
 
 
 def test_propose_write_creates_unpromoted_candidate_never_stated(
@@ -606,9 +675,9 @@ def test_propose_write_creates_unpromoted_candidate_never_stated(
     )
     assert result["status"] == "ok"
     written = result["raw"]
-    assert written["trust_tier"] != "STATED"
+    assert _nn(written)["trust_tier"] != "STATED"
 
     store = TypedArtifactStore(tmp_path)
-    current = store.get_current(written["id"])
-    assert current.trust_tier != "STATED"
-    assert current.promoted_at is None
+    current = store.get_current(_nn(written)["id"])
+    assert _nn(current).trust_tier != "STATED"
+    assert _nn(current).promoted_at is None

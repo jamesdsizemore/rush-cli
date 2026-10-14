@@ -17,11 +17,12 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 if sys.platform != "win32":
     import fcntl
 
+from rush.sqlite_util import ClosingConnection
 from rush.tools.base import ToolResult
 
 
@@ -61,7 +62,11 @@ _cross_process_lock_depth = threading.local()
 
 @contextmanager
 def cross_process_project_lock(
-    project_id: str, *, data_root: Path | None = None
+    project_id: str,
+    *,
+    data_root: Path | None = None,
+    storage: Literal["file", "directory"] = "file",
+    timeout_s: float | None = None,
 ) -> Iterator[None]:
     """S08 bullet 1: blocking cross-process mutual exclusion for one
     project's check-then-act mutation window (`_handle_action`'s
@@ -85,12 +90,37 @@ def cross_process_project_lock(
 
     Blocking (no `LOCK_NB`), unlike `claim_dead_owner`'s non-blocking
     best-effort claim above: this primitive is a real mutex a caller must
-    wait for, never one it silently skips."""
+    wait for, never one it silently skips.
+
+    72-T01 D2: `storage="directory"` locks the data root directory itself (no
+    lock file); a `memory-policy:` id requires it, and a nested entry for such
+    an id must name the same resolved data root.
+
+    72-T04 D26: `timeout_s` bounds the wait of a `file` lock (`TimeoutError` when
+    it elapses); `None` keeps the blocking wait. A `directory` lock has its own
+    bounded wait, so a supplied `timeout_s` is refused before any effect. The
+    reentrant (already held) path ignores it."""
+    if storage not in ("file", "directory"):
+        raise ValueError(f"unknown lock storage {storage!r}")
+    if storage == "directory" and timeout_s is not None:
+        raise ValueError("timeout_s applies only to storage='file'")
+    is_policy = project_id.startswith(_POLICY_LOCK_PREFIX)
+    if is_policy and storage != "directory":
+        raise ValueError("a memory-policy lock requires storage='directory'")
     held = getattr(_cross_process_lock_depth, "held", None)
     if held is None:
         held = {}
         _cross_process_lock_depth.held = held
+    roots = getattr(_cross_process_lock_depth, "roots", None)
+    if roots is None:
+        roots = {}
+        _cross_process_lock_depth.roots = roots
+    resolved: Path | None = None
+    if storage == "directory":
+        resolved = _directory_lock_root(data_root)
     if held.get(project_id, 0) > 0:
+        if is_policy and roots.get(project_id) != resolved:
+            raise OSError("policy lock data_root mismatch")
         held[project_id] += 1
         try:
             yield
@@ -98,19 +128,117 @@ def cross_process_project_lock(
             held[project_id] -= 1
         return
     held[project_id] = 1
+    if is_policy:
+        roots[project_id] = resolved
     try:
-        with _acquire_cross_process_project_lock(project_id, data_root=data_root):
-            yield
+        if storage == "directory":
+            with _acquire_cross_process_project_lock(
+                project_id, data_root=resolved, storage=storage
+            ):
+                yield
+        else:
+            with _acquire_cross_process_project_lock(
+                project_id, data_root=data_root, timeout_s=timeout_s
+            ):
+                yield
     finally:
         held[project_id] = 0
+        roots.pop(project_id, None)
+
+
+_POLICY_LOCK_PREFIX = "memory-policy:"
+# D2: the bounded wait for a directory (policy) lock.
+_DIRECTORY_LOCK_TIMEOUT_S = 30.0
+_DIRECTORY_LOCK_RETRY_S = 0.02
+
+
+class PolicyLockRootUncreatable(OSError):
+    """The absent policy-lock data root could not be created."""
+
+
+def _directory_lock_root(data_root: Path | None) -> Path:
+    if data_root is None:
+        from rush.setup.provision import default_data_root
+
+        data_root = default_data_root()
+    return Path(data_root).resolve()
+
+
+@contextmanager
+def _acquire_directory_lock(project_id: str, root: Path) -> Iterator[None]:
+    """D2: an exclusive lock on the data root directory, bounded by
+    `_DIRECTORY_LOCK_TIMEOUT_S`. POSIX `flock`s the directory fd; Windows
+    waits on a `Global\\RushPolicy-` named mutex. Never creates a file."""
+    if sys.platform == "win32":
+        import ctypes
+
+        name = _windows_policy_mutex_name(project_id)
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        handle = kernel32.CreateMutexW(None, False, name)
+        if not handle:
+            raise OSError(f"CreateMutexW failed for {name!r}")
+        wait_result = kernel32.WaitForSingleObject(
+            handle, int(_DIRECTORY_LOCK_TIMEOUT_S * 1000)
+        )
+        if wait_result not in (0x00000000, 0x00000080):
+            kernel32.CloseHandle(handle)
+            raise OSError(f"WaitForSingleObject failed for {name!r}: {wait_result:#x}")
+        try:
+            yield
+        finally:
+            kernel32.ReleaseMutex(handle)
+            kernel32.CloseHandle(handle)
+        return
+    if not os.path.lexists(root):
+        try:
+            os.makedirs(root, mode=0o700, exist_ok=True)
+        except OSError as exc:
+            raise PolicyLockRootUncreatable(str(exc)) from exc
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        if os.fstat(fd).st_uid != os.geteuid():
+            raise OSError("policy lock data root is owned by another user")
+        deadline = time.monotonic() + _DIRECTORY_LOCK_TIMEOUT_S
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise OSError("policy lock busy") from None
+                time.sleep(_DIRECTORY_LOCK_RETRY_S)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _windows_policy_mutex_name(lock_id: str) -> str:
+    """D2: the machine-wide named mutex for one policy lock id."""
+    digest = hashlib.sha256(lock_id.encode("utf-8")).hexdigest()
+    return f"Global\\RushPolicy-{digest}"
 
 
 @contextmanager
 def _acquire_cross_process_project_lock(
-    project_id: str, *, data_root: Path | None = None
+    project_id: str,
+    *,
+    data_root: Path | None = None,
+    storage: Literal["file", "directory"] = "file",
+    timeout_s: float | None = None,
 ) -> Iterator[None]:
     """The real OS-level acquisition `cross_process_project_lock` above
-    calls exactly once per outermost entry on a given thread."""
+    calls exactly once per outermost entry on a given thread. `timeout_s`
+    (file storage only) bounds the wait; `TimeoutError` when it elapses."""
+    if storage == "directory" and timeout_s is not None:
+        raise ValueError("timeout_s applies only to storage='file'")
+    if storage == "directory":
+        with _acquire_directory_lock(project_id, _directory_lock_root(data_root)):
+            yield
+        return
     if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
         # runner reachable in this environment. Mirrors `OwnerLock`'s
         # blocking-wait mutex pattern above, just with an infinite timeout
@@ -124,7 +252,14 @@ def _acquire_cross_process_project_lock(
         if not handle:
             raise OSError(f"CreateMutexW failed for {name!r}")
         _INFINITE = 0xFFFFFFFF
-        kernel32.WaitForSingleObject(handle, _INFINITE)
+        wait_ms = _INFINITE if timeout_s is None else int(max(timeout_s, 0.0) * 1000)
+        wait_result = kernel32.WaitForSingleObject(handle, wait_ms)
+        if wait_result == 0x00000102 and timeout_s is not None:  # WAIT_TIMEOUT
+            kernel32.CloseHandle(handle)
+            raise TimeoutError(f"project lock {project_id!r} busy")
+        if wait_result not in (0x00000000, 0x00000080):
+            kernel32.CloseHandle(handle)
+            raise OSError(f"WaitForSingleObject failed for {name!r}: {wait_result:#x}")
         try:
             yield
         finally:
@@ -134,7 +269,20 @@ def _acquire_cross_process_project_lock(
     path = _project_mutation_lock_path(project_id, data_root=data_root)
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if timeout_s is None:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + timeout_s
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"project lock {project_id!r} busy"
+                        ) from None
+                    time.sleep(_DIRECTORY_LOCK_RETRY_S)
         yield
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
@@ -263,6 +411,15 @@ class ProjectRegistry:
         with self._lock:
             record = self._projects.get(project_id)
             return None if record is None else self._detached(record)
+
+    def get_published(self, project_id: str) -> ProjectRecord | None:
+        """The stored record itself, never copied -- for read-only callers
+        only (the map path). Safe under M01: a state change replaces the
+        stored record and its `snapshot` wholesale, so this object never
+        changes underneath its reader. Mutating it would corrupt the
+        registry; use `get()` for a caller-owned copy."""
+        with self._lock:
+            return self._projects.get(project_id)
 
     @contextmanager
     def mutation_lock(self, project_id: str) -> Iterator[None]:
@@ -516,7 +673,9 @@ class MutationLedger:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self._db_path), timeout=10.0)
+        conn = sqlite3.connect(
+            str(self._db_path), timeout=10.0, factory=ClosingConnection
+        )
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -1669,8 +1828,8 @@ class ScanRunTracker:
 
 class OwnerLockError(RuntimeError):
     """Raised when this process's own owner-liveness lock cannot be
-    acquired -- the exact `owner_instance_id` is already held by another
-    live process. Should not happen in practice: `owner_instance_id` is
+    acquired -- another live process holds it or the OS acquisition fails.
+    Identity collision should not happen in practice: `owner_instance_id` is
     minted fresh (server identity + a random start nonce) per process
     start, per subsection h."""
 
@@ -1729,6 +1888,17 @@ class OwnerLock:
         # Intentionally never fcntl.LOCK_UN'd / os.close()'d here -- see
         # class docstring: the kernel is the only thing that releases it.
 
+    def release(self) -> None:
+        """Give up this lock before process exit: only for an owner that
+        rebinds to another data root (a TUI whose data root changed), whose
+        identity under the old root ends here."""
+        if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+            # runner reachable in this environment.
+            self._windows_park.set()
+            self._windows_thread.join()
+            return
+        os.close(self._fd)  # closing the descriptor drops the flock
+
     def _acquire_windows_mutex(self) -> None:  # pragma: no cover -- Windows-
         # only; no runner reachable in this environment.
         """`CreateMutexW` + zero-timeout `WaitForSingleObject` on a
@@ -1759,6 +1929,15 @@ class OwnerLock:
                     OwnerLockError(
                         f"owner-liveness lock already held for "
                         f"{self.owner_instance_id!r}"
+                    )
+                )
+                acquired.set()
+                return
+            if wait_result not in (0x00000000, 0x00000080):
+                kernel32.CloseHandle(handle)
+                failure.append(
+                    OwnerLockError(
+                        f"WaitForSingleObject failed for {name!r}: {wait_result:#x}"
                     )
                 )
                 acquired.set()
@@ -1807,9 +1986,8 @@ def claim_dead_owner(
         if not handle:
             yield False
             return
-        _WAIT_TIMEOUT = 0x00000102
         wait_result = kernel32.WaitForSingleObject(handle, 0)
-        if wait_result == _WAIT_TIMEOUT:
+        if wait_result not in (0x00000000, 0x00000080):
             kernel32.CloseHandle(handle)
             yield False
             return
@@ -1841,6 +2019,125 @@ def probe_owner_alive(owner_instance_id: str, *, data_root: Path | None = None) 
     never by project, and never by PID."""
     with claim_dead_owner(owner_instance_id, data_root=data_root) as claimed:
         return not claimed
+
+
+def observe_owner(owner_instance_id: str, data_root: Path) -> str:
+    """T23: `alive`, `dead` or `activity_unverified` for a recorded owner,
+    observed without claiming or recovering it. Unlike `claim_dead_owner`,
+    it only opens an existing lock (never `mkdir`, never `O_CREAT`); a
+    missing lock is `activity_unverified`, never `alive`."""
+    if (
+        not owner_instance_id
+        or os.sep in owner_instance_id
+        or (os.altsep and os.altsep in owner_instance_id)
+    ):
+        return "activity_unverified"
+    if sys.platform == "win32":  # pragma: no cover -- Windows-only; no
+        # runner reachable in this environment.
+        return _observe_owner_windows(owner_instance_id)
+    path = data_root / "owners" / f"{owner_instance_id}.lock"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return "activity_unverified"
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return "alive"
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return "dead"
+    finally:
+        os.close(fd)
+
+
+def _observe_owner_windows(owner_instance_id: str) -> str:  # pragma: no cover
+    """`OpenMutexW` (never `CreateMutexW`): absent is `activity_unverified`,
+    held is `alive`, acquirable (released or abandoned) is `dead`."""
+    import ctypes
+
+    synchronize, mutex_modify_state, wait_timeout = 0x00100000, 0x00000001, 0x00000102
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32.OpenMutexW.restype = ctypes.c_void_p
+    handle = kernel32.OpenMutexW(
+        synchronize | mutex_modify_state, False, _windows_mutex_name(owner_instance_id)
+    )
+    if not handle:
+        return "activity_unverified"
+    try:
+        wait_result = kernel32.WaitForSingleObject(handle, 0)
+        if wait_result == wait_timeout:
+            return "alive"
+        if wait_result not in (0x00000000, 0x00000080):
+            return "activity_unverified"
+        kernel32.ReleaseMutex(handle)
+        return "dead"
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+_LEDGER_ADMISSION_COLUMNS = (
+    "run_id",
+    "attempt_id",
+    "operation_id",
+    "owner_instance_id",
+    "plan_id",
+)
+_LEDGER_PUBLISHED_COLUMNS = (
+    "published_generation",
+    "latest_published_run_id",
+    "latest_published_attempt_id",
+)
+
+
+def _ledger_row(
+    conn: sqlite3.Connection, table: str, columns: tuple[str, ...], project_id: str
+) -> dict[str, Any] | None:
+    """One project's row, reading only the columns this schema has (an older
+    ledger without `attempt_id` reports it as `None`); a missing table or row
+    is no evidence (`None`)."""
+    present = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    wanted = [c for c in columns if c in present]
+    if not wanted:
+        return None
+    row = conn.execute(
+        f"SELECT {', '.join(wanted)} FROM {table} WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    values = dict(zip(wanted, row, strict=True))
+    return {c: values.get(c) for c in columns}
+
+
+def read_ledger_view(project_id: str, data_root: Path) -> dict[str, Any]:
+    """T23: the project's current scan admission and published result, read
+    through the shared zero-write SQLite opener -- never `MutationLedger`,
+    whose constructor creates directories, the schema and WAL files.
+    `project_generations.value` (the allocator) is never read.
+
+    `state` is `absent` (no ledger), `ok`, `corrupt` or `busy`."""
+    from rush.memory.store import MemoryStoreUnreadableError, read_sqlite_readonly
+
+    def read(conn: sqlite3.Connection) -> dict[str, Any]:
+        return {
+            "admission": _ledger_row(
+                conn, "scan_admission", _LEDGER_ADMISSION_COLUMNS, project_id
+            ),
+            "published": _ledger_row(
+                conn, "project_generations", _LEDGER_PUBLISHED_COLUMNS, project_id
+            ),
+        }
+
+    db = data_root / "dashboard" / "mutation_ledger.db"
+    try:
+        rows = read_sqlite_readonly(db, read)
+    except MemoryStoreUnreadableError as exc:
+        state = "corrupt" if exc.code == "E_STORE_CORRUPT" else "busy"
+        return {"state": state, "admission": None, "published": None, "error": str(exc)}
+    if rows is None:
+        return {"state": "absent", "admission": None, "published": None, "error": None}
+    return {"state": "ok", **rows, "error": None}
 
 
 @dataclass(eq=False)
@@ -2137,11 +2434,31 @@ def reconcile_admissions(
                             # genuinely advanced past `prepared` -- never a
                             # leak either way.
                             continue
-                        leak_store = TypedArtifactStore(project_root)
-                        artifact_receipt = leak_store.get_receipt(artifact_receipt_id)
-                        session_receipt = leak_store.get_receipt(session_receipt_id)
+                        # 72-T01 R15: receipts are read read-only first; a
+                        # pre-72, busy or unreadable store (`unavailable`)
+                        # leaves the ledger unchanged; only real leaked
+                        # receipts open a writable store for the cleanup.
+                        artifact_state, artifact_receipt = (
+                            TypedArtifactStore.get_receipt_readonly(
+                                project_root, artifact_receipt_id
+                            )
+                        )
+                        session_state, session_receipt = (
+                            TypedArtifactStore.get_receipt_readonly(
+                                project_root, session_receipt_id
+                            )
+                        )
+                        if "unavailable" in (artifact_state, session_state):
+                            continue
                         if artifact_receipt is None and session_receipt is None:
                             continue
+                        view, _view_state = TypedArtifactStore.open_readonly_view(
+                            project_root
+                        )
+                        if view is None:
+                            continue
+                        view.close()
+                        leak_store = TypedArtifactStore(project_root)
                         with suppress(Exception):
                             if artifact_receipt is not None:
                                 leak_store.mark_artifact_orphaned(

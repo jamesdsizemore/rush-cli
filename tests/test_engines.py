@@ -5,7 +5,6 @@ Skips tests gracefully when an engine is not installed.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -24,20 +23,11 @@ def test_engines_registry_matches_catalog():
     assert set(ENGINES) == set(ENGINE_SPECS)
 
 
-@pytest.mark.skipif(
-    shutil.which("ruff") is None
-    and not Path("C:/Users/james/developer/rush-cli/.venv/Scripts/ruff.exe").exists(),
-    reason="ruff not installed",
-)
 def test_ruff_engine_runs_and_parses(tmp_path: Path):
     """Real ruff on a tiny dirty file should find at least one E501."""
     sample = tmp_path / "x.py"
     sample.write_text("x = 1\n" + ("y = 2  # comment to fill " * 30 + "\n"))
     engine = RuffEngine()
-    from rush.tools.common import resolve_binary
-
-    if resolve_binary("ruff") is None:
-        pytest.skip("ruff not installed")
     raw = engine.run(sample, [], cwd=tmp_path)
     assert raw["exit_code"] in (0, 1)
     assert isinstance(raw["parsed"], list)
@@ -92,42 +82,24 @@ def test_pip_audit_parses_current_dependencies_envelope():
     assert result["findings"][0]["message"].startswith("pytest==8.3.4")
 
 
-@pytest.mark.skipif(
-    shutil.which("pytest") is None
-    and not Path("C:/Users/james/developer/rush-cli/.venv/Scripts/pytest.exe").exists(),
-    reason="pytest not installed",
-)
 def test_pytest_engine_on_passing_tests(tmp_path: Path):
     """pytest should exit 0 on a passing test."""
     test_dir = tmp_path / "t"
     test_dir.mkdir()
     (test_dir / "test_pass.py").write_text("def test_truth():\n    assert True\n")
     engine = PytestEngine()
-    from rush.tools.common import resolve_binary
-
-    if resolve_binary("pytest") is None:
-        pytest.skip("pytest not installed")
     raw = engine.run(test_dir / "test_pass.py", [], cwd=tmp_path)
     assert raw["exit_code"] == 0
     summary = raw["summary"] or ""
     assert "passed" in summary.lower()
 
 
-@pytest.mark.skipif(
-    shutil.which("pytest") is None
-    and not Path("C:/Users/james/developer/rush-cli/.venv/Scripts/pytest.exe").exists(),
-    reason="pytest not installed",
-)
 def test_pytest_engine_on_failing_tests(tmp_path: Path):
     """pytest should exit non-zero on a failing test, normalize should produce a finding."""
     test_dir = tmp_path / "t"
     test_dir.mkdir()
     (test_dir / "test_fail.py").write_text("def test_broken():\n    assert False\n")
     engine = PytestEngine()
-    from rush.tools.common import resolve_binary
-
-    if resolve_binary("pytest") is None:
-        pytest.skip("pytest not installed")
     raw = engine.run(test_dir / "test_fail.py", [], cwd=tmp_path)
     assert raw["exit_code"] != 0
     result = engine.normalize(raw, test_dir / "test_fail.py", "test")
@@ -135,7 +107,7 @@ def test_pytest_engine_on_failing_tests(tmp_path: Path):
     assert result["findings"]  # at least one finding (the test failure)
 
 
-@pytest.mark.skipif(shutil.which("prettier") is None, reason="prettier not installed")
+@pytest.mark.needs_prettier
 def test_prettier_engine_check_mode(tmp_path: Path):
     """prettier --check on an unformatted file should produce findings."""
     sample = tmp_path / "x.ts"

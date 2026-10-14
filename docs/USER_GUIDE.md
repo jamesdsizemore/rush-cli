@@ -76,7 +76,7 @@ Whenever Rush finishes checking your project, it assigns a clear **Status** to t
 
 ---
 
-## 4. Coding with AI Assistants (Cursor, Claude, Cline & Friends)
+## 4. Coding with AI Assistants (Claude, Cline & Friends)
 
 If you use AI coding assistants, Rush is your new best friend. AI models are lightning fast, but they can occasionally write repetitive code ("AI slop"), forget to write tests, or propose dangerous commands.
 
@@ -99,7 +99,8 @@ Prefer visual interfaces over terminal text? Rush has you covered:
   ```bash
   rush ui .
   ```
-  At a TTY, starts a persistent Rich UI with background checks and keyboard navigation. `--json` runs checks once, emits JSON, and exits. Redirected stdout without `--json` runs checks once and prints a text summary, then exits.
+  At a TTY, starts a persistent Rich UI with background checks and keyboard navigation. `--json` prints read-only status JSON and exits. Redirected stdout without `--json` prints read-only status and next-action hints, then exits. Neither noninteractive route starts analysis.
+  In Memory (`M` or `F3`, then `4`), `]` / `[` page through records, `Space` marks the highlighted row as `>[x]` for bulk actions, and `o` changes owner scope. Select a record and press `x` to read stored content, related records, and recorded write/use receipts. Use `]` / `[` to scroll detail and `x` to continue long content. Promotion (`p`, then `y` after review) requires matching current records from distinct sources; a lone source is denied. See [Interactive Terminal UI](user-guide/interactive-tui.md) for keys and recovery.
 
 - **Local Web Dashboard**:
   ```bash

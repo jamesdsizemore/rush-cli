@@ -64,17 +64,14 @@ def resolve_symbol_source(
     symbol = symbol_ref.get("symbol")
     if not path or not symbol:
         return None
-    try:
-        file_path = (project_root / str(path)).resolve()
-        file_path.relative_to(project_root.resolve())
-    except ValueError:
-        return None
-    if not file_path.is_file():
+    from rush.memory.trust import read_contained_source
+
+    text = read_contained_source(Path(project_root), str(path))
+    if text is None:
         return None
     try:
-        text = file_path.read_text(encoding="utf-8")
         tree = ast.parse(text)
-    except (OSError, SyntaxError, ValueError):
+    except (SyntaxError, ValueError):
         return None
     node = _find_node(tree.body, str(symbol).split("."))
     if node is None:
@@ -83,6 +80,48 @@ def resolve_symbol_source(
     if segment is None:
         return None
     return segment, hashlib.sha256(segment.encode("utf-8")).hexdigest()
+
+
+def _reader_access(project_root: Path, source: str) -> tuple[Any, Path] | None:
+    """72-T01 (D1/R8): `(access, root)` for one reader of a single `source`, or
+    `None` (denied or unavailable). Legacy mode filters to this project's own
+    owner. Opens nothing."""
+    from rush.memory.retrieval import MemoryAccess, RouteDenial, route_access
+    from rush.memory.store import legacy_owner_scope
+
+    try:
+        root = Path(project_root).resolve()
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return None
+    access = route_access(root, "ask", session_allowlist=[source])
+    if isinstance(access, RouteDenial):
+        return None
+    if access.kind == "legacy_allowlist":
+        access = MemoryAccess.legacy(
+            root, [source], owner_scope=legacy_owner_scope(root)
+        )
+    return access, root
+
+
+def _visible_current(view: Any, access: Any, artifact_id: str) -> Any:
+    """The current artifact when the shared decision shows it as current-capable
+    (never a rejected, superseded, pending or other-task row), else `None`. Anchor
+    freshness is not required: `resolve_recipe` reports applicability itself."""
+    from rush.memory.retrieval import NOT_CURRENT_REASONS, evaluate_artifact_visibility
+    from rush.memory.store import _row_to_artifact, legacy_owner_scope
+
+    row = view.get_current_row(artifact_id)
+    if row is None:
+        return None
+    decision = evaluate_artifact_visibility(view, row, access=access)
+    if not decision.visible or NOT_CURRENT_REASONS & set(decision.reason_codes):
+        return None
+    try:
+        return _row_to_artifact(
+            row, default_owner_scope=legacy_owner_scope(view.project_root)
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _verifier_outcome(content: Mapping[str, Any]) -> tuple[bool, bool]:
@@ -109,6 +148,8 @@ def record_recipe(
     checks: Sequence[Mapping[str, Any]] | None = None,
     exceptions: Sequence[str] | None = None,
     expected_version: int | None = None,
+    owner_scope: Any = None,
+    commit_check: Any = None,
 ) -> dict[str, Any]:
     """MC08.2: create a new recipe, or re-record an existing one (compare-and-swap on
     `expected_version`, mirrors `intent.record_intent`). `helper_ref` is required for a
@@ -189,11 +230,17 @@ def record_recipe(
             source=f"recipe:{recipe_id}",
             created_at=time.time(),
             content_hash=compute_content_signature(payload),
+            owner_scope=owner_scope,
         )
-        version = store.write(artifact).artifact_version
+        version = store.write(artifact, commit_check=commit_check).artifact_version
     else:
         try:
-            store.update_content(recipe_id, payload, expected_version=expected_version)
+            store.update_content(
+                recipe_id,
+                payload,
+                expected_version=expected_version,
+                commit_check=commit_check,
+            )
         except VersionConflictError as exc:
             return {"code": exc.code, "message": str(exc)}
         version = current.artifact_version + 1
@@ -217,6 +264,7 @@ def resolve_recipe(
     recipe_id: str,
     current_dependencies: Mapping[str, str] | None = None,
     current_config_digest: str | None = None,
+    access: Any = None,
 ) -> dict[str, Any]:
     """MC08.2: read-only -- resolves `recipe_id`'s applicability against source on disk
     *right now*, never a cached/recorded snapshot. `required_symbols`,
@@ -225,9 +273,31 @@ def resolve_recipe(
     `reason`. `checks`/`exceptions` are always returned unchanged regardless of `usable` --
     staleness never hides what safety checks the recipe declares (MC08 authority rule).
     """
-    current = TypedArtifactStore(project_root).get_current(recipe_id)
+    unknown = {"code": "E_INPUT", "message": f"unknown recipe {recipe_id!r}"}
+    # 72-T05 R16: a supplied access (the route's, carrying its task context) decides
+    # the row; `None` keeps the 72-T01 reader. Either way a rejected, superseded,
+    # pending or other-task row is not current.
+    if access is None:
+        authorized = _reader_access(project_root, f"recipe:{recipe_id}")
+        if authorized is None:
+            return unknown
+        access, root = authorized
+    else:
+        root = access.storage_root
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    if view is None:
+        return unknown
+    try:
+        current = _visible_current(view, access, recipe_id)
+    finally:
+        view.close()
     if current is None:
         return {"code": "E_INPUT", "message": f"unknown recipe {recipe_id!r}"}
+
+    def emit(result: dict[str, Any]) -> dict[str, Any]:
+        """A grant revoked or changed while the helper resolved emits nothing."""
+        return result if access.recheck() == "ok" else unknown
+
     content = current.content
     checks = content.get("checks", [])
     exceptions = content.get("exceptions", [])
@@ -236,17 +306,19 @@ def resolve_recipe(
     required_config_digest = content.get("required_config_digest")
 
     def _unusable(reason: str) -> dict[str, Any]:
-        return {
-            "code": "OK",
-            "recipe_id": recipe_id,
-            "version": current.artifact_version,
-            "usable": False,
-            "reason": reason,
-            "purpose": content.get("purpose"),
-            "current_helper": None,
-            "checks": checks,
-            "exceptions": exceptions,
-        }
+        return emit(
+            {
+                "code": "OK",
+                "recipe_id": recipe_id,
+                "version": current.artifact_version,
+                "usable": False,
+                "reason": reason,
+                "purpose": content.get("purpose"),
+                "current_helper": None,
+                "checks": checks,
+                "exceptions": exceptions,
+            }
+        )
 
     resolved = resolve_symbol_source(project_root, content.get("helper_ref"))
     if resolved is None:
@@ -278,21 +350,23 @@ def resolve_recipe(
             f"got {current_config_digest!r}."
         )
 
-    return {
-        "code": "OK",
-        "recipe_id": recipe_id,
-        "version": current.artifact_version,
-        "usable": True,
-        "reason": None,
-        "purpose": content.get("purpose"),
-        "current_helper": {
-            "helper_ref": content.get("helper_ref"),
-            "source": current_source,
-            "source_hash": current_hash,
-        },
-        "checks": checks,
-        "exceptions": exceptions,
-    }
+    return emit(
+        {
+            "code": "OK",
+            "recipe_id": recipe_id,
+            "version": current.artifact_version,
+            "usable": True,
+            "reason": None,
+            "purpose": content.get("purpose"),
+            "current_helper": {
+                "helper_ref": content.get("helper_ref"),
+                "source": current_source,
+                "source_hash": current_hash,
+            },
+            "checks": checks,
+            "exceptions": exceptions,
+        }
+    )
 
 
 def record_recipe_outcome(
@@ -302,6 +376,7 @@ def record_recipe_outcome(
     recipe_version: int,
     patch_hash: str,
     verifier_receipt_ref: Mapping[str, Any],
+    commit_check: Any = None,
 ) -> dict[str, Any]:
     """MC08.3: append one adaptation outcome to `recipe_id`, gated on `recipe_version`
     (compare-and-swap) and a real, resolvable `sandbox_verification` receipt from
@@ -367,7 +442,12 @@ def record_recipe_outcome(
     payload = dict(prior)
     payload["outcomes"] = outcomes
     try:
-        store.update_content(recipe_id, payload, expected_version=recipe_version)
+        store.update_content(
+            recipe_id,
+            payload,
+            expected_version=recipe_version,
+            commit_check=commit_check,
+        )
     except VersionConflictError as exc:
         return {"code": exc.code, "message": str(exc)}
 

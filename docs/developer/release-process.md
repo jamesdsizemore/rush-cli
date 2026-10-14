@@ -13,7 +13,7 @@ Before cutting any release candidate:
 unset VIRTUAL_ENV PYTHONPATH
 
 # 2. Run the complete pytest test suite; every collected test must pass
-.venv/Scripts/python.exe -m pytest tests/ -q
+.venv/Scripts/python.exe -m pytest tests/ -q -m ""
 
 # 3. Verify recursive documentation parity, hashes, links and runtime contracts
 .venv/Scripts/python.exe scripts/sync_docs.py --check

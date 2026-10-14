@@ -18,18 +18,26 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..permissions import build_execution_metadata, check_permissions
 from ..safety.redactor import SecretRedactor
-from ..tools.base import ToolResult
-from .binaries import engine_on_path, resolve_binary
+from .binaries import (
+    AnalysisScope,
+    analysis_scope,
+    compute_file_sha256,
+    current_analysis_scope,
+    engine_on_path,
+    resolve_binary,
+)
 from .result_helpers import elapsed_ms, error_result, now_ms, skipped_result
 
 if TYPE_CHECKING:
     from ..engines.base import Engine
     from ..permissions import ExecutionPermissions
+    from ..tools.base import ToolResult
 
 MAX_SUBPROCESS_OUTPUT_CHARS = 256 * 1024
 
@@ -78,8 +86,12 @@ _PROCS_RECORD_LOCK = threading.Lock()
 # explicitly releases it. If the owner dies first, its copy of the write end
 # closes with it, the `read` returns EOF, `&&` short-circuits, and the shell
 # exits without ever running the real binary -- airtight, not a narrowed race.
+# The pipe is the gate shell's own stdin (fd 0), never a numbered fd in a
+# redirection: dash (Ubuntu's `/bin/sh`) rejects multi-digit fds there ("Bad
+# fd number"), which silently fails closed once the owner holds 10+ fds. The
+# real engine then gets `/dev/null`, preserving the owned path's DEVNULL stdin.
 _GATE_SHELL = "/bin/sh"
-_GATE_SCRIPT = 'read -r _ <&"$RUSH_GATE_FD" && exec "$@"'
+_GATE_SCRIPT = 'read -r _ && exec "$@" </dev/null'
 _GATE_RELEASE_PAYLOAD = b"\n"
 
 # S03: Windows Job Object fencing. The bootstrap gate itself is a small
@@ -98,6 +110,25 @@ _WINDOWS_GATE_SCRIPT = (
     "    sys.exit(1)\n"
     "sys.exit(subprocess.Popen(sys.argv[2:]).wait())\n"
 )
+
+# A frozen (PyInstaller) rush.exe has no `-c`, so there the gate runs as
+# rush's own hidden entry (`rush.entry.main`) calling `windows_gate`.
+WINDOWS_GATE_ARG = "__rush_windows_gate__"
+
+
+def windows_gate(argv: list[str]) -> int:
+    """`_WINDOWS_GATE_SCRIPT`'s exact logic; `argv` is its `sys.argv[1:]`."""
+    if sys.platform != "win32":
+        raise RuntimeError("Windows-only gate called on a non-Windows platform")
+    import msvcrt
+
+    fd = msvcrt.open_osfhandle(int(argv[0]), os.O_RDONLY)
+    data = os.read(fd, 1)
+    os.close(fd)
+    if not data:
+        return 1
+    return subprocess.Popen(argv[1:]).wait()
+
 
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOBOBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
@@ -202,7 +233,8 @@ def _assign_process_to_job(job_handle: int, pid: int) -> bool:  # pragma: no cov
 def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
     # -- Windows-only; no runner reachable in this environment.
     """The exact `FILETIME` (as a single int) a live process at `pid` was
-    created at, or `None` if no such process can be opened. S03 item 4's
+    created at, or `None` if the PID is absent. Other query failures raise
+    `OSError`, never prove termination. S03 item 4's
     PID-reuse guard: a *different* process now holding a reused pid never
     has the *same* creation time as the one this record was made for."""
     import ctypes
@@ -213,11 +245,20 @@ def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
             ("dwHighDateTime", ctypes.c_uint32),
         ]
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int32, ctypes.c_uint32]
     kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessTimes.argtypes = [
+        ctypes.c_void_p,
+        *([ctypes.POINTER(_Filetime)] * 4),
+    ]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
-        return None
+        error = ctypes.get_last_error()  # type: ignore[attr-defined]
+        if error == 87:  # ERROR_INVALID_PARAMETER: no process at this PID.
+            return None
+        raise OSError(error, f"OpenProcess failed for pid {pid}")
     try:
         creation, exit_time, kernel_time, user_time = (
             _Filetime(),
@@ -233,7 +274,10 @@ def _windows_process_creation_time(pid: int) -> int | None:  # pragma: no cover
             ctypes.byref(user_time),
         )
         if not ok:
-            return None
+            raise OSError(
+                ctypes.get_last_error(),  # type: ignore[attr-defined]
+                f"GetProcessTimes failed for pid {pid}",
+            )
         return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
     finally:
         kernel32.CloseHandle(handle)
@@ -305,7 +349,10 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
 
     if not assigned or not isinstance(root_pid, int):
         return False
-    current_creation = _windows_process_creation_time(root_pid)
+    try:
+        current_creation = _windows_process_creation_time(root_pid)
+    except OSError:
+        return False
     if current_creation is None:
         return True  # no live process at that pid at all
     return creation_time is not None and current_creation != creation_time
@@ -314,6 +361,48 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
 _OWNED_EXECUTION: contextvars.ContextVar[tuple[str, str] | None] = (
     contextvars.ContextVar("rush_owned_execution", default=None)
 )
+# (owner_instance_id, data_root) resolved once when the owned execution began:
+# every `.procs` read/write for that owner inside the scope uses it, never a
+# late `default_data_root()` that may have changed by the time a child is
+# recorded or released.
+_OWNED_DATA_ROOT: contextvars.ContextVar[tuple[str, Path] | None] = (
+    contextvars.ContextVar("rush_owned_data_root", default=None)
+)
+
+
+@dataclass
+class CancelScope:
+    """Phase 70 T17 (finding 17): one ambient cancellation request. `hit`
+    records that a dispatch inside the scope was actually cut short."""
+
+    check: Callable[[], bool]
+    cause: str = "cancelled"
+    hit: bool = False
+
+
+_CANCEL_CHECK: contextvars.ContextVar[CancelScope | None] = contextvars.ContextVar(
+    "rush_cancel_check", default=None
+)
+
+
+@contextmanager
+def cancel_scope(
+    cancel_check: Callable[[], bool] | None, cause: str = "cancelled"
+) -> Iterator[CancelScope | None]:
+    """Make `cancel_check` ambient for one workflow step (T17, finding 17):
+    every `run_subprocess` call inside it that passes no explicit
+    `cancel_check` polls this one, so cancelling stops the step's in-flight
+    child mid-step, not only at the next step boundary. Context-local, like
+    `owned_execution_scope`."""
+    if cancel_check is None:
+        yield None
+        return
+    scope = CancelScope(cancel_check, cause)
+    token = _CANCEL_CHECK.set(scope)
+    try:
+        yield scope
+    finally:
+        _CANCEL_CHECK.reset(token)
 
 
 @contextmanager
@@ -337,10 +426,22 @@ def owned_execution_scope(
     if owner_instance_id is None or run_id is None:
         yield
         return
+    bound = _OWNED_DATA_ROOT.get()
+    if bound is None or bound[0] != owner_instance_id:
+        from rush.setup.provision import DataRootUnavailableError, default_data_root
+
+        try:
+            bound = (owner_instance_id, Path(default_data_root()))
+        except DataRootUnavailableError:
+            # Keep today's behavior: the error surfaces only if a child is
+            # actually recorded.
+            bound = None
     token = _OWNED_EXECUTION.set((owner_instance_id, run_id))
+    root_token = _OWNED_DATA_ROOT.set(bound)
     try:
         yield
     finally:
+        _OWNED_DATA_ROOT.reset(root_token)
         _OWNED_EXECUTION.reset(token)
 
 
@@ -351,9 +452,13 @@ def _owner_procs_path(owner_instance_id: str, *, data_root: Path | None = None) 
     owner's lock says its *process* exited, this file says which of its
     *children* still need reaping."""
     if data_root is None:
-        from rush.setup.provision import default_data_root
+        bound = _OWNED_DATA_ROOT.get()
+        if bound is not None and bound[0] == owner_instance_id:
+            data_root = bound[1]
+        else:
+            from rush.setup.provision import default_data_root
 
-        data_root = default_data_root()
+            data_root = default_data_root()
     owners_dir = Path(data_root) / "owners"
     owners_dir.mkdir(parents=True, exist_ok=True)
     return owners_dir / f"{owner_instance_id}.procs"
@@ -528,11 +633,9 @@ def _launch_gated_process(
     pending: BaseException | None = None
     try:
         read_fd, write_fd = os.pipe()
-        gate_env = dict(os.environ if env is None else env)
-        gate_env["RUSH_GATE_FD"] = str(read_fd)
         proc = subprocess.Popen(
             [_GATE_SHELL, "-c", _GATE_SCRIPT, "sh", *exec_argv],
-            **{**popen_kwargs, "env": gate_env, "pass_fds": (read_fd,)},
+            **{**popen_kwargs, "stdin": read_fd},
         )
         # `start_new_session=True` makes the gate shell its own process-group
         # leader, and its pid survives its own later `exec`.
@@ -582,6 +685,8 @@ def _launch_gated_process_windows(  # pragma: no cover -- Windows-only; no
     pid-keyed handle registry and close+pop from `_clear_owned_process_record`
     once a launch's owning `Popen` has actually exited.
     """
+    if sys.platform != "win32":
+        raise RuntimeError("Windows-only launcher called on a non-Windows platform")
     import msvcrt
 
     read_fd: int | None = None
@@ -596,14 +701,13 @@ def _launch_gated_process_windows(  # pragma: no cover -- Windows-only; no
         startupinfo = subprocess.STARTUPINFO()
         startupinfo.lpAttributeList = {"handle_list": [handle_value]}
         gate_env = dict(os.environ if env is None else env)
+        gate_entry = (
+            [WINDOWS_GATE_ARG]
+            if getattr(sys, "frozen", False)
+            else ["-c", _WINDOWS_GATE_SCRIPT]
+        )
         proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                _WINDOWS_GATE_SCRIPT,
-                str(handle_value),
-                *exec_argv,
-            ],
+            [sys.executable, *gate_entry, str(handle_value), *exec_argv],
             **{
                 **popen_kwargs,
                 "env": gate_env,
@@ -807,7 +911,12 @@ def run_subprocess(
         ambient = _OWNED_EXECUTION.get()
         if ambient is not None:
             owner_instance_id, run_id = ambient
+    if cancel_check is None:
+        # T17 (finding 17): an enclosing `cancel_scope` reaches this child.
+        scope = _CANCEL_CHECK.get()
+        cancel_check = scope.check if scope is not None else None
     exec_argv = _resolve_exec_argv(argv)
+    _record_spawn(exec_argv, cwd)
 
     if cancel_check is None and owner_instance_id is None:
         return _run_subprocess_blocking(
@@ -826,6 +935,34 @@ def run_subprocess(
     )
 
 
+# T16 §3 item 2: the spawn recorder `run_engine` sets around one engine
+# dispatch. `run_subprocess` appends each child it starts (resolved
+# executable, actual cwd, kind); the kind is `main` unless a scope probe or a
+# `--version` probe is running.
+_SPAWNS: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvars.ContextVar(
+    "rush_engine_spawns", default=None
+)
+_SPAWN_KIND: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "rush_engine_spawn_kind", default="main"
+)
+
+
+def _record_spawn(exec_argv: list[str], cwd: Path | None) -> None:
+    spawns = _SPAWNS.get()
+    if spawns is None:
+        return
+    spawns.append(
+        {
+            "kind": "version_probe"
+            if exec_argv[1:] == ["--version"]
+            else _SPAWN_KIND.get(),
+            "path": exec_argv[0],
+            "cwd": str(cwd) if cwd is not None else os.getcwd(),
+            "argv": list(exec_argv),
+        }
+    )
+
+
 def _resolve_exec_argv(argv: list[str]) -> list[str]:
     common = sys.modules.get("rush.tools.common")
     resolver = (
@@ -833,7 +970,17 @@ def _resolve_exec_argv(argv: list[str]) -> list[str]:
         if common is not None
         else resolve_binary
     )
-    resolved_cmd = resolver(argv[0]) or argv[0]
+    resolved = resolver(argv[0])
+    if (
+        resolved is None
+        and not os.path.dirname(argv[0])
+        and current_analysis_scope() is not None
+    ):
+        # S11.6: inside an engine dispatch, a bare name the trusted policy
+        # cannot resolve must not fall through to the OS PATH search, which
+        # would select a project-scoped executable after all.
+        raise FileNotFoundError(argv[0])
+    resolved_cmd = resolved or argv[0]
     if os.name != "nt":
         return [resolved_cmd, *argv[1:]]
     which_cmd = shutil.which(resolved_cmd) or resolved_cmd
@@ -1087,7 +1234,355 @@ def _merge_provenance_metadata(
         )
 
 
+def _engine_analysis_scope(
+    engine: Engine, path: Path, project_root: Path | None
+) -> AnalysisScope:
+    """S11.6: the roots this dispatch's executable resolution trusts nothing in.
+
+    The logical root is the caller's explicit ``project_root``, else an outer
+    ambient scope's, else ``path`` (its directory for a file). Under an
+    active staged scan the logical root is the original tree -- never the
+    temporary snapshot, even when ``path`` already points into it -- and the
+    snapshot itself is excluded too, as the execution root.
+    """
+    from ..engines.staging import active_staging
+
+    outer = current_analysis_scope()
+    execution_root: Path | None = None
+    if project_root is not None:
+        logical_root = project_root
+    elif outer is not None:
+        logical_root = outer.logical_root
+        execution_root = outer.execution_root
+    else:
+        logical_root = path if path.is_dir() else path.parent
+    staging = active_staging()
+    if staging is not None:
+        staged = os.path.realpath(str(staging.staged_root))
+        logical = os.path.realpath(str(logical_root))
+        if logical == staged or logical.startswith(staged.rstrip(os.sep) + os.sep):
+            logical_root = staging.original_root
+        execution_root = staging.staged_root
+    return AnalysisScope(
+        logical_root=logical_root,
+        execution_root=execution_root,
+        engine_id=engine.name,
+        binary=engine.binary,
+    )
+
+
 def run_engine(
+    engine: Engine,
+    path: Path,
+    args: list[str] | None = None,
+    *,
+    cwd: Path | None = None,
+    tool_name: str | None = None,
+    timeout: int = 120,
+    permissions: ExecutionPermissions | None = None,
+    required_permissions: ExecutionPermissions | None = None,
+    owner_instance_id: str | None = None,
+    run_id: str | None = None,
+    consumed_paths: list[str] | None = None,
+    project_root: Path | None = None,
+    scope_probe: bool = False,
+) -> ToolResult:
+    """Run an engine and always return a canonical result.
+
+    S11.6: the whole dispatch -- the PATH probe, the engine's own argv, its
+    `--version` probe and exec resolution -- runs inside an `analysis_scope`
+    for the logical project root (``project_root``, else ``path``), so a
+    verified project manifest wins and an executable found only inside the
+    project (or a staged snapshot of it) is never selected from PATH.
+
+    T16 S16.2: every return -- executed, skipped, denied, timed out, crashed
+    -- carries `metadata.engines=[entry]`, built from the children this
+    dispatch actually spawned. `scope_probe=True` (finding 24) also runs the
+    engine's `show_files` listing with the identical argv, cwd, config and
+    staging redirection, as a recorded `scope_probe` spawn, and counts the
+    consumed files from it.
+    """
+    spawns: list[dict[str, Any]] = []
+    token = _SPAWNS.set(spawns)
+    listed: list[str] | None = None
+    cancel = _CANCEL_CHECK.get()
+    try:
+        if cancel is not None and cancel.check():
+            # T17: a cancelled step starts no further engine child; the same
+            # cancelled mapping as a child terminated mid-run (no pid ran).
+            raise SubprocessCancelled([engine.binary], pid=0)
+        with analysis_scope(_engine_analysis_scope(engine, path, project_root)):
+            result = _run_engine_in_scope(
+                engine,
+                path,
+                args,
+                cwd=cwd,
+                tool_name=tool_name,
+                timeout=timeout,
+                permissions=permissions,
+                required_permissions=required_permissions,
+                owner_instance_id=owner_instance_id,
+                run_id=run_id,
+                consumed_paths=consumed_paths,
+            )
+            if scope_probe and any(s["kind"] == "main" for s in spawns):
+                listed = _run_scope_probe(
+                    engine,
+                    path,
+                    list(args or []),
+                    cwd,
+                    consumed_paths,
+                    owner_instance_id=owner_instance_id,
+                    run_id=run_id,
+                )
+    except SubprocessCancelled:
+        result = _cancelled_engine_result(
+            engine, tool_name, cancel, required_permissions, permissions
+        )
+    finally:
+        _SPAWNS.reset(token)
+    metadata = result.get("metadata")
+    if metadata is None:
+        metadata = {}
+        result["metadata"] = metadata
+    metadata["engines"] = [
+        build_engine_entry(engine.name, result, spawns, consumed_paths, listed)
+    ]
+    return result
+
+
+def _cancelled_engine_result(
+    engine: Engine,
+    tool_name: str | None,
+    cancel: CancelScope | None,
+    required_permissions: ExecutionPermissions | None,
+    permissions: ExecutionPermissions | None,
+) -> ToolResult:
+    """T17 (finding 17): a dispatch stopped by cancellation is a cancelled
+    child -- `skipped` with `disposition:"cancelled"` -- never a crash. Its
+    process group is already terminated by `run_subprocess`."""
+    cause = cancel.cause if cancel is not None else "cancelled"
+    if cancel is not None:
+        cancel.hit = True
+    return skipped_result(
+        tool_name or engine.name,
+        engine.name,
+        f"cancelled ({cause}) before {engine.name} finished",
+        metadata={
+            "execution": build_execution_metadata(
+                "executed",
+                requested=required_permissions,
+                granted=permissions,
+                producer=engine.name,
+                extra={"disposition": "cancelled", "cause": cause},
+            )
+        },
+    )
+
+
+# -- T16 §3 item 2: the per-engine entry --------------------------------------
+
+_CONFIG_FILE_NAMES = frozenset({"pyproject.toml", "ruff.toml", ".ruff.toml"})
+_DIGESTS: dict[tuple[str, int, int, int, int], str] = {}
+
+
+def _executable_digest(path: str) -> str | None:
+    """sha256 of the executable's final target, cached by its identity."""
+    real = os.path.realpath(path)
+    try:
+        st = os.stat(real)
+    except OSError:
+        return None
+    key = (real, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    if key not in _DIGESTS:
+        try:
+            _DIGESTS[key] = compute_file_sha256(real)
+        except OSError:
+            return None
+    return _DIGESTS[key]
+
+
+def _outcome_reason(result: ToolResult) -> str | None:
+    """Why a dispatch did not produce a normal engine verdict, else `None`."""
+    status = result.get("status")
+    summary = str(result.get("summary", ""))
+    if status == "skipped":
+        if summary.startswith("skipped: requires permission"):
+            return "permission_denied"
+        if "not on PATH" in summary or "disappeared from PATH" in summary:
+            return "engine_not_installed"
+        return "engine_skipped"
+    if status != "error":
+        return None
+    if (result.get("metadata") or {}).get("terminal_reason") == "timeout":
+        return "timeout"
+    if summary.startswith("error: engine crashed"):
+        return "crash"
+    if summary.startswith("error: staging input rejected"):
+        return "staging_input_rejected"
+    return "engine_error"
+
+
+def _identity(path: str) -> tuple[int, int] | None:
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _argv_targets(main: list[dict[str, Any]]) -> tuple[set[tuple[int, int]], bool]:
+    """(identities of existing files, any directory) among main argv entries."""
+    files: set[tuple[int, int]] = set()
+    directory = False
+    for spawn in main:
+        for arg in spawn["argv"][1:]:
+            candidate = os.path.join(spawn["cwd"], arg)
+            if os.path.isdir(candidate):
+                directory = True
+            elif os.path.isfile(candidate) and (ident := _identity(candidate)):
+                files.add(ident)
+    return files, directory
+
+
+def _probe_scope(listed: list[str], requested: int | None) -> dict[str, Any]:
+    consumed = sorted(
+        {p for p in listed if os.path.basename(p) not in _CONFIG_FILE_NAMES}
+    )
+    return {
+        "requested_file_count": requested,
+        "consumed_file_count": len(consumed),
+        "consumption_source": "engine_show_files",
+        "consumed_files": consumed,
+        "configuration_files": sorted(
+            {p for p in listed if os.path.basename(p) in _CONFIG_FILE_NAMES}
+        ),
+        "coverage": "complete" if consumed else "none",
+        "reason": None,
+    }
+
+
+def _entry_scope(
+    main: list[dict[str, Any]],
+    consumed_paths: list[str] | None,
+    listed: list[str] | None,
+    reason: str | None,
+) -> dict[str, Any]:
+    """R16.3: explicit file arguments are counted; a directory argument makes
+    the count unavailable (the engine discovers its contents) unless the
+    engine's own listing (finding 24) reports what it consumed."""
+    requested = len(consumed_paths) if consumed_paths is not None else None
+    if listed is not None:
+        return _probe_scope(listed, requested)
+    base: dict[str, Any] = {
+        "requested_file_count": requested,
+        "consumption_source": "explicit_arguments",
+    }
+    if not main:
+        return {**base, "consumed_file_count": 0, "coverage": "none", "reason": reason}
+    files, directory = _argv_targets(main)
+    if directory:
+        return {
+            **base,
+            "consumed_file_count": None,
+            "coverage": "unavailable",
+            "reason": "engine_discovers_directory_contents",
+        }
+    wanted = {i for p in consumed_paths or () if (i := _identity(p))}
+    if not files:
+        coverage = "none"
+    elif consumed_paths is None:
+        coverage = "unavailable"
+    else:
+        coverage = "complete" if wanted <= files else "partial"
+    return {
+        **base,
+        "consumed_file_count": len(files),
+        "coverage": coverage,
+        "reason": "requested_files_unknown" if coverage == "unavailable" else None,
+    }
+
+
+def build_engine_entry(
+    engine_name: str,
+    result: ToolResult,
+    spawns: list[dict[str, Any]],
+    consumed_paths: list[str] | None,
+    listed: list[str] | None,
+) -> dict[str, Any]:
+    """S16.2: one engine's recorded outcome. A missing engine or a refused
+    dispatch has `version:null` plus `version_unavailable_reason`."""
+    main = [spawn for spawn in spawns if spawn["kind"] == "main"]
+    reason = _outcome_reason(result)
+    executable = main[0]["path"] if main else None
+    version = result.get("engine_version")
+    metadata = result.get("metadata") or {}
+    return {
+        "engine": engine_name,
+        "executable": {
+            "path": executable,
+            "sha256": _executable_digest(executable) if executable else None,
+            "reason": None if executable else (reason or "not_spawned"),
+        },
+        "version": version,
+        "version_unavailable_reason": None
+        if version
+        else (reason or "engine_reports_no_version"),
+        "config": {
+            "path": None,
+            "sha256": None,
+            "reason": "engine_does_not_report_config",
+        },
+        "analysis_environment": metadata.get("analysis_environment")
+        or {"mode": "not_applicable"},
+        "status": result.get("status"),
+        "summary": result.get("summary"),
+        "reason": reason,
+        "cwd": main[0]["cwd"] if main else None,
+        "spawns": [
+            {"kind": s["kind"], "path": s["path"], "cwd": s["cwd"]} for s in spawns
+        ],
+        "scope": _entry_scope(main, consumed_paths, listed, reason),
+    }
+
+
+def _run_scope_probe(
+    engine: Engine,
+    path: Path,
+    args: list[str],
+    cwd: Path | None,
+    consumed_paths: list[str] | None,
+    *,
+    owner_instance_id: str | None,
+    run_id: str | None,
+) -> list[str] | None:
+    """Finding 24: the engine's own consumed-file listing, or `None` when it
+    cannot report one. Staged paths map back to the logical tree."""
+    from ..engines.staging import StagingInputError, map_staged_path
+
+    show_files = getattr(engine, "show_files", None)
+    if show_files is None:
+        return None
+    kind = _SPAWN_KIND.set("scope_probe")
+    try:
+        staging, run_path, run_cwd, extra_args = _staged_invocation(
+            engine, path, cwd, args, consumed_paths=consumed_paths
+        )
+        with owned_execution_scope(owner_instance_id, run_id):
+            listed: list[str] | None = show_files(run_path, extra_args, cwd=run_cwd)
+    except (OSError, subprocess.SubprocessError, StagingInputError, ValueError):
+        return None
+    finally:
+        _SPAWN_KIND.reset(kind)
+    if listed is None or staging is None:
+        return listed
+    return [
+        map_staged_path(item, staging.staged_root, staging.original_root)
+        for item in listed
+    ]
+
+
+def _run_engine_in_scope(
     engine: Engine,
     path: Path,
     args: list[str] | None = None,
@@ -1147,11 +1642,14 @@ def run_engine(
             engine.name,
             f"requires permission: {missing_str}",
             metadata={
+                # T5: a denied step never ran -- `not_run`, so suites do not
+                # count it in `executed_tools`.
                 "execution": build_execution_metadata(
                     "executed",
                     requested=required_permissions,
                     granted=permissions,
                     producer=engine.name,
+                    extra={"disposition": "not_run", "cause": "permission_denied"},
                 )
             },
         )
@@ -1202,6 +1700,8 @@ def run_engine(
                 cwd=run_cwd,
                 **_engine_run_ownership(engine, owner_instance_id, run_id),
             )
+    except SubprocessCancelled:
+        raise  # T17: mapped to a cancelled child by `run_engine`
     except subprocess.TimeoutExpired:
         return _error(
             tool_name,
@@ -1264,7 +1764,7 @@ def run_engine(
     # undercover) stashes its own real-evidence digest on `result` itself --
     # carry it forward onto the returned `ToolResult`'s metadata so
     # `project_run.py` can fold it into the run's consumption identity.
-    provenance = result.get("provenance")  # type: ignore[typeddict-item]
+    provenance = result.get("provenance")
     with owned_execution_scope(owner_instance_id, run_id):
         tool_res = engine.normalize(result, run_path, tool_name)
     if staging is not None:
@@ -1278,9 +1778,11 @@ def run_engine(
 __all__ = [
     "MAX_SUBPROCESS_OUTPUT_CHARS",
     "OWNED_TERMINATION_TIMEOUT_SECONDS",
+    "CancelScope",
     "SubprocessCancelled",
     "_bounded_redacted_output",
     "_install_hint",
+    "cancel_scope",
     "owned_execution_scope",
     "read_owned_process_records",
     "reap_owner_processes",

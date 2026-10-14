@@ -6,7 +6,7 @@ Manages local session checkpoints through `save`, `list`, and `restore`. It is i
 
 ## `memory` — workflow, real adapter (Phase 61)
 
-Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through `ask`, `write`, `promote`, `list`, `recall`, and `maintain`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. `write`/`promote`/`maintain` are `stateful-mutation` operations requiring cache-write permission. `ask`/`list`/`recall` require an explicit session allowlist and return content only after recall defenses pass.
+Queries and writes the unified `TypedArtifactStore` (`.rush/memory.db`) through the operations `ask`, `write`, `promote`, `list`, `recall`, `maintain`, `expand`, `related`, `link`, `consolidate`, `edit`, `archive`, `delete`, `verify_attempt`, `prepare`, `resume`, `intent`, `recipe`, `plan_checks`, `last_success_diagnose`, `handoff`, `receive`, `preference`, `history`, `explain`, and `capsule`. It is implemented by `MemoryTool`, has no external engine, and is registered as MCP `rush_memory` and CLI `rush memory`. Mutating operations are `stateful-mutation` operations requiring cache-write permission. Reads depend on the project's memory grant: with a grant, a read resolves that grant, a supplied session allowlist only narrows what the grant approves, and a revoked grant, an expired grant or an invalid policy is denied; a project that was never enrolled keeps the legacy rule, where a read needs a non-empty session allowlist and is skipped without one. Content is returned only after recall defenses pass, and memory content is data, never instructions.
 
 ## `scan` — workflow, real adapter (Phase 65)
 
@@ -23,7 +23,7 @@ Current execution limitations: catalog engines are candidates, not proof every n
 | `format` | quality | real adapter | Ruff format, Prettier, Squoosh (WebP/AVIF image compression), Critical (CSS extraction), Font-Spider (font glyph compression), PyClean (cache cleanup); `--check` is safe verification mode |
 | `test` | test | real adapter | pytest, Vitest, Newman (Postman CLI runner); deterministic reference test suites |
 | `security` | security | real adapter | pip-audit, npm audit, OSV-Scanner, Semgrep, Trivy, Grype, Bearer, Horusec, Medusa (agent hook auditor), Pa11y, OWASP ZAP, Deadfinder, A11yWatch, Dockle (container CIS), Safe-Env (environment sanity), NCU (dependency upgrade) |
-| `typecheck` | quality | real adapter | mypy, tsc, Pyrefly; reference test suites |
+| `typecheck` | quality | real adapter | mypy, tsc, Pyrefly; `environment=project\|isolated` selects the analyzed interpreter; reference test suites |
 | `dead` | quality | real adapter | Vulture, Knip, FawltyDeps (Python import/dependency auditor), Ts-prune (unused TS exports); reference test suites |
 | `complexity` | quality | real adapter | Radon, jscpd, Tach (modular boundaries), Clines (token density), Sentrux (decay sensors), Depcruise (architectural cycles), Scaphandre (energy/carbon estimation), Readability (Flesch-Kincaid), Memray (memory profiling), Statoscope (JS bundle analysis), Bloaty (binary footprint) |
 | `slop` | quality | real adapter | sloppylint, aislop (AST anti-pattern scanner), deterministic JS/TS fallback, Markdown-Unfluff |
@@ -55,6 +55,8 @@ Current execution limitations: catalog engines are candidates, not proof every n
 | `tdd` | workflow | real adapter | TDD Guard Red-Green-Refactor cycle enforcement and automated test discovery |
 | `fix` | quality | real adapter | automated safe multi-engine code remediation and formatting (Ruff, Biome, ESLint, Prettier, ast-grep) |
 | `doctor` | workflow | real adapter | environment health, PATH precedence, virtual environment, and toolchain integrity diagnostics |
+| `check` | workflow | real adapter (Phase 70) | six-step check suite: format (check-only), lint, typecheck, dead, slop and test; registered as MCP `rush_check` and CLI `rush check` |
+| `status` | workflow | real adapter (Phase 70) | selected project's registration, setup, scan and memory status without changing anything; registered as MCP `rush_status` and CLI `rush status` |
 | `guard` | security | real adapter | destructive command interceptor, repository path boundary confinement, and secret redactor |
 | `token` | quality | real adapter | fast BPE token counter, Python AST outline compressor |
 | `sync` | quality | real adapter | OpenAPI contract validator, TypeScript interface generator |

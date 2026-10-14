@@ -5,7 +5,7 @@ editing of Plans 02–10 in `docs/phase-plans/command-tdd-2026-10-01/` after Jam
 explicitly authorizes the next plan. Creating or invoking this guide does not
 authorize that next plan, production implementation, commits, or publication.
 
-Use this guide with [orchestrate](/Users/jamesdsizemore/.agents/skills/orchestrate/SKILL.md)
+Use this guide with orchestrate (machine-local skill provenance: `/Users/jamesdsizemore/.agents/skills/orchestrate/SKILL.md`)
 and [task-block-template.md](../templates/task-block-template.md). Keep the
 existing plan's valid content and schema. The [batch creation prompt](cli-command-remediation-plan-batch-prompt.md)
 serves a different authorized task; its ten-plan scope never replaces the

@@ -50,8 +50,10 @@ def build_continuity_result(
     findings: list[Finding] | None = None,
     as_v1: bool = False,
     tool_name: str = "continuity",
+    memory: dict[str, Any] | None = None,
 ) -> ContinuityOutput:
-    """Build canonical ToolResult or ToolResultV1 for session continuity."""
+    """Build canonical ToolResult or ToolResultV1 for session continuity.
+    `memory` is the T19 `metadata.memory` block, omitted when `None`."""
     metadata = {
         "operation": operation,
         "execution": build_execution_metadata(
@@ -68,6 +70,7 @@ def build_continuity_result(
         ),
         **({"coordination": coordination} if coordination is not None else {}),
         **({"provider_route": provider_route} if provider_route is not None else {}),
+        **({"memory": memory} if memory is not None else {}),
     }
     extensions: dict[str, Any] = {
         "metadata": metadata,

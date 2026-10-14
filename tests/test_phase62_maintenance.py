@@ -7,13 +7,16 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+import rush.memory.maintenance as maintenance_module
 import rush.tools.memory as memory_module
 from rush.mcp_mesh.lock_manager import MeshLockManager
 from rush.memory.maintenance import MaintenanceRunResult, run_maintenance_cycle
+from rush.memory.retrieval import MemoryAccess
 from rush.memory.store import (
     MemoryArtifact,
     OwnerScope,
@@ -22,7 +25,25 @@ from rush.memory.store import (
 )
 from rush.tools.memory import MemoryTool
 
+
+def _nn[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
+
 _LOCK_PATH = Path(".rush/memory-maintenance.lock")
+
+
+def _access(
+    root: Path, sources: list[str], owner: OwnerScope | None = None
+) -> MemoryAccess:
+    """72-T04 (D9): the resolved write access every cycle now takes."""
+    return MemoryAccess.legacy(
+        root,
+        sources,
+        owner_scope=owner or legacy_owner_scope(root),
+        operation="write",
+    )
 
 
 def test_maintenance_rejects_missing_lock_capability(tmp_path: Path) -> None:
@@ -35,7 +56,7 @@ def test_maintenance_rejects_missing_lock_capability(tmp_path: Path) -> None:
         run_maintenance_cycle(
             "promotion_sweep",
             project_root=tmp_path,
-            owner_scope=legacy_owner_scope(tmp_path),
+            access=_access(tmp_path, ["tool-0"]),
         )
 
 
@@ -70,19 +91,30 @@ def test_maintenance_cycle_acquires_and_releases_lock(
         spy_acquire.side_effect = original_acquire
         spy_release.side_effect = original_release
 
-        result = run_maintenance_cycle(
-            "promotion_sweep", owner_scope=legacy_owner_scope(tmp_path)
-        )
+        access = _access(tmp_path, ["tool"])
+        result = run_maintenance_cycle("promotion_sweep", access=access)
         assert isinstance(result, MaintenanceRunResult)
         assert spy_acquire.call_count == 1
         assert spy_release.call_count == 1
 
-        # An unrecognized task isn't in _SELECT_SQL, so the cycle body raises KeyError
-        # before any row processing — release() must still fire (T-62.05's actual intent).
-        with pytest.raises(KeyError):
-            run_maintenance_cycle(  # type: ignore[arg-type]
-                "not_a_real_task", owner_scope=legacy_owner_scope(tmp_path)
+        # 72-T04 (D9): an unrecognized task is a `ValueError` before any lease.
+        with pytest.raises(ValueError):
+            run_maintenance_cycle(
+                "not_a_real_task",  # type: ignore[arg-type]
+                access=access,
             )
+        assert spy_acquire.call_count == 1
+        assert spy_release.call_count == 1
+
+        # A body that raises inside the lease (the access recheck after the lease)
+        # still releases it -- T-62.05's actual intent.
+        with (
+            patch.object(
+                maintenance_module, "recheck_failure", side_effect=RuntimeError("boom")
+            ),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            run_maintenance_cycle("promotion_sweep", access=access)
         assert spy_acquire.call_count == 2
         assert spy_release.call_count == 2
 
@@ -93,12 +125,15 @@ def test_maintenance_cycle_respects_batch_size_parameter(
     """T-62.06: 600 candidate rows seeded; `batch_size=500` processes exactly 500, and a
     separate `batch_size=50` call processes exactly 50 — proving a real parameter, not a
     hardcoded constant."""
+    # 500 per-row transactions must fit one policy-lock hold (D9).
+    monkeypatch.setattr(maintenance_module, "POLICY_LOCK_HOLD_BUDGET_S", 120.0)
+    sources = [f"tool-{i}" for i in range(600)]
     root_500 = tmp_path / "run-500"
     root_500.mkdir()
     monkeypatch.chdir(root_500)
     _seed_candidate_rows(root_500, 600)
     result_500 = run_maintenance_cycle(
-        "promotion_sweep", batch_size=500, owner_scope=legacy_owner_scope(root_500)
+        "promotion_sweep", batch_size=500, access=_access(root_500, sources)
     )
     assert result_500.processed == 500
 
@@ -107,7 +142,7 @@ def test_maintenance_cycle_respects_batch_size_parameter(
     monkeypatch.chdir(root_50)
     _seed_candidate_rows(root_50, 600)
     result_50 = run_maintenance_cycle(
-        "promotion_sweep", batch_size=50, owner_scope=legacy_owner_scope(root_50)
+        "promotion_sweep", batch_size=50, access=_access(root_50, sources)
     )
     assert result_50.processed == 50
 
@@ -143,7 +178,8 @@ def test_maintenance_sweep_never_touches_a_different_owners_rows(
     store.write(user_owned)
 
     result = run_maintenance_cycle(
-        "promotion_sweep", owner_scope=OwnerScope("user", "u-1")
+        "promotion_sweep",
+        access=_access(tmp_path, ["tool"], OwnerScope("user", "u-1")),
     )
     assert result.processed == 1
     assert result.errors == ()
@@ -151,7 +187,7 @@ def test_maintenance_sweep_never_touches_a_different_owners_rows(
     # M09: owner_scope is required (no silent default) -- the project-owned row
     # is reached only by explicitly passing this project's own legacy owner.
     default_result = run_maintenance_cycle(
-        "promotion_sweep", owner_scope=legacy_owner_scope(tmp_path)
+        "promotion_sweep", access=_access(tmp_path, ["tool"])
     )
     assert default_result.processed == 1
 
@@ -165,7 +201,7 @@ def test_expired_lease_reclaimed_by_second_cycle_survives_first_cycles_stale_rel
     monkeypatch.chdir(tmp_path)
     mgr = MeshLockManager()
 
-    acquired_a, cap_a = mgr.acquire(
+    acquired_a, cap_a = mgr.acquire(  # type: ignore[misc]
         _LOCK_PATH,
         agent_id="memory-maintenance",
         timeout_s=1.0,
@@ -178,7 +214,7 @@ def test_expired_lease_reclaimed_by_second_cycle_survives_first_cycles_stale_rel
 
     time.sleep(0.15)  # let cycle A's lease expire
 
-    acquired_b, cap_b = mgr.acquire(
+    acquired_b, cap_b = mgr.acquire(  # type: ignore[misc]
         _LOCK_PATH,
         agent_id="memory-maintenance",
         timeout_s=1.0,
@@ -190,7 +226,7 @@ def test_expired_lease_reclaimed_by_second_cycle_survives_first_cycles_stale_rel
 
     state_before = MeshLockManager.inspect(tmp_path, _LOCK_PATH)
     assert state_before["state"] == "held"
-    generation_b = state_before["generation"]
+    generation_b: Any = state_before["generation"]
     assert generation_b > generation_a
 
     # Cycle A's cleanup runs against its now-stale capability.
@@ -220,13 +256,28 @@ def test_memory_tool_maintain_operation_dispatches_to_run_maintenance_cycle(
             task="promotion_sweep",
             allow_cache_write=True,
             owner_scope=owner,
+            sources=["tool"],
         )
 
-    spy.assert_called_once_with(
-        "promotion_sweep",
-        batch_size=500,
-        project_root=tmp_path.resolve(),
-        owner_scope=owner,
+    # 72-T04 (D3/D9): `legacy` mode builds the explicit-source write access; the
+    # reviewed-set restriction keywords stay absent on an unrestricted call.
+    spy.assert_called_once()
+    assert spy.call_args.args == ("promotion_sweep",)
+    kwargs = spy.call_args.kwargs
+    assert kwargs["batch_size"] == 500
+    assert kwargs["project_root"] == tmp_path.resolve()
+    assert kwargs["access"] == MemoryAccess.legacy(
+        tmp_path.resolve(), ["tool"], owner_scope=owner, operation="write"
     )
+    assert not set(kwargs) - {
+        "access",
+        "batch_size",
+        "project_root",
+        "candidate_ids",
+        "expected_revisions",
+        "data_root",
+    }
+    assert kwargs.get("candidate_ids") is None
+    assert kwargs.get("expected_revisions") is None
     assert result["status"] == "ok"
-    assert result["metadata"]["operation"] == "maintain"
+    assert _nn(result["metadata"])["operation"] == "maintain"

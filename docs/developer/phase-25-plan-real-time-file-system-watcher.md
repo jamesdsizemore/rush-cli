@@ -1010,7 +1010,7 @@ The following specific documents across the `/docs` tree must be created or upda
 - **[`docs/CLI_COOKBOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/CLI_COOKBOOK.md)**: Add recipes for running `rush watch` alongside frontend and backend development dev servers.
 - **[`docs/RECIPE_BOOK.md`](file:///C:/Users/james/developer/rush-cli/docs/RECIPE_BOOK.md)**: Add recipe for auto-running tests and linters on modified files on save.
 - **[`docs/EXAMPLES.md`](file:///C:/Users/james/developer/rush-cli/docs/EXAMPLES.md)**: Include terminal UI snapshots of the live watcher interface.
-- **[`docs/TUTORIALS.md`](file:///C:/Users/james/developer/rush-cli/docs/TUTORIALS.md)**: Add tutorial on setting up real-time feedback in VSCode and Cursor terminal panels.
+- **[`docs/TUTORIALS.md`](file:///C:/Users/james/developer/rush-cli/docs/TUTORIALS.md)**: Add tutorial on setting up real-time feedback in VSCode terminal panels.
 - **[`docs/TROUBLESHOOTING.md`](file:///C:/Users/james/developer/rush-cli/docs/TROUBLESHOOTING.md)**: Add entries for inotify limits on Linux and OS file descriptor exhaustion handling.
 - **[`docs/FAQ.md`](file:///C:/Users/james/developer/rush-cli/docs/FAQ.md)**: Explain how `rush watch` filters out auto-fixes to prevent infinite event loops.
 

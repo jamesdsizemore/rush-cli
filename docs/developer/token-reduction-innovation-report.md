@@ -222,7 +222,7 @@ Below is the exhaustive, granular technical evaluation of all 24 repositories in
 ### 4.6 `Mapleeeeeeeeeee/cc-session-reader`
 - **Current Repository State & Metadata**: Active open-source CLI; v1.x; MIT License; developed by Maple Kuo.
 - **Dependencies & Runtime**: Python 3.10+; standard library `json`, `pathlib`, `re`.
-- **Core Problem Solved**: Claude Code and Cursor session transcripts (`transcript.jsonl`) grow into 50MB+ files over long coding sessions, making session restoration prohibitively expensive.
+- **Core Problem Solved**: Claude Code session transcripts (`transcript.jsonl`) grow into 50MB+ files over long coding sessions, making session restoration prohibitively expensive.
 - **Main Technique**: Deterministic JSONL transcript parsing, tool-call deduplication, error deduplication, and hierarchical milestone turn compaction.
 - **Type of Context Optimized**: Multi-turn agent conversational history and resumption context.
 - **Architecture and Data Flow**:
@@ -326,15 +326,15 @@ Below is the exhaustive, granular technical evaluation of all 24 repositories in
 - **Current Repository State & Metadata**: Active CLI utility; v1.x; MIT License; maintained by yttrium400.
 - **Dependencies & Runtime**: Python 3.8+; zero external dependencies (standard library `ast`, `re`, `pathlib`).
 - **Core Problem Solved**: Coding agents spend 10k–50k tokens at the start of every session scanning the repository structure.
-- **Main Technique**: Generates a compact structural "skeleton" of the entire repository (imports, class definitions, function signatures) and automatically injects it into `.cursorrules` or `CLAUDE.md`.
+- **Main Technique**: Generates a compact structural "skeleton" of the entire repository (imports, class definitions, function signatures) and automatically injects it into `CLAUDE.md`.
 - **Type of Context Optimized**: Repository-level architecture overview and project bootstrapping.
 - **Architecture and Data Flow**:
   1. CLI scans repository source files.
   2. Strips all function/method bodies, keeping signatures and top-level imports.
   3. Combines into a single $<500$-line structural markdown skeleton.
-  4. Injects skeleton into agent configuration files (`.cursorrules`, `CLAUDE.md`).
+  4. Injects skeleton into agent configuration files (`CLAUDE.md`).
 - **Important Implementation Details**: Pure standard library implementation; runs in $<50\text{ ms}$.
-- **Independently Supported Results**: Widely used across Cursor and Claude Code communities.
+- **Independently Supported Results**: Widely used across Claude Code communities.
 - **Strengths & Weaknesses**:
   - *Strengths*: Zero runtime overhead; zero dependencies; instant startup context.
   - *Weaknesses*: Skeleton can become stale if not updated automatically when files change.
@@ -351,7 +351,7 @@ Below is the exhaustive, granular technical evaluation of all 24 repositories in
 ### 4.11 `NickCirv/engram`
 - **Current Repository State & Metadata**: Active MCP server and CLI (`engramx`); v0.5.x; MIT License; Nick Cirv.
 - **Dependencies & Runtime**: Python 3.11+, `mcp`, `sqlite3`, `pydantic`.
-- **Core Problem Solved**: Developers using multiple tools (Cursor, Claude Code, Cline, terminal) experience siloed memory, leading to repeated indexing and redundant token burn across sessions.
+- **Core Problem Solved**: Developers using multiple tools (Claude Code, Cline, terminal) experience siloed memory, leading to repeated indexing and redundant token burn across sessions.
 - **Main Technique**: Local SQLite "context spine" providing persistent cross-IDE memory, cost tracking, and error surfacing with an 89% measured token reduction.
 - **Type of Context Optimized**: Cross-session architectural memory, past errors, and token cost telemetry.
 - **Architecture and Data Flow**:
@@ -584,7 +584,7 @@ Below is the exhaustive, granular technical evaluation of all 24 repositories in
 - **Dependencies & Runtime**: Python 3.10+, `tree-sitter`, `fastapi`, `httpx`.
 - **Core Problem Solved**: Agents read entire codebases, inflating token bills by hundreds of dollars per day and diluting reasoning focus.
 - **Main Technique**: Drop-in proxy middleware that uses AST parsing to skeletonize "background" files while preserving full verbatim code on active edit targets (50–80% cost reduction).
-- **Type of Context Optimized**: Multi-file repository context in Cursor, Claude, and OpenCode.
+- **Type of Context Optimized**: Multi-file repository context in Claude and OpenCode.
 - **Architecture and Data Flow**:
   1. Sits as an HTTP proxy between the agent IDE and LLM provider.
   2. Inspects prompt payload to identify target edit files vs background reference files.
@@ -612,7 +612,7 @@ Below is the exhaustive, granular technical evaluation of all 24 repositories in
 - **Main Technique**: Unified CLI manager orchestrating token-saving plugins, shell proxies, and agent configurations with zero-config defaults.
 - **Type of Context Optimized**: Agent tool configuration and runtime environment setup.
 - **Architecture and Data Flow**:
-  1. CLI scans developer environment to detect installed IDEs (Claude Code, Cursor, Windsurf).
+  1. CLI scans developer environment to detect installed IDEs (Claude Code, Windsurf).
   2. Automatically configures optimal token-reduction presets and shell wrappers.
   3. Provides one-command updates and health checks.
 - **Important Implementation Details**: Wires together shell command filters and MCP server configurations.
@@ -800,7 +800,7 @@ Each candidate idea and repository was scored on a strict 1–5 scale across 12 
 ## 10. Product Concept Exploration (3 Detailed Directions)
 
 ### Direction A: "Rush TokenProxy" (Drop-in HTTP/LLM Middleware Proxy)
-- **Concept**: A local proxy server running on `localhost:8080` that intercepts all OpenAI/Anthropic API calls from Cursor/Claude Code and compresses prompts on the wire.
+- **Concept**: A local proxy server running on `localhost:8080` that intercepts all OpenAI/Anthropic API calls from Claude Code and compresses prompts on the wire.
 - **Pros**: Transparent to any agent; zero configuration inside agent prompts.
 - **Cons**: High operational friction (TLS certificate management, port collisions, VPN conflicts); cannot understand tool semantics deeply; failure in proxy kills the agent session.
 
@@ -934,7 +934,7 @@ Implementing the Context Intelligence Engine impacts the entire Rush documentati
 | [`docs/CONFIGURATION.md`](file:///C:/Users/james/developer/rush-cli/docs/CONFIGURATION.md) | Add configuration guide for the `[context_intel]` table in `rush.toml` (modes, token budgets, TOON format, CCR toggle). |
 | [`docs/CONFIG_SCHEMA.md`](file:///C:/Users/james/developer/rush-cli/docs/CONFIG_SCHEMA.md) | Update JSON Schema and TOML schema definitions with the `[context_intel]` schema specification. |
 | [`docs/DEVELOPER_GUIDE.md`](file:///C:/Users/james/developer/rush-cli/docs/DEVELOPER_GUIDE.md) | Add developer instructions for implementing custom command distillers, AST outline extractors, and CCR storage backends. |
-| [`docs/INTEGRATIONS.md`](file:///C:/Users/james/developer/rush-cli/docs/INTEGRATIONS.md) | Add setup guides for Claude Code hooks, Cursor agent configuration, Codex CLI `AGENTS.md` integration, and Antigravity hooks. |
+| [`docs/INTEGRATIONS.md`](file:///C:/Users/james/developer/rush-cli/docs/INTEGRATIONS.md) | Add setup guides for Claude Code hooks, Codex CLI `AGENTS.md` integration, and Antigravity hooks. |
 | [`docs/SAFETY.md`](file:///C:/Users/james/developer/rush-cli/docs/SAFETY.md) | Document secret scrubbing and redaction invariants applied during command output distillation and CCR chunk caching. |
 | [`docs/SECURITY.md`](file:///C:/Users/james/developer/rush-cli/docs/SECURITY.md) | Detail the security architecture of the local SQLite CCR cache (permissions 0700, zero cloud egress). |
 | [`docs/adr/README.md`](file:///C:/Users/james/developer/rush-cli/docs/adr/README.md) | Register new Architectural Decision Records ADR-0038 through ADR-0045. |

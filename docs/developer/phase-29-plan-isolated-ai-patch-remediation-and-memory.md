@@ -31,7 +31,7 @@
 ## 1. Architectural Mission & Invariants
 
 ### 1.1 Problem Statement & Deep Threat Model
-When autonomous AI coding agents (Claude Code, Cursor, GitHub Copilot Workspace, Devin, Antigravity) attempt automated code remediation across developer workspaces:
+When autonomous AI coding agents (Claude Code, GitHub Copilot Workspace, Devin, Antigravity) attempt automated code remediation across developer workspaces:
 1. **Destructive In-Place Working Tree Mutations**: AI agents applying experimental patches directly to dirty working trees corrupt uncommitted developer work, create unrecoverable merge conflicts, and leave orphaned syntax errors.
 2. **Hallucinated & Regressive Patches**: An AI model generates a patch that resolves a single Ruff lint warning (e.g. `F401 unused-import`) while inadvertently deleting critical side-effect imports or breaking 15 downstream unit tests.
 3. **Runaway Remediation Feedback Loops**: Agent loops that fail test verification attempt blind fixes repeatedly, exhausting API budgets, mutating repository state, and cycling through identical failing patch variants.
@@ -185,7 +185,6 @@ HUNK_HEADER_REGEX = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 GOVERNANCE_BLOCKED_FILES = {
     "AGENTS.md",
     "CLAUDE.md",
-    ".cursorrules",
     ".windsurfrules",
     "rush.toml",
     ".rush/trust.json",

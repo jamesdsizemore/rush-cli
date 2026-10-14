@@ -645,7 +645,7 @@ Integrate next-generation AI anti-pattern detection, modular architecture bounda
 4. **`medusa` (Agent Hook & Prompt Injection Auditor)**
    - **Command Mapping:** `rush security`
    - **Binary:** `medusa`
-   - **Capability:** Scans `.claude/`, `.cursor/`, `.windsurf/`, and MCP agent configuration files for privilege escalation, untrusted shell execution, and prompt injection vectors.
+   - **Capability:** Scans `.claude/`, `.windsurf/`, and MCP agent configuration files for privilege escalation, untrusted shell execution, and prompt injection vectors.
    - **Adapter File:** `src/rush/engines/medusa.py`
    - **Reference Test:** `tests/test_medusa_reference.py`
 

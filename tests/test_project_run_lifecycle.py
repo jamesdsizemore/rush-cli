@@ -319,6 +319,92 @@ def test_cancel_mid_subprocess_terminates_owned_child_with_no_orphan(
     assert handoff.finding_ids
 
 
+def test_cancel_real_pytest_candidate_terminates_child_tree_before_release(
+    tmp_path: Path,
+) -> None:
+    project_id, data_root = _register(tmp_path)
+    root = tmp_path / "project"
+    release = tmp_path / "release-pytest"
+    parent_pid = tmp_path / "pytest-pid"
+    child_pid = tmp_path / "pytest-child-pid"
+    (root / "pyproject.toml").write_text(
+        '[tool.pytest.ini_options]\ntestpaths = ["test_blocking.py"]\n'
+    )
+    grandchild = (
+        "import time\n"
+        "from pathlib import Path\n"
+        f"release = Path({str(release)!r})\n"
+        "deadline = time.monotonic() + 30\n"
+        "while not release.exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.02)\n"
+    )
+    (root / "test_blocking.py").write_text(
+        "import os, subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        f"release = Path({str(release)!r})\n"
+        "def test_blocked():\n"
+        f"    child = subprocess.Popen([sys.executable, '-c', {grandchild!r}], "
+        "stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL)\n"
+        f"    Path({str(parent_pid)!r}).write_text(str(os.getpid()))\n"
+        f"    Path({str(child_pid)!r}).write_text(str(child.pid))\n"
+        "    deadline = time.monotonic() + 30\n"
+        "    while not release.exists() and time.monotonic() < deadline:\n"
+        "        time.sleep(0.02)\n"
+        "    assert release.exists()\n"
+    )
+    exclude = tuple(
+        candidate.candidate_id
+        for candidate in project_run._build_candidates(list(project_run.ALL_TOOLS))
+        if candidate.candidate_id != "test"
+    )
+    plan = plan_scan(project_id, exclude=exclude, data_root=data_root)
+    assert [
+        c.candidate_id for c in plan.candidates if c.disposition == "applicable"
+    ] == ["test"]
+    run_id = str(uuid.uuid4())
+    outcome: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            outcome["run"] = execute_scan(
+                plan,
+                run_id=run_id,
+                permissions=ExecutionPermissions(
+                    build=True, cache_write=True, artifact_write=True
+                ),
+                data_root=data_root,
+            )
+        except BaseException as exc:  # noqa: BLE001 -- surface worker failure
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=_run)
+    thread.start()
+    try:
+        assert _wait_until(
+            lambda: parent_pid.is_file() and child_pid.is_file(), timeout=10
+        ), "real pytest and descendant did not start"
+        pytest_pid = int(parent_pid.read_text())
+        descendant_pid = int(child_pid.read_text())
+        assert _process_alive(pytest_pid) and _process_alive(descendant_pid)
+        cancel_scan_run(project_id, run_id, data_root=data_root)
+        thread.join(timeout=5)
+        assert not thread.is_alive(), "active pytest ignored cancellation"
+        assert not release.exists(), "pytest gate was released before cancellation"
+        assert _wait_until(lambda: not _process_alive(pytest_pid), timeout=5)
+        assert _wait_until(lambda: not _process_alive(descendant_pid), timeout=5)
+        if "error" in outcome:
+            raise outcome["error"]
+        run = outcome["run"]
+        assert run.run_state == "cancelled"
+        assert run.candidate_results[0].candidate.candidate_id == "test"
+        assert run.candidate_results[0].outcome == "cancelled"
+        assert load_scan_events(root, run_id)["run_state"] == "cancelled"
+    finally:
+        release.touch()
+        thread.join(timeout=10)
+
+
 def test_resume_after_crash_before_aggregate_retains_executed_children(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1060,9 +1146,9 @@ def test_explicit_target_a_py_does_not_claim_unrelated_b_js_as_consumed(
     """M16: an engine invoked with root plus an explicit file target must
     record only that staged target as consumed, never the whole staged
     root -- an unrelated inventory file must not be falsely claimed."""
+    from rush.engines.ruff import RuffEngine
     from rush.engines.staging import stage_inventory, staging_scope
     from rush.runtime.subprocesses import _staged_invocation
-    from rush.engines.ruff import RuffEngine
 
     root = tmp_path / "project"
     root.mkdir()
@@ -1072,7 +1158,11 @@ def test_explicit_target_a_py_does_not_claim_unrelated_b_js_as_consumed(
     staging = stage_inventory(root, staged_root, ["a.py", "b.js"])
     with staging_scope(staging):
         _staged_invocation(
-            RuffEngine(), root, root, [str(root / "a.py")], consumed_paths=[str(root / "a.py")]
+            RuffEngine(),
+            root,
+            root,
+            [str(root / "a.py")],
+            consumed_paths=[str(root / "a.py")],
         )
         consumed = staging.take_candidate_digests()
 
@@ -1083,9 +1173,9 @@ def test_root_scoped_scan_records_its_full_staged_source_scope(tmp_path: Path) -
     """M16 bullet 2: an engine invoked with no explicit targets (a genuine
     root-scoped scan) still records its full staged source scope -- the
     `consumed_paths` narrowing must never regress that case."""
+    from rush.engines.ruff import RuffEngine
     from rush.engines.staging import stage_inventory, staging_scope
     from rush.runtime.subprocesses import _staged_invocation
-    from rush.engines.ruff import RuffEngine
 
     root = tmp_path / "project"
     root.mkdir()
@@ -1173,7 +1263,7 @@ def test_disappeared_inventory_file_during_staging_forces_incomplete_attempt_sta
 
 
 def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_executing(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """M21 bullet 2/3: a genuine attempt run with a staging failure
     (a disappeared inventory file) must persist that failure into the
@@ -1187,6 +1277,11 @@ def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_
     data_root = tmp_path / "rush-data"
     record = register_project(root, data_root=data_root)
     project_id = record.project_id
+    # One instant candidate, so the staging failure alone decides the
+    # outcome (real-catalog `unavailable` rows would force `incomplete`
+    # even without it) and no host engine runs.
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("quick-a")])
 
     real_scan_inventory = project_run._scan_inventory
     try:
@@ -1206,7 +1301,7 @@ def test_copy_or_hash_error_during_staging_prevents_the_affected_candidate_from_
 
 
 def test_staging_failure_never_falls_back_to_a_live_read_and_never_publishes_a_clean_result(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """M21 bullet 2: same scenario, phrased as the acceptance property --
     the run never reports `completed` when a required source could not be
@@ -1220,6 +1315,11 @@ def test_staging_failure_never_falls_back_to_a_live_read_and_never_publishes_a_c
     data_root = tmp_path / "rush-data"
     record = register_project(root, data_root=data_root)
     project_id = record.project_id
+    # One instant candidate, so the staging failure alone decides the
+    # outcome (real-catalog `unavailable` rows would force `incomplete`
+    # even without it) and no host engine runs.
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("quick-a")])
 
     real_scan_inventory = project_run._scan_inventory
     try:

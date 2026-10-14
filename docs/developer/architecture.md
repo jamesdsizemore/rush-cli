@@ -137,7 +137,7 @@ The context intelligence subsystem resides in `src/rush/token_economy/` and `src
 * `src/rush/tools/memory.py`: `MemoryTool(ToolFn)` — `ask`/`write`/`promote`/`list`/`recall`/`maintain`, registered as both `rush_memory` (MCP) and `@cli.group(name="memory")` (CLI), Phase 61.
 * `src/rush/token_economy/memory_cache_gate.py`: `check_memory_before_pack()` — defended cache lookup wired into `pack_context()`, `DERIVED` write-back gated on `granted.cache_write` (Phase 62).
 * `src/rush/memory/maintenance.py`: `run_maintenance_cycle()` — `promotion_sweep`/`staleness_sweep`/`skill_admission_check`/`expiry_sweep` maintenance tasks, `MeshLockManager`-leased, reachable via `MemoryTool`'s `maintain` operation (Phase 62).
-* `src/rush/memory/expiry.py`: `ExpiryPolicy`, `DEFAULT_POLICIES`, `sweep_expired()` — per-`trust_tier` TTL expiry (`STATED` never, `DERIVED` 14d, `EXTERNAL_WRITE` 30d, `IMPORTED` 90d), independent of merkle/API-diff staleness (Phase 62).
+* `src/rush/memory/expiry.py`: `ExpiryPolicy`, `DEFAULT_POLICIES`, `expired_candidate_rows()` — per-`trust_tier` TTL expiry, stamped only by `run_maintenance_cycle("expiry_sweep", access=...)` under the maintenance access (owner and granted sources), policy lock and lease (`STATED` never, `DERIVED` 14d, `EXTERNAL_WRITE` 30d, `IMPORTED` 90d), independent of merkle/API-diff staleness (Phase 62).
 * `src/rush/memory/decision_schema.py`: `DecisionRecordFields` — remediation-shaped fields reused by `mistake_miner.py`'s candidate-shaping function (Phase 62).
 * `src/rush/tools/ship/`: `ScratchCleaner`, `EnvParityLinter`, `DocsLinter`, `MigrationLinter`, `SemverLinter`, `PackageLinter`, `ShipCockpit`.
 

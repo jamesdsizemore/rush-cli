@@ -58,27 +58,71 @@ def load_scenarios() -> dict[str, Scenario]:
     return scenarios
 
 
+_ROUTE_KEYS = frozenset(
+    {
+        "provider_id",
+        "route_id",
+        "mode",
+        "command",
+        "official_docs_url",
+        "terms_url",
+        "privacy_url",
+        "credential_boundary",
+        "redaction_patterns",
+        "timeout_s",
+    }
+)
+_DECISION_PROTOCOL_KEYS = frozenset(
+    {"format", "help_args", "argv", "instruction_files"}
+)
+_DECISION_FORMATS = frozenset({"codex_exec_jsonl", "claude_print_json"})
+_DECISION_KINDS = frozenset({"dataset_answer", "episode"})
+_INSTRUCTION_FILES = frozenset({"$CODEX_HOME/AGENTS.md"})
+
+
+def _is_str_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)
+
+
+def _validate_decision_protocol(route_id: Any, protocol: Any) -> dict[str, Any]:
+    """D13a: a decision route's fixture-owned hermetic contract, strict at
+    every level; any other shape is a `FixtureError`."""
+    valid = (
+        isinstance(protocol, dict)
+        and set(protocol) == _DECISION_PROTOCOL_KEYS
+        and isinstance(protocol["format"], str)
+        and protocol["format"] in _DECISION_FORMATS
+        and _is_str_list(protocol["help_args"])
+        and len(protocol["help_args"]) > 0
+        and isinstance(protocol["argv"], dict)
+        and set(protocol["argv"]) == _DECISION_KINDS
+        and all(_is_str_list(v) for v in protocol["argv"].values())
+        and _is_str_list(protocol["instruction_files"])
+        and set(protocol["instruction_files"]) <= _INSTRUCTION_FILES
+    )
+    if not valid:
+        raise FixtureError(f"decision_protocol invalid: {route_id}")
+    return protocol
+
+
 def load_provider_routes() -> dict[str, RouteDescriptor]:
-    """Loads provider route descriptors from provider_routes.json."""
+    """Loads provider route descriptors from provider_routes.json. A route
+    may carry an optional `decision_protocol` (D13a); without one it stays a
+    presence probe only."""
     raw = json.loads(fixture_path("provider_routes.json").read_text(encoding="utf-8"))
     routes: dict[str, RouteDescriptor] = {}
     for item in raw.get("routes", []):
-        require_exact_keys(
-            item,
-            frozenset(
-                {
-                    "provider_id",
-                    "route_id",
-                    "mode",
-                    "command",
-                    "official_docs_url",
-                    "terms_url",
-                    "privacy_url",
-                    "credential_boundary",
-                    "redaction_patterns",
-                    "timeout_s",
-                }
-            ),
+        if not isinstance(item, dict):
+            raise FixtureError("route entry is not an object")
+        keys = set(item)
+        missing = _ROUTE_KEYS - keys
+        unknown = keys - _ROUTE_KEYS - {"decision_protocol"}
+        if missing or unknown:
+            raise FixtureError(f"missing={sorted(missing)} unknown={sorted(unknown)}")
+        protocol = (
+            _validate_decision_protocol(item["route_id"], item["decision_protocol"])
+            if "decision_protocol" in item
+            else None
         )
         route = RouteDescriptor(
             provider_id=item["provider_id"],
@@ -91,6 +135,7 @@ def load_provider_routes() -> dict[str, RouteDescriptor]:
             credential_boundary=item["credential_boundary"],
             redaction_patterns=list(item.get("redaction_patterns", [])),
             timeout_s=float(item.get("timeout_s", 30.0)),
+            decision_protocol=protocol,
         )
         routes[route.route_id] = route
     return routes

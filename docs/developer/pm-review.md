@@ -48,7 +48,7 @@ For teams managing complex polyglot architectures, integrating workspace boundar
 
 ## Autonomous AI Agent Integration and Feedback Loops
 
-The Model Context Protocol integration in Rush is one of its most powerful differentiators. Providing thirty-five FastMCP tools allows AI assistants like Claude Code, Cursor, Codex, and Windsurf to inspect codebases with extreme fidelity. To maximize the effectiveness of AI agents, Rush can expand from diagnostic reporting into active, closed-loop agent collaboration.
+The Model Context Protocol integration in Rush is one of its most powerful differentiators. Providing thirty-five FastMCP tools allows AI assistants like Claude Code, Codex, and Windsurf to inspect codebases with extreme fidelity. To maximize the effectiveness of AI agents, Rush can expand from diagnostic reporting into active, closed-loop agent collaboration.
 
 When an AI agent receives a linting or type-checking error from Rush over MCP, the agent must currently infer how to fix the problem and manually execute follow-up edits. Rush could enrich tool findings with machine-readable suggestion patches and context-budget metrics. By providing targeted AST-level diff proposals alongside finding coordinates, Rush would allow AI agents to evaluate and apply proposed fixes in fewer conversational turns, conserving context tokens and reducing model hallucination.
 

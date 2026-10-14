@@ -7,6 +7,7 @@ import json
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,7 +17,7 @@ from rush.memory.embeddings import (
     validate_embedding_response,
 )
 from rush.memory.retrieval import embedding_text, hybrid_candidates, hybrid_page
-from rush.memory.store import MemoryArtifact, TypedArtifactStore
+from rush.memory.store import MemoryArtifact, TypedArtifactStore, payload_digest
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 
@@ -26,7 +27,7 @@ _CONFIG_V1 = EmbeddingConfig(
 
 
 def _write(
-    store: TypedArtifactStore, artifact_id: str, content: dict[str, object], source: str
+    store: TypedArtifactStore, artifact_id: str, content: dict[str, Any], source: str
 ) -> MemoryArtifact:
     return store.write(
         MemoryArtifact(
@@ -41,7 +42,7 @@ def _write(
     )
 
 
-def _content_hash(content: dict[str, object]) -> str:
+def _content_hash(content: dict[str, Any]) -> str:
     return hashlib.sha256(embedding_text(content).encode("utf-8")).hexdigest()
 
 
@@ -182,13 +183,12 @@ def test_missing_engine_reports_lexical_fallback_explicitly(tmp_path: Path) -> N
         request={"view": "compact", "retrieval": "hybrid"},
     )
     assert result["status"] == "warn"
-    assert result["raw"]["code"] == "E_EMBEDDING_UNAVAILABLE"
-    assert result["raw"]["data"]["retrieval"] == "lexical"
-    assert result["raw"]["data"]["embedding_status"] == "skipped"
-    assert (
-        result["raw"]["data"]["hybrid_unavailable_reason"]
-        == "no embedding engine configured"
-    )
+    raw = result["raw"]
+    assert raw is not None
+    assert raw["code"] == "E_EMBEDDING_UNAVAILABLE"
+    assert raw["data"]["retrieval"] == "lexical"
+    assert raw["data"]["embedding_status"] == "skipped"
+    assert raw["data"]["hybrid_unavailable_reason"] == "no embedding engine configured"
 
 
 def test_candidate_truncation_reported_when_scan_cap_hit(tmp_path: Path) -> None:
@@ -314,12 +314,21 @@ def test_model_digest_change_invalidates_vectors(tmp_path: Path) -> None:
     # for raw-row setup): the digest-v1 vector keyed by the old content hash is untouched,
     # but the new content hash has never been embedded and must be recomputed.
     new_content = {"text": "different content now"}
+    # 72-T01: rebind the payload hash too (origin `write`), so this stands for a real
+    # content change rather than a tamper the shared decision would exclude.
+    new_text = json.dumps(new_content)
     with sqlite3.connect(store.db_path) as conn:
         conn.execute(
-            "UPDATE memory_artifacts SET content = ? WHERE id = 'A1'",
-            (json.dumps(new_content),),
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ?, "
+            "payload_hash_origin = 'write' WHERE id = 'A1'",
+            (new_text, payload_digest(new_text)),
         )
         conn.commit()
+    # 72-T01 D41: the raw content rewrite is bound again, as a real content change is.
+    preview = TypedArtifactStore.bind_store(tmp_path, approve=False)
+    TypedArtifactStore.bind_store(
+        tmp_path, approve=True, expected_binding_digest=preview["binding_digest"]
+    )
     new_hash = _content_hash(new_content)
     assert store.get_embedding(
         artifact_id="A1",

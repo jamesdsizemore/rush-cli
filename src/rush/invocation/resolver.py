@@ -19,9 +19,11 @@ from typing import Any, Literal
 from rush import __version__
 from rush.config import resolve_memory_record
 from rush.permissions import ExecutionPermissions
+from rush.safety.redactor import sanitize_value
 
 from .models import (
     CachePolicy,
+    InvalidTargetError,
     InvocationContext,
     OperationKind,
     PhysicalTarget,
@@ -140,15 +142,36 @@ def _normalize_permissions(
 def _resolve_targets(
     request: dict[str, Any], workspace_root: Path
 ) -> tuple[PhysicalTarget, ...]:
-    """Resolve and normalize physical targets within workspace root boundary."""
-    if "targets" in request and isinstance(request["targets"], (list, tuple)):
+    """Resolve and normalize physical targets within workspace root boundary.
+
+    T9/R9.2: a malformed target (e.g. an embedded NUL, which `lstat` rejects
+    with `ValueError`) is `InvalidTargetError`. This covers callers that
+    bypass the T8 root walk (suites' `files`, scan candidates, custom tools'
+    `files`); containment errors keep their own raise contract."""
+    raw_targets: list[Any] = _raw_targets(request)
+    try:
         return build_physical_targets(
             workspace_root=workspace_root,
-            raw_targets=request["targets"],
+            raw_targets=raw_targets,
             provenance=request.get("provenance", "explicit"),
             capability=request.get("capability", "read"),
             declared_inputs=request.get("declared_inputs"),
         )
+    except ValueError as exc:
+        shown = next(
+            (str(t) for t in raw_targets if "\x00" in str(t)),
+            ", ".join(str(t) for t in raw_targets),
+        )
+        raise InvalidTargetError(
+            str(sanitize_value(f"invalid target: {shown!r}: {exc}").value),
+            target=shown,
+        ) from None
+
+
+def _raw_targets(request: dict[str, Any]) -> list[Any]:
+    """Every target-bearing request field, in the historical order."""
+    if "targets" in request and isinstance(request["targets"], (list, tuple)):
+        return list(request["targets"])
 
     raw_paths: list[str | Path] = []
     if request.get("path"):
@@ -157,14 +180,29 @@ def _resolve_targets(
         raw_paths.extend(request["files"])
     if "paths" in request and isinstance(request["paths"], (list, tuple)):
         raw_paths.extend(request["paths"])
+    # T8: a custom tool's singular `file`/`target` argument is a target
+    # exactly like `path` -- contained, hashed, and never a bare typed value.
+    for key in ("file", "target"):
+        value = request.get(key)
+        if isinstance(value, (str, Path)) and str(value):
+            raw_paths.append(value)
 
-    return build_physical_targets(
-        workspace_root=workspace_root,
-        raw_targets=raw_paths,
-        provenance=request.get("provenance", "explicit"),
-        capability=request.get("capability", "read"),
-        declared_inputs=request.get("declared_inputs"),
-    )
+    return raw_paths
+
+
+def _file_targets(
+    request: dict[str, Any], targets: tuple[PhysicalTarget, ...]
+) -> tuple[PhysicalTarget, ...] | None:
+    """T10 (R10.5): the slice of `targets` `_resolve_targets` built from `files`
+    (in order, right after an optional `path`). `None` when there are no `files`
+    or explicit `targets` replaced them."""
+    files = request.get("files")
+    if not isinstance(files, (list, tuple)) or (
+        "targets" in request and isinstance(request["targets"], (list, tuple))
+    ):
+        return None
+    start = 1 if request.get("path") else 0
+    return targets[start : start + len(files)]
 
 
 def _is_typed_argument_name(name: str, request: dict[str, Any]) -> bool:
@@ -226,6 +264,9 @@ def resolve_invocation(
     workspace_root: Path | None = None,
     config: Any = None,
     permissions: list[str] | tuple[str, ...] | ExecutionPermissions | None = None,
+    original_requested_targets: tuple[str, ...] | None = None,
+    invocation_start_cwd: Path | None = None,
+    declared_root: Path | None = None,
 ) -> InvocationContext:
     """Resolve an invocation request into a canonical, immutable InvocationContext.
 
@@ -315,6 +356,22 @@ def resolve_invocation(
     tool_rev = str(req.get("tool_revision") or "1.0.0")
     normalizer_rev = str(req.get("normalizer_revision") or "1.0.0")
     req_id = str(req.get("request_id") or "")
+
+    # T8: capture the caller's own verbatim original strings and the anchor
+    # cwd it resolved relative input against, before RESERVED_REQUEST_KEYS is
+    # ever consulted. Never reconstructed from `targets_tuple` or `Path.cwd()`
+    # -- a caller that supplies nothing here is explicitly "unavailable", not
+    # guessed, for both fields.
+    originals = (
+        tuple(str(t) for t in original_requested_targets)
+        if original_requested_targets is not None
+        else ()
+    )
+    start_cwd = (
+        Path(invocation_start_cwd).resolve()
+        if invocation_start_cwd is not None
+        else None
+    )
     # MC05 §9: resolved from real `[tools.memory] record` config only, never from
     # arbitrary result text or a caller-declared flag.
     memory_record = resolve_memory_record(cfg)
@@ -339,6 +396,10 @@ def resolve_invocation(
         memory_record=memory_record,
         owner_instance_id=str(req.get("owner_instance_id") or ""),
         run_id=str(req.get("run_id") or ""),
+        original_requested_targets=originals,
+        invocation_start_cwd=start_cwd,
+        declared_root=declared_root,
+        file_targets=_file_targets(req, targets_tuple),
     )
 
 

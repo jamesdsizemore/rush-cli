@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 import rush.tools.test_heal as test_heal_mod
@@ -12,6 +13,17 @@ from rush.cli import cli
 from rush.permissions import ExecutionPermissions
 from rush.tools.api_diff import ApiDiffer
 from rush.tools.test_heal import TestHealer
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _heal_children_skip_plugin_autoload():
+    """Each observation is its own child pytest process (the diagnosis's
+    isolation property). Those children inherit this environment; they
+    need only the perturbation plugin, which the healer loads explicitly
+    with `-p`, not every plugin installed in the venv."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+        yield
 
 
 def test_test_healer_diagnose(tmp_path: Path):

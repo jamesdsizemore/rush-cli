@@ -50,22 +50,35 @@ def _run_git(args: list[str], repo_root: Path) -> list[str]:
         return []
 
 
+def _files_under(target: Path, diff_args: list[str]) -> list[Path]:
+    """`git diff --name-only` paths are relative to the repository top level,
+    not to `target`: resolve them against `rev-parse --show-toplevel`, then
+    keep only existing files inside `target` (the whole repo when `target`
+    is its root)."""
+    toplevel = _run_git(["rev-parse", "--show-toplevel"], target)
+    if not toplevel:
+        return []
+    top = Path(toplevel[0]).resolve()
+    scope = target.resolve()
+    files = [(top / p).resolve() for p in _run_git(diff_args, target)]
+    return [f for f in files if f.is_file() and (f == scope or scope in f.parents)]
+
+
 def get_staged_files(repo_root: Path) -> list[Path]:
-    """Return list of files staged in the Git index."""
-    lines = _run_git(
-        ["diff", "--cached", "--name-only", "--diff-filter=ACMR"], repo_root
+    """Return the files staged in the Git index under `repo_root`."""
+    return _files_under(
+        repo_root, ["diff", "--cached", "--name-only", "--diff-filter=ACMR"]
     )
-    return [(repo_root / p).resolve() for p in lines if (repo_root / p).is_file()]
 
 
 def get_changed_files(repo_root: Path) -> list[Path]:
-    """Return list of modified, unstaged files in the working tree."""
-    lines = _run_git(["diff", "--name-only", "--diff-filter=ACMR"], repo_root)
-    return [(repo_root / p).resolve() for p in lines if (repo_root / p).is_file()]
+    """Return the modified, unstaged working-tree files under `repo_root`."""
+    return _files_under(repo_root, ["diff", "--name-only", "--diff-filter=ACMR"])
 
 
 def get_files_since(repo_root: Path, ref: str) -> list[Path]:
-    """Return list of files changed since a Git commit, branch, or tag."""
+    """Return the files under `repo_root` changed since a commit, branch or tag."""
     safe_ref = validate_git_ref(ref)
-    lines = _run_git(["diff", "--name-only", "--diff-filter=ACMR", safe_ref], repo_root)
-    return [(repo_root / p).resolve() for p in lines if (repo_root / p).is_file()]
+    return _files_under(
+        repo_root, ["diff", "--name-only", "--diff-filter=ACMR", safe_ref]
+    )

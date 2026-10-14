@@ -1,6 +1,6 @@
 # Agent Governance & Multi-IDE Rules
 
-Modern engineering teams use a diverse mix of AI coding assistants: some developers use **Cursor**, others use **Claude Code**, **Cline**, **Windsurf**, or **GitHub Copilot**. Each tool reads rules from a different file format (`.cursorrules`, `.clinerules`, `.windsurfrules`, `AGENTS.md`, or Claude system prompts), creating severe rule drift and inconsistent agent behaviors.
+Modern engineering teams use a diverse mix of AI coding assistants: some developers use **Claude Code**, others use **Cline**, **Windsurf**, or **GitHub Copilot**. Each tool reads rules from a different file format (`.clinerules`, `.windsurfrules`, `AGENTS.md`, or Claude system prompts), creating severe rule drift and inconsistent agent behaviors.
 
 Rush’s **Agent Governance Subsystem** (`rush governance`) establishes `AGENTS.md` as the single canonical source of truth and automatically compiles it across all IDE formats.
 
@@ -26,7 +26,6 @@ rush governance sync
 ```
 
 ### Generated Target Files:
-- `.cursorrules` (Cursor IDE)
 - `.clinerules` (Cline / Roo Code extension)
 - `.windsurfrules` (Windsurf Cascade AI)
 - `.github/copilot-instructions.md` (GitHub Copilot)

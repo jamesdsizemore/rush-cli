@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -27,10 +28,13 @@ def test_mypy_runs_bounded_argv(monkeypatch, tmp_path: Path) -> None:
     raw = MypyEngine().run(tmp_path, [str(tmp_path / "main.py")], cwd=tmp_path)
 
     assert raw["exit_code"] == 0
+    # T12 R12.1/S12.3: no durable cache without a grant; absolute paths.
     assert calls == [
         [
             "C:/bin/mypy",
             "--hide-error-context",
+            "--show-absolute-path",
+            f"--cache-dir={os.devnull}",
             str(tmp_path / "main.py"),
         ]
     ]

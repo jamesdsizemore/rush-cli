@@ -1,6 +1,6 @@
 # Tutorial: Connecting an AI Coding Assistant via MCP
 
-**Goal:** Configure Claude Desktop, Cursor, Claude Code, or Windsurf to call Rush quality and security tools over local stdio.
+**Goal:** Configure Claude Desktop, Claude Code, or Windsurf to call Rush quality and security tools over local stdio.
 
 ---
 
@@ -17,7 +17,7 @@ uv run rush mcp serve
 
 ## 2. Connect Your AI Assistant
 
-Add to your editor's MCP configuration (`.cursor/mcp.json` or `claude_desktop_config.json`):
+Add to your editor's MCP configuration (`claude_desktop_config.json`):
 
 ```json
 {

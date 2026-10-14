@@ -6,6 +6,7 @@ maintainability hotspots (T-60.01 through T-60.06).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from rush.contracts.results import ToolResultV1
 from rush.discovery.workspace import discover_workspaces
 from rush.engines import ENGINES
 from rush.mcp import ALL_TOOLS, _register_tools, mcp_server
+from rush.mcp_support.request_models import published_schema
 from rush.permissions import ExecutionPermissions
 from rush.tools.base import ToolResult
 from rush.tools.blast_radius import BlastRadiusAnalyzer
@@ -82,22 +84,38 @@ def test_cli_catalog_options_rendering_characterization(tmp_path: Path) -> None:
 def test_mcp_registration_characterization() -> None:
     """T-60.02: Freeze FastMCP tool registration and parameter schema."""
     tools = mcp_server._tool_manager._tools
-    assert len(tools) == 79
+    # Phase 70 T17: MCP tools 79->80 (rush_check added; finding 13).
+    assert len(tools) == 81
 
-    # 1. Assert all 54 catalog tools are registered with exact descriptions and path property
-    assert len(ALL_TOOLS) == 54
+    # 1. Assert all 55 catalog tools are registered with exact descriptions and path property
+    # Phase 70 T17: ALL_TOOLS 54->55 (CheckTool added).
+    assert len(ALL_TOOLS) == 56
     for tool in ALL_TOOLS:
         tool_name = f"rush_{tool.name.replace('-', '_')}"
         assert tool_name in tools, f"Catalog tool {tool_name} missing from MCP server"
         mcp_tool = tools[tool_name]
         assert mcp_tool.description == tool.mcp_description
-        assert "path" in mcp_tool.parameters.get("properties", {})
+        props = mcp_tool.parameters.get("properties", {})
+        assert "path" in props
+        # Phase 70 T8 decision (4)(a): every path-taking catalog tool
+        # publishes exactly one optional declared-root argument -- the new
+        # `project`, or its own pre-existing `project_id` (continuity, memory).
+        declared = {"project", "project_id"} & set(props)
+        expected_declared = (
+            {"project_id"}
+            if tool_name in {"rush_continuity", "rush_memory"}
+            else {"project"}
+        )
+        assert declared == expected_declared, f"Declared-root arg for {tool_name}"
+        assert not (declared & set(mcp_tool.parameters.get("required", []))), (
+            f"Declared-root arg must be optional for {tool_name}"
+        )
 
     # 2. Assert custom phase tools are registered with exact descriptions and parameters
     expected_custom_tools: dict[str, tuple[str, list[str]]] = {
         "rush_ship_clean": (
             "Clean scratch directories and build caches before release",
-            ["allow_artifact_write", "apply", "path"],
+            ["allow_artifact_write", "apply", "path", "project"],
         ),
         "rush_ship_env": (
             "Audit codebase environment variable usage against .env.example",
@@ -109,15 +127,25 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_token_outline": (
             "Generate token-efficient AST skeleton outline of a code file",
-            ["focus_symbol", "path"],
+            ["focus_symbol", "path", "project"],
         ),
         "rush_context_retrieve": (
             "Retrieve uncompressed content from CCR chunk store by hash",
-            ["chunk_hash", "path"],
+            # Phase 70 T16 S16.6: result/bytes views of stored compact results.
+            [
+                "chunk_hash",
+                "cursor",
+                "limit",
+                "max_bytes",
+                "offset",
+                "path",
+                "project",
+                "view",
+            ],
         ),
         "rush_hallu_guard": (
             "Audit code imports against installed packages and stdlib",
-            ["path"],
+            ["path", "project"],
         ),
         "rush_context_mistakes_check": (
             "Check git revert history for past mistakes and anti-patterns",
@@ -125,7 +153,7 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_context_pack": (
             "Pack graph-pruned context outline under a strict token budget",
-            ["allow_cache_write", "budget", "path", "symbol"],
+            ["allow_cache_write", "budget", "path", "project", "symbol"],
         ),
         "rush_context_gain_stats": (
             "Get real-time token economy savings and cost metrics",
@@ -133,7 +161,7 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_blast_radius": (
             "Calculate downstream transitive blast radius for a changed file",
-            ["depth", "path"],
+            ["depth", "path", "project"],
         ),
         "rush_arch_guard": (
             "Validate codebase against clean architecture layer boundaries",
@@ -146,6 +174,7 @@ def test_mcp_registration_characterization() -> None:
                 "allow_build",
                 "allow_slow",
                 "dry_run",
+                "project",
                 "runs",
                 "seed",
                 "target",
@@ -161,11 +190,11 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_simplify": (
             "Decompose high-complexity functions into modular helpers",
-            ["file", "max_complexity"],
+            ["file", "max_complexity", "project"],
         ),
         "rush_strictify": (
             "Synthesize runtime type guards for unvalidated parameters",
-            ["file"],
+            ["file", "project"],
         ),
         "rush_trace": (
             "Scan codebase and specs to output requirement traceability matrix",
@@ -173,11 +202,11 @@ def test_mcp_registration_characterization() -> None:
         ),
         "rush_mesh_acquire_lock": (
             "Acquire non-blocking multi-agent file lock",
-            ["agent_id", "capability", "path"],
+            ["agent_id", "capability", "path", "project"],
         ),
         "rush_mesh_release_lock": (
             "Release multi-agent file lock",
-            ["agent_id", "capability", "path"],
+            ["agent_id", "capability", "path", "project"],
         ),
         "rush_swarm_merge": (
             "Execute 3-way AST merge conflict resolution",
@@ -201,8 +230,14 @@ def test_mcp_registration_characterization() -> None:
                 "allowed_signers",
                 "artifact_path",
                 "builder_id",
+                # Phase 70 T16 R16.5: the shared result-view parameters.
+                "limit",
+                "max_bytes",
+                "no_cache",
                 "output_path",
                 "path",
+                "project",
+                "result_view",
                 "trusted_roots",
                 "verify",
             ],
@@ -216,10 +251,25 @@ def test_mcp_registration_characterization() -> None:
         actual_params = sorted(custom_tool.parameters.get("properties", {}).keys())
         assert actual_params == sorted(params), f"Parameter mismatch for {name}"
 
+    # Phase 70 T6 (X9): `tools/list` publishes the request-model schema for
+    # rush_project/rush_scan -- the legacy `request` envelope next to the named
+    # operation fields -- not the SDK manager's `{request}`-only parameters.
+    published = {
+        tool.name: tool.inputSchema for tool in asyncio.run(mcp_server.list_tools())
+    }
+    for name in ("rush_project", "rush_scan"):
+        assert published[name] == published_schema(name)
+        assert published[name]["type"] == "object"
+        assert published[name]["required"] == []
+        assert {"request", "operation", "schema_version"} <= set(
+            published[name]["properties"]
+        )
+
     # 3. Test _register_tools on an isolated server
     fresh_server = FastMCP("test-mcp-server")
     _register_tools(fresh_server)
-    assert len(fresh_server._tool_manager._tools) == 79
+    # Phase 70 T17: MCP tools 79->81 (rush_check T17, rush_status T23).
+    assert len(fresh_server._tool_manager._tools) == 81
 
 
 def test_continuity_dispatch_provider_receipt_characterization(
@@ -272,7 +322,8 @@ def test_continuity_dispatch_provider_receipt_characterization(
     )
 
     missing_res = tool.run(tmp_path, operation="restore", name="nonexistent_ckpt")
-    assert missing_res["status"] == "skipped"
+    # Phase 70 T27 (R27.1): restoring an unknown checkpoint is an error.
+    assert missing_res["status"] == "error"
 
     # 4. Operation 'context_pack'
     module_path = tmp_path / "app_service.py"

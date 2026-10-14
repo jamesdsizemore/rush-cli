@@ -96,6 +96,7 @@ def test_atomic_write_preserves_existing_target_and_removes_temp_on_failure(
     assert files == [written]
 
 
+@pytest.mark.posix_only
 def test_atomic_write_rejects_intermediate_symlink_without_creating_a_target(
     tmp_path: Path,
 ) -> None:
@@ -106,10 +107,7 @@ def test_atomic_write_rejects_intermediate_symlink_without_creating_a_target(
     outside = tmp_path / "outside"
     outside.mkdir()
     link = root / "redirect"
-    try:
-        link.symlink_to(outside, target_is_directory=True)
-    except (OSError, NotImplementedError):
-        pytest.skip("symlinks are unavailable on this platform")
+    link.symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(ValueError, match="symlink"):
         atomic_write_bytes(root, "redirect/output.json", b"must not escape")

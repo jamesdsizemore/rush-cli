@@ -6,10 +6,11 @@ This walkthrough uses the current editable source checkout, runs a local determi
 
 ```bash
 uv run rush --help
+uv run rush status .
 uv run rush doctor .
 ```
 
-`rush doctor` diagnoses your local environment health, verifies PATH precedence, checks virtual environments, and flags binary shadowing.
+`rush status` (also bare `uv run rush` from inside the project) prints a read-only summary: registration/config state, detected engines, current activity, latest attempt, published result, agent registration state, and useful memory count; it changes nothing. `rush doctor` diagnoses your local environment health, verifies PATH precedence, checks virtual environments, and flags binary shadowing.
 
 ## 2. Initialize and validate configuration
 
@@ -29,7 +30,7 @@ Current `rush setup` does not provide the verified integrated installation route
 uv run rush check .
 ```
 
-`rush check` runs the current fixed check suite and returns child results. A missing optional engine can produce `skipped`; inspect JSON before treating the suite as complete evidence.
+`rush check` runs six steps in order — `format` (check-only), `lint`, `typecheck`, `dead`, `slop`, `test` — and reports every one by default; the `test` step needs `--allow-build` and is otherwise `skipped` with the permission reason. A missing optional engine can also produce `skipped`; inspect JSON before treating the suite as complete evidence. When the run actually used or wrote memory records, the summary ends with one clause naming how many prior records it read and wrote (for example `memory: read 1 prior record, wrote 1 record`); the clause is absent when neither happened. `ok`/`skipped` exit 0, `warn`/`fail` exit 1, and `error` exits 2 — a mandatory step that comes back `skipped` still exits 0, so treat that as something to inspect, not proof it ran.
 
 ## 4. Current UI and dashboard limits
 

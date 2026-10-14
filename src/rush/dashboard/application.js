@@ -460,9 +460,10 @@ const ACTION_FORMS = [
   {
     section: "setup",
     operation: "provision_plan",
-    label: "Provision: Plan",
-    grants: [],
+    label: "Provision: Review / Resolve",
+    grants: ["network"],
     fields: [
+      { name: "resolve", checkbox: true },
       { name: "exclude", csv: true },
       { name: "targets", csv: true },
       { name: "severity", csv: true },
@@ -474,8 +475,9 @@ const ACTION_FORMS = [
     section: "setup",
     operation: "provision_apply",
     label: "Provision: Apply",
-    grants: ["cache_write", "artifact_write"],
-    fields: [{ name: "plan_id" }],
+    grants: ["network", "download", "build", "cache_write", "artifact_write"],
+    fields: [{ name: "plan_id" }, { name: "review", multiline: true, jsonObject: true,
+      placeholder: "Paste readiness.review from Provision: Review / Resolve" }],
   },
   {
     section: "scans",
@@ -699,7 +701,7 @@ function buildActionForm(container, spec) {
     input.setAttribute("data-field", field.name);
     // U11: a visible, illustrative example -- never a universal subject
     // schema -- for the fields that now require a non-array JSON object.
-    if (field.jsonObject) input.setAttribute("placeholder", '{"text":"..."}');
+    if (field.jsonObject) input.setAttribute("placeholder", field.placeholder || '{"text":"..."}');
     fieldEls[field.name] = { el: input, field };
     form.appendChild(labelWrap(field.name, input));
   }
@@ -1018,21 +1020,17 @@ function base64ToBytes(base64) {
  * rejecting any page whose reference/path/offset/size/digest doesn't match
  * what every prior page in this same download already established --
  * never assembling a partial artifact as if it were complete. */
-async function downloadArtifactContentPages(projectId, artifactRef, path, { signal, onProgress } = {}) {
+async function downloadArtifactContentPages(projectId, artifactRef, path, { signal, onProgress, expectedSha256 } = {}) {
   let offset = 0;
   let totalSize = null;
-  let sha256 = null;
+  let sha256 = expectedSha256 || null;
   let mediaType = null;
   const chunks = [];
   for (;;) {
+    if (signal) signal.throwIfAborted();
     const params = new URLSearchParams({ path, offset: String(offset) });
-    // T036: the server's route matcher reads `urlparse(self.path).path`
-    // directly, with no percent-decoding of the URL path -- so a
-    // `%3A`-encoded colon in `artifactRef` (every real scan_output/handoff/
-    // memory ref is `kind:id:...`) never matches `expand_artifact_reference`
-    // and 404s. Encode normally, then restore literal colons, which are
-    // legal, unencoded, in a URL path segment (RFC 3986) and match what the
-    // server actually parses.
+    // Encode the artifact ID as one path tail; the server decodes it once
+    // after route matching. Literal colons remain readable in the URL.
     const encodedArtifactRef = encodeURIComponent(artifactRef).replace(/%3A/g, ":");
     const response = await fetch(
       `/api/projects/${encodeURIComponent(projectId)}/artifacts/${encodedArtifactRef}?${params.toString()}`,
@@ -1060,11 +1058,29 @@ async function downloadArtifactContentPages(projectId, artifactRef, path, { sign
     chunks.push(bytes);
     offset += bytes.length;
     if (onProgress) onProgress(offset, totalSize);
-    if (content.next_offset === null || content.next_offset === undefined) break;
-    if (content.next_offset !== offset) {
+    if (!Number.isSafeInteger(totalSize) || totalSize < 0 || offset > totalSize) {
+      throw new Error("truncated or inconsistent artifact page sequence");
+    }
+    if (content.next_offset === null) {
+      if (offset !== totalSize) {
+        throw new Error("truncated or inconsistent artifact page sequence");
+      }
+      break;
+    }
+    if (bytes.length === 0 || content.next_offset !== offset) {
       throw new Error("truncated or inconsistent artifact page sequence");
     }
   }
+  const bytes = new Uint8Array(totalSize);
+  let position = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, position);
+    position += chunk.length;
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  if (signal) signal.throwIfAborted();
+  const actualSha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  if (actualSha256 !== sha256) throw new Error("artifact digest mismatch");
   return { chunks, totalSize, sha256, mediaType };
 }
 
@@ -1117,40 +1133,45 @@ function buildArtifactExportControl(container) {
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (activeController) return;
     const artifactId = idInput.value;
     if (!artifactId) {
       result.textContent = "artifact_id is required";
       return;
     }
-    const expected = state.sourceIdentity ? { source_identity: state.sourceIdentity } : {};
-    const exportOutcome = await dispatchAction(
-      "artifact_export",
-      { artifact_id: artifactId },
-      { download: grantBox.checked },
-      expected
-    );
-    if (!exportOutcome.ok || !exportOutcome.envelope) {
-      result.textContent = JSON.stringify(exportOutcome.envelope, null, 2);
-      return;
-    }
-    const entry = (exportOutcome.envelope.data || {}).entry || {};
-    const artifactRef = entry.artifact_ref;
-    const paths = entry.paths || [];
-    if (!artifactRef || paths.length === 0) {
-      result.textContent = "artifact has no downloadable content";
-      return;
-    }
-    const path = paths[0];
-    activeController = new AbortController();
+    const projectId = state.selectedProjectId;
+    const controller = new AbortController();
+    activeController = controller;
     cancelBtn.hidden = false;
     result.textContent = "downloading...";
     try {
+      const expected = state.sourceIdentity ? { source_identity: state.sourceIdentity } : {};
+      const exportOutcome = await dispatchAction(
+        "artifact_export",
+        { artifact_id: artifactId },
+        { download: grantBox.checked },
+        expected
+      );
+      controller.signal.throwIfAborted();
+      if (!exportOutcome.ok || !exportOutcome.envelope) {
+        result.textContent = JSON.stringify(exportOutcome.envelope, null, 2);
+        return;
+      }
+      const entry = (exportOutcome.envelope.data || {}).entry || {};
+      const artifactRef = entry.artifact_ref;
+      const paths = entry.paths || [];
+      if (!artifactRef || paths.length === 0) {
+        result.textContent = "artifact has no downloadable content";
+        return;
+      }
+      const path = paths[0];
       const { chunks, totalSize, mediaType } = await downloadArtifactContentPages(
-        state.selectedProjectId,
+        projectId,
         artifactRef,
         path,
         {
-          signal: activeController.signal,
+          signal: controller.signal,
+          expectedSha256: entry.sha256,
           onProgress: (received, total) => {
             result.textContent = `downloading ${received}/${total ?? "?"} bytes`;
           },

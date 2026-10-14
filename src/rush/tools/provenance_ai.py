@@ -91,12 +91,14 @@ class GitTrailerParser:
         Stores only the commit SHA (Phase 62 §6.5 Invariant 4) — never the commit body/diff.
         Returns the SHAs of the commits linked.
         """
-        from ..session_memory import record_fix_attribution
+        from ..session_memory import ATTRIBUTION_DENIED, record_fix_attribution
 
         linked = []
         for commit in commits:
             if commit["is_fix"]:
-                record_fix_attribution(project_root, commit, failure_id)
+                outcome = record_fix_attribution(project_root, commit, failure_id)
+                if outcome is ATTRIBUTION_DENIED:
+                    continue  # 72-T01 D4: the memory policy refused the link
                 linked.append(commit["hash"])
         return linked
 

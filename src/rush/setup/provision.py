@@ -22,14 +22,16 @@ import io
 import json
 import os
 import platform
+import shlex
 import shutil
 import ssl
 import subprocess
 import tarfile
 import tempfile
+import uuid
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -38,7 +40,15 @@ from urllib.request import Request, urlopen
 import certifi
 
 from rush.permissions import ExecutionPermissions, check_permissions
-from rush.runtime.binaries import ProvisionManifest, compute_file_sha256, write_manifest
+from rush.runtime.binaries import (
+    MANIFEST_FILENAME,
+    ManifestVerificationError,
+    ProvisionManifest,
+    compute_file_sha256,
+    read_manifest,
+    verify_manifest,
+    write_manifest,
+)
 from rush.setup.engine_packages import (
     ENGINE_PACKAGES,
     EnginePackage,
@@ -52,7 +62,9 @@ class ProvisionError(Exception):
     Always carries one of the exact §6.2 error codes: NO_COMPATIBLE_ASSET,
     AMBIGUOUS_ASSET, INTEGRITY_UNAVAILABLE, INTEGRITY_MISMATCH,
     PACKAGE_NOT_FOUND, VERSION_UNAVAILABLE, SYSTEM_PREREQUISITE_REQUIRED,
-    ENGINE_PROTOCOL_MISMATCH.
+    ENGINE_PROTOCOL_MISMATCH; or one of the Phase 70 T24 reviewed-plan codes:
+    PLAN_TAMPERED, WRONG_PLATFORM, DESTINATION_ESCAPE, IDENTITY_UNRESOLVED,
+    PERMISSION_DENIED, DESTINATION_OCCUPIED, MANIFEST_CHANGED.
     """
 
     def __init__(self, code: str, message: str) -> None:
@@ -144,9 +156,47 @@ class ResolvedIdentity:
     digest_value: str | None
 
 
+def _go_module_escape(module: str) -> str:
+    """Go module proxy case-encoding: each uppercase letter becomes `!` + lower."""
+    return "".join(f"!{c.lower()}" if c.isupper() else c for c in module)
+
+
+def _maven_url(package_id: str) -> str:
+    group_id, artifact_id = package_id.split(":", 1)
+    query = f"g:{group_id}+AND+a:{artifact_id}"
+    return (
+        f"https://search.maven.org/solrsearch/select?q={query}&core=gav&rows=1&wt=json"
+    )
+
+
+# The one registry GET per source. `resolution_url` shows it in previews and
+# every resolver requests exactly it, so a preview never under-reports.
+_REGISTRY_URLS: dict[str, Callable[[str], str]] = {
+    "pypi": lambda pid: f"https://pypi.org/pypi/{pid}/json",
+    "npm": lambda pid: f"https://registry.npmjs.org/{pid.replace('/', '%2F')}",
+    "crates": lambda pid: f"https://crates.io/api/v1/crates/{pid}",
+    "gem": lambda pid: f"https://rubygems.org/api/v1/versions/{pid}.json",
+    "composer": lambda pid: f"https://repo.packagist.org/p2/{pid}.json",
+    "maven": _maven_url,
+    "github": lambda pid: f"https://api.github.com/repos/{pid}/releases/latest",
+    "go": lambda pid: (
+        f"https://proxy.golang.org/{_go_module_escape('github.com/' + pid)}/@latest"
+    ),
+}
+
+
+def resolution_url(engine: EnginePackage) -> str | None:
+    """The exact GET `resolve_identity` makes for `engine`, or None when
+    resolving needs no request (a pinned go version) or cannot resolve."""
+    if engine.source == "go" and ":" in engine.version_policy:
+        return None
+    builder = _REGISTRY_URLS.get(engine.source)
+    return builder(engine.package_id) if builder is not None else None
+
+
 def _resolve_pypi(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
     data = _http_get_json(
-        f"https://pypi.org/pypi/{package_id}/json",
+        _REGISTRY_URLS["pypi"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -171,9 +221,8 @@ def _resolve_pypi(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
 
 
 def _resolve_npm(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
-    encoded = package_id.replace("/", "%2F")
     data = _http_get_json(
-        f"https://registry.npmjs.org/{encoded}",
+        _REGISTRY_URLS["npm"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -194,7 +243,7 @@ def _resolve_npm(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
 
 def _resolve_crates(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
     data = _http_get_json(
-        f"https://crates.io/api/v1/crates/{package_id}",
+        _REGISTRY_URLS["crates"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -212,7 +261,7 @@ def _resolve_crates(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
 
 def _resolve_gem(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
     data = _http_get_json(
-        f"https://rubygems.org/api/v1/versions/{package_id}.json",
+        _REGISTRY_URLS["gem"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -230,7 +279,7 @@ def _resolve_gem(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
 
 def _resolve_composer(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
     data = _http_get_json(
-        f"https://repo.packagist.org/p2/{package_id}.json",
+        _REGISTRY_URLS["composer"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -257,10 +306,8 @@ def _resolve_composer(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
 
 
 def _resolve_maven(package_id: str, http_get: HttpGet) -> ResolvedIdentity:
-    group_id, artifact_id = package_id.split(":", 1)
-    query = f"g:{group_id}+AND+a:{artifact_id}"
     data = _http_get_json(
-        f"https://search.maven.org/solrsearch/select?q={query}&core=gav&rows=1&wt=json",
+        _REGISTRY_URLS["maven"](package_id),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -274,7 +321,7 @@ def _resolve_github(
     repo: str, engine: EnginePackage, os_name: str, arch: str, http_get: HttpGet
 ) -> ResolvedIdentity:
     data = _http_get_json(
-        f"https://api.github.com/repos/{repo}/releases/latest",
+        _REGISTRY_URLS["github"](repo),
         http_get,
         not_found_code="PACKAGE_NOT_FOUND",
     )
@@ -318,6 +365,23 @@ def _resolve_github(
     )
 
 
+def _resolve_go(engine: EnginePackage, http_get: HttpGet) -> ResolvedIdentity:
+    """A pinned policy needs no request. Otherwise the Go module proxy's
+    `@latest` names a concrete version; the proxy publishes no artifact
+    digest, so the identity carries none and previews report integrity as
+    unavailable."""
+    if ":" in engine.version_policy:
+        return ResolvedIdentity(
+            engine.version_policy.split(":", 1)[1], None, None, None
+        )
+    url = _REGISTRY_URLS["go"](engine.package_id)
+    data = _http_get_json(url, http_get, not_found_code="PACKAGE_NOT_FOUND")
+    version = data.get("Version") if isinstance(data, dict) else None
+    if not isinstance(version, str) or not version:
+        raise ProvisionError("VERSION_UNAVAILABLE", f"{url} returned no Version")
+    return ResolvedIdentity(version, url, None, None)
+
+
 _RESOLVERS: dict[str, Callable[..., ResolvedIdentity]] = {
     "pypi": lambda engine, os_name, arch, http_get: _resolve_pypi(
         engine.package_id, http_get
@@ -340,14 +404,7 @@ _RESOLVERS: dict[str, Callable[..., ResolvedIdentity]] = {
     "github": lambda engine, os_name, arch, http_get: _resolve_github(
         engine.package_id, engine, os_name, arch, http_get
     ),
-    "go": lambda engine, os_name, arch, http_get: ResolvedIdentity(
-        engine.version_policy.split(":", 1)[1]
-        if ":" in engine.version_policy
-        else "latest",
-        None,
-        None,
-        None,
-    ),
+    "go": lambda engine, os_name, arch, http_get: _resolve_go(engine, http_get),
 }
 
 
@@ -383,6 +440,70 @@ _SOURCE_GRANTS: dict[str, tuple[str, ...]] = {
     "internal": (),
 }
 
+_GRANT_FLAGS: dict[str, str] = {
+    "network": "--allow-network",
+    "download": "--allow-download",
+    "cache_write": "--allow-cache-write",
+    "build": "--allow-build",
+}
+
+# Canonical flag order -- matches the order grants appear in `_SOURCE_GRANTS`
+# tuples above, so a single-source lookup emits identically to before.
+_GRANT_ORDER: tuple[str, ...] = ("network", "download", "cache_write", "build")
+
+
+SETUP_PLAN_RELATIVE_PATH = ".rush/setup-plan.json"
+
+
+def setup_action_command(root: Path, entries: list[EnginePackage]) -> str:
+    """The exact `rush setup` route to provision `entries` (S15.5).
+
+    Single shared builder for the doctor readiness action string. The
+    non-interactive apply route (T24/T26) is `rush setup PATH --apply --yes
+    --plan-file FILE --plan-id ID` plus grants, and its `ID` exists only once
+    a reviewed plan with resolved identities is saved -- so the action is the
+    save step: it resolves identities (`--allow-network`, needed whenever an
+    entry's source resolves over the network), writes the reviewed plan to
+    `<root>/.rush/setup-plan.json` (`--allow-artifact-write`), and prints
+    that exact apply command with every grant the saved plan needs.
+    """
+    resolved = root.resolve()
+    needs_network = any(
+        "network" in _SOURCE_GRANTS.get(entry.source, ()) for entry in entries
+    )
+    plan_file = shlex.quote(str(resolved / SETUP_PLAN_RELATIVE_PATH))
+    base = (
+        f"rush setup {shlex.quote(str(resolved))} --save-plan {plan_file} "
+        "--allow-artifact-write"
+    )
+    return f"{base} --allow-network" if needs_network else base
+
+
+def plan_is_complete(plan: ProvisionPlan) -> bool:
+    """Whether every applicable entry already has its verified install.
+
+    Read-only: a `reuse_verified` entry counts, and so does a resolved entry
+    whose reviewed destination holds a manifest that verifies for exactly
+    its frozen version. An unresolved or blocked entry is incomplete.
+    """
+    root = Path(plan.project_root)
+    for entry in plan.entries:
+        if (
+            entry.disposition != "applicable"
+            or entry.identity_state == "reuse_verified"
+        ):
+            continue
+        if entry.identity_state != "resolved" or entry.identity is None:
+            return False
+        dest = Path(entry.destination)
+        if (
+            _verified_manifest_at(dest, entry.engine_id, entry.identity.version, root)
+            is None
+        ):
+            return False
+    return True
+
+
 # --- Plan -------------------------------------------------------------------
 
 
@@ -397,6 +518,16 @@ class ProvisionPlanEntry:
     prerequisites: tuple[str, ...]
     destination: str
     probe: tuple[str, ...]
+    # Phase 70 T24 reviewed identity. Only a `resolved` entry is installable;
+    # `reuse_verified` binds the project's existing verified manifest.
+    # `blocked_reason` names a missing manager seen at preview time;
+    # `resolution_error` is the code of a failed resolution.
+    identity: ResolvedIdentity | None = None
+    identity_state: str = (
+        "unresolved"  # unresolved|resolved|reuse_verified|resolution_failed
+    )
+    blocked_reason: str | None = None
+    resolution_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -406,6 +537,7 @@ class ProvisionPlan:
     os_name: str
     arch: str
     entries: tuple[ProvisionPlanEntry, ...]
+    data_root: str = ""
 
 
 def _canonical_json(value: Any) -> bytes:
@@ -422,61 +554,309 @@ def _destination_for(
     return _toolchains_root(data_root) / engine_id / version / f"{os_name}-{arch}"
 
 
+def compute_plan_id(
+    *,
+    project_root: str,
+    data_root: str,
+    os_name: str,
+    arch: str,
+    entries: tuple[ProvisionPlanEntry, ...],
+) -> str:
+    """Canonical SHA-256 over both roots, the platform, and every entry field
+    (frozen identity and concrete destination included)."""
+    payload = {
+        "project_root": project_root,
+        "data_root": data_root,
+        "os": os_name,
+        "arch": arch,
+        "entries": [asdict(e) for e in entries],
+    }
+    return hashlib.sha256(_canonical_json(payload)).hexdigest()
+
+
+def _make_plan(
+    project_root: str,
+    data_root: str,
+    os_name: str,
+    arch: str,
+    entries: tuple[ProvisionPlanEntry, ...],
+) -> ProvisionPlan:
+    plan_id = compute_plan_id(
+        project_root=project_root,
+        data_root=data_root,
+        os_name=os_name,
+        arch=arch,
+        entries=entries,
+    )
+    return ProvisionPlan(
+        plan_id=plan_id,
+        project_root=project_root,
+        os_name=os_name,
+        arch=arch,
+        entries=entries,
+        data_root=data_root,
+    )
+
+
+def _is_contained(path: Path, data_root: Path) -> bool:
+    """True when `path` lies strictly below `data_root/toolchains`."""
+    root = _toolchains_root(data_root).resolve()
+    target = path.resolve()
+    return target != root and target.is_relative_to(root)
+
+
+def _verified_manifest_at(
+    dest: Path, engine_id: str, version: str, project_root: Path
+) -> ProvisionManifest | None:
+    manifest = read_manifest(dest / MANIFEST_FILENAME)
+    if manifest is None or (manifest.engine_id, manifest.version) != (
+        engine_id,
+        version,
+    ):
+        return None
+    try:
+        verify_manifest(manifest, project_root=project_root)
+    except ManifestVerificationError:
+        return None
+    return manifest
+
+
+def _reusable_selection(
+    project_root: Path, data_root: Path, engine_id: str, os_name: str, arch: str
+) -> tuple[ProvisionManifest, Path] | None:
+    """Read-only local resolution: the project's selected manifest for
+    `engine_id` when it is for this platform, lives under this data root's
+    toolchains, and verifies. Returns `(manifest, destination)`."""
+    try:
+        selection = json.loads(
+            (project_root / ".rush" / "toolchains.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    chosen = selection.get(engine_id) if isinstance(selection, dict) else None
+    manifest_path = chosen.get("manifest") if isinstance(chosen, dict) else None
+    if not isinstance(manifest_path, str):
+        return None
+    dest = Path(manifest_path).parent
+    manifest = read_manifest(Path(manifest_path))
+    if manifest is None or (manifest.os_name, manifest.arch) != (os_name, arch):
+        return None
+    if not _is_contained(dest, data_root):
+        return None
+    if _verified_manifest_at(dest, engine_id, manifest.version, project_root) is None:
+        return None
+    return manifest, dest
+
+
+def _plan_entry(
+    engine: EnginePackage,
+    project_root: Path,
+    data_root: Path,
+    os_name: str,
+    arch: str,
+    which: Callable[[str], str | None],
+    runner: Runner,
+) -> ProvisionPlanEntry:
+    entry = ProvisionPlanEntry(
+        engine_id=engine.engine_id,
+        package_id=engine.package_id,
+        source=engine.source,
+        manager=engine.manager,
+        disposition="requires_input" if engine.source == "internal" else "applicable",
+        required_grants=_SOURCE_GRANTS.get(engine.source, ()),
+        prerequisites=engine.prerequisites,
+        destination=str(
+            _destination_for(data_root, engine.engine_id, "<version>", os_name, arch)
+        ),
+        probe=engine.probe,
+    )
+    if entry.disposition != "applicable":
+        return entry
+    reusable = _reusable_selection(
+        project_root, data_root, engine.engine_id, os_name, arch
+    )
+    if reusable is not None:
+        manifest, dest = reusable
+        # A reused npm-runtime engine whose package is not usable offline
+        # (a new machine, a cleared cache) needs the fetch grants again.
+        cold = engine.engine_id in NPM_RUNTIME_FETCH and not _npm_runtime_offline(
+            engine.engine_id, Path(manifest.executable), runner, which
+        )
+        return replace(
+            entry,
+            required_grants=NPM_RUNTIME_FETCH_GRANTS if cold else (),
+            destination=str(dest),
+            identity=ResolvedIdentity(manifest.version, None, None, None),
+            identity_state="reuse_verified",
+        )
+    manager = _MANAGER_BINARIES.get(engine.source)
+    if manager is not None and which(manager) is None:
+        return replace(entry, blocked_reason="SYSTEM_PREREQUISITE_REQUIRED")
+    return entry
+
+
 def build_provision_plan(
     project_root: Path,
     engine_ids: list[str],
     *,
     os_name: str | None = None,
     arch: str | None = None,
+    data_root: Path | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    runner: Runner | None = None,
 ) -> ProvisionPlan:
     """Build an immutable provision plan for exactly the requested engines.
 
     Raises `UnknownEngineError` immediately for any id outside the declared
     `ENGINE_PACKAGES` allowlist -- no arbitrary package is ever planned.
+    Read-only and offline: an engine whose project selection already has a
+    verified manifest is `reuse_verified` (an npm-runtime engine among them
+    is probed offline with `runner` and, when its package is not usable
+    offline, requires `NPM_RUNTIME_FETCH_GRANTS`); every other applicable engine
+    stays `unresolved` until `resolve_provision_identities` runs under the
+    network grant. A missing package manager is reported as
+    `blocked_reason="SYSTEM_PREREQUISITE_REQUIRED"` so the preview shows it.
     """
     resolved_os, resolved_arch = (
         (os_name, arch) if os_name and arch else current_os_arch()
     )
-    entries: list[ProvisionPlanEntry] = []
-    for engine_id in engine_ids:
-        engine = resolve_engine_package(
-            engine_id
-        )  # raises UnknownEngineError for bad input
-        if engine.source == "internal":
-            disposition = "requires_input"
-        else:
-            disposition = "applicable"
-        destination = str(
-            _destination_for(
-                Path("<data_root>"), engine_id, "<version>", resolved_os, resolved_arch
-            )
+    root = project_root.resolve()
+    data = data_root if data_root is not None else default_data_root()
+    engines = [resolve_engine_package(e) for e in engine_ids]  # UnknownEngineError
+    entries = tuple(
+        _plan_entry(
+            engine,
+            root,
+            data,
+            resolved_os,
+            resolved_arch,
+            which,
+            runner or _default_runner,
         )
-        entries.append(
-            ProvisionPlanEntry(
-                engine_id=engine.engine_id,
-                package_id=engine.package_id,
-                source=engine.source,
-                manager=engine.manager,
-                disposition=disposition,
-                required_grants=_SOURCE_GRANTS.get(engine.source, ()),
-                prerequisites=engine.prerequisites,
-                destination=destination,
-                probe=engine.probe,
-            )
+        for engine in engines
+    )
+    return _make_plan(str(root), str(data), resolved_os, resolved_arch, entries)
+
+
+def _resolve_entry(
+    entry: ProvisionPlanEntry, plan: ProvisionPlan, http_get: HttpGet
+) -> ProvisionPlanEntry:
+    if entry.disposition != "applicable" or entry.identity_state != "unresolved":
+        return entry
+    try:
+        identity = resolve_identity(
+            ENGINE_PACKAGES[entry.engine_id],
+            os_name=plan.os_name,
+            arch=plan.arch,
+            http_get=http_get,
         )
-    payload = {
-        "project_root": str(project_root.resolve()),
-        "os": resolved_os,
-        "arch": resolved_arch,
-        "entries": [e.__dict__ for e in entries],
-    }
-    plan_id = hashlib.sha256(_canonical_json(payload)).hexdigest()
+    except ProvisionError as exc:
+        return replace(
+            entry, identity_state="resolution_failed", resolution_error=exc.code
+        )
+    except (ValueError, KeyError, TypeError, AttributeError):
+        # A registry answer that is not the documented shape.
+        return replace(
+            entry,
+            identity_state="resolution_failed",
+            resolution_error="VERSION_UNAVAILABLE",
+        )
+    destination = _destination_for(
+        Path(plan.data_root), entry.engine_id, identity.version, plan.os_name, plan.arch
+    )
+    return replace(
+        entry,
+        identity=identity,
+        identity_state="resolved",
+        destination=str(destination),
+    )
+
+
+def resolve_provision_identities(
+    plan: ProvisionPlan,
+    permissions: ExecutionPermissions | None,
+    *,
+    http_get: HttpGet = _default_http_get,
+) -> ProvisionPlan:
+    """Freeze a concrete identity and destination for every unresolved
+    applicable entry, returning a new plan with a new plan_id.
+
+    Requires the `network` grant, checked before any request, and requests
+    only each entry's `resolution_url`. A failed resolution leaves the entry
+    `resolution_failed` with its error code; it is not installable.
+    """
+    ok, missing = check_permissions(ExecutionPermissions(network=True), permissions)
+    if not ok:
+        raise ProvisionError(
+            "PERMISSION_DENIED", f"identity resolution requires {', '.join(missing)}"
+        )
+    entries = tuple(_resolve_entry(e, plan, http_get) for e in plan.entries)
+    return _make_plan(
+        plan.project_root, plan.data_root, plan.os_name, plan.arch, entries
+    )
+
+
+def _integrity(entry: ProvisionPlanEntry) -> str:
+    """What byte-level verification the reviewed identity allows."""
+    identity = entry.identity
+    if entry.identity_state == "reuse_verified":
+        return "installed_manifest_verified"
+    if identity is None:
+        return "unresolved"
+    if identity.digest_value is None:
+        return "unavailable"
+    if entry.source == "github":
+        return "download_digest_verified"
+    # The package manager fetches the artifact itself; Rush cannot attest the
+    # installed bytes against the registry digest, only hash what it installed.
+    return "source_digest_unattested"
+
+
+def plan_to_dict(plan: ProvisionPlan) -> dict[str, Any]:
+    """JSON-ready full plan, with each entry's exact resolution request and
+    integrity class added for review."""
+    data = asdict(plan)
+    for raw, entry in zip(data["entries"], plan.entries, strict=True):
+        engine = ENGINE_PACKAGES.get(entry.engine_id)
+        raw["resolution_url"] = (
+            resolution_url(engine)
+            if engine is not None and entry.identity_state == "unresolved"
+            else None
+        )
+        raw["integrity"] = _integrity(entry)
+    return data
+
+
+def plan_from_dict(data: dict[str, Any]) -> ProvisionPlan:
+    """Rebuild a plan from `plan_to_dict` output. Apply recomputes its
+    plan_id, so any edit to the payload is rejected as PLAN_TAMPERED.
+    Malformed input raises KeyError/TypeError/ValueError."""
+
+    def entry(e: dict[str, Any]) -> ProvisionPlanEntry:
+        identity = e.get("identity")
+        return ProvisionPlanEntry(
+            engine_id=str(e["engine_id"]),
+            package_id=str(e["package_id"]),
+            source=str(e["source"]),
+            manager=str(e["manager"]),
+            disposition=str(e["disposition"]),
+            required_grants=tuple(e["required_grants"]),
+            prerequisites=tuple(e["prerequisites"]),
+            destination=str(e["destination"]),
+            probe=tuple(e["probe"]),
+            identity=ResolvedIdentity(**identity) if identity is not None else None,
+            identity_state=str(e["identity_state"]),
+            blocked_reason=e.get("blocked_reason"),
+            resolution_error=e.get("resolution_error"),
+        )
+
     return ProvisionPlan(
-        plan_id=plan_id,
-        project_root=str(project_root.resolve()),
-        os_name=resolved_os,
-        arch=resolved_arch,
-        entries=tuple(entries),
+        plan_id=str(data["plan_id"]),
+        project_root=str(data["project_root"]),
+        os_name=str(data["os_name"]),
+        arch=str(data["arch"]),
+        entries=tuple(entry(e) for e in data["entries"]),
+        data_root=str(data["data_root"]),
     )
 
 
@@ -607,6 +987,102 @@ _MANAGER_BINARIES: dict[str, str] = {
 }
 
 
+# Engines whose pinned package runs a pinned npm package through `npx` on
+# first use (aislop 0.16.1: `npx --yes --package aislop@0.16.1 aislop`, 183
+# npm packages including @biomejs/@oxlint native binaries). Provisioning
+# fetches that package into the npm cache the engine uses, so a later run
+# works with npm offline and needs no download grant.
+NPM_RUNTIME_FETCH: dict[str, tuple[str, ...]] = {"aislop": ("--version",)}
+
+# The online npm fetch contacts the registry, downloads packages, and writes
+# the npm cache.
+NPM_RUNTIME_FETCH_GRANTS: tuple[str, ...] = ("network", "download", "cache_write")
+
+
+def prefetch_npm_runtime(
+    engine_id: str,
+    executable: Path,
+    runner: Runner = _default_runner,
+    *,
+    allow_fetch: bool = True,
+    which: Callable[[str], str | None] | None = None,
+) -> str:
+    """Make `engine_id`'s npm runtime available offline: `already_cached`
+    when an offline run already works, else `fetched` after one online run
+    that a second offline run then verifies. Without `allow_fetch` there is
+    no online run: `fetch_not_granted`. Runs the npm package `executable`
+    (the launcher) pins exactly as the engine does, never the launcher.
+    Raises ProvisionError."""
+    from ..engines.aislop import (
+        AISLOP_NO_TELEMETRY_ENV,
+        NO_NODE_STDERR,
+        npm_command,
+        npm_package,
+    )
+
+    args = NPM_RUNTIME_FETCH.get(engine_id)
+    if args is None:
+        return "not_applicable"
+    package = npm_package(str(executable))
+    if package is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine_id}: no aislop_py package found for {executable} "
+            "to pin its npm version",
+        )
+    argv = npm_command(package, list(args), which)
+    if argv is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED", f"{engine_id}: {NO_NODE_STDERR}"
+        )
+
+    def run(offline: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return runner(
+                argv, {**AISLOP_NO_TELEMETRY_ENV, "npm_config_offline": offline}
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise ProvisionError(
+                "SYSTEM_PREREQUISITE_REQUIRED",
+                f"{engine_id} could not run {argv[0]} to fetch its npm package: {exc}",
+            ) from exc
+
+    if run("true").returncode == 0:
+        return "already_cached"
+    if not allow_fetch:
+        return "fetch_not_granted"
+    fetched = run("false")
+    if fetched.returncode != 0:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine_id} could not fetch its npm package: "
+            f"{(fetched.stderr or '').strip()[-300:]}",
+        )
+    if run("true").returncode != 0:
+        raise ProvisionError(
+            "ENGINE_PROTOCOL_MISMATCH",
+            f"{engine_id}'s npm package is still not usable offline after fetching",
+        )
+    return "fetched"
+
+
+def _npm_runtime_offline(
+    engine_id: str,
+    executable: Path,
+    runner: Runner,
+    which: Callable[[str], str | None] | None = None,
+) -> bool:
+    """True when `engine_id`'s npm package already runs offline (one offline
+    run, no network); an executable that cannot run counts as not usable."""
+    try:
+        state = prefetch_npm_runtime(
+            engine_id, executable, runner, allow_fetch=False, which=which
+        )
+    except ProvisionError:
+        return False
+    return state == "already_cached"
+
+
 def _check_manager_available(
     engine: EnginePackage, which: Callable[[str], str | None] = shutil.which
 ) -> None:
@@ -621,6 +1097,11 @@ def _check_manager_available(
         raise ProvisionError(
             "SYSTEM_PREREQUISITE_REQUIRED",
             f"required manager '{manager_binary}' is not installed",
+        )
+    if engine.engine_id in NPM_RUNTIME_FETCH and which("npx") is None:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"{engine.engine_id} runs its npm package through npx, which is not installed",
         )
 
 
@@ -697,6 +1178,31 @@ class ProvisionResult:
     failed: dict[str, dict[str, str]] = field(default_factory=dict)
     permission_blocked: dict[str, list[str]] = field(default_factory=dict)
     requires_input: list[str] = field(default_factory=list)
+    # Phase 70 T24 (additive): verified installs kept as-is, destinations
+    # that need manual recovery (engine -> path), where the applied identity
+    # came from, and the plan that was applied.
+    reused: dict[str, ProvisionManifest] = field(default_factory=dict)
+    recovery_required: dict[str, str] = field(default_factory=dict)
+    identity_source: str = "frozen_review"
+    plan_id: str = ""
+
+
+OWNER_MARKER = ".rush-provision-owner.json"
+
+
+@dataclass(frozen=True)
+class _ApplyContext:
+    plan: ProvisionPlan
+    project_id: str
+    project_root: Path
+    data_root: Path
+    txid: str
+    identity_source: str
+    downloader: Downloader
+    runner: Runner
+    prober: Prober
+    which: Callable[[str], str | None]
+    permissions: ExecutionPermissions | None
 
 
 def _update_selection(project_root: Path, engine_id: str, manifest_path: Path) -> None:
@@ -718,23 +1224,332 @@ def _update_selection(project_root: Path, engine_id: str, manifest_path: Path) -
     os.replace(temp_path, selection_path)
 
 
+def _plan_rejection(
+    plan: ProvisionPlan, reviewed_plan_id: str, current_platform: tuple[str, str]
+) -> tuple[str, str] | None:
+    """Plan-level checks that reject every entry before any effect."""
+    recomputed = compute_plan_id(
+        project_root=plan.project_root,
+        data_root=plan.data_root,
+        os_name=plan.os_name,
+        arch=plan.arch,
+        entries=plan.entries,
+    )
+    if recomputed != plan.plan_id or reviewed_plan_id != plan.plan_id:
+        return "PLAN_TAMPERED", "plan content does not match the reviewed plan_id"
+    for e in plan.entries:
+        engine = ENGINE_PACKAGES.get(e.engine_id)
+        if engine is None:
+            return "PLAN_TAMPERED", f"{e.engine_id} is not an allowlisted engine"
+        grants = _SOURCE_GRANTS.get(engine.source, ())
+        if e.identity_state == "reuse_verified":
+            fetch = NPM_RUNTIME_FETCH_GRANTS if e.engine_id in NPM_RUNTIME_FETCH else ()
+            grants = fetch if tuple(e.required_grants) == fetch else ()
+        if (
+            e.package_id,
+            e.source,
+            e.manager,
+            tuple(e.probe),
+            tuple(e.required_grants),
+        ) != (
+            engine.package_id,
+            engine.source,
+            engine.manager,
+            engine.probe,
+            grants,
+        ):
+            return (
+                "PLAN_TAMPERED",
+                f"{e.engine_id} package metadata differs from the allowlist",
+            )
+    if (plan.os_name, plan.arch) != current_platform:
+        return (
+            "WRONG_PLATFORM",
+            (
+                f"plan is for {plan.os_name}/{plan.arch}, this machine is "
+                f"{current_platform[0]}/{current_platform[1]}"
+            ),
+        )
+    return None
+
+
+def _missing_grants(
+    plan: ProvisionPlan, permissions: ExecutionPermissions | None
+) -> dict[str, list[str]]:
+    missing: dict[str, list[str]] = {}
+    for entry in plan.entries:
+        if entry.disposition != "applicable" or not entry.required_grants:
+            continue
+        ok, flags = check_permissions(
+            ExecutionPermissions(**{g: True for g in entry.required_grants}),
+            permissions,
+        )
+        if not ok:
+            missing[entry.engine_id] = flags
+    return missing
+
+
+def _checked_destination(
+    entry: ProvisionPlanEntry, identity: ResolvedIdentity, ctx: _ApplyContext
+) -> Path:
+    expected = _destination_for(
+        ctx.data_root,
+        entry.engine_id,
+        identity.version,
+        ctx.plan.os_name,
+        ctx.plan.arch,
+    )
+    if entry.destination != str(expected) or not _is_contained(expected, ctx.data_root):
+        raise ProvisionError(
+            "DESTINATION_ESCAPE",
+            f"{entry.destination} is not the reviewed destination under "
+            f"{_toolchains_root(ctx.data_root)}",
+        )
+    return expected
+
+
+def _read_owner_marker(dest: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads((dest / OWNER_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _claim_destination(
+    dest: Path,
+    entry: ProvisionPlanEntry,
+    identity: ResolvedIdentity,
+    ctx: _ApplyContext,
+) -> None:
+    """Own `dest` for this transaction before any install writes into it.
+
+    A new destination is created exclusively. An existing one is taken over
+    only when its ownership marker names this exact frozen identity (a prior
+    Rush attempt); its partial contents are then cleared. Anything else is
+    DESTINATION_OCCUPIED and is never modified or deleted.
+    """
+    if dest.exists():
+        owner = _read_owner_marker(dest)
+        if (
+            owner is None
+            or owner.get("engine_id") != entry.engine_id
+            or owner.get("identity") != asdict(identity)
+        ):
+            raise ProvisionError(
+                "DESTINATION_OCCUPIED",
+                f"{dest} exists and is not a Rush partial install of this reviewed "
+                "identity; move or remove it, then rerun setup",
+            )
+        if not (dest / MANIFEST_FILENAME).exists():
+            for child in dest.iterdir():
+                if child.name == OWNER_MARKER:
+                    continue
+                if child.is_dir() and not child.is_symlink():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dest.mkdir()
+        except FileExistsError as exc:
+            raise ProvisionError(
+                "DESTINATION_OCCUPIED", f"{dest} was created concurrently"
+            ) from exc
+    marker = {
+        "txid": ctx.txid,
+        "plan_id": ctx.plan.plan_id,
+        "engine_id": entry.engine_id,
+        "identity": asdict(identity),
+        "identity_source": ctx.identity_source,
+    }
+    (dest / OWNER_MARKER).write_text(
+        json.dumps(marker, sort_keys=True, indent=2), encoding="utf-8"
+    )
+
+
+def _install_into(
+    engine: EnginePackage,
+    identity: ResolvedIdentity,
+    dest: Path,
+    ctx: _ApplyContext,
+) -> Path:
+    """Install exactly `identity.version` into `dest`; return the executable."""
+    if engine.source == "github":
+        if identity.url is None:
+            raise ProvisionError(
+                "NO_COMPATIBLE_ASSET", f"{engine.engine_id} has no download URL"
+            )
+        data = ctx.downloader(identity.url)
+        _verify_digest(data, identity.digest_algo, identity.digest_value)
+        return _safe_extract_binary(data, identity.url, engine.binary, dest)
+    argv = list(_manager_install_command(engine, identity.version, dest))
+    env: dict[str, str] | None = None
+    if engine.source == "go":
+        env = {"GOBIN": str(dest)}
+    elif engine.source == "pypi":
+        # `uv tool install` ignores the positional dest we pass it and always
+        # installs into uv's own global tool directory; these two env vars are
+        # uv's real mechanism for redirecting that (verified directly: a shim
+        # lands at UV_TOOL_BIN_DIR pointing into UV_TOOL_DIR, and is directly
+        # executable from there).
+        env = {"UV_TOOL_DIR": str(dest / "tools"), "UV_TOOL_BIN_DIR": str(dest)}
+    try:
+        proc = ctx.runner(argv, env)
+    except OSError as exc:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED", f"could not execute {argv[0]}: {exc}"
+        ) from exc
+    if proc.returncode != 0:
+        raise ProvisionError(
+            "SYSTEM_PREREQUISITE_REQUIRED",
+            f"install command failed: {' '.join(argv)}",
+        )
+    found = shutil.which(engine.binary, path=str(dest)) or shutil.which(
+        engine.binary, path=str(dest / "bin")
+    )
+    executable = Path(found) if found else dest / engine.binary
+    if not executable.is_file():
+        raise ProvisionError(
+            "ENGINE_PROTOCOL_MISMATCH",
+            f"{engine.engine_id} binary not found after install",
+        )
+    return executable
+
+
+def _apply_entry(
+    entry: ProvisionPlanEntry, ctx: _ApplyContext, result: ProvisionResult
+) -> None:
+    engine = ENGINE_PACKAGES[entry.engine_id]
+    identity = entry.identity
+    if entry.identity_state == "reuse_verified" and identity is not None:
+        dest = Path(entry.destination)
+        reused = (
+            _verified_manifest_at(
+                dest, entry.engine_id, identity.version, ctx.project_root
+            )
+            if _is_contained(dest, ctx.data_root)
+            else None
+        )
+        if reused is None:
+            raise ProvisionError(
+                "MANIFEST_CHANGED",
+                f"the verified {entry.engine_id} manifest at {dest} no longer "
+                "verifies; review setup again",
+            )
+        # A warm npm cache answers `already_cached` at once; a cold one (a new
+        # machine, a cleared cache) is fetched again so slop runs offline --
+        # only under the fetch grants, else the engine needs them.
+        granted, flags = check_permissions(
+            ExecutionPermissions(**{g: True for g in NPM_RUNTIME_FETCH_GRANTS}),
+            ctx.permissions,
+        )
+        state = prefetch_npm_runtime(
+            entry.engine_id,
+            Path(reused.executable),
+            ctx.runner,
+            allow_fetch=granted,
+            which=ctx.which,
+        )
+        if state == "fetch_not_granted":
+            result.permission_blocked[entry.engine_id] = flags
+            return
+        result.reused[entry.engine_id] = reused
+        return
+    if engine.source != "github":
+        _check_manager_available(engine, ctx.which)
+    if entry.identity_state != "resolved" or identity is None:
+        raise ProvisionError(
+            "IDENTITY_UNRESOLVED",
+            f"{entry.engine_id} has no reviewed identity "
+            f"({entry.resolution_error or entry.identity_state}); review again "
+            "with --allow-network to resolve it",
+        )
+    dest = _checked_destination(entry, identity, ctx)
+    existing = _verified_manifest_at(
+        dest, entry.engine_id, identity.version, ctx.project_root
+    )
+    if existing is not None:
+        prefetch_npm_runtime(
+            entry.engine_id, Path(existing.executable), ctx.runner, which=ctx.which
+        )
+        _update_selection(ctx.project_root, entry.engine_id, dest / MANIFEST_FILENAME)
+        result.reused[entry.engine_id] = existing
+        return
+    _claim_destination(dest, entry, identity, ctx)
+    executable = _install_into(engine, identity, dest, ctx)
+    prefetch_npm_runtime(entry.engine_id, executable, ctx.runner, which=ctx.which)
+    probe_argv = (
+        [str(executable), *entry.probe[1:]]
+        if entry.probe
+        else [str(executable), "--version"]
+    )
+    probe_result = ctx.prober(probe_argv)
+    if probe_result.returncode != 0:
+        raise ProvisionError(
+            "ENGINE_PROTOCOL_MISMATCH",
+            f"{entry.engine_id} probe failed: {probe_result.stderr}",
+        )
+    manifest = ProvisionManifest(
+        schema_version=1,
+        engine_id=entry.engine_id,
+        package_id=entry.package_id,
+        version=identity.version,
+        source=entry.source,
+        manager=entry.manager,
+        executable=str(executable),
+        executable_sha256=compute_file_sha256(executable),
+        os_name=ctx.plan.os_name,
+        arch=ctx.plan.arch,
+        project_id=ctx.project_id,
+        project_root=ctx.plan.project_root,
+        runtime_identity=f"{entry.manager} {identity.version}",
+        plan_id=ctx.plan.plan_id,
+        created_at=__import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .isoformat(),
+    )
+    manifest_path = write_manifest(dest, manifest)
+    _update_selection(ctx.project_root, entry.engine_id, manifest_path)
+    result.applied[entry.engine_id] = manifest
+
+
 def apply_provision_plan(
     plan: ProvisionPlan,
-    permissions: ExecutionPermissions,
+    permissions: ExecutionPermissions | None,
     *,
     project_id: str,
     data_root: Path,
-    http_get: HttpGet = _default_http_get,
+    reviewed_plan_id: str,
+    identity_source: str = "frozen_review",
+    http_get: HttpGet | None = None,
     downloader: Downloader = _default_downloader,
     runner: Runner = _default_runner,
     prober: Prober = _default_prober,
     which: Callable[[str], str | None] = shutil.which,
+    current_platform: tuple[str, str] | None = None,
 ) -> ProvisionResult:
-    """Apply a previously built plan: resolve, install, probe, and bind a manifest.
+    """Apply a reviewed plan: install each frozen identity, probe, and bind a manifest.
+
+    Never resolves an identity (`http_get` is accepted for callers that pass
+    one shared fake set, and is never called). Before any effect, in order:
+    the recomputed plan_id must equal both `plan.plan_id` and
+    `reviewed_plan_id`, and every entry must match the engine allowlist
+    (else PLAN_TAMPERED); the plan platform must equal this machine
+    (WRONG_PLATFORM); every applicable entry's grants must be present (else
+    `permission_blocked` lists the missing flags and nothing happens). Only
+    then is the cursor key ensured. Per entry: an unresolved entry is
+    IDENTITY_UNRESOLVED, a destination other than the reviewed contained one
+    is DESTINATION_ESCAPE, a destination Rush does not own for this identity
+    is DESTINATION_OCCUPIED (listed in `recovery_required`, never deleted),
+    and an existing verified manifest is `reused` without reinstalling.
 
     A failed post-install probe or checksum mismatch never writes a manifest
     and never touches the project's existing toolchain selection -- the
-    previous compatible toolchain (if any) is retained untouched.
+    previous compatible toolchain (if any) is retained untouched. The partial
+    destination keeps its ownership marker so a rerun of the same identity
+    can clean and retry it.
 
     This is Rush's authorized global setup flow: it also ensures the
     project registry's HMAC cursor-signing key exists (plan §6.1 --
@@ -744,120 +1559,84 @@ def apply_provision_plan(
     """
     from rush.workflows.projects import ensure_cursor_key
 
-    result = ProvisionResult()
+    result = ProvisionResult(identity_source=identity_source, plan_id=plan.plan_id)
+    rejection = _plan_rejection(
+        plan, reviewed_plan_id, current_platform or current_os_arch()
+    )
+    if rejection is not None:
+        code, message = rejection
+        result.failed = {
+            e.engine_id: {"code": code, "message": f"[{code}] {message}"}
+            for e in plan.entries
+        }
+        return result
+    result.requires_input = [
+        e.engine_id for e in plan.entries if e.disposition == "requires_input"
+    ]
+    missing = _missing_grants(plan, permissions)
+    if missing:
+        result.permission_blocked = missing
+        return result
     ensure_cursor_key(data_root)
-    project_root = Path(plan.project_root)
+    ctx = _ApplyContext(
+        plan=plan,
+        project_id=project_id,
+        project_root=Path(plan.project_root),
+        data_root=data_root,
+        txid=uuid.uuid4().hex,
+        identity_source=identity_source,
+        downloader=downloader,
+        runner=runner,
+        prober=prober,
+        which=which,
+        permissions=permissions,
+    )
     for entry in plan.entries:
-        if entry.disposition == "requires_input":
-            result.requires_input.append(entry.engine_id)
+        if entry.disposition != "applicable":
             continue
-        ok, missing = check_permissions(
-            ExecutionPermissions(**{g: True for g in entry.required_grants})
-            if entry.required_grants
-            else None,
-            permissions,
-        )
-        if not ok:
-            result.permission_blocked[entry.engine_id] = missing
-            continue
-        engine = ENGINE_PACKAGES[entry.engine_id]
         try:
-            identity = resolve_identity(
-                engine, os_name=plan.os_name, arch=plan.arch, http_get=http_get
-            )
-            dest_dir = _destination_for(
-                data_root, entry.engine_id, identity.version, plan.os_name, plan.arch
-            )
-            if dest_dir.exists() and not (dest_dir / "manifest.json").is_file():
-                # Interrupted prior attempt: clean the partial directory before retrying.
-                shutil.rmtree(dest_dir, ignore_errors=True)
-            if engine.source in ("github",):
-                if identity.url is None:
-                    raise ProvisionError(
-                        "NO_COMPATIBLE_ASSET", f"{entry.engine_id} has no download URL"
-                    )
-                data = downloader(identity.url)
-                _verify_digest(data, identity.digest_algo, identity.digest_value)
-                executable = _safe_extract_binary(
-                    data, identity.url, engine.binary, dest_dir
-                )
-            else:
-                _check_manager_available(engine, which)
-                argv = list(
-                    _manager_install_command(engine, identity.version, dest_dir)
-                )
-                if engine.source == "go":
-                    env = {"GOBIN": str(dest_dir)}
-                elif engine.source == "pypi":
-                    # `uv tool install` ignores the positional dest we pass it and
-                    # always installs into uv's own global tool directory; these two
-                    # env vars are uv's real mechanism for redirecting that (verified
-                    # directly: a shim lands at UV_TOOL_BIN_DIR pointing into
-                    # UV_TOOL_DIR, and is directly executable from there).
-                    env = {
-                        "UV_TOOL_DIR": str(dest_dir / "tools"),
-                        "UV_TOOL_BIN_DIR": str(dest_dir),
-                    }
-                else:
-                    env = None
-                try:
-                    proc = runner(argv, env)
-                except OSError as exc:
-                    raise ProvisionError(
-                        "SYSTEM_PREREQUISITE_REQUIRED",
-                        f"could not execute {argv[0]}: {exc}",
-                    ) from exc
-                if proc.returncode != 0:
-                    raise ProvisionError(
-                        "SYSTEM_PREREQUISITE_REQUIRED",
-                        f"install command failed: {' '.join(argv)}",
-                    )
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                found = shutil.which(engine.binary, path=str(dest_dir)) or shutil.which(
-                    engine.binary, path=str(dest_dir / "bin")
-                )
-                executable = Path(found) if found else dest_dir / engine.binary
-                if not executable.is_file():
-                    raise ProvisionError(
-                        "ENGINE_PROTOCOL_MISMATCH",
-                        f"{entry.engine_id} binary not found after install",
-                    )
-            probe_argv = (
-                [str(executable), *entry.probe[1:]]
-                if entry.probe
-                else [str(executable), "--version"]
-            )
-            probe_result = prober(probe_argv)
-            if probe_result.returncode != 0:
-                raise ProvisionError(
-                    "ENGINE_PROTOCOL_MISMATCH",
-                    f"{entry.engine_id} probe failed: {probe_result.stderr}",
-                )
-            manifest = ProvisionManifest(
-                schema_version=1,
-                engine_id=entry.engine_id,
-                package_id=entry.package_id,
-                version=identity.version,
-                source=entry.source,
-                manager=entry.manager,
-                executable=str(executable),
-                executable_sha256=compute_file_sha256(executable),
-                os_name=plan.os_name,
-                arch=plan.arch,
-                project_id=project_id,
-                project_root=plan.project_root,
-                runtime_identity=f"{entry.manager} {identity.version}",
-                plan_id=plan.plan_id,
-                created_at=__import__("datetime")
-                .datetime.now(__import__("datetime").timezone.utc)
-                .isoformat(),
-            )
-            manifest_path = write_manifest(dest_dir, manifest)
-            _update_selection(project_root, entry.engine_id, manifest_path)
-            result.applied[entry.engine_id] = manifest
+            _apply_entry(entry, ctx, result)
         except ProvisionError as exc:
             result.failed[entry.engine_id] = {"code": exc.code, "message": str(exc)}
+            if exc.code == "DESTINATION_OCCUPIED":
+                result.recovery_required[entry.engine_id] = entry.destination
     return result
+
+
+def resolve_and_apply_provision_plan(
+    plan: ProvisionPlan,
+    permissions: ExecutionPermissions | None,
+    *,
+    project_id: str,
+    data_root: Path,
+    http_get: HttpGet = _default_http_get,
+    downloader: Downloader = _default_downloader,
+    runner: Runner = _default_runner,
+    prober: Prober = _default_prober,
+    which: Callable[[str], str | None] = shutil.which,
+    current_platform: tuple[str, str] | None = None,
+) -> ProvisionResult:
+    """Unattended callers (InstallTool, `scan --install`, dashboard
+    `provision_apply`): resolve under the caller's network grant, then apply
+    that plan in the same invocation, labelled `resolved_at_apply`. Without
+    the network grant nothing resolves and apply reports the missing grants.
+    """
+    has_unresolved = any(e.identity_state == "unresolved" for e in plan.entries)
+    if has_unresolved and permissions is not None and permissions.network:
+        plan = resolve_provision_identities(plan, permissions, http_get=http_get)
+    return apply_provision_plan(
+        plan,
+        permissions,
+        project_id=project_id,
+        data_root=data_root,
+        reviewed_plan_id=plan.plan_id,
+        identity_source="resolved_at_apply",
+        downloader=downloader,
+        runner=runner,
+        prober=prober,
+        which=which,
+        current_platform=current_platform,
+    )
 
 
 __all__ = [
@@ -870,7 +1649,14 @@ __all__ = [
     "ResolvedIdentity",
     "apply_provision_plan",
     "build_provision_plan",
+    "compute_plan_id",
     "current_os_arch",
     "default_data_root",
+    "plan_from_dict",
+    "plan_is_complete",
+    "plan_to_dict",
+    "resolution_url",
+    "resolve_and_apply_provision_plan",
     "resolve_identity",
+    "resolve_provision_identities",
 ]

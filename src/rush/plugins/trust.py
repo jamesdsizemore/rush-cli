@@ -19,11 +19,10 @@ from rush.plugins.trust_store import (
 
 logger = get_logger("plugins.trust")
 
-DEFAULT_TRUST_LEDGER_PATH = Path.home() / ".rush" / "trusted_repositories.json"
-
 
 def get_trust_ledger_path() -> Path:
-    return DEFAULT_TRUST_LEDGER_PATH
+    """Resolved per call, never at import, so it follows the current HOME."""
+    return Path.home() / ".rush" / "trusted_repositories.json"
 
 
 def is_repo_trusted(repo_root: Path, ledger_file: Path | None = None) -> bool:

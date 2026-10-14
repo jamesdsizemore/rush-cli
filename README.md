@@ -24,7 +24,7 @@ AI coding agents move fast and occasionally make a mess: hallucinated imports, e
 - **Keep agents on a leash** — a command-safety firewall that blocks destructive shell commands, isolated git worktrees for patch attempts, and a failure ledger so agents stop repeating the same broken fix.
 - **Give agents a real memory** — a typed, queryable store per project (not a stuffed context window) that survives across sessions and agents, with a trust gate so nothing gets treated as fact until it's corroborated.
 - **Stop burning tokens** — context packing, AST skeletons, and compact result formats so you're not pasting whole files and 10,000-line stack traces into a chat window.
-- **Talk to your agent directly** — a stdio MCP server so Claude Code, Cursor, Windsurf, Zed, and other MCP-capable agents can call Rush's tools natively, not just from a shell.
+- **Talk to your agent directly** — a stdio MCP server so Claude Code, Windsurf, Zed, and other MCP-capable agents can call Rush's tools natively, not just from a shell.
 
 Rush runs entirely on your machine. It doesn't upload your code anywhere, and it doesn't install anything in the background — it drives quality/security engines that are already on your `PATH`.
 
@@ -44,7 +44,7 @@ curl -fsSL https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/script
 irm https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/scripts/install.ps1 | iex
 ```
 
-This installs `rush` to a user-owned directory, adds it to your shell (or tells you how to), and automatically connects any supported coding agent it finds on your machine (Claude Desktop, Claude Code, Cursor, Windsurf, Zed, Codex CLI). Once installed, re-run the `rush install` command directly any time you want different flags, upgrade, repair, or connect a specific project:
+This installs `rush` to a user-owned directory, adds it to your shell (or tells you how to), and automatically connects any supported coding agent it finds on your machine (Claude Desktop, Claude Code, Windsurf, Zed, Codex CLI). Once installed, re-run the `rush install` command directly any time you want different flags, upgrade, repair, or connect a specific project:
 
 ```bash
 # Skip agent connection / memory consent entirely
@@ -53,6 +53,14 @@ rush install --agents none --memory off
 # Connect a specific project instead of leaving selection pending
 rush install --agents all --memory on --project /path/to/your/project
 ```
+
+For a fully guided route straight to a working Claude Code or Codex CLI connection, pass `--setup` (with `--agent` and `--project`) to the same install script — it installs the binary, connects no agent itself, then runs `rush setup` for that project/agent and asks for consent on the terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jamesdsizemore/rush-cli/main/scripts/install.sh | sh -s -- --setup --agent claude --project /path/to/your/project
+```
+
+If you install without `--setup` (or decline setup's prompt), the result prints the exact command to resume it later: `rush setup /path/to/your/project --agent claude`.
 
 > **Windows on ARM64** isn't available yet — a dependency (`cryptography`) doesn't currently publish a prebuilt wheel for that platform. Every other combination (macOS Intel/Apple Silicon, Linux x86_64/ARM64, Windows x86_64) is fully supported.
 
@@ -121,7 +129,7 @@ Rush speaks [MCP](https://modelcontextprotocol.io) over stdio, so any MCP-capabl
 }
 ```
 
-**Cursor** (`~/.cursor/mcp.json`) and **Windsurf** (`~/.codeium/windsurf/mcp_config.json`) use the same shape:
+**Windsurf** (`~/.codeium/windsurf/mcp_config.json`) uses the same shape:
 ```json
 {
   "mcpServers": {
@@ -171,7 +179,7 @@ Static analysis feeds directly into it: `memory plan-checks` ranks which checks 
 `context pack` (AST-aware, budget-constrained context) · `context align-prompt` (prompt-cache-friendly formatting) · `context gain` (live token/cost savings HUD) · `token count` · `blast-radius`
 
 **Governance & multi-IDE**
-`governance sync` — compile one `AGENTS.md` into `.cursorrules`, `.windsurfrules`, `.clinerules`, and Claude Code config in one command
+`governance sync` — compile one `AGENTS.md` into `.windsurfrules`, `.clinerules`, and Claude Code config in one command
 
 **Dashboards**
 `dashboard` — a local, authenticated web UI · `ui` — the same views as a terminal app (Rich TUI), both backed by the same project data (scans, findings, memory, token use, git history)

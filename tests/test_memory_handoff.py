@@ -9,15 +9,17 @@ never a hardcoded fake result standing in for a live call.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
 import time
 from base64 import b64decode
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from mcp.types import TextContent
 
 from rush.mcp_support.tool_registry import build_memory_bridge_handler
 from rush.memory import handoff, transport
@@ -263,7 +265,6 @@ def test_bridge_denies_unrelated_tools_and_scope_widening(tmp_path: Path) -> Non
     `mcp` client library, exposes exactly one tool (`rush_memory`); any operation outside
     receive/expand/related/resume is denied, and an artifact outside the session's own
     `session_allowlist` is never visible even when its id is guessed."""
-    pytest.importorskip("mcp.client.stdio")
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -305,14 +306,18 @@ def test_bridge_denies_unrelated_tools_and_scope_widening(tmp_path: Path) -> Non
 
             return (
                 [t.name for t in tools.tools],
-                _json.loads(write_attempt.content[0].text),
-                _json.loads(widen_attempt.content[0].text),
+                _json.loads(cast(TextContent, write_attempt.content[0]).text),
+                _json.loads(cast(TextContent, widen_attempt.content[0]).text),
             )
 
     tool_names, denied_write, denied_widen = _run_sync(_run)
     assert tool_names == ["rush_memory"]
     assert denied_write["code"] == "E_PERMISSION"
-    assert denied_widen["code"] == "E_NOT_VISIBLE"
+    # 72-T01 D22: a guessed id the session never selected is refused at the bridge
+    # authority boundary, before any read, and the refusal reveals nothing of it.
+    assert denied_widen["code"] == "E_PERMISSION"
+    assert denied_widen["data"]["reason"] == "not_selected"
+    assert "S1" not in str(denied_widen["data"])
 
 
 def _run_sync(coro_fn):
@@ -395,7 +400,8 @@ def test_default_transport_still_denies_all_tools(
     """T-MC11.3 regression: the plain (non-bridge) `dispatch()` path used by every existing
     Phase 61 cross-tool handoff caller still builds `tools=[]`/`mcp_servers={}` -- MC11's
     additions never widen the default."""
-    sdk = pytest.importorskip("claude_agent_sdk")
+    import claude_agent_sdk as sdk
+
     monkeypatch.setattr(transport, "_native_sdk_available", lambda tool: True)
     captured: dict[str, Any] = {}
 
@@ -475,9 +481,26 @@ def test_cancelled_receiver_leaks_no_process(tmp_path: Path) -> None:
         env=env,
     )
     try:
-        time.sleep(0.5)
+        # Synchronize on the receiver actually serving (an MCP initialize
+        # round trip), never on a fixed sleep: a cold start under load can
+        # outlast any sleep, and closing stdin before it serves turns this
+        # into a startup-time check instead of a cancellation check.
+        assert process.stdin is not None and process.stdout is not None
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "t-mc11.4", "version": "1"},
+            },
+        }
+        process.stdin.write((json.dumps(initialize) + "\n").encode())
+        process.stdin.flush()
+        response = json.loads(process.stdout.readline())
+        assert response["id"] == 1 and "result" in response, response
         assert process.poll() is None, "receiver exited before it could be cancelled"
-        assert process.stdin is not None
         process.stdin.close()
         process.wait(timeout=10)
     finally:
@@ -522,7 +545,7 @@ def test_guest_intent_and_last_success_survive_readback(tmp_path: Path) -> None:
         store,
         root=tmp_path,
         audience="codex_cli",
-        granted_ids=[passed.id],
+        granted_ids=[passed.id, intent_id],
         session_allowlist=["test:guest-checkout-pass", intent_source],
         intent_behavior_ids=["guest-checkout"],
         namespace="default",
@@ -616,7 +639,9 @@ def test_mark_artifact_orphaned_is_idempotent(tmp_path: Path) -> None:
     store.mark_artifact_orphaned("A1", now=60.0)
     assert _orphaned_at(store, "A1") == 50.0
     # Marking orphaned never deletes or alters the artifact's content.
-    assert store.get_current("A1").content == artifact.content
+    current = store.get_current("A1")
+    assert current is not None
+    assert current.content == artifact.content
 
 
 def test_mark_artifact_orphaned_unknown_id_is_a_silent_no_op(tmp_path: Path) -> None:
@@ -719,3 +744,296 @@ def test_recover_session_delta_without_capability_unknown_session_returns_none(
         )
         is None
     )
+
+
+# --- 72-T02 R14: receiver reassembly of utf8 expansion pages (T005 §6) ------
+
+_T02_TEXT = "needle \U0001f642é\U00010348 é \U0001f642é\U00010348 é"
+_T02_BIG = 1_000_000
+
+
+def _t02_literal_utf8(root: Path) -> tuple[TypedArtifactStore, bytes]:
+    """`u1` (DERIVED, source-a) whose persisted JSON is literal UTF-8, with a
+    matching `payload_hash` on the current row and the version row (copied from
+    tests/test_phase72_memory_correctness.py)."""
+    import sqlite3
+    from contextlib import closing
+
+    store = TypedArtifactStore(root)
+    value = {"text": _T02_TEXT}
+    store.write(
+        MemoryArtifact(
+            id="u1",
+            family="memory",
+            subject="domain_knowledge",
+            trust_tier="DERIVED",
+            content=value,
+            source="source-a",
+            created_at=time.time(),
+        )
+    )
+    text = json.dumps(value, ensure_ascii=False)
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    with closing(sqlite3.connect(store.db_path)) as conn:
+        conn.execute(
+            "UPDATE memory_artifacts SET content = ?, payload_hash = ? WHERE id = 'u1'",
+            (text, digest),
+        )
+        conn.execute(
+            "UPDATE memory_artifact_versions SET content = ?, payload_hash = ? "
+            "WHERE artifact_id = 'u1' AND artifact_version = 1",
+            (text, digest),
+        )
+        conn.commit()
+    stored = store.get_version_content("u1", 1)
+    assert stored is not None
+    data = stored.encode("utf-8")
+    assert b"\xf0\x9f\x99\x82" in data and b"\xcc\x81" in data
+    return store, data
+
+
+def test_t02_receiver_digest_reconstruction(tmp_path: Path) -> None:
+    reassemble = transport.reassemble_utf8_expansion
+    root = tmp_path.resolve()
+    store, data = _t02_literal_utf8(root)
+    session, capability, _ = prepare_handoff(
+        store,
+        root=root,
+        audience="codex_cli",
+        granted_ids=["u1"],
+        session_allowlist=["source-a"],
+    )
+    handler = build_memory_bridge_handler(
+        root=root, session_id=session.session_id, capability=capability
+    )
+
+    def utf8_pages(version: int) -> list[dict[str, Any]]:
+        content = store.get_version_content("u1", version)
+        assert content is not None
+        total = len(content.encode("utf-8"))
+        request = {"id": "u1", "version": version, "representation": "utf8"}
+        end = handler(
+            "expand",
+            {**request, "offset": total, "max_bytes": _T02_BIG, "max_tokens": _T02_BIG},
+        )
+        assert end["code"] == "OK", end
+        cap = end["data"]["bytes"] + 10
+        pages: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(total + 2):
+            page = handler("expand", {**request, "offset": offset, "max_bytes": cap})
+            assert page["code"] == "OK", page
+            pages.append(page["data"])
+            if page["data"]["complete"]:
+                return pages
+            offset = page["data"]["next_offset"]
+        raise AssertionError("utf8 expansion never completed")
+
+    def refused(pages: list[dict[str, Any]], version: int = 1) -> str:
+        with pytest.raises(HandoffError) as exc:
+            reassemble(pages, artifact_id="u1", version=version)
+        return exc.value.code
+
+    v1 = utf8_pages(1)
+    assert len(v1) >= 3
+    rebuilt, digest = reassemble(v1, artifact_id="u1", version=1)
+    assert rebuilt == data
+    assert digest == hashlib.sha256(data).hexdigest() == v1[0]["payload_hash"]
+
+    wrong = handler(
+        "receive", {"ack": [{"id": "u1", "version": 1, "digest": "0" * 64}]}
+    )
+    assert wrong["code"] == "E_VERSION"
+    assert store.get_handoff_receipts(session.session_id) == {}
+    acked = handler("receive", {"ack": [{"id": "u1", "version": 1, "digest": digest}]})
+    assert acked["code"] == "OK", acked
+    assert store.get_handoff_receipts(session.session_id) == {"u1": 1}
+
+    edited = [dict(page) for page in v1]
+    first_text = edited[0]["content_utf8"]
+    edited[0]["content_utf8"] = ("X" if first_text[0] != "X" else "Y") + first_text[1:]
+    assert refused(edited) == "E_VERSION"
+    rehashed = [dict(page) for page in v1]
+    rehashed[1]["payload_hash"] = "0" * 64
+    assert refused(rehashed) == "E_VERSION"
+    assert refused([v1[0], *v1[2:]]) == "E_OFFSET"
+    assert refused([v1[1], v1[0], *v1[2:]]) == "E_OFFSET"
+    b64_page = handler("expand", {"id": "u1", "version": 1})
+    assert b64_page["code"] == "OK"
+    assert refused([v1[0], b64_page["data"], *v1[2:]]) == "E_INPUT"
+
+    store.update_content("u1", {"text": "needle second version"}, expected_version=1)
+    v2 = utf8_pages(2)
+    assert len(v2) >= 2
+    assert refused([v1[0], *v2[1:]], version=2) == "E_VERSION"
+    assert store.get_handoff_receipts(session.session_id) == {"u1": 1}
+
+
+def test_t02_fix1_m38_reassembly_rejects_overstated_total_bytes(
+    tmp_path: Path,
+) -> None:
+    from rush.memory.retrieval import expand_artifact
+
+    store, data = _t02_literal_utf8(tmp_path.resolve())
+
+    def expand(offset: int, **caps: Any) -> dict[str, Any]:
+        return expand_artifact(
+            store,
+            artifact_id="u1",
+            version=1,
+            session_allowlist=["source-a"],
+            representation="utf8",
+            offset=offset,
+            **caps,
+        )
+
+    end = expand(len(data), max_bytes=_T02_BIG, max_tokens=_T02_BIG)
+    assert end["code"] == "OK", end
+    cap = end["bytes"] + 10
+    pages: list[dict[str, Any]] = []
+    offset = 0
+    for _ in range(len(data) + 2):
+        page = expand(offset, max_bytes=cap)
+        assert page["code"] == "OK", page
+        pages.append(page)
+        if page["complete"]:
+            break
+        offset = page["next_offset"]
+    assert len(pages) >= 2 and pages[-1]["complete"]
+    rebuilt, _digest = transport.reassemble_utf8_expansion(
+        pages, artifact_id="u1", version=1
+    )
+    assert rebuilt == data
+
+    inflated = [{**page, "total_bytes": len(data) + 1} for page in pages]
+    with pytest.raises(HandoffError) as exc:
+        transport.reassemble_utf8_expansion(inflated, artifact_id="u1", version=1)
+    assert exc.value.code == "E_OFFSET"
+
+
+# <<<T02-GATE H begin>>>
+@pytest.mark.parametrize(
+    "row",
+    [
+        pytest.param("verified", id="verified"),
+        pytest.param("backfilled", id="backfilled"),
+        pytest.param("unbound", id="unbound"),
+        pytest.param("mismatch_historical", id="mismatch_historical"),
+        pytest.param("blob_utf8", id="blob_utf8"),
+    ],
+)
+def test_t02_receiver_reassembles_d32_rows(tmp_path: Path, row: str) -> None:
+    """Real multi-page `expand` pages for each D32 version-row label rebuild the
+    stored bytes and digest through the receiver; any changed digest, content or
+    version is refused; base64 pages of the same row rebuild the same bytes."""
+    import sqlite3
+    from contextlib import closing
+
+    from rush.memory.retrieval import expand_artifact
+
+    store, data = _t02_literal_utf8(tmp_path.resolve())
+    digest = hashlib.sha256(data).hexdigest()
+    stored = data
+    historical = row == "mismatch_historical"
+    with closing(sqlite3.connect(store.db_path)) as conn:
+
+        def set_rows(
+            content: Any,
+            payload_hash: str | None,
+            origin: str | None,
+            *,
+            current: bool = True,
+        ) -> None:
+            if current:
+                conn.execute(
+                    "UPDATE memory_artifacts SET content = ?, payload_hash = ?, "
+                    "payload_hash_origin = ? WHERE id = 'u1'",
+                    (content, payload_hash, origin),
+                )
+            conn.execute(
+                "UPDATE memory_artifact_versions SET content = ?, payload_hash = ?, "
+                "payload_hash_origin = ? "
+                "WHERE artifact_id = 'u1' AND artifact_version = 1",
+                (content, payload_hash, origin),
+            )
+
+        if row == "verified":
+            set_rows(data.decode("utf-8"), digest, "write")
+        elif row == "backfilled":
+            set_rows(data.decode("utf-8"), digest, "backfill")
+        elif row == "unbound":
+            set_rows(data.decode("utf-8"), None, None)
+        elif row == "mismatch_historical":
+            stored = data.decode("utf-8").replace("needle", "needlf", 1).encode("utf-8")
+            set_rows(stored.decode("utf-8"), digest, "write", current=False)
+        else:
+            assert row == "blob_utf8"
+            set_rows(data, digest, "write")
+        conn.commit()
+
+    mode = "historical" if historical else "ordinary"
+
+    def expand(representation: str, offset: int, **caps: Any) -> dict[str, Any]:
+        return expand_artifact(
+            store,
+            artifact_id="u1",
+            version=1,
+            session_allowlist=["source-a"],
+            mode=mode,  # type: ignore[arg-type]
+            representation=representation,  # type: ignore[arg-type]
+            offset=offset,
+            **caps,
+        )
+
+    def pages(representation: str) -> list[dict[str, Any]]:
+        end = expand(
+            representation, len(stored), max_bytes=_T02_BIG, max_tokens=_T02_BIG
+        )
+        assert end["code"] == "OK", (row, representation, end)
+        cap = end["bytes"] + 10
+        out: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(len(stored) + 2):
+            page = expand(representation, offset, max_bytes=cap)
+            assert page["code"] == "OK", (row, representation, page)
+            out.append(page)
+            if page["complete"]:
+                return out
+            offset = page["next_offset"]
+        raise AssertionError("expansion never completed")
+
+    utf8 = pages("utf8")
+    assert len(utf8) >= 3, row
+    rebuilt, rebuilt_digest = transport.reassemble_utf8_expansion(
+        utf8, artifact_id="u1", version=1
+    )
+    assert rebuilt == stored, row
+    assert rebuilt_digest == hashlib.sha256(stored).hexdigest(), row
+    assert {page["payload_hash"] for page in utf8} == {rebuilt_digest}
+
+    def refused(edited: list[dict[str, Any]], version: int = 1) -> str:
+        with pytest.raises(HandoffError) as exc:
+            transport.reassemble_utf8_expansion(
+                edited, artifact_id="u1", version=version
+            )
+        return exc.value.code
+
+    rehashed = [dict(page) for page in utf8]
+    rehashed[1]["payload_hash"] = "0" * 64
+    assert refused(rehashed) == "E_VERSION"
+    altered = [dict(page) for page in utf8]
+    first = altered[0]["content_utf8"]
+    altered[0]["content_utf8"] = ("X" if first[0] != "X" else "Y") + first[1:]
+    assert refused(altered) == "E_VERSION"
+    moved = [dict(page) for page in utf8]
+    moved[1]["version"] = 2
+    assert refused(moved) == "E_VERSION"
+    assert refused(utf8, version=2) == "E_VERSION"
+    assert refused([utf8[0], *utf8[2:]]) == "E_OFFSET"
+
+    base64_pages = pages("base64")
+    joined = b"".join(b64decode(page["content_base64"]) for page in base64_pages)
+    assert joined == stored, row
+
+
+# <<<T02-GATE H end>>>

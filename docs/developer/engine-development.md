@@ -57,7 +57,7 @@ class MyEngine(Engine):
 - Flag newly introduced methods or changed blocks lacking unit test assertions.
 
 ### Agent Hook & Security Scanners (`medusa`, `trufflehog`, `bearer`)
-- Target agent instruction configurations (`.claude/`, `.cursor/`, `.windsurf/`).
+- Target agent instruction configurations (`.claude/`, `.windsurf/`).
 - Auto-redact detected credentials as `[REDACTED]` prior to generating `ToolResult`.
 
 ### Offline Cryptographic Trust Attestation (`cejel`)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rush.contracts.results import (
     FindingSeverity,
@@ -17,7 +17,9 @@ from rush.contracts.results import (
     validate_tool_result,
 )
 from rush.logging import get_logger, log_subsystem
-from rush.tools.base import ToolStatus
+
+if TYPE_CHECKING:
+    from rush.tools.base import ToolStatus
 
 logger = get_logger("plugins.validator")
 

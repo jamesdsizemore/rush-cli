@@ -187,11 +187,18 @@ def test_setup_wizard_non_interactive(tmp_path) -> None:
     assert len(res["skipped"]) > 0
 
 
-def test_install_engine_package_security_rejection() -> None:
-    from rush.tools.setup_wizard import install_engine_package
+def test_install_engine_package_security_rejection(tmp_path) -> None:
+    """Phase 70 T24: the ad-hoc installer is gone; a hostile name is refused
+    by the engine allowlist before any plan or effect exists."""
+    from rush.setup.engine_packages import UnknownEngineError
+    from rush.setup.provision import build_provision_plan
+    from rush.tools import setup_wizard
 
-    with pytest.raises(ValueError, match="Invalid or hostile package name"):
-        install_engine_package("npm", "malicious; rm -rf /")
+    assert not hasattr(setup_wizard, "install_engine_package")
+    with pytest.raises(UnknownEngineError):
+        build_provision_plan(
+            tmp_path, ["malicious; rm -rf /"], data_root=tmp_path / "data"
+        )
 
 
 def test_tool_config_preserves_declared_typed_options(tmp_path) -> None:

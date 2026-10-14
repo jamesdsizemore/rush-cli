@@ -32,7 +32,7 @@
 ### 1.1 Problem Statement & Deep Threat Model
 Autonomous coding agents operating with shell and filesystem write permissions pose critical operational risks to developer repositories:
 1. **Destructive Command Execution (MITRE ATT&CK T1485)**: Agents attempting to resolve git conflicts or clean untracked files executing destructive commands (`git reset --hard`, `git push --force`, `git clean -fdx`, `rm -rf .`) resulting in catastrophic loss of uncommitted work.
-2. **Governance Hijacking & Rule Tampering**: An agent attempting to pass a failing lint check modifies `AGENTS.md`, `.cursorrules`, or `rush.toml` to weaken security thresholds or delete test requirements.
+2. **Governance Hijacking & Rule Tampering**: An agent attempting to pass a failing lint check modifies `AGENTS.md` or `rush.toml` to weaken security thresholds or delete test requirements.
 3. **Secret Leakage in Multi-Turn Context**: Agents logging unredacted environment variables, database connection strings, or API tokens into stdout or log artifacts.
 4. **stdio Stream Pollution**: External sandbox process wrappers writing interactive escape codes to stdout corrupt FastMCP JSON-RPC communication frames.
 5. **Path Traversal & Host Filesystem Escapes**: Agents writing temporary files to `/tmp`, `~/.ssh/`, or parent directories outside the active repository root.
@@ -187,7 +187,6 @@ from pathlib import Path
 PROTECTED_GOVERNANCE_FILES = {
     "AGENTS.md",
     "CLAUDE.md",
-    ".cursorrules",
     ".windsurfrules",
     "rush.toml",
     ".rush/trust.json",
@@ -763,7 +762,6 @@ def test_safety_guard_blocks_governance_files(tmp_path: Path):
     guard = AgentSafetyGuard(tmp_path)
     assert guard.is_file_protected("AGENTS.md") is True
     assert guard.is_file_protected("CLAUDE.md") is True
-    assert guard.is_file_protected(".cursorrules") is True
     assert guard.is_file_protected("rush.toml") is True
     assert guard.is_file_protected(".git/config") is True
     assert guard.is_file_protected("src/main.py") is False

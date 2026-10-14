@@ -25,11 +25,25 @@ from scripts.benchmarks.run import run_dashboard_user_journey
 
 
 @pytest.fixture(scope="module")
-def ui_journey(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
+def ui_journey(
+    tmp_path_factory: pytest.TempPathFactory, hermetic_engine_path_module: None
+) -> dict[str, Any]:
     """Runs the whole real dashboard HTTP journey exactly once; every test
-    below asserts a different stage of this single, shared execution."""
+    below asserts a different stage of this single, shared execution.
+    Engines resolve only from this venv (`hermetic_engine_path_module`,
+    conftest.py), never the host's PATH."""
     tmp_root = tmp_path_factory.mktemp("dashboard-user-journey")
-    return run_dashboard_user_journey(tmp_root)
+    # 72-T01 D41: this module-scoped fixture runs before the function-scoped autouse
+    # `_isolated_home`, so the journey's memory stage would create the store-binding key in
+    # the real data root. HOME, XDG and LOCALAPPDATA go under `tmp_root` for the run.
+    home = tmp_root / "journey-home"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HOME", str(home))
+        patch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
+        patch.setenv("XDG_DATA_HOME", str(home / ".local" / "share"))
+        patch.setenv("XDG_CACHE_HOME", str(home / ".cache"))
+        patch.setenv("LOCALAPPDATA", str(home / "AppData" / "Local"))
+        return run_dashboard_user_journey(tmp_root)
 
 
 def _assert_stage(ui_journey: dict[str, Any], stage: str) -> None:
@@ -110,6 +124,11 @@ def test_benchmark_action_helper_sends_owner_scope_on_the_calls_it_makes(
 
 def test_tokens_snapshot_reflects_real_telemetry(ui_journey: dict[str, Any]) -> None:
     _assert_stage(ui_journey, "tokens")
+    snapshot = ui_journey["tokens_snapshot"]
+    assert snapshot["actual"]["raw_tokens"] == 100
+    assert snapshot["actual"]["sent_tokens"] == 40
+    assert snapshot["actual"]["events_count"] == 1
+    assert snapshot["estimated_avoided"]["tokens_saved"] == 60
 
 
 def test_git_snapshot_reports_real_repo_identity(ui_journey: dict[str, Any]) -> None:

@@ -64,7 +64,52 @@ def _resolve_authorized_statement(
         return None
     if current.artifact_version != statement_version:
         return None
+    # 72-T05 (plan L51/L55): a rejected, pending or superseded statement is not
+    # usable as current, nor is a task-bound one (no task context here matches it).
+    if current.applicability not in (None, "active") or current.task_id is not None:
+        return None
     return current
+
+
+def _reader_access(project_root: Path, source: str) -> tuple[Any, Path] | None:
+    """72-T01 (D1/R8): `(access, root)` for one reader of a single `source`, or
+    `None` (denied or unavailable). Legacy mode filters to this project's own
+    owner. Opens nothing."""
+    from rush.memory.retrieval import MemoryAccess, RouteDenial, route_access
+    from rush.memory.store import legacy_owner_scope
+
+    try:
+        root = Path(project_root).resolve()
+    except (OSError, RuntimeError, ValueError, TypeError):
+        return None
+    access = route_access(root, "ask", session_allowlist=[source])
+    if isinstance(access, RouteDenial):
+        return None
+    if access.kind == "legacy_allowlist":
+        access = MemoryAccess.legacy(
+            root, [source], owner_scope=legacy_owner_scope(root)
+        )
+    return access, root
+
+
+def _visible_current(view: Any, access: Any, artifact_id: str) -> Any:
+    """The current artifact when the shared decision shows it as current-capable
+    (never a rejected, superseded, pending or other-task row, 72-T05), else `None`."""
+    from rush.memory.retrieval import NOT_CURRENT_REASONS, evaluate_artifact_visibility
+    from rush.memory.store import _row_to_artifact, legacy_owner_scope
+
+    row = view.get_current_row(artifact_id)
+    if row is None:
+        return None
+    decision = evaluate_artifact_visibility(view, row, access=access)
+    if not decision.visible or NOT_CURRENT_REASONS & set(decision.reason_codes):
+        return None
+    try:
+        return _row_to_artifact(
+            row, default_owner_scope=legacy_owner_scope(view.project_root)
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _execution_result(content: Mapping[str, Any]) -> tuple[bool, bool]:
@@ -88,6 +133,8 @@ def record_intent(
     check_refs: Sequence[Mapping[str, Any]] | None = None,
     exceptions: Sequence[str] | None = None,
     expected_version: int | None = None,
+    owner_scope: Any = None,
+    commit_check: Any = None,
 ) -> dict[str, Any]:
     """MC07.2: create a new intent, or re-record (confirm) an existing one.
 
@@ -157,11 +204,17 @@ def record_intent(
             source=f"intent:{intent_id}",
             created_at=time.time(),
             content_hash=compute_content_signature(payload),
+            owner_scope=owner_scope,
         )
-        version = store.write(artifact).artifact_version
+        version = store.write(artifact, commit_check=commit_check).artifact_version
     else:
         try:
-            store.update_content(intent_id, payload, expected_version=expected_version)
+            store.update_content(
+                intent_id,
+                payload,
+                expected_version=expected_version,
+                commit_check=commit_check,
+            )
         except VersionConflictError as exc:
             return {"code": exc.code, "message": str(exc)}
         version = current.artifact_version + 1
@@ -188,6 +241,7 @@ def supersede_intent(
     source_refs: Sequence[Mapping[str, Any]] | None = None,
     check_refs: Sequence[Mapping[str, Any]] | None = None,
     exceptions: Sequence[str] | None = None,
+    commit_check: Any = None,
 ) -> dict[str, Any]:
     """MC07.2: explicit supersession -- an actual change to the recorded requirement.
 
@@ -249,7 +303,12 @@ def supersede_intent(
         "supersedes_version": expected_old_version,
     }
     try:
-        store.update_content(intent_id, payload, expected_version=expected_old_version)
+        store.update_content(
+            intent_id,
+            payload,
+            expected_version=expected_old_version,
+            commit_check=commit_check,
+        )
     except VersionConflictError as exc:
         return {"code": exc.code, "message": str(exc)}
 
@@ -270,18 +329,45 @@ def check_intent(
     project_root: Path,
     intent_id: str,
     current_revision: str | None = None,
+    access: Any = None,
 ) -> dict[str, Any]:
     """MC07.3: read-only -- exact-revision execution evidence for one intent's `check_refs`,
     or `"UNRESOLVED"`. Never launches a command; a stale reference, an unrecognized
     label/tag record, a behavior-ID mismatch, or a revision mismatch (when `current_revision`
     is given) is silently skipped, never treated as proof.
+
+    72-T05 (R16): a supplied `access` (the operation's access, carrying its task
+    context) decides the intent row (visible and usable as current); `None` keeps the
+    72-T01 shared decision for the intent's own source.
     """
-    current = TypedArtifactStore(project_root).get_current(intent_id)
+    unknown = {"code": "E_INPUT", "message": f"unknown intent {intent_id!r}"}
+    if access is None:
+        authorized = _reader_access(project_root, f"intent:{intent_id}")
+        if authorized is None:
+            return unknown
+        access, root = authorized
+    else:
+        try:
+            root = Path(project_root).resolve()
+        except (OSError, RuntimeError, ValueError, TypeError):
+            return unknown
+    view, _state = TypedArtifactStore.open_readonly_view(root)
+    if view is None:
+        return unknown
+    try:
+        return _check_intent(view, access, intent_id, current_revision)
+    finally:
+        view.close()
+
+
+def _check_intent(
+    store: Any, access: Any, intent_id: str, current_revision: str | None
+) -> dict[str, Any]:
+    current = _visible_current(store, access, intent_id)
     if current is None:
         return {"code": "E_INPUT", "message": f"unknown intent {intent_id!r}"}
     content = current.content
     behavior_id = content.get("behavior_id")
-    store = TypedArtifactStore(project_root)
     for ref in content.get("check_refs", []):
         ref_id = ref.get("id") if isinstance(ref, Mapping) else None
         ref_version = ref.get("version") if isinstance(ref, Mapping) else None
@@ -324,24 +410,45 @@ def intent_evidence(
     project_root: Path,
     behavior_ids: Sequence[str] = (),
     session_allowlist: Iterable[str] | None = None,
+    access: Any = None,
 ) -> list[dict[str, Any]]:
     """MC07.3: read-only -- the current intent record (refs only, not resolved evidence) for
     each of `behavior_ids`, for `prepare_memory` to surface without executing anything.
 
-    Fails closed on an empty/absent `session_allowlist` or empty `behavior_ids`, matching
-    `recall_repair_episodes()`'s existing no-default-cross-session-access precedent.
+    Fails closed on empty `behavior_ids`. 72-T01 (OD-3): a non-empty `session_allowlist` is
+    the legacy access form (no owner filter); otherwise the memory policy at the default
+    data root decides, and no grant fails closed, matching `recall_repair_episodes()`.
+    Every record goes through the shared decision (ordinary mode) over a read-only view.
+    72-T05 (R16): a supplied `access` is used as is (its task context included).
     """
-    allowed_sources = set(session_allowlist or ())
-    if not behavior_ids or not allowed_sources:
+    from rush.memory.retrieval import read_access
+
+    if not behavior_ids:
         return []
-    store = TypedArtifactStore(project_root)
+    if access is None:
+        access = read_access(project_root, "ask", session_allowlist)
+    if access is None:
+        return []
+    return intent_records_under(project_root, behavior_ids, access)
+
+
+def intent_records_under(
+    project_root: Path, behavior_ids: Sequence[str], access: Any
+) -> list[dict[str, Any]]:
+    """`intent_evidence`'s records under an already-resolved `access` (72-T01 D21:
+    a handoff's prepare reads them under the sender's own access)."""
+    from rush.memory.retrieval import read_visible
+
+    found = read_visible(
+        project_root,
+        [("architectural_decision", _fts_phrase(b)) for b in behavior_ids],
+        access=access,
+    )
     seen_ids: set[str] = set()
     results: list[dict[str, Any]] = []
-    for behavior_id in behavior_ids:
-        for artifact in store.search(
-            "architectural_decision", _fts_phrase(behavior_id)
-        ):
-            if artifact.id in seen_ids or artifact.source not in allowed_sources:
+    for behavior_id, artifacts in zip(behavior_ids, found, strict=True):
+        for artifact in artifacts:
+            if artifact.id in seen_ids:
                 continue
             content = artifact.content
             if (

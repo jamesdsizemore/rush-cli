@@ -6,7 +6,7 @@ Current status: historical decision; Lock and merge components are documented in
 Accepted (v0.3.0 / Phase 49)
 
 ## Context
-When multiple autonomous AI agents (Claude Code, Cursor, Windsurf) work concurrently in the same repository, they create file write race conditions, invalidate caches redundantly, and trigger Git merge conflicts.
+When multiple autonomous AI agents (Claude Code, Windsurf) work concurrently in the same repository, they create file write race conditions, invalidate caches redundantly, and trigger Git merge conflicts.
 
 ## Decision
 1. Implement a lightweight local **FastMCP Mesh Coordinator** in `src/rush/mcp_mesh/` over local UNIX domain sockets / Windows named pipes.
