@@ -1,6 +1,6 @@
 # Phase 72: remaining work (handoff)
 
-State as of 2026-10-14. Phase 72 is merged to `main` (PR #3, merge `1f770e4`); `main` is at `3651902`.
+State as of 2026-10-14. Phase 72 is merged to `main` (PR #3, merge `1f770e4`); `main` is at `5e57675`.
 CI run on `1f770e4` (failing): https://github.com/jamesdsizemore/rush-cli/actions/runs/38567715397
 
 ## 0. Setup
@@ -21,7 +21,7 @@ CI run on `1f770e4` (failing): https://github.com/jamesdsizemore/rush-cli/action
 | 4 | `tests/test_windows_import_safety.py::test_windows_f2_f3_shift_tab_decode_to_named_actions_not_escape` (:970, :976) | Windows runtime and installed contracts | `assert 1 == 0` | Windows-only test; run via PR CI. |
 | 5 | `tests/test_windows_import_safety.py::test_windows_installed_tui_real_console_journey` (:2397, :2548) | Windows runtime and installed contracts | `installed TUI left child processes after exit` | Windows-only test; run via PR CI. |
 | 6 | `tests/test_phase72_memory_acceptance.py::test_t09_live_windows_console` (:6475) | Windows runtime and installed contracts | `native console journey failed` | Windows-only test; run via PR CI. |
-| 7 | `scripts/sync_docs.py --check` (step "Verify documentation parity & links") | Quality and tests | `missing coverage receipt` for 123 files | Fails: `.venv/bin/python scripts/sync_docs.py --check`. Detail in section 1b. |
+| 7 | `scripts/sync_docs.py --check` (step "Verify documentation parity & links") | Quality and tests | `missing coverage receipt` for 123 files | **Fixed** in PR #4 (`5e57675`): `scripts/sync_docs.py --check` prints `Documentation coverage and runtime contracts match.` Detail in section 1b. |
 
 Test line numbers come from the CI logs of `1f770e4`; `git diff --name-only 1f770e4 3651902 -- tests src` is empty, so they hold on `main`.
 Local results for items 1 and 3: `.venv/bin/python -m pytest -m '' <both ids>` on `3651902` gave `1 failed, 1 passed` (item 3 failed).
@@ -36,15 +36,11 @@ CI does this in `.github/workflows/ci.yml`, step "Build native release archive f
 3. `build_release_archive(Path('dist/rush'), Path('dist'), 'rush-linux-x86_64.tar.gz', rush.__version__)` and `write_sha256sums(...)` from `scripts/probe_installed_artifacts.py`.
 4. Run the test with `RUSH_G8_NATIVE_ARCHIVE=$PWD/dist/rush-linux-x86_64.tar.gz` (workflow line 207; Windows uses `dist/rush-windows-x86_64.zip`, line 414).
 
-### 1b. Coverage receipts (item 7)
+### 1b. Coverage receipts (item 7): fixed
 
-- Failing paths: `docs/phase-plans/worktree-cleanup-plan.md` (on `main` since `a2e8b77`, before PR #3; the pre-PR CI run on `6189ce5` stopped earlier at ruff, 8 errors, so this check did not run there), plus since `3651902`: 120 files under `docs/assets/brand/`, `docs/CORRECT-WORKFLOW-DESIGN.md`, and this file.
-- Receipts are entries in the `documents` list (512 entries) inside `docs/reports/phase-64-66-documentation-coverage.md`, read by `read_coverage_receipt` in `scripts/sync_docs.py`.
-- Entry keys: `audience`, `authority`, `changed_sections`, `evidence`, `lane_authority`, `lane_receipt`, `media_type`, `owner`, `path`, `referrers`, `sha256`, `source_state`. Copy a template: for an image, the entry whose `path` is `docs/assets/rush-terminal-control-plane-concept.png`; for Markdown, any `docs/phase-plans/` entry.
-- `sha256` comes from `document_digest(path)`; mechanical fields from `build_document_inventory(repo_root)` (`scripts/sync_docs.py:504`).
-- `sync_docs.py` accepts only `--check`, so add entries with a small script that edits the JSON block. Exclusions are in `_is_excluded_document` (`scripts/sync_docs.py:450`); today only `.DS_Store` and `docs/goals/*/state.yaml`.
-  verified-by: `scripts/sync_docs.py:783-787` defines one argument, `--check`, and errors without it.
-- Decision for James: add receipts for the 120 brand files, or exclude `docs/assets/brand/`.
+- PR #4 (merge `5e57675`) added 123 entries to the `documents` list in `docs/reports/phase-64-66-documentation-coverage.md` (now 635 entries): 120 files under `docs/assets/brand/`, `docs/CORRECT-WORKFLOW-DESIGN.md`, this file, and `docs/phase-plans/worktree-cleanup-plan.md`.
+- Any edit to a file under `docs/` changes its `sha256`; update its entry (`document_digest(path)` in `scripts/sync_docs.py`) in the same commit, then run `.venv/bin/python scripts/sync_docs.py --check`.
+- New files under `docs/` need a new entry: mechanical fields from `build_document_inventory(repo_root)` (`scripts/sync_docs.py:504`) plus nonempty `audience`, `authority` (one of `current`, `historical`, `instruction`, `planned`, `generated`) and `evidence`. The block is one line of JSON written with `json.dumps(payload, separators=(',', ':'), sort_keys=True)`, `documents` sorted by `path`.
 - Related: `docs/assets/brand/rush-wordmark-v2/build.py` reports 12 mypy errors with `MYPYPATH=src .venv/bin/mypy <file>`.
 
 ## 2. Open product item: 72-T08 hybrid retrieval default is off
