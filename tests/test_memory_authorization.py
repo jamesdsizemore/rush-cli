@@ -8,6 +8,7 @@ existing code only.
 from __future__ import annotations
 
 import contextlib
+import copy
 import hashlib
 import inspect
 import json
@@ -2238,6 +2239,12 @@ PR6_CASES = [
     "stage0_wildcard_requested_source",
     "stage14_family_item_granted",
     "require_sources_pattern_item",
+    "ordinary_revoked_behind_overlay",
+    "overlay_owner_no_overlay_read_revoked",
+    "stale_overlay_revoked",
+    "user_kind_revoked_behind_overlay",
+    "lone_overlay_owner_without_overlay_read",
+    "lone_stale_overlay_grant",
 ]
 
 
@@ -2545,6 +2552,60 @@ def test_t01_pr6_authorization_guards(
         granted = _resolve(auth, root, d, "ask")
         _assert_granted(granted)
         assert granted["owner_scope"] == {"kind": "user", "id": "alice"}
+        return
+
+    if case in {
+        "ordinary_revoked_behind_overlay",
+        "overlay_owner_no_overlay_read_revoked",
+        "stale_overlay_revoked",
+        "user_kind_revoked_behind_overlay",
+    }:
+        # A revoked ordinary grant must read "revoked" even with an overlay grant present.
+        overlay = auth.user_overlay_owner_scope(data_root=d)
+        ordinary_owner = (
+            OwnerScope("user", "bob") if case.startswith("user_kind") else ALICE
+        )
+        ordinary = _grant(auth, root, ordinary_owner, d, ops=("ask",))
+        overlay_ops = (
+            ("ask",) if case.startswith("overlay_owner_no") else ("overlay_read",)
+        )
+        _grant(auth, root, overlay, d, ops=overlay_ops, expected=1)
+        _assert_granted(_resolve(auth, root, d, "ask"))
+        auth.revoke_memory_scope(
+            grant_id=ordinary["grant_id"],
+            expected_policy_revision=2,
+            consent=True,
+            data_root=d,
+        )
+        target = d
+        if case == "stale_overlay_revoked":
+            target = tmp_path / "moved-data"
+            shutil.move(str(d), str(target))
+            assert auth.user_overlay_owner_scope(data_root=target) != overlay
+        before = _sha(_policy_file(target))
+        _assert_denied(_resolve(auth, root, target, "ask"), "revoked")
+        assert _sha(_policy_file(target)) == before
+        return
+
+    if case in {"lone_overlay_owner_without_overlay_read", "lone_stale_overlay_grant"}:
+        # An overlay-owner grant alone never authorizes; an ordinary grant is needed.
+        overlay = auth.user_overlay_owner_scope(data_root=d)
+        stale = case == "lone_stale_overlay_grant"
+        _grant(
+            auth, root, overlay, d, ops=("ask", "overlay_read") if stale else ("ask",)
+        )
+        target = d
+        if stale:
+            target = tmp_path / "moved-data"
+            shutil.move(str(d), str(target))
+            assert auth.user_overlay_owner_scope(data_root=target) != overlay
+        before = _sha(_policy_file(target))
+        _assert_denied(_resolve(auth, root, target, "ask"), "owner_not_granted")
+        assert _sha(_policy_file(target)) == before
+        _grant(auth, root, ALICE, target, ops=("ask",), expected=1)
+        granted = _resolve(auth, root, target, "ask")
+        _assert_granted(granted)
+        assert granted["owner_scope"] == {"kind": "agent", "id": "alice"}
         return
 
     if case == "stage0_wildcard_requested_source":
@@ -3463,6 +3524,193 @@ def test_capsule_mapping_owner_change_requires_new_approval(tmp_path: Path) -> N
     )
     # the superseded mapping stays refused
     _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)
+
+
+def test_capsule_origin_shape_rejected(tmp_path: Path) -> None:
+    auth, d, root, _grant_view = _mapped(tmp_path)
+    sha = _sha(_policy_file(d))
+    good = _origin()
+    for origin in (
+        "origin",
+        None,
+        5,
+        {"project_id": "origin-project"},
+        {"worktree_id": ORIGIN_WORKTREE},
+        {**good, "extra": "x"},
+    ):
+        _expect(
+            auth,
+            "E_INPUT",
+            "capsule_origin",
+            auth.approve_capsule_mapping,
+            capsule_origin=origin,
+            project_root=root,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+    assert _sha(_policy_file(d)) == sha
+    assert _approve(auth, root, d)["origin_worktree_id"] == ORIGIN_WORKTREE
+
+
+def test_capsule_origin_worktree_id_rejected(tmp_path: Path) -> None:
+    auth, d, root, _grant_view = _mapped(tmp_path)
+    sha = _sha(_policy_file(d))
+    for worktree in (5, "A" * 64, "a" * 63, "g" * 64):
+        _expect(
+            auth,
+            "E_INPUT",
+            "capsule_origin",
+            auth.approve_capsule_mapping,
+            capsule_origin={"project_id": "origin-project", "worktree_id": worktree},
+            project_root=root,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+    assert _sha(_policy_file(d)) == sha
+
+
+def test_capsule_mapping_owner_scope_input(tmp_path: Path) -> None:
+    auth, d, root, _grant_view = _mapped(tmp_path)
+    sha = _sha(_policy_file(d))
+    for owner in (
+        "alice",
+        {"kind": "agent"},
+        {"kind": "robot", "id": "x"},
+        OwnerScope("agent", "a\ud800"),
+    ):
+        _expect(
+            auth,
+            "E_INPUT",
+            "owner_scope",
+            auth.approve_capsule_mapping,
+            capsule_origin=_origin(),
+            project_root=root,
+            owner_scope=owner,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+    assert _sha(_policy_file(d)) == sha
+    assert _approve(auth, root, d, owner_scope=ALICE)["target_owner_scope"] == {
+        "kind": "agent",
+        "id": "alice",
+    }
+
+
+class _BytesFspath:
+    def __fspath__(self) -> bytes:  # type: ignore[override]
+        return b"/x"
+
+
+def test_capsule_mapping_project_root_type(tmp_path: Path) -> None:
+    auth, d, _root, _grant_view = _mapped(tmp_path)
+    sha = _sha(_policy_file(d))
+    for bad in (5, None, 1.5, object()):
+        _expect(
+            auth,
+            "E_INPUT",
+            "project_missing",
+            auth.approve_capsule_mapping,
+            capsule_origin=_origin(),
+            project_root=bad,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+    assert _sha(_policy_file(d)) == sha
+
+
+def test_capsule_mapping_project_root_text(tmp_path: Path) -> None:
+    auth, d, _root, _grant_view = _mapped(tmp_path)
+    sha = _sha(_policy_file(d))
+    for bad in ("", "a\ud800", _BytesFspath()):
+        _expect(
+            auth,
+            "E_INPUT",
+            "project_missing",
+            auth.approve_capsule_mapping,
+            capsule_origin=_origin(),
+            project_root=bad,
+            expected_policy_revision=_revision(auth, d),
+            consent=True,
+            data_root=d,
+        )
+    assert _sha(_policy_file(d)) == sha
+    # a missing directory is decided by the resolve, not the input check
+    _expect(
+        auth,
+        "E_PERMISSION",
+        "project_missing",
+        auth.approve_capsule_mapping,
+        capsule_origin=_origin(),
+        project_root=tmp_path / "gone",
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+
+
+def test_capsule_mapping_target_identity_tamper(tmp_path: Path) -> None:
+    auth, d, root, grant = _mapped(tmp_path)
+    view = _approve(auth, root, d)
+
+    def resolve() -> dict[str, Any]:
+        return auth.resolve_capsule_mapping(
+            mapping_id=view["mapping_id"],
+            origin_project_id="origin-project",
+            origin_worktree_id=ORIGIN_WORKTREE,
+            project_root=root,
+            data_root=d,
+        )
+
+    assert resolve()["grant_id"] == grant["grant_id"]
+    base = _raw(d)
+    for field, value in (
+        ("target_project_id", "forged-project"),
+        ("target_worktree_id", "1" * 64),
+        ("target_root_hex", (str(root) + "-x").encode().hex()),
+    ):
+        forged = copy.deepcopy(base)
+        forged["data"]["mappings"][view["mapping_id"]][field] = value
+        _write_raw(d, forged)
+        assert auth.load_policy_readonly(data_root=d)["state"] == "ok", field
+        before = _sha(_policy_file(d))
+        _expect(auth, "E_PERMISSION", "mapping_mismatch", resolve)
+        assert _sha(_policy_file(d)) == before, field
+    _write_raw(d, base)
+    assert resolve()["grant_id"] == grant["grant_id"]
+
+
+def test_capsule_mapping_revoke_foreign_principal(tmp_path: Path) -> None:
+    auth, d, root, grant = _mapped(tmp_path)
+    view = _approve(auth, root, d)
+    original = _raw(d)
+    forged = copy.deepcopy(original)
+    forged["data"]["grants"][grant["grant_id"]]["principal"] = "uid:99999999"
+    _write_raw(d, forged)
+    assert auth.load_policy_readonly(data_root=d)["state"] == "ok"
+    sha = _sha(_policy_file(d))
+    _expect(
+        auth,
+        "E_PRINCIPAL",
+        "principal_mismatch",
+        auth.revoke_capsule_mapping,
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+    assert _sha(_policy_file(d)) == sha
+    _write_raw(d, original)
+    revoked = auth.revoke_capsule_mapping(
+        mapping_id=view["mapping_id"],
+        expected_policy_revision=_revision(auth, d),
+        consent=True,
+        data_root=d,
+    )
+    assert revoked["revoked"] is True
 
 
 # --- 73-T02/BOOTSTRAP-CONSENT: grant, revoke and bind-store CLI -----------------------
@@ -6222,3 +6470,564 @@ def test_consent_preservation_oracle_self_check(
         code="OK",
     )
     assert _c_state(root) == before
+
+
+def test_consent_preview_validate_checks_the_revision_first(tmp_path: Path) -> None:
+    """The grant preview's validators refuse a bad expected revision before any other
+    input: a bad revision with every other input valid raises, and with a bad owner as
+    well it is still the revision that is reported. Nothing is written."""
+    import rush.memory.authorization as auth
+    from rush.cli import _consent_preview_validate
+
+    root = _c_project(tmp_path)
+    owner = legacy_owner_scope(root)
+    before = _c_state(root)
+    sealed = _c_policy_bytes()
+    assert _consent_preview_validate(root, owner, False, ["ask"], ["s"], False, None, 0)
+    for bad in (-1, "3", 1.5, None):
+        for chosen in (owner, None):
+            with pytest.raises(auth.MemoryPolicyError) as raised:
+                _consent_preview_validate(
+                    root,
+                    cast("Any", chosen),
+                    False,
+                    ["ask"],
+                    ["s"],
+                    False,
+                    None,
+                    cast("Any", bad),
+                )
+            assert (raised.value.code, raised.value.reason) == (
+                "E_INPUT",
+                "expected_policy_revision",
+            )
+    assert _c_state(root) == before and _c_policy_bytes() == sealed
+
+
+def test_consent_revoke_preview_lists_only_the_target_grants_bindings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With two grants each holding a binding, the revoke preview of one shows that
+    grant's bindings only and writes nothing."""
+    _root_a, grant_a = _c_bound_grant(tmp_path / "a", (("session-a", "host-a"),))
+    _root_b, grant_b = _c_bound_grant(tmp_path / "b", (("session-b", "host-b"),))
+    loaded = _c_policy()
+    by_grant = {
+        grant_id: sorted(
+            b["binding_id"]
+            for b in loaded["bindings"].values()
+            if b["grant_id"] == grant_id
+        )
+        for grant_id in (grant_a, grant_b)
+    }
+    assert len(by_grant[grant_a]) == len(by_grant[grant_b]) == 1
+    before = _c_state(_root_a, _root_b)
+    sealed = _c_policy_bytes()
+    for grant_id, other in ((grant_a, grant_b), (grant_b, grant_a)):
+        with _c_no_effects(monkeypatch):
+            payload = _c_run(
+                [
+                    "memory",
+                    "revoke",
+                    "--grant-id",
+                    grant_id,
+                    "--expected-policy-revision",
+                    "0",
+                ],
+                code="OK",
+            )
+        shown = [b["binding_id"] for b in payload["raw"]["data"]["bindings"]]
+        assert shown == by_grant[grant_id]
+        assert not set(shown) & set(by_grant[other])
+    assert _c_state(_root_a, _root_b) == before and _c_policy_bytes() == sealed
+
+
+def test_consent_bind_store_without_a_data_root_is_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--overlay` and `--approve` need the data root: without it each is
+    `E_PERMISSION data_root_unavailable` before any policy or store lookup, nothing
+    written; a plain preview of an absent store does not need one."""
+    import rush.memory.authorization as auth
+
+    root = _c_project(tmp_path)
+    before = _c_state(root)
+    sealed = _c_policy_bytes()
+
+    def no_data_root(*_args: Any, **_kwargs: Any) -> Any:
+        raise auth.MemoryPolicyError("E_POLICY_INVALID", "data_root_unavailable")
+
+    with monkeypatch.context() as stubbed:
+        stubbed.setattr(auth, "user_overlay_owner_scope", no_data_root)
+        plain = _c_run(_c_bind_args(root), code="OK")
+        assert plain["raw"]["data"]["store"] == "absent"
+        for extra in (
+            ["--overlay"],
+            ["--approve", "--expected-digest", "0" * 64, "--allow-cache-write"],
+            [
+                "--overlay",
+                "--approve",
+                "--expected-digest",
+                "0" * 64,
+                "--allow-cache-write",
+            ],
+        ):
+            payload = _c_run(_c_bind_args(root, *extra), code="E_PERMISSION")
+            assert payload["raw"]["data"]["reason"] == "data_root_unavailable"
+    assert _c_state(root) == before and _c_policy_bytes() == sealed
+
+
+def test_consent_bind_store_vanished_at_approve_is_a_version_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store that disappears between the target check and the bind is
+    `E_VERSION store_changed`, never the writer's own `E_NOT_FOUND`."""
+    from rush.memory.store import TypedArtifactStore, read_store_key
+
+    root = _c_project(tmp_path, "vanishing")
+    db = _c_unbound_stated(root, "v1", "v-source")
+    preview = _c_run(_c_bind_args(root), code="OK")["raw"]["data"]
+    policy_before = _c_policy_bytes()
+    key_before = read_store_key()
+    original = TypedArtifactStore.bind_store
+    seen: list[str] = []
+
+    def vanishing(*args: Any, **kwargs: Any) -> Any:
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            Path(str(db) + suffix).unlink(missing_ok=True)
+        result = dict(original(*args, **kwargs))
+        seen.append(str(result["code"]))
+        return result
+
+    with monkeypatch.context() as stubbed:
+        stubbed.setattr(TypedArtifactStore, "bind_store", staticmethod(vanishing))
+        payload = _c_run(
+            _c_bind_args(
+                root,
+                "--approve",
+                "--expected-digest",
+                preview["binding_digest"],
+                "--allow-cache-write",
+            ),
+            code="E_VERSION",
+        )
+    assert seen == ["E_NOT_FOUND"]
+    assert payload["raw"]["data"]["reason"] == "store_changed"
+    assert not any(
+        Path(str(db) + suffix).exists() for suffix in ("", "-wal", "-shm", "-journal")
+    )
+    assert _c_policy_bytes() == policy_before
+    assert read_store_key() == key_before
+
+
+_OTHER_UUID = "11111111-1111-4111-8111-111111111111"
+
+
+def _loader_base(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    """`(data root, project, grant id, binding id)` of a one-grant, one-binding policy."""
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    granted = _grant(auth, root, legacy_owner_scope(root), d)
+    bound = _bind(auth, granted["grant_id"], d, expected=1)
+    return d, root, granted["grant_id"], bound["binding_id"]
+
+
+def _grant_rekey(payload: dict[str, Any], gid: str, _bid: str, new: str) -> None:
+    grants = payload["data"]["grants"]
+    record = grants.pop(gid)
+    record["grant_id"] = new
+    grants[new] = record
+
+
+def _binding_rekey(payload: dict[str, Any], _gid: str, bid: str, new: str) -> None:
+    bindings = payload["data"]["bindings"]
+    record = bindings.pop(bid)
+    record["binding_id"] = new
+    bindings[new] = record
+
+
+# (id, operations, reason): an operation is (kind, argument); `grant`/`binding` merge
+# fields into the stored record, `*_fn` run a callable on it.
+_LOADER_GUARD_CASES: list[tuple[str, list[tuple[str, Any]], str]] = [
+    ("envelope_not_dict", [("payload", [])], "envelope_invalid"),
+    ("envelope_extra_key", [("root", {"extra": 1})], "envelope_invalid"),
+    ("schema_other", [("root", {"schema_version": "2.0.0"})], "envelope_invalid"),
+    ("schema_not_string", [("root", {"schema_version": 1})], "envelope_invalid"),
+    (
+        "version_zero",
+        [("root", {"version": 0}), ("data", {"policy_revision": 0})],
+        "revision_invalid",
+    ),
+    ("data_not_dict", [("root", {"data": []})], "envelope_invalid"),
+    ("data_missing_key", [("data_pop", "mappings")], "missing_field"),
+    ("collection_not_dict", [("data", {"mappings": []})], "record_invalid"),
+    ("grants_not_dict", [("data", {"grants": []})], "record_invalid"),
+    ("grant_not_dict", [("grant_record", [])], "record_invalid"),
+    ("grant_extra_key", [("grant", {"zz": 1})], "record_invalid"),
+    ("grant_key_not_uuid", [("grant_rekey", "not-a-uuid")], "record_invalid"),
+    ("grant_id_mismatch", [("grant", {"grant_id": _OTHER_UUID})], "record_invalid"),
+    (
+        "grant_principal",
+        [("grant", {"principal": "not a principal"})],
+        "record_invalid",
+    ),
+    ("grant_project_empty", [("grant", {"project_id": ""})], "record_invalid"),
+    ("grant_project_int", [("grant", {"project_id": 5})], "record_invalid"),
+    ("grant_worktree", [("grant", {"worktree_id": "zz"})], "record_invalid"),
+    (
+        "grant_owner_extra",
+        [("grant_fn", lambda r: r["owner_scope"].update(zz=1))],
+        "record_invalid",
+    ),
+    (
+        "grant_owner_kind",
+        [("grant_fn", lambda r: r["owner_scope"].update(kind="bogus"))],
+        "record_invalid",
+    ),
+    (
+        "grant_owner_blank",
+        [("grant_fn", lambda r: r["owner_scope"].update(id_hex="20"))],
+        "record_invalid",
+    ),
+    (
+        "grant_sources_empty",
+        [("grant", {"approved_sources_hex": []})],
+        "record_invalid",
+    ),
+    (
+        "grant_sources_unsorted",
+        [("grant", {"approved_sources_hex": ["62", "61"]})],
+        "record_invalid",
+    ),
+    (
+        "grant_sources_duplicate",
+        [("grant", {"approved_sources_hex": ["61", "61"]})],
+        "record_invalid",
+    ),
+    ("grant_ops_empty", [("grant", {"allowed_operations": []})], "record_invalid"),
+    (
+        "grant_ops_unsorted",
+        [("grant", {"allowed_operations": ["list", "ask"]})],
+        "record_invalid",
+    ),
+    (
+        "grant_ops_duplicate",
+        [("grant", {"allowed_operations": ["ask", "ask"]})],
+        "record_invalid",
+    ),
+    (
+        "grant_ops_unknown",
+        [("grant", {"allowed_operations": ["zz"]})],
+        "record_invalid",
+    ),
+    ("grant_consented", [("grant", {"consented_at": "x"})], "record_invalid"),
+    ("grant_expires", [("grant", {"expires_at": "x"})], "record_invalid"),
+    ("grant_granted_zero", [("grant", {"granted_revision": 0})], "record_invalid"),
+    ("grant_granted_future", [("grant", {"granted_revision": 99})], "record_invalid"),
+    ("grant_revoked_string", [("grant", {"revoked": "yes"})], "record_invalid"),
+    ("grant_revoked_zero", [("grant", {"revoked": 0})], "record_invalid"),
+    ("grant_revoked_empty", [("grant", {"revoked": ""})], "record_invalid"),
+    ("grant_revoked_bare", [("grant", {"revoked": True})], "record_invalid"),
+    (
+        "grant_revoked_before_grant",
+        [("grant", {"revoked": True, "revoked_at": 1.0, "revoked_revision": 0})],
+        "record_invalid",
+    ),
+    (
+        "grant_revoked_bad_superseded",
+        [
+            (
+                "grant",
+                {
+                    "revoked": True,
+                    "revoked_at": 1.0,
+                    "revoked_revision": 1,
+                    "superseded_by": "x",
+                },
+            )
+        ],
+        "record_invalid",
+    ),
+    ("grant_active_revoked_at", [("grant", {"revoked_at": 1.0})], "record_invalid"),
+    (
+        "grant_active_revoked_rev",
+        [("grant", {"revoked_revision": 1})],
+        "record_invalid",
+    ),
+    (
+        "grant_active_superseded",
+        [("grant", {"superseded_by": _OTHER_UUID})],
+        "record_invalid",
+    ),
+    ("binding_not_dict", [("binding_record", [])], "record_invalid"),
+    ("binding_extra_key", [("binding", {"zz": 1})], "record_invalid"),
+    ("binding_key_not_uuid", [("binding_rekey", "not-a-uuid")], "record_invalid"),
+    (
+        "binding_id_mismatch",
+        [("binding", {"binding_id": _OTHER_UUID})],
+        "record_invalid",
+    ),
+    ("binding_grant_not_uuid", [("binding", {"grant_id": "x"})], "record_invalid"),
+    ("binding_revision_zero", [("binding", {"policy_revision": 0})], "record_invalid"),
+    (
+        "binding_revision_future",
+        [("binding", {"policy_revision": 99})],
+        "record_invalid",
+    ),
+    ("binding_project_empty", [("binding", {"project_id": ""})], "record_invalid"),
+    ("binding_project_int", [("binding", {"project_id": 5})], "record_invalid"),
+    ("binding_worktree", [("binding", {"worktree_id": "zz"})], "record_invalid"),
+    (
+        "binding_fingerprint",
+        [("binding", {"scope_fingerprint": "zz"})],
+        "record_invalid",
+    ),
+    ("binding_revoked_string", [("binding", {"revoked": "no"})], "record_invalid"),
+]
+
+
+@pytest.mark.parametrize(
+    ("case", "operations", "reason"),
+    [pytest.param(c, o, r, id=c) for c, o, r in _LOADER_GUARD_CASES],
+)
+def test_load_policy_rejects_each_malformed_record(
+    tmp_path: Path, case: str, operations: list[tuple[str, Any]], reason: str
+) -> None:
+    """Every structural guard of the strict loader refuses its own malformed input with
+    the pinned state and reason, reads as an empty invalid policy and writes nothing."""
+    import rush.memory.authorization as auth
+
+    d, root, gid, bid = _loader_base(tmp_path)
+    pristine = _policy_file(d).read_bytes()
+    assert auth.load_policy_readonly(data_root=d)["state"] == "ok"
+    payload: Any = _raw(d)
+    for kind, arg in operations:
+        grant_record: Any = (
+            payload["data"]["grants"][gid] if kind.startswith("grant") else {}
+        )
+        binding_record: Any = (
+            payload["data"]["bindings"][bid] if kind.startswith("binding") else {}
+        )
+        if kind == "payload":
+            payload = arg
+        elif kind == "root":
+            payload.update(arg)
+        elif kind == "data":
+            payload["data"].update(arg)
+        elif kind == "data_pop":
+            payload["data"].pop(arg)
+        elif kind == "grant":
+            grant_record.update(arg)
+        elif kind == "grant_fn":
+            arg(grant_record)
+        elif kind == "grant_record":
+            payload["data"]["grants"][gid] = arg
+        elif kind == "grant_rekey":
+            _grant_rekey(payload, gid, bid, arg)
+        elif kind == "binding":
+            binding_record.update(arg)
+        elif kind == "binding_record":
+            payload["data"]["bindings"][bid] = arg
+        else:
+            assert kind == "binding_rekey", kind
+            _binding_rekey(payload, gid, bid, arg)
+    _policy_file(d).write_text(json.dumps(payload), encoding="utf-8")
+    written = _policy_file(d).read_bytes()
+    assert written != pristine, case
+
+    loaded = auth.load_policy_readonly(data_root=d)
+    assert (loaded["state"], loaded["reason"]) == ("invalid", reason), loaded
+    assert loaded["policy_revision"] == 0 and loaded["content_sha256"] is None
+    assert (loaded["grants"], loaded["bindings"], loaded["mappings"]) == ({}, {}, {})
+    _assert_denied(
+        _resolve(auth, root, d, owner_scope=legacy_owner_scope(root)), "policy_invalid"
+    )
+    assert _policy_file(d).read_bytes() == written
+
+
+def test_policy_error_message_names_the_reason_only_when_given() -> None:
+    import rush.memory.authorization as auth
+
+    assert str(auth.MemoryPolicyError("E_INPUT")) == "E_INPUT"
+    assert (
+        str(auth.MemoryPolicyError("E_INPUT", "owner_scope")) == "E_INPUT: owner_scope"
+    )
+
+
+def test_binding_refuses_an_unreadable_or_malformed_registry_as_relinked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A registry that cannot confirm the grant's project root still maps to it is
+    `relinked`: a registry that is not `ok`, or whose entry is not a mapping with a
+    string root, refuses the binding with nothing written."""
+    import rush.memory.authorization as auth
+    from rush.workflows import projects
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    granted = _grant(auth, root, legacy_owner_scope(root), d)
+    project_id = granted["project_id"]
+    sealed = _policy_file(d).read_bytes()
+    real = projects.read_registry_strict
+    forged: list[dict[str, Any]] = [
+        {"state": "corrupt"},
+        {"state": "unreadable"},
+        {"state": "ok", "registry": {"projects": {project_id: "not-a-mapping"}}},
+        {"state": "ok", "registry": {"projects": {project_id: {"root": 5}}}},
+        {"state": "ok", "registry": {"projects": {project_id: {}}}},
+        {"state": "ok", "registry": {"projects": {}}},
+    ]
+    assert real(d)["state"] == "ok"
+    for result in forged:
+        with monkeypatch.context() as stubbed:
+            stubbed.setattr(projects, "read_registry_strict", lambda _root, r=result: r)
+            _expect(
+                auth,
+                "E_GRANT_INACTIVE",
+                "relinked",
+                auth.register_memory_binding,
+                grant_id=granted["grant_id"],
+                session_id="session-1",
+                host_id="host-1",
+                expected_policy_revision=1,
+                consent=True,
+                data_root=d,
+            )
+        assert _policy_file(d).read_bytes() == sealed
+    _bind(auth, granted["grant_id"], d, expected=1)
+
+
+@pytest.mark.posix_only
+@pytest.mark.parametrize("case", ["symlink_user_dir", "symlink_file", "user_not_dir"])
+def test_load_policy_second_line_of_defense_after_containment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """The loader's own lstat checks refuse a symlinked directory, a symlinked file and
+    a non-directory `user` with the pinned reason even when the containment check in
+    front of them passes, and write nothing."""
+    import rush.memory.authorization as auth
+    from rush.io.physical_paths import PhysicalRoot
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    _grant(auth, root, legacy_owner_scope(root), d)
+    if case == "user_not_dir":
+        shutil.rmtree(d.resolve() / "user")
+        (d.resolve() / "user").write_text("not a directory", encoding="utf-8")
+    else:
+        _craft_invalid(case, d, tmp_path)
+    expected = {
+        "symlink_user_dir": "symlink",
+        "symlink_file": "symlink",
+        "user_not_dir": "not_directory",
+    }[case]
+    before = _snapshot(d.resolve() / "user", tmp_path / "elsewhere")
+    with monkeypatch.context() as bypass:
+        bypass.setattr(PhysicalRoot, "open_contained", lambda *_a, **_k: None)
+        loaded = auth.load_policy_readonly(data_root=d)
+    assert (loaded["state"], loaded["reason"]) == ("invalid", expected), loaded
+    assert _snapshot(d.resolve() / "user", tmp_path / "elsewhere") == before
+
+
+def _argv_values(command: str, flag: str) -> list[str]:
+    argv = shlex.split(command)
+    return [argv[i + 1] for i, token in enumerate(argv) if token == flag]
+
+
+def test_grant_command_merges_only_this_principals_superseded_grant(
+    tmp_path: Path,
+) -> None:
+    """The printed grant command keeps the operations and sources of the same-scope
+    grant it supersedes only when that grant is this principal's; another principal's
+    grant of the same scope contributes nothing."""
+    import rush.memory.authorization as auth
+
+    d = _data_root(tmp_path)
+    root, _record = _project(tmp_path, "project", d)
+    owner = legacy_owner_scope(root)
+    granted = _grant(auth, root, owner, d, sources=("s1",), ops=("ask", "list"))
+
+    def command() -> str:
+        return cast(
+            "str",
+            auth.memory_grant_command(
+                project_root=root,
+                operations=["write"],
+                owner_scope=owner,
+                requested_sources=["s2"],
+                data_root=d,
+            ),
+        )
+
+    before = _snapshot(d, root)
+    own = command()
+    assert _argv_values(own, "--operation") == ["ask", "list", "write"]
+    assert _argv_values(own, "--source") == ["s1", "s2"]
+    assert _snapshot(d, root) == before
+    payload = _raw(d)
+    payload["data"]["grants"][granted["grant_id"]]["principal"] = "uid:99999"
+    _write_raw(d, payload)
+    forged_bytes = _policy_file(d).read_bytes()
+    before = _snapshot(d, root)
+    foreign = command()
+    assert _argv_values(foreign, "--operation") == ["write"]
+    assert _argv_values(foreign, "--source") == ["s2"]
+    assert _policy_file(d).read_bytes() == forged_bytes
+    assert _snapshot(d, root) == before
+
+
+def test_next_action_for_an_unavailable_policy_root_has_no_command(
+    tmp_path: Path,
+) -> None:
+    import rush.memory.authorization as auth
+
+    root = tmp_path / "project"
+    root.mkdir()
+    data_root = Path("bad\x00root")
+    assert auth.load_policy_readonly(data_root=data_root)["state"] == "unavailable"
+    action = auth.memory_next_action(
+        reason="no_grant",
+        project_root=root,
+        operations=["ask"],
+        data_root=data_root,
+    )
+    assert action["command"] is None
+    assert "no_grant" in str(action["text"])
+    assert "unavailable" in str(action["text"])
+
+
+def test_policy_next_action_is_attached_once_with_its_summary_suffix(
+    tmp_path: Path,
+) -> None:
+    """A denial without a `next_action` gains it and the ` Next:` summary suffix; one
+    that already carries a `next_action` is left exactly as it was."""
+    from rush.tools.memory import _attach_policy_next_action
+
+    root = tmp_path / "project"
+    root.mkdir()
+
+    def attach(raw: dict[str, Any]) -> dict[str, Any]:
+        result: Any = {"summary": "denied.", "raw": raw}
+        _attach_policy_next_action(
+            result,
+            reason="no_grant",
+            project_root=root,
+            operations=["ask"],
+            owner_scope=None,
+            requested_sources=[],
+        )
+        return cast("dict[str, Any]", result)
+
+    existing = {"text": "keep me", "command": None}
+    kept = attach({"code": "E_PERMISSION", "next_action": existing})
+    assert kept == {
+        "summary": "denied.",
+        "raw": {"code": "E_PERMISSION", "next_action": existing},
+    }
+    fresh = attach({"code": "E_PERMISSION"})
+    action = fresh["raw"]["next_action"]
+    assert action != existing
+    assert action["text"].startswith("memory access denied (no_grant)")
+    assert fresh["summary"] == f"denied. Next: {action['command'] or action['text']}"

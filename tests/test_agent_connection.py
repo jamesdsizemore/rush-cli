@@ -1609,3 +1609,253 @@ def test_connect_binding_precheck_first_failure(
     shutil.rmtree(data_root)
     data_root.write_text("not a directory", encoding="utf-8")
     refuse(root, gid, revision, "E_PERMISSION", "policy_invalid", session="S10")
+
+
+@contextlib.contextmanager
+def _forged_grant_fields(edits: dict[str, dict[str, Any]]) -> Iterator[None]:
+    """The stored grants carry the forged raw fields (the policy file itself stays
+    valid and owned by the current principal); the original bytes come back on exit."""
+    from rush.memory import authorization as auth
+
+    path = auth.policy_path(data_root=_data_root())
+    original = path.read_bytes()
+    payload = json.loads(original.decode("utf-8"))
+    for grant_id, fields in edits.items():
+        payload["data"]["grants"][grant_id].update(fields)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    try:
+        assert _policy()["state"] == "ok"
+        yield
+    finally:
+        path.write_bytes(original)
+
+
+def test_connect_binding_precheck_principal_precedes_later_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A grant of another OS principal is `principal_mismatch` whatever else is wrong
+    with it: it is decided before the revoked, expired and identity checks and before
+    the resolve, so a foreign grant of another project or a revoked foreign grant is
+    never reported under a later check's reason."""
+    from rush.memory import authorization as auth
+
+    fake = _fake_rush(tmp_path)
+    root = _project(tmp_path, "project")
+    other = _project(tmp_path, "other")
+    foreign = _grant(other)
+    doomed = _grant(root, owner=_owner("user", "doomed"))
+    auth.revoke_memory_scope(
+        grant_id=doomed["grant_id"],
+        expected_policy_revision=int(_policy()["policy_revision"]),
+        consent=True,
+        data_root=_data_root(),
+    )
+    revision = int(_policy()["policy_revision"])
+    for grant_id in (foreign["grant_id"], doomed["grant_id"]):
+        with (
+            _forged_grant_fields({grant_id: {"principal": "uid:99999"}}),
+            _forbid_connect(monkeypatch),
+        ):
+            _assert_refused(
+                _connect_args(
+                    root, fake, *_binding_flags(grant_id, revision, approve=True)
+                ),
+                "E_PERMISSION",
+                "principal_mismatch",
+                root,
+                other,
+            )
+
+
+def test_connect_binding_precheck_grant_root_must_equal_project_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same project ID and worktree ID under another recorded root is not this
+    project's grant: `binding_scope_mismatch` before connect, nothing written."""
+    from rush.memory import authorization as auth
+
+    fake = _fake_rush(tmp_path)
+    root = _project(tmp_path, "project")
+    grant = _grant(root)
+    grant_id = grant["grant_id"]
+    revision = int(_policy()["policy_revision"])
+    moved = str(tmp_path / "elsewhere").encode("utf-8").hex()
+    stored = auth.load_policy_readonly(data_root=_data_root())["grants"][grant_id]
+    with (
+        _forged_grant_fields({grant_id: {"project_root_hex": moved}}),
+        _forbid_connect(monkeypatch),
+    ):
+        forged = _policy()["grants"][grant_id]
+        assert forged["project_root"] != stored["project_root"]
+        assert forged["project_id"] == stored["project_id"]
+        assert forged["worktree_id"] == stored["worktree_id"]
+        _assert_refused(
+            _connect_args(
+                root, fake, *_binding_flags(grant_id, revision, approve=True)
+            ),
+            "E_PERMISSION",
+            "binding_scope_mismatch",
+            root,
+        )
+
+
+def test_connect_binding_precheck_resolve_must_grant_the_named_grant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pre-check ends on the scope resolve: its denial reason is the refusal, and a
+    resolve that names a different grant is `binding_scope_mismatch`. Neither reaches
+    connect or writes anything; the unpatched resolve binds."""
+    from rush.memory import authorization as auth
+
+    fake = _fake_rush(tmp_path)
+    root = _project(tmp_path, "project")
+    grant_id = _grant(root)["grant_id"]
+    revision = int(_policy()["policy_revision"])
+    real = auth.resolve_memory_scope
+    args = _connect_args(root, fake, *_binding_flags(grant_id, revision, approve=True))
+
+    def denied(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["operation"] in auth.GRANT_OPERATIONS
+        return auth._denied("owner_not_granted", kwargs["operation"], revision)
+
+    def other_grant(**kwargs: Any) -> dict[str, Any]:
+        resolved = real(**kwargs)
+        assert resolved["access"] != "denied" and resolved["grant_id"] == grant_id
+        return {**resolved, "grant_id": str(uuid.uuid4())}
+
+    with monkeypatch.context() as stubbed, _forbid_connect(monkeypatch):
+        stubbed.setattr(auth, "resolve_memory_scope", denied)
+        _assert_refused(args, "E_PERMISSION", "owner_not_granted", root)
+    with monkeypatch.context() as stubbed, _forbid_connect(monkeypatch):
+        stubbed.setattr(auth, "resolve_memory_scope", other_grant)
+        _assert_refused(args, "E_PERMISSION", "binding_scope_mismatch", root)
+    payload = _connect(args, status="ok")
+    assert payload["raw"]["memory_binding"]["grant_id"] == grant_id
+
+
+def test_connect_binding_not_registered_when_connect_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--approve-memory-binding` registers only after a successful connect (status ok
+    or warn with an applied `raw.apply`): a failed connect, or one that applied
+    nothing, leaves the policy file byte-identical and the binding at `preview`."""
+    from rush.tools.agent_connection import AgentConnectionTool
+
+    fake = _fake_rush(tmp_path)
+    original = AgentConnectionTool.run
+
+    def failed(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original(self, *args, **kwargs)
+        raw = result["raw"]
+        assert raw is not None and isinstance(raw.get("apply"), dict)
+        result["status"] = "fail"
+        return result
+
+    def unapplied(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original(self, *args, **kwargs)
+        raw = result["raw"]
+        assert raw is not None and result["status"] in ("ok", "warn")
+        raw.pop("apply", None)
+        return result
+
+    for index, stub in enumerate((failed, unapplied)):
+        root = _project(tmp_path, f"project-{index}")
+        grant_id = _grant(root)["grant_id"]
+        revision = int(_policy()["policy_revision"])
+        sealed = _policy_bytes()
+        with monkeypatch.context() as patched:
+            patched.setattr(AgentConnectionTool, "run", stub)
+            _exit_code, payload, output = _cli(
+                *_connect_args(
+                    root,
+                    fake,
+                    *_binding_flags(grant_id, revision, approve=True),
+                    session=f"S-fail-{index}",
+                ),
+                "--json",
+            )
+        assert payload is not None, output
+        assert payload["raw"]["memory_binding"] == {
+            "state": "preview",
+            "grant_id": grant_id,
+            "session_id": f"S-fail-{index}",
+            "host_id": "codex",
+            "expected_policy_revision": revision,
+        }, payload
+        assert _policy_bytes() == sealed
+        assert _policy()["bindings"] == {}
+
+
+def test_disconnect_listing_scope_and_policy_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The disconnect listing shows a grant only when it names this project AND this
+    worktree, and nothing at all under a non-`ok` policy state, whatever the
+    policy still holds."""
+    from rush.memory import authorization as auth
+
+    a = _project(tmp_path, "A")
+    b = _project(tmp_path, "B")
+    mine = _grant(a)
+    strange = _grant(a, owner=_owner("user", "strange"))
+    foreign = _grant(b)
+    auth.register_memory_binding(
+        grant_id=mine["grant_id"],
+        session_id="s1",
+        host_id="codex",
+        expected_policy_revision=int(_policy()["policy_revision"]),
+        consent=True,
+        data_root=_data_root(),
+    )
+    grants = _policy()["grants"]
+    assert (
+        grants[mine["grant_id"]]["project_id"]
+        == grants[strange["grant_id"]]["project_id"]
+    )
+    assert (
+        grants[mine["grant_id"]]["project_id"]
+        != grants[foreign["grant_id"]]["project_id"]
+    )
+    worktree = grants[mine["grant_id"]]["worktree_id"]
+    sealed = _policy_bytes()
+
+    def listed() -> dict[str, Any]:
+        exit_code, payload, output = _cli(
+            "agent", "disconnect", "codex", "--project", str(a), "--json"
+        )
+        assert exit_code == 0 and payload is not None, output
+        return cast("dict[str, Any]", payload["raw"]["memory"])
+
+    # The first `disconnect` creates only its ledger lock's `Rush/agents` dir under
+    # HOME (the read-only memory listing writes nothing, in this project or any
+    # other); run it once so the forged listing below starts from a settled state.
+    listed()
+
+    # Another project's grant carrying this worktree ID, and this project's grant
+    # carrying another worktree ID, are both left out.
+    forged = {
+        foreign["grant_id"]: {"worktree_id": worktree},
+        strange["grant_id"]: {"worktree_id": "0" * 64},
+    }
+    with _forged_grant_fields(forged):
+        forged_bytes = _policy_bytes()
+        before = _state(a, b)
+        assert [g["grant_id"] for g in listed()["grants"]] == [mine["grant_id"]]
+        assert _policy_bytes() == forged_bytes
+        assert _state(a, b) == before
+    assert _policy_bytes() == sealed
+    assert [g["grant_id"] for g in listed()["grants"]] == sorted(
+        [mine["grant_id"], strange["grant_id"]]
+    )
+
+    # A non-ok state lists nothing even when the loaded policy still carries rows.
+    real = auth.load_policy_readonly
+    assert listed()["bindings"]
+    with monkeypatch.context() as stubbed:
+        stubbed.setattr(
+            auth,
+            "load_policy_readonly",
+            lambda **kwargs: {**real(**kwargs), "state": "invalid"},
+        )
+        assert listed() == {"grants": [], "bindings": []}
+    assert _policy_bytes() == sealed
