@@ -56,6 +56,7 @@ from rush.memory.authorization import (
 )
 from rush.memory.maintenance import MaintenanceTask
 from rush.memory.retrieval import (
+    NOT_CURRENT_REASONS,
     MemoryAccess,
     RouteDenial,
     evaluate_artifact_visibility,
@@ -4874,6 +4875,13 @@ def _fetch_memory_browse_items(
                         mode="historical" if include_archived else "inspect",
                     )
                     if not decision.visible:
+                        continue
+                    # 72-T05: a browse row carries no applicability or
+                    # `usable_as_current` to qualify a not-current row with, so it
+                    # hides one as the legacy query and list do (plan L51/L55).
+                    if not include_archived and NOT_CURRENT_REASONS & set(
+                        decision.reason_codes
+                    ):
                         continue
                     item = _scope_artifact_row(row)
                     if "store_unbound" in decision.reason_codes:

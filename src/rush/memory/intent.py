@@ -64,6 +64,10 @@ def _resolve_authorized_statement(
         return None
     if current.artifact_version != statement_version:
         return None
+    # 72-T05 (plan L51/L55): a rejected, pending or superseded statement is not
+    # usable as current, nor is a task-bound one (no task context here matches it).
+    if current.applicability not in (None, "active") or current.task_id is not None:
+        return None
     return current
 
 

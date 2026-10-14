@@ -8571,6 +8571,14 @@ def memory_overview(
             live = [
                 f"{c} IS NULL" for c in ("archived_at", "expired_at") if c in columns
             ]
+            # 72-T05 (plan L51/L55): the overview names "useful" rows and carries no
+            # field to qualify one, so it lists and counts only rows usable as
+            # current: an active applicability (NULL = pre-T05) and no task binding
+            # (an omitted task context never matches one).
+            if "applicability" in columns:
+                live.append("(applicability IS NULL OR applicability = 'active')")
+            if "task_id" in columns:
+                live.append("task_id IS NULL")
             internal_sql, internal_params = internal_source_exclusion_sql()
             where = live if include_internal else [*live, internal_sql]
             params: tuple[str, ...] = () if include_internal else internal_params

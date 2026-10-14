@@ -143,13 +143,27 @@ def internal_source_exclusion_sql() -> tuple[str, tuple[str, ...]]:
     return f"source NOT IN ({placeholders})", sources
 
 
+def current_row_sql(conn: sqlite3.Connection) -> str:
+    """`archived_at IS NULL AND expired_at IS NULL`, plus (72-T05, plan L51/L55)
+    an active applicability (NULL = pre-T05) and no task binding (an omitted task
+    context never matches one) when the store has those columns -- an old-schema
+    store lacks them."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_artifacts)")}
+    live = ["archived_at IS NULL", "expired_at IS NULL"]
+    if "applicability" in columns:
+        live.append("(applicability IS NULL OR applicability = 'active')")
+    if "task_id" in columns:
+        live.append("task_id IS NULL")
+    return " AND ".join(live)
+
+
 def useful_memory_count(conn: sqlite3.Connection) -> int:
-    """R18.1: the internal-exclusion predicate AND `archived_at IS NULL` AND
-    `expired_at IS NULL` -- the "useful memory count" T20/T23/T28 share."""
+    """R18.1: the internal-exclusion predicate AND `current_row_sql` -- the
+    "useful memory count" T20/T23/T28 share."""
     fragment, params = internal_source_exclusion_sql()
     row = conn.execute(
         f"SELECT COUNT(*) FROM memory_artifacts WHERE {fragment} "
-        "AND archived_at IS NULL AND expired_at IS NULL",
+        f"AND {current_row_sql(conn)}",
         params,
     ).fetchone()
     return int(row[0])

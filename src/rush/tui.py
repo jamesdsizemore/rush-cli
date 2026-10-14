@@ -8597,6 +8597,7 @@ def _memory_list_layout(state: TuiState, head: list[Any], tail: list[Any]) -> li
     table.add_column("owner")
     table.add_column("trust", width=14)
     table.add_column("freshness", width=10)
+    table.add_column("state")
     table.add_column("source")
     for idx, item in enumerate(items[first : first + count], start + first):
         cursor = ">" if idx == state.memory_selected_index else " "
@@ -8606,6 +8607,12 @@ def _memory_list_layout(state: TuiState, head: list[Any], tail: list[Any]) -> li
         freshness = (
             reference.get("freshness") if isinstance(reference, dict) else None
         ) or ("stale" if item.get("stale") else "")
+        # 72-T05 (plan L849): an inspect row not usable as current names why.
+        row_state = ",".join(
+            code.removeprefix("applicability_")
+            for code in item.get("reason_codes") or []
+            if code.startswith("applicability_") or code == "task_mismatch"
+        )
         table.add_row(
             _safe(f"{cursor}[{checked}]"),
             _safe(item.get("id", "")),
@@ -8617,6 +8624,7 @@ def _memory_list_layout(state: TuiState, head: list[Any], tail: list[Any]) -> li
             ),
             _safe(item.get("trust_tier", "")),
             _safe(freshness),
+            _safe(row_state),
             _safe(item.get("source", "")),
             style=_state_selection_style(state) if cursor == ">" else None,
         )

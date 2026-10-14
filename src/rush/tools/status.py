@@ -342,6 +342,7 @@ def _memory(root: Path) -> dict[str, Any]:
     from rush.memory.retrieval import RouteDenial, reader_row_allowed, route_access
     from rush.memory.store import (
         MemoryStoreUnreadableError,
+        current_row_sql,
         internal_source_exclusion_sql,
         read_sqlite_readonly,
         useful_memory_count,
@@ -372,7 +373,7 @@ def _memory(root: Path) -> dict[str, Any]:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"SELECT * FROM memory_artifacts WHERE {fragment} "
-            "AND archived_at IS NULL AND expired_at IS NULL",
+            f"AND {current_row_sql(conn)}",
             params,
         ).fetchall()
         return sum(1 for row in rows if reader_row_allowed(access, root, row))
