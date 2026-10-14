@@ -192,7 +192,9 @@ def _state(tmp_path: Path, *roots: Path, project_ids: tuple[str, ...] = ()) -> T
 
 def _drain(state: TuiState, actions: ScanActions) -> None:
     """Pumps like `run_interactive_tui` until no memory request is in flight."""
-    deadline = time.monotonic() + 2
+    # A worker-thread apply may wait up to 5 s for the maintenance lock; under a
+    # loaded shard 2 s was too short (test_r1_maintenance_never_creates_rows_...).
+    deadline = time.monotonic() + 30
     tui_mod._pump(state, actions)
     while state.memory_request is not None:
         assert time.monotonic() < deadline, f"still in flight: {state.memory_request}"

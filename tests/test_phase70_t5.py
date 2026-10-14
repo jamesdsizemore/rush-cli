@@ -33,6 +33,7 @@ import tempfile
 from pathlib import Path
 from typing import TextIO, cast
 
+import anyio
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -442,14 +443,31 @@ def _stdio_params(*extra_args: str) -> StdioServerParameters:
 
 
 async def _initialize_and_list(params: StdioServerParameters):
+    answer: tuple[set[str], str] | None = None
     with tempfile.NamedTemporaryFile(mode="w+", encoding="utf-8") as server_stderr:
-        async with (
-            stdio_client(params, errlog=cast(TextIO, server_stderr)) as (read, write),
-            ClientSession(read, write) as session,
-        ):
-            init_result = await asyncio.wait_for(session.initialize(), timeout=10)
-            listed = await asyncio.wait_for(session.list_tools(), timeout=10)
-            return {tool.name for tool in listed.tools}, init_result.instructions or ""
+        try:
+            async with (
+                stdio_client(params, errlog=cast(TextIO, server_stderr)) as (
+                    read,
+                    write,
+                ),
+                ClientSession(read, write) as session,
+            ):
+                init_result = await asyncio.wait_for(session.initialize(), timeout=10)
+                listed = await asyncio.wait_for(session.list_tools(), timeout=10)
+                answer = (
+                    {tool.name for tool in listed.tools},
+                    init_result.instructions or "",
+                )
+        except* anyio.BrokenResourceError:
+            # mcp's stdio_client reader catches ClosedResourceError but not
+            # BrokenResourceError: a server line that arrives after ClientSession
+            # closed its stream fails the exit. Tolerated only once both answers
+            # are in.
+            if answer is None:
+                raise
+    assert answer is not None
+    return answer
 
 
 def test_stdio_core_and_full_profile_list_exact_tools_named_in_instructions():

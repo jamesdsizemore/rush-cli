@@ -193,8 +193,11 @@ def test_cache_clear_and_stats(temp_cache_dir: Path, sample_file: Path) -> None:
     assert stats_after["entries"] == 0
 
 
-def test_cli_cache_commands() -> None:
+def test_cli_cache_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from click.testing import CliRunner
+
+    # `cache stats` and `cache clean` use the cwd's .rush/cache.db, never the repo's.
+    monkeypatch.chdir(tmp_path)
 
     from rush.cli import cli
 

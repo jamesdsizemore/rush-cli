@@ -151,9 +151,14 @@ def test_write_handoff_validation(tmp_path: Path):
     assert "P2-T01" in content
 
 
-def test_runner_generates_all_decisions_and_handoff(tmp_path: Path):
+def test_runner_generates_all_decisions_and_handoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from scripts.benchmarks.run import main
 
+    # The probes run against the cwd: keep their .rush stores out of the repo.
+    repo = Path(__file__).resolve().parents[1]
+    monkeypatch.chdir(tmp_path)
     out_dir = tmp_path / "research" / "benchmark" / "run"
     exit_code = main(["--all", "--output", str(out_dir)])
     assert exit_code == 0
@@ -173,7 +178,7 @@ def test_runner_generates_all_decisions_and_handoff(tmp_path: Path):
     # Assert final-handoff.md and hardware-profile.json were written
     assert (out_dir / "final-handoff.md").exists()
     assert (out_dir / "hardware-profile.json").exists()
-    assert Path("docs/reports/final-handoff.md").exists()
+    assert (repo / "docs/reports/final-handoff.md").exists()
     handoff_text = (out_dir / "final-handoff.md").read_text(encoding="utf-8")
     assert "B-D01" in handoff_text
     assert "B-D06" in handoff_text
