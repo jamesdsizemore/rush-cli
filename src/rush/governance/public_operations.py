@@ -239,6 +239,13 @@ def build_operations_inventory() -> list[PublicOperation]:
             "rush memory maintain --help",
             "admin",
         ),
+        "memory bootstrap": (
+            None,
+            "rush.tools.memory:MemoryTool",
+            "read-only",
+            "rush memory bootstrap --help",
+            "tool",
+        ),
         # 73-T09/CODEC: the non-invokable `memory capsule` group's leaves.
         "memory capsule preview-export": (
             None,

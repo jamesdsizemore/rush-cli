@@ -4566,6 +4566,7 @@ class TypedArtifactStore:
         commit_check: CommitCheck | None = None,
         access: MemoryAccess | None = None,
         receipt_writer: ReceiptWriter | None = None,
+        expected_basis: dict[str, Any] | None = None,
     ) -> MemoryArtifact:
         """Persist an artifact. Enforces Invariant 1 (no-STATED-on-entry) and 2
         (redact-before-store). The conflict lookup/delete `_prepare_write()` may run,
@@ -4589,6 +4590,10 @@ class TypedArtifactStore:
             if replayed is not None:
                 conn.rollback()
             else:
+                if expected_basis is not None:
+                    self._check_checkpoint_basis(
+                        conn, artifact.content, expected_basis, access
+                    )
                 self._insert_row(conn, stored)
                 if receipt_operation_id:
                     self._write_receipt(
@@ -4616,6 +4621,51 @@ class TypedArtifactStore:
             return self._visible_replay(replayed, access)
         self._note_inserted(stored, evicted)
         return stored
+
+    def _check_checkpoint_basis(
+        self,
+        conn: sqlite3.Connection,
+        content: Any,
+        expected_basis: dict[str, Any],
+        access: MemoryAccess | None,
+    ) -> None:
+        """Read-only preflight and same-transaction native checkpoint precondition."""
+        from rush.memory.authorization import MemoryPolicyError
+        from rush.memory.capsule import _checkpoint
+        from rush.memory.retrieval import evaluate_artifact_visibility
+
+        if (
+            set(expected_basis) != {"artifact_id", "artifact_version"}
+            or not isinstance(expected_basis["artifact_id"], str)
+            or not expected_basis["artifact_id"]
+            or type(expected_basis["artifact_version"]) is not int
+            or expected_basis["artifact_version"] < 1
+        ):
+            raise MemoryPolicyError("E_INPUT", "checkpoint_basis_invalid")
+        row = conn.execute(
+            "SELECT * FROM memory_artifacts WHERE id = ?",
+            (expected_basis["artifact_id"],),
+        ).fetchone()
+        if (
+            access is None
+            or row is None
+            or not evaluate_artifact_visibility(self, row, access=access).visible
+        ):
+            raise MemoryPolicyError("E_NOT_VISIBLE", "not_visible")
+        basis = _checkpoint(self, row, access)
+        if row["subject"] != "episodic" or basis is None:
+            raise MemoryPolicyError("E_INPUT", "checkpoint_basis_required")
+        if int(row["artifact_version"]) != expected_basis["artifact_version"]:
+            raise VersionConflictError("checkpoint_basis_version")
+        if (
+            not isinstance(content, dict)
+            or content.get("kind") != "checkpoint"
+            or any(
+                content.get(key) != basis.get(key)
+                for key in ("project_id", "worktree_id", "task_id")
+            )
+        ):
+            raise MemoryPolicyError("E_INPUT", "checkpoint_basis_mismatch")
 
     def _event_replay_row(
         self, conn: sqlite3.Connection, stored: MemoryArtifact
@@ -5722,6 +5772,7 @@ class TypedArtifactStore:
         effect_id: str,
         request_digest: str,
         access: MemoryAccess,
+        result_check: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """D18 import apply into `access.storage_root`, in the order access
         recheck -> receipt replay -> binding (`E_INPUT`) -> revisions (`E_VERSION`)
@@ -5825,6 +5876,8 @@ class TypedArtifactStore:
                         for record, artifact in zip(prepared, artifacts, strict=True)
                     ],
                 }
+                if result_check is not None:
+                    result_check(result)
                 receipt = {
                     "invocation_id": invocation_id,
                     "effect_id": effect_id,

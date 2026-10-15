@@ -76,6 +76,39 @@ def test_manifest_rejects_unclassified_tracked_path(tmp_path: Path) -> None:
         classify_path("unknown_foreign_blob.bin")
 
 
+def test_manifest_excludes_local_tools_but_keeps_untracked_first_party(
+    tmp_path: Path,
+) -> None:
+    for directory in (
+        "repos",
+        "graphify-out",
+        ".playwright-mcp",
+        ".codex",
+        ".kiro",
+        ".impeccable",
+    ):
+        local = tmp_path / directory
+        local.mkdir()
+        (local / "local.bin").write_bytes(b"local tool state")
+    expected = {
+        "src/rush/dashboard/assets/new.svg": "source",
+        "tests/test_new.py": "test",
+    }
+    for path in expected:
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("new first-party file", encoding="utf-8")
+
+    manifest = build_manifest(tmp_path, revision="local-tools")
+    assert {
+        record.path: record.classification for record in manifest.records
+    } == expected
+
+    (tmp_path / "unknown_foreign_blob.bin").write_bytes(b"unclassified")
+    with pytest.raises(ValueError, match="Unclassified first-party path"):
+        build_manifest(tmp_path, revision="local-tools")
+
+
 @pytest.mark.parametrize("path", ["rush_entry.py", "rush.spec"])
 def test_pyinstaller_build_byproducts_are_classified_excluded(path: str) -> None:
     # CI's and release.yml's native-archive step writes these into the checkout root.

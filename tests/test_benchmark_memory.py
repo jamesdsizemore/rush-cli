@@ -6,7 +6,9 @@ import importlib
 import json
 import os
 from dataclasses import replace
+from itertools import count
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -968,6 +970,7 @@ def test_t08_frozen_corpus_literal(
 # --- R22 --------------------------------------------------------------------------------
 
 _FAKE_HELP = """Usage: fake [options]
+  -c, --config
   -p, --print
   --tools
   --output-format
@@ -978,6 +981,9 @@ _FAKE_HELP = """Usage: fake [options]
   --ephemeral
   --ignore-rules
   --ignore-user-config
+  --strict-config
+  --enable
+  --disable
   --json
   --sandbox
   --skip-git-repo-check
@@ -992,7 +998,7 @@ def _fake_provider_reply(args: list[str]) -> tuple[int, str]:
     if args and args[-1] == "--help":
         return 0, _FAKE_HELP
     if args == ["--version"]:
-        return 0, "fake 1.0\n"
+        return 0, "fake 0.162.1\n"
     prompt = args[-1]
     request, _end = json.JSONDecoder().raw_decode(prompt.split("\nREQUEST:\n", 1)[1])
     kind = request.get("decision_kind")
@@ -1114,6 +1120,12 @@ def test_t08_verdict_reachable_end_to_end(
     support = _t08_support()
     from rush.memory import embeddings
 
+    # This fixture tests verdict reachability, independent of host scheduling.
+    clock = count()
+    monkeypatch.setattr(
+        "scripts.benchmarks.run.time",
+        SimpleNamespace(perf_counter=lambda: next(clock) / 1000),
+    )
     vectors = {
         "oracle": support.oracle_vectors,
         "uniform": support.uniform_vectors,
@@ -1152,6 +1164,12 @@ def test_t08_verdict_reachable_end_to_end(
                 ]
             )
             assert rc == 0, (scenario, route, arm)
+            report = json.loads(
+                (eval_root / arm / route / "memory-suite-report.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            assert {round(row["case_ms"], 6) for row in report["verdict_rows"]} == {5.0}
     verdict = json.loads(
         (eval_root / "hybrid-verdict.json").read_text(encoding="utf-8")
     )

@@ -748,4 +748,286 @@ def _memory_listing(
     return {"grants": grants, "bindings": bindings}
 
 
-__all__ = ["AgentConnectionTool"]
+def project_continuation(
+    delivery: Any,
+    current_revision: Any,
+    expected_scope: Any,
+    source_sha256: Any,
+    capsule_digest: Any,
+    expected_effects: Any,
+    local_verification: Any = None,
+    stage_receipts: Any = None,
+    observed_host: Any = None,
+    now: Any = None,
+) -> dict[str, Any]:
+    """Project accepted current delivery and independently bound local/host receipts."""
+    import math
+    import time
+
+    def hex64(value: Any) -> bool:
+        return (
+            isinstance(value, str)
+            and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value)
+        )
+
+    if (
+        not isinstance(delivery, dict)
+        or not isinstance(current_revision, str)
+        or not current_revision
+        or not hex64(source_sha256)
+        or (capsule_digest is not None and not hex64(capsule_digest))
+        or not isinstance(expected_scope, dict)
+        or not isinstance(expected_effects, dict)
+        or set(expected_effects) != {"import", "bridge"}
+        or any(
+            value is not None and not hex64(value)
+            for value in expected_effects.values()
+        )
+    ):
+        raise ValueError("invalid continuation binding")
+    mode = delivery.get("mode")
+    if mode not in {"live", "offline_snapshot", "unavailable"}:
+        raise ValueError("invalid continuation mode")
+    data = delivery.get("data") or {}
+    if not isinstance(data, dict):  # schema errors share caller's ValueError envelope
+        raise ValueError("invalid continuation data")  # noqa: TRY004
+    raw = data
+    if mode == "unavailable" and raw:
+        raise ValueError("unavailable continuation content")
+    if mode != "unavailable" and raw.get("scope") != expected_scope:
+        raise ValueError("foreign continuation scope")
+    if mode == "offline_snapshot" and raw.get("capsule_digest") != capsule_digest:
+        raise ValueError("foreign continuation capsule")
+    if mode != "unavailable":
+        intent = raw.get("intent")
+        if (
+            not isinstance(intent, dict)
+            or set(intent) != {"task_id", "task_kind", "query"}
+            or intent["task_id"] != raw.get("task_id")
+            or intent["task_kind"] != raw.get("task_kind")
+            or intent["task_kind"] not in {"memory_continuation", "test_repair"}
+            or not isinstance(intent["query"], str)
+            or not intent["query"]
+            or not isinstance(raw.get("next_action"), dict)
+        ):
+            raise ValueError("invalid continuation intent")
+        states = (
+            {"no_verified_checkpoint", "invalid_checkpoint", "checkpoint_available"}
+            if mode == "live"
+            else {"unverified_snapshot", "limited_unverified_snapshot"}
+        )
+        if raw.get("progress_state") not in states:
+            raise ValueError("invalid continuation progress state")
+    records = raw.get("records") or []
+    if not isinstance(records, list) or any(
+        not isinstance(r, dict) or not isinstance(r.get("content", {}), dict)
+        for r in records
+    ):
+        raise ValueError("invalid continuation records")
+    task: Any = raw.get("task") or next(
+        (
+            r.get("content", {}).get("task", {})
+            for r in records
+            if r.get("content", {}).get("kind") == "imported_task"
+        ),
+        {},
+    )
+    task_fields = {
+        "description",
+        "objective",
+        "completed",
+        "remaining",
+        "next_action",
+        "constraints",
+        "decisions",
+        "failed_approaches",
+        "blockers",
+        "discoveries",
+        "last_verified_checkpoint",
+    }
+    if not isinstance(task, dict) or (task and set(task) != task_fields):
+        raise ValueError("invalid continuation task")
+    if mode == "live" and (
+        bool(task) != (raw.get("progress_state") == "checkpoint_available")
+    ):
+        raise ValueError("inconsistent continuation checkpoint state")
+    if mode == "offline_snapshot" and not task:
+        raise ValueError("missing snapshot task")
+    for key in (
+        "completed",
+        "remaining",
+        "constraints",
+        "decisions",
+        "failed_approaches",
+        "blockers",
+        "discoveries",
+    ):
+        if (
+            task
+            and not isinstance(task[key], list)
+            and not (
+                mode == "offline_snapshot"
+                and raw.get("progress_state") == "limited_unverified_snapshot"
+                and key == "failed_approaches"
+                and task[key] is None
+            )
+        ):
+            raise ValueError("invalid continuation task list")
+    verified = None
+    if local_verification is not None:
+        if (
+            not isinstance(local_verification, dict)
+            or set(local_verification) != {"scope", "check"}
+            or local_verification["scope"] != expected_scope
+        ):
+            raise ValueError("invalid local verification binding")
+        check = local_verification["check"]
+        if (
+            not isinstance(check, dict)
+            or set(check)
+            != {"command", "exit_code", "status", "source_revision", "receipt_id"}
+            or not isinstance(check["command"], list)
+            or not check["command"]
+            or any(not isinstance(s, str) or not s for s in check["command"])
+            or type(check["exit_code"]) is not int
+            or check["status"] not in {"passed", "failed"}
+            or not isinstance(check["receipt_id"], str)
+            or not check["receipt_id"]
+        ):
+            raise ValueError("invalid local verification receipt")
+        if (
+            check["status"] == "passed"
+            and check["exit_code"] == 0
+            and check["source_revision"] == current_revision
+        ):
+            verified = dict(check)
+    stages = {
+        "import": "not_requested",
+        "bridge": "not_requested",
+        "reread": "not_requested",
+    }
+    kinds = {
+        "import": "capsule_import",
+        "bridge": "capsule_bridge",
+        "reread": "host_reread",
+    }
+    allowed = {
+        "import": {"preview", "applied", "replayed"},
+        "bridge": {"preview", "written", "replayed"},
+        "reread": {"required", "observed"},
+    }
+    receipt_fields = {
+        "kind",
+        "state",
+        "receipt_id",
+        "source_revision",
+        "source_sha256",
+        "scope",
+        "capsule_digest",
+        "effect_id",
+        "host_id",
+        "host_version",
+        "instructions_sha256",
+    }
+    if stage_receipts is not None and not isinstance(stage_receipts, dict):
+        raise ValueError("invalid continuation stages")
+    for key, receipt in (stage_receipts or {}).items():
+        if (
+            key not in stages
+            or not isinstance(receipt, dict)
+            or set(receipt) != receipt_fields
+            or receipt["kind"] != kinds[key]
+            or receipt["state"] not in allowed[key]
+            or not isinstance(receipt["receipt_id"], str)
+            or not receipt["receipt_id"]
+            or receipt["source_revision"] != current_revision
+            or receipt["source_sha256"] != source_sha256
+            or receipt["scope"] != expected_scope
+            or capsule_digest is None
+            or receipt["capsule_digest"] != capsule_digest
+        ):
+            raise ValueError("invalid continuation stage binding")
+        effect = expected_effects["bridge" if key == "reread" else key]
+        if effect is None or receipt["effect_id"] != effect:
+            raise ValueError("foreign continuation effect")
+        if key != "reread":
+            if any(
+                receipt[k] is not None
+                for k in ("host_id", "host_version", "instructions_sha256")
+            ):
+                raise ValueError("host evidence on non-host stage")
+        elif receipt["state"] == "required":
+            if any(
+                receipt[k] is not None
+                for k in ("host_id", "host_version", "instructions_sha256")
+            ):
+                raise ValueError("unobserved host evidence")
+        else:
+            host_fields = {
+                "host_id",
+                "host_version",
+                "receipt_id",
+                "instructions_sha256",
+                "capsule_digest",
+                "effect_id",
+            }
+            if (
+                not isinstance(observed_host, dict)
+                or set(observed_host) != host_fields
+                or not all(
+                    isinstance(observed_host[k], str) and observed_host[k]
+                    for k in ("host_id", "host_version", "receipt_id")
+                )
+                or not hex64(observed_host["instructions_sha256"])
+                or any(receipt[k] != observed_host[k] for k in host_fields)
+                or observed_host["capsule_digest"] != capsule_digest
+                or observed_host["effect_id"] != effect
+            ):
+                raise ValueError("unobserved continuation reread")
+        stages[key] = receipt["state"]
+    if stages["reread"] == "observed" and stages["bridge"] not in {
+        "written",
+        "replayed",
+    }:
+        raise ValueError("reread without committed bridge")
+    clock = time.time() if now is None else now
+    created = raw.get("created_at")
+    if type(clock) not in (int, float) or not math.isfinite(clock):
+        raise ValueError("invalid continuation clock")
+    age = (
+        max(0, clock - created)
+        if isinstance(created, (int, float))
+        and not isinstance(created, bool)
+        and math.isfinite(created)
+        else None
+    )
+    return {
+        "task": task or None,
+        "intent": raw.get("intent"),
+        "checkpoint": raw.get("checkpoint"),
+        "progress_state": raw.get("progress_state"),
+        "unknown_fields": raw.get("unknown_fields", []),
+        "scope": raw.get("scope"),
+        "mode": mode,
+        "delivery_channel": delivery.get("channel"),
+        "locally_verified_progress": verified,
+        "claimed_progress": {
+            "authority": "imported_unverified",
+            "value": task.get("last_verified_checkpoint"),
+        }
+        if mode == "offline_snapshot"
+        else None,
+        "unresolved": task.get("remaining") if task else None,
+        "next_action": raw.get("next_action"),
+        "capsule": {
+            "digest": capsule_digest,
+            "age_seconds": age,
+            "freshness": raw.get("freshness", "unavailable"),
+        },
+        "stages": stages,
+        "recovery": delivery.get("recovery"),
+    }
+
+
+__all__ = ["AgentConnectionTool", "project_continuation"]

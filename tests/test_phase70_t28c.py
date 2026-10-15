@@ -610,8 +610,8 @@ def test_t28c_directory_grouping_does_not_change_build_project_map_totals() -> N
     """`total_nodes`/`total_edges` (the true full-graph counts, computed
     before any grouped-overview pagination) are identical whether the
     result stays flat (under the render limit) or is paginated into
-    `groups` (over it) -- directories/grouping never change the underlying
-    node/edge set, only how it is paged for presentation."""
+    `groups` (over it) -- grouping never changes the underlying node/edge
+    set, including directory nodes, only how it is paged for presentation."""
     small_snapshot = {
         "schema_version": 1,
         "project_id": "small",
@@ -636,9 +636,10 @@ def test_t28c_directory_grouping_does_not_change_build_project_map_totals() -> N
     assert grouped["groups"], (
         "250 files must exceed the render limit and page into groups"
     )
-    # 250 files + 1 project node = 251 real nodes, regardless of how the
-    # grouped presentation pages them.
-    assert grouped["total_nodes"] == 251
+    # 250 files + 250 directories + 1 project = 501 real nodes, regardless
+    # of how the grouped presentation pages them.
+    assert grouped["total_nodes"] == 501
+    assert grouped["total_edges"] == 500
 
 
 # ---------------------------------------------------------------------------
@@ -811,9 +812,15 @@ def test_t28c_map_reuses_build_project_map_mixed_nodes_and_edges() -> None:
     }
     graph = build_project_map(snapshot)
     kinds = {n["kind"] for n in graph["nodes"]}
-    assert kinds == {"project", "file", "finding", "memory", "agent"}
+    assert kinds == {"project", "directory", "file", "finding", "memory", "agent"}
     relations = {e["relation"] for e in graph["edges"]}
     assert relations == {"contains", "reports", "cites", "assigned_to"}
+    nodes_by_id = {node["id"]: node for node in graph["nodes"]}
+    assert {
+        (nodes_by_id[edge["source"]]["path"], nodes_by_id[edge["target"]]["path"])
+        for edge in graph["edges"]
+        if edge["relation"] == "contains"
+    } == {(None, "src"), ("src", "src/a.py")}
 
 
 def test_t28c_map_search_reaches_collapsed_nodes_guard() -> None:

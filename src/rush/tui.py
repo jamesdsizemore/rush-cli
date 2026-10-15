@@ -9362,6 +9362,7 @@ def run_interactive_tui(
     exception -- the `with` block's `finally` always runs, regardless of
     how the loop body exits."""
     import os
+    from contextlib import ExitStack
 
     from rich.live import Live
 
@@ -9370,7 +9371,6 @@ def run_interactive_tui(
     # only RUSH_REDUCED_MOTION controls whether this loop's idle refresh
     # heartbeat runs at all.
     reduced_motion = bool(os.environ.get("RUSH_REDUCED_MOTION"))
-    console = console or Console(no_color=bool(os.environ.get("NO_COLOR")))
     actions = actions or default_scan_actions()
     reader = key_reader or make_key_reader()
 
@@ -9422,20 +9422,22 @@ def run_interactive_tui(
     previous_sigint: Any = None
     if threading.current_thread() is threading.main_thread():
         previous_sigint = signal.signal(signal.SIGINT, lambda *_: sigint.set())
-    with raw_terminal():
-        live = (
-            Live(
-                render_app(state),
-                console=console,
-                screen=True,
-                auto_refresh=False,
-            )
-            if use_live
-            else None
-        )
-        if live is not None:
-            live.start()
+    with ExitStack() as cleanup:
+        if previous_sigint is not None:
+            cleanup.callback(signal.signal, signal.SIGINT, previous_sigint)
+        cleanup.enter_context(raw_terminal())
+        live = None
         try:
+            console = console or Console(no_color=bool(os.environ.get("NO_COLOR")))
+            live = (
+                Live(
+                    render_app(state), console=console, screen=True, auto_refresh=False
+                )
+                if use_live
+                else None
+            )
+            if live is not None:
+                live.start()
             while not state.should_quit:
                 if max_ticks is not None and ticks >= max_ticks:
                     break
@@ -9538,10 +9540,16 @@ def run_interactive_tui(
                 # A change still waiting for its slot is shown before exit.
                 live.update(render_app(state), refresh=True)
         finally:
-            if previous_sigint is not None:
-                signal.signal(signal.SIGINT, previous_sigint)
+            primary_error = sys.exception()
             if live is not None:
-                live.stop()
+                try:
+                    live.stop()
+                except BaseException as cleanup_error:
+                    if primary_error is None:
+                        raise
+                    primary_error.add_note(
+                        f"Live.stop failed: {type(cleanup_error).__name__}"
+                    )
 
     if exit_cause:
         print(exit_cause, file=sys.stderr)

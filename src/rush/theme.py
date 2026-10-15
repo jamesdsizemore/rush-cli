@@ -595,6 +595,19 @@ def _memory_inspection(result: Mapping[str, Any], c: Console) -> None:
     """expand (and the other single-record reads): the exact byte page with its
     reference, or the generic field listing when no page is present."""
     ui = _memory_state_lines(result, c)
+    if operation_key(result) == "bootstrap":
+        payload = _payload(result)
+        if not isinstance(payload, Mapping):
+            return
+        fields = ["intent", "progress_state", "next_action"]
+        if _memory_raw(result).get("code") == "OK":
+            fields.extend(("checkpoint", "task", "unresolved"))
+        for key in fields:
+            if payload.get(key) is not None:
+                c.print(
+                    _text(f"  {key}: {json.dumps(payload[key], ensure_ascii=False)}")
+                )
+        return
     items = _memory_raw(result).get("items")
     page: Mapping[str, Any] | None = None
     for candidate in (
@@ -872,6 +885,7 @@ _OPERATION_FAMILIES: dict[str, dict[str | None, str]] = {
         "last_success_diagnose": "memory_inspection",
         "preference": "memory_inspection",
         "capsule": "memory_inspection",
+        "bootstrap": "memory_inspection",
         "history": "memory_history",
         "explain": "memory_explain",
     },

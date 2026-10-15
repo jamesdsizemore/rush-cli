@@ -31,7 +31,7 @@ from .contracts import (
     Scenario,
     SourceEvidence,
 )
-from .fixtures import load_provider_routes, load_routers
+from .fixtures import FIXTURE_ROOT, load_provider_routes, load_routers
 
 
 def redact_text(text: str, patterns: list[str]) -> tuple[str, list[str]]:
@@ -684,12 +684,48 @@ def build_decision_prompt(request: dict[str, Any]) -> str:
     )
 
 
+_CODEX_DECISION_INSTRUCTIONS_SHA = (
+    "5b73465f7986c3d56a2c895523b3e8969e7eee5762ac0eeb1b5876e69a384df1"
+)
+_DECISION_INSTRUCTIONS_MARKER = "model_instructions_file={decision_instructions}"
+
+
+def _decision_instruction(route: DecisionRoute) -> tuple[Path, str] | None:
+    if not any(
+        _DECISION_INSTRUCTIONS_MARKER in values
+        for values in route.protocol["argv"].values()
+    ):
+        return None
+    if route.format != "codex_exec_jsonl":
+        raise ValueError("invalid decision instruction override")
+    path = FIXTURE_ROOT / "codex_decision_instructions.md"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != _CODEX_DECISION_INSTRUCTIONS_SHA:
+        raise ValueError("decision instructions changed")
+    return path, digest
+
+
 def decision_argv(decision_route: DecisionRoute, kind: str, prompt: str) -> list[str]:
-    return [
-        str(decision_route.executable),
-        *decision_route.protocol["argv"][kind],
-        prompt,
-    ]
+    args = list(decision_route.protocol["argv"][kind])
+    instruction = _decision_instruction(decision_route)
+    if _DECISION_INSTRUCTIONS_MARKER in args:
+        if instruction is None or args.count(_DECISION_INSTRUCTIONS_MARKER) != 1:
+            raise ValueError("invalid decision instruction override")
+        args[args.index(_DECISION_INSTRUCTIONS_MARKER)] = (
+            "model_instructions_file="
+            + json.dumps(str(instruction[0]), ensure_ascii=False)
+        )
+    return [str(decision_route.executable), *args, prompt]
+
+
+def decision_protocol_digest(route: DecisionRoute) -> tuple[str, str | None]:
+    instruction = _decision_instruction(route)
+    instruction_sha = instruction[1] if instruction is not None else None
+    descriptor = {"protocol": route.protocol, "instruction_sha256": instruction_sha}
+    data = json.dumps(
+        descriptor, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    return hashlib.sha256(data).hexdigest(), instruction_sha
 
 
 def _provider_ids(value: Any) -> list[str]:
@@ -1076,6 +1112,23 @@ def preflight_decision_route(
         "preflight": None,
     }
     workspace_root = Path(workspace_root)
+    report["decision_protocol_digest"], report["decision_instruction_sha256"] = (
+        decision_protocol_digest(decision_route)
+    )
+    report["decision_kind_protocol_digests"] = {
+        kind: hashlib.sha256(
+            json.dumps(
+                {
+                    "argv": argv,
+                    "instruction_sha256": report["decision_instruction_sha256"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        for kind, argv in decision_route.protocol["argv"].items()
+    }
     help_out = _probe_output(
         [exe, *protocol["help_args"]], workspace_root, decision_route.timeout_s, env
     )
@@ -1100,6 +1153,11 @@ def preflight_decision_route(
     if version_out is not None:
         lines = version_out[0].splitlines()
         report["version"] = lines[0].strip() if lines else ""
+    if _decision_instruction(decision_route) is not None and not re.search(
+        r"\b0\.162\.1\b", report["version"] or ""
+    ):
+        report["reason"] = "decision_instruction_runtime_unsupported"
+        return report
     root = workspace_root / "preflight"
     root.mkdir(parents=True, exist_ok=True)
     result = run_memory_decision(

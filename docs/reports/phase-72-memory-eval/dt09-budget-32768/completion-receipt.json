@@ -1,0 +1,197 @@
+{
+  "completed_at": "2026-10-15T02:23:19.764022+00:00",
+  "registration_sha256": "3bbbe900289173ab0c1d1730797491e508a4199f1a35f9905b63cb403e2ac1e8",
+  "claude_output_registration": ".scratch/phase72-final-acceptance/benchmark-budget/claude-output-registration.json",
+  "claude_output_registration_sha256": "f54194cd92d8c1a1ef2047da4b8395d8986ced2132a4c83431f91c9faa6683cc",
+  "source_freeze_receipt_sha256": "5a9387aca500c7383e603175fb94006e41e8e92e81b63976fa42175a5f0e7aae",
+  "checks": {
+    "all_six_exits_zero": true,
+    "case_seed_results": 522,
+    "phase72_verdict_rows": 432,
+    "same_case_seed_fixture_grants_acceptance": true,
+    "actual_cli_and_case_caps_match_registration": true,
+    "protocol_equal_across_arms_per_route": true,
+    "registered_subject_drift": [],
+    "human_instruction_sha256_unchanged": true,
+    "original_16k_unavailable_receipt_unchanged": true,
+    "reports_copied_without_byte_changes": true
+  },
+  "protocols": {
+    "openai-codex-oauth-cli-live": {
+      "decision_protocol_digest": "257c5fbb431363c0aa98b0bce91a615039237faa83a57751848ee24f343336fc",
+      "decision_instruction_sha256": "5b73465f7986c3d56a2c895523b3e8969e7eee5762ac0eeb1b5876e69a384df1",
+      "decision_kind_protocol_digests": {
+        "dataset_answer": "7d7b9a68e93be06b1265c542bd050ec6876c05e52e6df42a7ca94091eba7a399",
+        "episode": "d47c3d491964edb8848da36c041749bfa492f1d42b1434f50b2d43f71adf685b"
+      }
+    },
+    "anthropic-claude-code-live": {
+      "decision_protocol_digest": "152e79023b3ae4408d3aa9f56a22abf473113596633c69d4f1eef977966bd504",
+      "decision_instruction_sha256": null,
+      "decision_kind_protocol_digests": {
+        "dataset_answer": "d11b8383960ee75b7e3969bd1031f98944e8e32e79c8dd2282b34366a688e6fd",
+        "episode": "6540818f8aa26c43cd18c8d8c01798b60efdfdb533df5299874a266e84b2345f"
+      }
+    }
+  },
+  "runs": [
+    {
+      "arm": "current",
+      "route": "openai-codex-oauth-cli-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/current/openai-codex-oauth-cli-live/memory-suite-report.json",
+      "sha256": "7e27c06f6295062dac43f969b3f21ba1166688f3457ee20d89ca5b66d54bd975",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 39,
+      "phase72_passed": 36,
+      "failed_by_reason": {
+        "evaluator_failed": 39,
+        "unknown_decision_field": 3,
+        "max_steps_exhausted": 6
+      },
+      "route_overhead_tokens": 14008,
+      "version": "codex-cli 0.162.1",
+      "model_tokens_cases": 2531885,
+      "model_tokens_preflight": 14008,
+      "provider_duration_ms": 1145258,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    },
+    {
+      "arm": "current",
+      "route": "anthropic-claude-code-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/current/anthropic-claude-code-live/memory-suite-report.json",
+      "sha256": "e73487e8fe5a910c8bd9aec16e7742e78bbd8861d1ceb97fc8daf26e908aa547",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 42,
+      "phase72_passed": 36,
+      "failed_by_reason": {
+        "unknown_decision_field": 3,
+        "evaluator_failed": 42
+      },
+      "route_overhead_tokens": 2306,
+      "version": "2.1.300 (Claude Code)",
+      "model_tokens_cases": 566927,
+      "model_tokens_preflight": 2306,
+      "provider_duration_ms": 671729,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    },
+    {
+      "arm": "hybrid",
+      "route": "openai-codex-oauth-cli-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/hybrid/openai-codex-oauth-cli-live/memory-suite-report.json",
+      "sha256": "b7571f8b344358574417aa2aec950e913c26e984888699b0f3e9a23046fc95a0",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 72,
+      "phase72_passed": 69,
+      "failed_by_reason": {
+        "evaluator_failed": 6,
+        "unknown_decision_field": 3,
+        "max_steps_exhausted": 6
+      },
+      "route_overhead_tokens": 14010,
+      "version": "codex-cli 0.162.1",
+      "model_tokens_cases": 2491757,
+      "model_tokens_preflight": 14010,
+      "provider_duration_ms": 1097320,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    },
+    {
+      "arm": "hybrid",
+      "route": "anthropic-claude-code-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/hybrid/anthropic-claude-code-live/memory-suite-report.json",
+      "sha256": "7f73e0de94497cf0f4792c7d3b6ea5013b8bedd3d3f0e91b43f1b5cae1c0f87f",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 78,
+      "phase72_passed": 72,
+      "failed_by_reason": {
+        "unknown_decision_field": 3,
+        "evaluator_failed": 6
+      },
+      "route_overhead_tokens": 2306,
+      "version": "2.1.300 (Claude Code)",
+      "model_tokens_cases": 574289,
+      "model_tokens_preflight": 2306,
+      "provider_duration_ms": 614351,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    },
+    {
+      "arm": "metadata",
+      "route": "openai-codex-oauth-cli-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/metadata/openai-codex-oauth-cli-live/memory-suite-report.json",
+      "sha256": "7bbd9d5270b7531d1560335a2c9c95b0de49236a9745529c371b58e26a7de87d",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 27,
+      "phase72_passed": 24,
+      "failed_by_reason": {
+        "evaluator_failed": 50,
+        "unknown_decision_field": 3,
+        "max_steps_exhausted": 6,
+        "provider_error": 1
+      },
+      "route_overhead_tokens": 14006,
+      "version": "codex-cli 0.162.1",
+      "model_tokens_cases": 2449643,
+      "model_tokens_preflight": 14006,
+      "provider_duration_ms": 1151707,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    },
+    {
+      "arm": "metadata",
+      "route": "anthropic-claude-code-live",
+      "exit_code": 0,
+      "report": "docs/reports/phase-72-memory-eval/dt09-budget-32768/metadata/anthropic-claude-code-live/memory-suite-report.json",
+      "sha256": "297606acb5361168914e59302e2b8e15e4c88eb34b4752d54b83d6b593b26f99",
+      "case_results": 87,
+      "phase72_rows": 72,
+      "total_passed": 30,
+      "phase72_passed": 24,
+      "failed_by_reason": {
+        "unknown_decision_field": 3,
+        "evaluator_failed": 54
+      },
+      "route_overhead_tokens": 2306,
+      "version": "2.1.300 (Claude Code)",
+      "model_tokens_cases": 637816,
+      "model_tokens_preflight": 2306,
+      "provider_duration_ms": 710523,
+      "python": {
+        "executable": "~/Developer/rush-cli/.venv/bin/python",
+        "version": "3.12.12 (main, Feb  4 2026, 01:57:59) [Clang 21.1.4 ]"
+      }
+    }
+  ],
+  "verdict_path": "docs/reports/phase-72-memory-eval/dt09-budget-32768/hybrid-verdict.json",
+  "verdict_sha256": "32eb82ecb9a09889b84d0205458190d57046e75abed1815ce862d44057c9a814",
+  "total_model_tokens_including_six_preflights": 9301259,
+  "raw_log_root": ".scratch/phase72-final-acceptance/benchmark-budget",
+  "limitations": [
+    "Bundled fixed29-case corpus, not full external datasets.",
+    "Repetition labels are not provider RNG seeds.",
+    "Three concurrent arms share host/provider resources; latency includes contention.",
+    "Baseline episode and provider failures retained; no outcome-based retries or cap tuning."
+  ]
+}

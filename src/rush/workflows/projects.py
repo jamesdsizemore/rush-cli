@@ -69,6 +69,8 @@ from rush.review.collection import SKIP_DIRS
 from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup.provision import default_data_root
 from rush.token_economy.telemetry import (
+    memory_frame_usage,
+    read_memory_frame_receipts_readonly,
     read_summary_readonly,
 )
 from rush.tools.routing import detect_project_languages
@@ -2360,6 +2362,9 @@ def _read_root_token_usage(
     telemetry_error: str | None = None
     try:
         recorded = _readonly_memory_event_totals(root, filters, access=access)
+        frame_usage = memory_frame_usage(
+            read_memory_frame_receipts_readonly(root, access=access, **filters)
+        )
         avoided = read_summary_readonly(root, **filters)
         unscoped_telemetry, telemetry_times = _readonly_telemetry_scope(
             root, filters, identity_keys, access=access
@@ -2368,6 +2373,13 @@ def _read_root_token_usage(
     except (MemoryStoreUnreadableError, sqlite3.DatabaseError) as exc:
         telemetry_error = f"token telemetry unreadable: {exc}"
         recorded = {}
+        frame_usage = {
+            "available": False,
+            "by_count_basis": {},
+            "unmeasured_events": None,
+            "invalid_events": None,
+            "reason": telemetry_error,
+        }
         unscoped_telemetry = 0
         avoided = {
             "events_count": 0,
@@ -2395,6 +2407,7 @@ def _read_root_token_usage(
     cache_hits: dict[str, Any] = {
         "total_tokens": sum(cache_by_kind.values()),
         "by_kind": cache_by_kind,
+        "count_basis": None,
     }
     if telemetry_error is not None:
         cache_hits.update(available=False, reason=telemetry_error)
@@ -2410,6 +2423,7 @@ def _read_root_token_usage(
         unscoped["reason"] = telemetry_error
     usage: dict[str, Any] = {
         "provider_reported": provider,
+        "memory_frame_usage": frame_usage,
         "tokenizer_counted": {
             "total_tokens": tokenizer_total,
             "packet_count": tokenizer_packets,

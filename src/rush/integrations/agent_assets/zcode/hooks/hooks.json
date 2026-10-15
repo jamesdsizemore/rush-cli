@@ -1,0 +1,10 @@
+{
+  "description": "Rush continuity. Requires an enabled plugin and a new ZCode session.",
+  "hooks": {
+    "SessionStart": [{"matcher": "startup|clear|compact", "hooks": [{"type": "process", "command": "@RUSH_BINARY@", "args": ["agent", "hook", "zcode", "--event", "SessionStart"], "timeoutMs": 5000}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "process", "command": "@RUSH_BINARY@", "args": ["agent", "hook", "zcode", "--event", "UserPromptSubmit"], "timeoutMs": 5000}]}],
+    "PostToolUse": [{"hooks": [{"type": "process", "command": "@RUSH_BINARY@", "args": ["agent", "hook", "zcode", "--event", "PostToolUse"], "timeoutMs": 5000}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "process", "command": "@RUSH_BINARY@", "args": ["agent", "hook", "zcode", "--event", "PostToolUseFailure"], "timeoutMs": 5000}]}],
+    "Stop": [{"hooks": [{"type": "process", "command": "@RUSH_BINARY@", "args": ["agent", "hook", "zcode", "--event", "Stop"], "timeoutMs": 10000}]}]
+  }
+}

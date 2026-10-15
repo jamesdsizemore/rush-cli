@@ -384,6 +384,20 @@ def test_t01_skill_is_guidance_only_without_secrets_or_memory_text() -> None:
     strings."""
     from rush.safety.redactor import sanitize_value
 
+    for candidate in (
+        "worktree_id",
+        "worktree_42",
+        "`worktree_42`",
+        "worktree_id_secret",
+        "`worktree_id_secret`",
+        "worktree_id-secret",
+        "`worktree_id-secret`",
+    ):
+        assert any(
+            pattern.search(candidate.replace("`worktree_id`", ""))
+            for pattern in _PROJECT_OR_MEMORY_PATTERNS
+        ), candidate
+
     login = getpass.getuser().lower()
     assets = importlib.resources.files("rush.integrations")
     for resource in _SERVED_SKILL_COPIES:
@@ -392,7 +406,8 @@ def test_t01_skill_is_guidance_only_without_secrets_or_memory_text() -> None:
         assert sanitized.value == text, resource
         assert not sanitized.redacted, resource
         for pattern in _PROJECT_OR_MEMORY_PATTERNS:
-            match = pattern.search(text)
+            # This exact backticked scope key names public schema.
+            match = pattern.search(text.replace("`worktree_id`", ""))
             assert match is None, (resource, pattern.pattern, match and match.group())
         # The login alone can be an ordinary word (CI's is "runner"); what
         # would identify this machine is a home path that names it.

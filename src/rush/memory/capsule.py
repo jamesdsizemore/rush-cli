@@ -457,6 +457,11 @@ class _Request:
     sources: tuple[str, ...] | None
     include_personal: bool
     legacy: bool = False
+    instructions: str | None = None
+    apply: bool = False
+    frame_bytes: retrieval.FrameBytes | None = None
+    access: MemoryAccess | None = None
+    cache_write: bool = False
 
     def selectors(self) -> dict[str, Any]:
         """The normalized selectors (sorted sources, `include_personal` default
@@ -523,21 +528,19 @@ def _validate_request(request: object, transport: str) -> _Request:
     action = request.get("action")
     if not isinstance(action, str) or action not in _ACTIONS:
         raise _bad("action", "action must be one of " + ", ".join(_ACTIONS))
-    if action == "bridge":
-        raise _Fail(
-            "E_INPUT",
-            "bridge_not_available",
-            field="action",
-            message="memory capsule bridge is not available in this release",
-        )
     fmt = request.get("format", "rush_v1")
     if not isinstance(fmt, str) or fmt not in _FORMATS:
         raise _bad("format", "format must be rush_v1 or pas_v1")
     export = action in _EXPORT_ACTIONS
-    final = action in ("export", "import")
+    final = action in ("export", "import") or (
+        action == "bridge" and request.get("apply") is True
+    )
 
     input_path = _path_field(request, "input")
     output_path = _path_field(request, "output")
+    instructions = _path_field(request, "instructions")
+    if action != "bridge" and "instructions" in request:
+        raise _bad("instructions", "instructions applies only to bridge")
     max_bytes = _budget_field(request, "max_bytes", DEFAULT_MAX_BYTES, HARD_MAX_BYTES)
     max_tokens = _budget_field(
         request, "max_tokens", DEFAULT_MAX_TOKENS, HARD_MAX_TOKENS
@@ -654,8 +657,14 @@ def _validate_request(request: object, transport: str) -> _Request:
         if action == "import":
             if request.get("apply") is not True:
                 raise _bad("apply", "import requires apply: true")
-        elif "apply" in request:
+        elif action != "bridge" and "apply" in request:
             raise _bad("apply", "preview_import does not take apply")
+    if action == "bridge":
+        if instructions is None:
+            raise _bad("instructions", "bridge requires instructions")
+        for key in ("expected_store_revision", "confirm_constraint_ids"):
+            if key in request:
+                raise _bad(key, f"bridge does not take {key}")
     if final:
         if invocation_id is None:
             raise _bad("invocation_id", f"{action} requires the preview invocation_id")
@@ -686,6 +695,8 @@ def _validate_request(request: object, transport: str) -> _Request:
         owner=owner,
         sources=sources,
         include_personal=include_personal,
+        instructions=instructions,
+        apply=request.get("apply", False),
     )
 
 
@@ -698,19 +709,30 @@ def run_capsule(
     *,
     permissions: ExecutionPermissions,
     transport: Literal["cli", "mcp"] = "cli",
+    frame_bytes: retrieval.FrameBytes | None = None,
 ) -> dict[str, Any]:
     """Run one capsule action. Returns `{"code": C, **data}` or `{"skipped": True,
     "action": A, "missing": [...]}`; request, file and policy faults are results."""
     try:
-        return _run(Path(root), request, permissions, transport)
+        return _run(Path(root), request, permissions, transport, frame_bytes)
     except _Fail as fail:
         return fail.result()
 
 
 def _run(
-    root: Path, request: object, permissions: ExecutionPermissions, transport: str
+    root: Path,
+    request: object,
+    permissions: ExecutionPermissions,
+    transport: str,
+    frame_bytes: retrieval.FrameBytes | None = None,
 ) -> dict[str, Any]:
     req = _validate_request(request, transport)
+    req.frame_bytes = frame_bytes
+    admission = _capsule_admission(req)
+    if admission is not None:
+        return admission
+    req.cache_write = permissions.cache_write
+    req.invocation_id = req.invocation_id or _new_uuid()
     if req.action in _IMPORT_ACTIONS and transport == "mcp" and req.confirm:
         raise _Fail(
             "E_PERMISSION",
@@ -724,6 +746,8 @@ def _run(
         "export": ExecutionPermissions(artifact_write=True),
         "import": ExecutionPermissions(cache_write=True),
     }.get(req.action)
+    if req.action == "bridge" and req.apply:
+        needed = ExecutionPermissions(artifact_write=True)
     if needed is not None:
         satisfied, missing = check_permissions(needed, permissions)
         if not satisfied:
@@ -733,8 +757,13 @@ def _run(
         raise _Fail("E_PERMISSION", reason or "policy_invalid", denial=True)
     req.legacy = mode == "legacy"
     if req.action in _EXPORT_ACTIONS:
-        return _export(root, req, transport)
-    return _import(root, req, transport)
+        result = _export(root, req, transport)
+    elif req.action == "bridge":
+        result = _bridge(root, req, transport)
+    else:
+        result = _import(root, req, transport)
+    _check_response_budget(req, result)
+    return result
 
 
 # --- access ---------------------------------------------------------------------
@@ -1446,17 +1475,102 @@ def _tokens(text: str) -> int:
 
 
 def _check_budget(req: _Request, required: dict[str, int], reason: str) -> None:
-    limits = {"max_bytes": req.max_bytes, "max_tokens": req.max_tokens}
     if required["bytes"] > min(req.max_bytes, HARD_MAX_BYTES) or required[
         "tokens"
     ] > min(req.max_tokens, HARD_MAX_TOKENS):
-        raise _Fail(
-            "E_BUDGET",
-            reason,
-            message="the content needs more than the allowed bytes or tokens",
-            required=required,
-            limits=limits,
+        raise _budget_failure(req, "E_BUDGET", reason, required)
+
+
+def _budget_failure(
+    req: _Request,
+    code: str,
+    reason: str,
+    required: dict[str, int],
+    *,
+    admission_failure: bool = False,
+) -> _Fail:
+    if code == "E_BUDGET" and not admission_failure:
+        _stage_budget_failure(req)
+    return _Fail(
+        code,
+        reason,
+        message="Approve required limits and retry the same complete content.",
+        required=required,
+        limits={"max_bytes": req.max_bytes, "max_tokens": req.max_tokens},
+        admission_failure=admission_failure,
+    )
+
+
+def _stage_budget_failure(req: _Request) -> None:
+    from rush.delivery import compact
+    from rush.token_economy.telemetry import TelemetryStore
+
+    access = req.access
+    if access is None or not req.cache_write or compact.RECEIPT_FRAME.get() is None:
+        return
+    retrieval._record_memory_event(
+        lambda: TelemetryStore(access.storage_root),
+        "retrieval",
+        0,
+        request_id=req.invocation_id,
+        event_id="capsule-budget",
+        invocation_id=req.invocation_id,
+        project_id=access.project_id,
+        opt_in=False,
+        cache_write=True,
+        access=access,
+    )
+
+
+def _capsule_admission(req: _Request) -> dict[str, Any] | None:
+    """C05: reserve complete numeric recovery before policy/input/target reads."""
+
+    def floor(code: str, _data: dict[str, Any]) -> bytes:
+        result = _budget_failure(
+            req,
+            code,
+            "budget_below_minimum",
+            {"bytes": _SQLITE_MAX, "tokens": _SQLITE_MAX},
+            admission_failure=False,
+        ).result()
+        result["limits"] = {"max_bytes": _SQLITE_MAX, "max_tokens": _SQLITE_MAX}
+        data = {key: value for key, value in result.items() if key != "code"}
+        return (
+            req.frame_bytes(code, data)
+            if req.frame_bytes is not None
+            else canonical_json(result)
         )
+
+    refused = retrieval.recall_admission(
+        limit=1,
+        max_bytes=req.max_bytes,
+        max_tokens=req.max_tokens,
+        encoding=retrieval.DEFAULT_ENCODING,
+        frame_bytes=floor,
+    )
+    if refused is None:
+        return None
+    minimum = refused["required"]
+    return _budget_failure(
+        req,
+        "E_INPUT",
+        "budget_below_minimum",
+        {"bytes": minimum["max_bytes"], "tokens": minimum["max_tokens"]},
+        admission_failure=True,
+    ).result()
+
+
+def _check_response_budget(req: _Request, result: dict[str, Any]) -> None:
+    """Count the real success wrapper before a write, never trim mandatory data."""
+    if req.frame_bytes is None:
+        return
+    data = {key: value for key, value in result.items() if key != "code"}
+    raw = req.frame_bytes(str(result["code"]), data)
+    _check_budget(
+        req,
+        {"bytes": len(raw), "tokens": _tokens(raw.decode("utf-8"))},
+        "response_blocked",
+    )
 
 
 # --- export targets -------------------------------------------------------------
@@ -1687,6 +1801,7 @@ def _export(root: Path, req: _Request, transport: str) -> dict[str, Any]:
     access = _resolve(
         root, req.action, owner=req.owner, sources=req.sources, legacy=req.legacy
     )
+    req.access = access
     overlay = _resolve_overlay(root) if req.include_personal else None
     if req.action == "preview_export":
         canonical = _target_rules(root, out, req.fmt, transport, absence=True)
@@ -1795,6 +1910,9 @@ def _publish_export(
     _recheck(access, overlay)
     receipt = _receipt(
         req, out, built.doc, built.required["bytes"], effect["effect_id"]
+    )
+    _check_response_budget(
+        req, {"code": "OK", "action": "export", **receipt, "replayed": False}
     )
     if req.fmt == "rush_v1":
         path, _data, checked = built.files[0]
@@ -2518,7 +2636,12 @@ def _parse_pas(data: bytes) -> dict[str, Any]:
             ):
                 raise _Invalid("PAS file")
             _pas_status(entry["status"])
-    return {"id": session_id, "project_name": value["project_name"], "task": task}
+    return {
+        "id": session_id,
+        "project_name": value["project_name"],
+        "task": task,
+        "created_at": _pas_time_seconds(value["created_at"]),
+    }
 
 
 # --- import -----------------------------------------------------------------------
@@ -2532,6 +2655,620 @@ class _Input:
     origin: tuple[str, str] | None
     required: dict[str, int]
     extra: dict[str, Any]
+    created_at: float | None = None
+
+
+def _replace_capsule_bridge_block(
+    original: bytes, metadata: dict[str, object]
+) -> bytes:
+    import json
+
+    begin, end = b"<!-- rush:capsule:begin -->", b"<!-- rush:capsule:end -->"
+
+    def conflict(message: str) -> _Fail:
+        return _Fail(
+            "E_INPUT",
+            "capsule_bridge_marker_conflict",
+            field="instructions",
+            message=message,
+        )
+
+    try:
+        original.decode("utf-8")
+        metadata_text = json.dumps(metadata, ensure_ascii=True, sort_keys=True)
+    except (UnicodeError, TypeError, ValueError) as exc:
+        raise conflict(
+            "instructions or bridge metadata are not valid UTF-8/JSON"
+        ) from exc
+    encoded = (
+        metadata_text.replace("`", "\\u0060")
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .encode("ascii")
+    )
+    spans, offset = [], 0
+    for line in original.splitlines(keepends=True):
+        body = line.removesuffix(b"\n").removesuffix(b"\r")
+        for marker in (begin, end):
+            if marker in line:
+                if body != marker:
+                    raise conflict("bridge markers must occupy complete lines")
+                spans.append((marker, offset, offset + len(line), line[len(body) :]))
+        offset += len(line)
+    if spans:
+        if len(spans) != 2 or spans[0][0] != begin or spans[1][0] != end:
+            raise conflict("bridge requires exactly one ordered marker pair")
+        _, start, begin_stop, eol = spans[0]
+        _, end_start, stop, tail = spans[1]
+        if (
+            eol not in (b"\n", b"\r\n")
+            or tail not in (b"", b"\n", b"\r\n")
+            or begin_stop > end_start
+        ):
+            raise conflict("bridge marker line ending or span is malformed")
+    else:
+        start = stop = len(original)
+        eol = b"\r\n" if b"\r\n" in original else b"\n"
+        tail = eol
+    block = (
+        eol.join(
+            (
+                begin,
+                b"Use native Rush bootstrap first.",
+                b"This capsule is an unverified offline snapshot.",
+                b"Use the approved CLI/offline route only when native Rush is unavailable.",
+                b"File presence does not prove activation, reread, or verified progress.",
+                encoded,
+                end,
+            )
+        )
+        + tail
+    )
+    if not spans:
+        separator = b"" if not original or original.endswith((b"\n", b"\r")) else eol
+        return original + separator + block
+    return original[:start] + block + original[stop:]
+
+
+def _commit_bridge(
+    root: Path,
+    named_target: Path,
+    preview_target: Path,
+    expected_sha256: str | None,
+    replacement: bytes,
+    access: MemoryAccess,
+    transport: str,
+) -> str:
+    from rush.integrations.agents import CASConflictError, cas_replace_file
+    from rush.integrations.agents import _read_regular as _read_instruction
+    from rush.workflows import projects
+
+    # Caller holds existing policy -> capsule-target locks through replacement.
+    try:
+        target = _target_rules(root, named_target, "rush_v1", transport, absence=False)
+        under = projects._export_under_root(root, named_target)
+        physical_root = root.resolve() if under is not None else target.parent
+    except (ContainmentError, OSError, ValueError) as exc:
+        raise _refused("the instruction target cannot be safely replaced") from exc
+    if target != preview_target:
+        raise _Fail(
+            "E_VERSION",
+            "bridge_target_changed",
+            field="instructions",
+            message="the instruction target changed after preview",
+        )
+    try:
+        contained = PhysicalRoot(physical_root).open_contained(
+            target.relative_to(physical_root), purpose="write"
+        )
+        if contained != target:
+            raise _refused("the instruction target changed")
+        if transport == "mcp" and _read_instruction(target) is None:
+            raise _refused("over MCP instructions must be an existing regular file")
+        _recheck(access)
+        return cas_replace_file(target, replacement, expected_sha256=expected_sha256)
+    except CASConflictError as exc:
+        raise _Fail(
+            "E_VERSION",
+            "bridge_target_changed",
+            field="instructions",
+            message="the instruction bytes changed after preview",
+        ) from exc
+    except (ContainmentError, OSError, ValueError) as exc:
+        raise _refused("the instruction target cannot be safely replaced") from exc
+
+
+def _bridge_outside(data: bytes) -> bytes:
+    begin, end = b"<!-- rush:capsule:begin -->", b"<!-- rush:capsule:end -->"
+    positions, offset = [], 0
+    for line in data.splitlines(keepends=True):
+        body = line.removesuffix(b"\n").removesuffix(b"\r")
+        if body in (begin, end):
+            positions.append((body, offset, offset + len(line)))
+        offset += len(line)
+    if not positions:
+        return data
+    if len(positions) != 2 or positions[0][0] != begin or positions[1][0] != end:
+        raise _Fail("E_INPUT", "capsule_bridge_marker_conflict")
+    return data[: positions[0][1]] + data[positions[1][2] :]
+
+
+def _bridge_preview(
+    req: _Request,
+    target: Path,
+    original: bytes | None,
+    semantic_metadata: dict[str, Any],
+    authority: dict[str, Any],
+) -> dict[str, Any]:
+    if "bridge_effect" in semantic_metadata or "after_sha256" in semantic_metadata:
+        raise _bad("metadata", "derived effect/hash cannot enter semantic metadata")
+    semantic = dict(semantic_metadata)
+    # Rendering this temporary semantic-only block validates original marker grammar;
+    # its outside bytes do not depend on any digest added inside the marked block.
+    before_sha = None if original is None else _sha(original)
+    original = b"" if original is None else original
+    candidate = _replace_capsule_bridge_block(original, semantic)
+    semantic["outside_sha256"] = _sha(_bridge_outside(candidate))
+    invocation = req.invocation_id or _new_uuid()
+    basis = {
+        "action": "bridge",
+        "format": req.fmt,
+        "invocation_id": invocation,
+        "target": str(target),
+        "target_before_sha256": before_sha,
+        "semantic_metadata_sha256": _digest(semantic),
+        "authority": authority,
+        "limits": {"max_bytes": req.max_bytes, "max_tokens": req.max_tokens},
+    }
+    preview = _digest(basis)
+    effect_id = _effect_id(invocation, "bridge", str(target))
+    request_basis = {
+        "action": "bridge",
+        "format": req.fmt,
+        "invocation_id": invocation,
+        "effect_id": effect_id,
+        "target": str(target),
+        "expected_digest": preview,
+        "semantic_metadata_sha256": _digest(semantic),
+        "limits": basis["limits"],
+    }
+    effect = {
+        "invocation_id": invocation,
+        "effect_id": effect_id,
+        "request_digest": _digest(request_basis),
+        "preview_digest": preview,
+        "target_before_sha256": basis["target_before_sha256"],
+    }
+    metadata = {**semantic, "bridge_effect": effect}
+    replacement = _replace_capsule_bridge_block(original, metadata)
+    required = {
+        "bytes": len(replacement),
+        "tokens": _tokens(replacement.decode("utf-8")),
+    }
+    _check_budget(req, required, "bridge_blocked")
+    return {
+        "basis": basis,
+        "semantic_metadata": semantic,
+        "metadata": metadata,
+        "replacement": replacement,
+        "digest": preview,
+        "effect": effect,
+        "after_sha256": _sha(replacement),
+        "required": required,
+    }
+
+
+def _bridge_replay(
+    req: _Request,
+    target: Path,
+    current: bytes,
+    stored_metadata: dict[str, Any],
+    semantic_metadata: dict[str, Any],
+    access: MemoryAccess,
+    authority: dict[str, Any],
+) -> dict[str, Any] | None:
+    _recheck(access)  # active current grant required even for original-effect replay
+    effect = stored_metadata.get("bridge_effect")
+    if not isinstance(effect, dict) or set(effect) != {
+        "invocation_id",
+        "effect_id",
+        "request_digest",
+        "preview_digest",
+        "target_before_sha256",
+    }:
+        return None
+    if (
+        not _uuid(effect["invocation_id"])
+        or not all(
+            _hex64(effect[k]) for k in ("effect_id", "request_digest", "preview_digest")
+        )
+        or (
+            effect["target_before_sha256"] is not None
+            and not _hex64(effect["target_before_sha256"])
+        )
+    ):
+        raise _Fail("E_VERSION", "effect_digest_conflict")
+    assert req.invocation_id is not None
+    expected_effect = _effect_id(req.invocation_id, "bridge", str(target))
+    if effect["effect_id"] != expected_effect:
+        return None
+    semantic = dict(semantic_metadata)
+    semantic["outside_sha256"] = _sha(_bridge_outside(current))
+    current_preview = _digest(
+        {
+            "action": "bridge",
+            "format": req.fmt,
+            "invocation_id": effect["invocation_id"],
+            "target": str(target),
+            "target_before_sha256": effect["target_before_sha256"],
+            "semantic_metadata_sha256": _digest(semantic),
+            "authority": authority,
+            "limits": {"max_bytes": req.max_bytes, "max_tokens": req.max_tokens},
+        }
+    )
+    if current_preview != effect["preview_digest"]:
+        raise _Fail("E_VERSION", "effect_digest_conflict")
+    expected_request = _digest(
+        {
+            "action": "bridge",
+            "format": req.fmt,
+            "invocation_id": req.invocation_id,
+            "effect_id": expected_effect,
+            "target": str(target),
+            "expected_digest": req.expected_digest,
+            "semantic_metadata_sha256": _digest(semantic),
+            "limits": {"max_bytes": req.max_bytes, "max_tokens": req.max_tokens},
+        }
+    )
+    if (
+        effect["invocation_id"] != req.invocation_id
+        or effect["preview_digest"] != req.expected_digest
+        or effect["request_digest"] != expected_request
+    ):
+        raise _Fail("E_VERSION", "effect_digest_conflict")
+    expected = _replace_capsule_bridge_block(
+        current, {**semantic, "bridge_effect": effect}
+    )
+    if expected != current:
+        raise _Fail("E_VERSION", "bridge_target_changed")
+    return {
+        "code": "OK",
+        "action": "bridge",
+        "stage": "replayed",
+        "replayed": True,
+        "invocation_id": effect["invocation_id"],
+        "effect_id": effect["effect_id"],
+        "preview_digest": effect["preview_digest"],
+        "before_sha256": effect["target_before_sha256"],
+        "after_sha256": _sha(current),
+        "mode": "offline_snapshot",
+        "reread": {"state": "required", "action": semantic["reread_action"]},
+    }
+
+
+def _read_bridge_metadata(data: bytes) -> dict[str, Any] | None:
+    # Same renderer grammar rejects embedded/nested/duplicate/reversed markers.
+    _replace_capsule_bridge_block(data, {})
+    begin, end = b"<!-- rush:capsule:begin -->", b"<!-- rush:capsule:end -->"
+    bodies = [
+        line.removesuffix(b"\n").removesuffix(b"\r")
+        for line in data.splitlines(keepends=True)
+    ]
+    if begin not in bodies:
+        return None
+    start, stop = bodies.index(begin), bodies.index(end)
+    lines = [line for line in bodies[start + 1 : stop] if line.startswith(b"{")]
+    if not lines and not any(line.strip() for line in bodies[start + 1 : stop]):
+        return None
+    if len(lines) != 1:
+        raise _bad("instructions", "bridge requires exactly one metadata object")
+    try:
+        metadata = _strict_loads(lines[0])
+    except _Invalid as exc:
+        raise _bad("instructions", "bridge metadata is not strict JSON") from exc
+    fields = {
+        "capsule_path",
+        "capsule_digest",
+        "input_sha256",
+        "source_revision",
+        "mode",
+        "reread_action",
+        "outside_sha256",
+        "bridge_effect",
+    }
+    if not isinstance(metadata, dict) or set(metadata) != fields:
+        raise _bad("instructions", "bridge metadata fields differ")
+    if (
+        metadata["mode"] != "offline_snapshot"
+        or not all(
+            _hex64(metadata[k])
+            for k in ("capsule_digest", "input_sha256", "outside_sha256")
+        )
+        or not isinstance(metadata["capsule_path"], str)
+        or not (
+            metadata["source_revision"] is None
+            or isinstance(metadata["source_revision"], str)
+        )
+        or not isinstance(metadata["reread_action"], str)
+        or not isinstance(metadata["bridge_effect"], dict)
+        or set(metadata["bridge_effect"])
+        != {
+            "invocation_id",
+            "effect_id",
+            "request_digest",
+            "preview_digest",
+            "target_before_sha256",
+        }
+    ):
+        raise _bad("instructions", "bridge metadata values differ")
+    return metadata
+
+
+def _bridge(root: Path, req: _Request, transport: str) -> dict[str, Any]:
+    from rush.integrations.agents import CASConflictError
+    from rush.integrations.agents import _read_regular as _read_instruction
+
+    # _run already checked explicit artifact_write for apply; preview is read-only.
+    assert req.instructions is not None and req.input is not None
+    input_path = req.input
+    inp = _read_input(root, req, transport)
+    owner, _ = _origin_owner(root, req, inp.origin)
+    access = _resolve(root, "bridge", owner=owner, sources=None, legacy=req.legacy)
+    req.access = access
+    destination_owner = access.owner_scope
+    if destination_owner is None:
+        raise _Fail("E_PERMISSION", "scope_required", denial=True)
+    try:
+        named = _anchor(req.instructions, root, transport)
+        target = _target_rules(root, named, "rush_v1", transport, absence=False)
+    except (OSError, ValueError, ContainmentError) as exc:
+        raise _refused("the instruction target cannot be safely read") from exc
+
+    def prepare() -> tuple[_Input, dict[str, Any], dict[str, Any], bytes | None]:
+        current_input = _read_input(root, req, transport)
+        current_owner, _ = _origin_owner(root, req, current_input.origin)
+        if current_owner is not None and current_owner != destination_owner:
+            raise _Fail("E_PERMISSION", "mapping_mismatch", denial=True)
+        _recheck(access)
+        mapping = None
+        if req.mapping_id is not None:
+            origin = current_input.origin
+            if origin is None:
+                raise _Fail("E_PERMISSION", "mapping_mismatch", denial=True)
+            try:
+                mapping = auth.resolve_capsule_mapping(
+                    mapping_id=req.mapping_id,
+                    origin_project_id=origin[0],
+                    origin_worktree_id=origin[1],
+                    project_root=root,
+                )["mapping"]
+            except auth.MemoryPolicyError as exc:
+                raise _seam_failure(exc) from exc
+        authority = {
+            "grant_id": access.grant_id,
+            "policy_revision": access.policy_revision,
+            "project_id": access.project_id,
+            "worktree_id": access.worktree_id,
+            "owner_scope": destination_owner.as_dict(),
+            "session_binding": access.session_binding,
+            "mapping": mapping,
+        }
+        continuation = _snapshot_continuation(current_input)
+        checkpoint = continuation["task"].get("last_verified_checkpoint")
+        revision = (
+            checkpoint.get("source_revision") if isinstance(checkpoint, dict) else None
+        )
+        semantic = {
+            "capsule_path": str(_anchor(input_path, root, transport)),
+            "capsule_digest": current_input.capsule_digest,
+            "input_sha256": current_input.input_sha256,
+            "source_revision": revision,
+            "mode": "offline_snapshot",
+            "reread_action": "Restart the installed agent host and reread "
+            + str(target)
+            + " before continuation.",
+        }
+        try:
+            checked = _target_rules(root, named, "rush_v1", transport, absence=False)
+            current = _read_instruction(checked)
+        except (CASConflictError, OSError, ValueError, ContainmentError) as exc:
+            raise _refused("the instruction target cannot be safely read") from exc
+        if checked != target:
+            raise _Fail("E_VERSION", "bridge_target_changed")
+        if transport == "mcp" and current is None:
+            raise _refused("over MCP instructions must be an existing regular file")
+        if current is not None and len(current) > HARD_MAX_BYTES:
+            raise _Fail(
+                "E_BUDGET",
+                "bridge_blocked",
+                required={"bytes": len(current)},
+                message="existing instruction bytes exceed the hard bound",
+            )
+        return current_input, authority, semantic, current
+
+    def receipt(
+        plan: dict[str, Any], current_input: _Input, stage: str
+    ) -> dict[str, Any]:
+        return {
+            "code": "OK",
+            "action": "bridge",
+            "stage": stage,
+            "format": req.fmt,
+            "invocation_id": plan["effect"]["invocation_id"],
+            "effect_id": plan["effect"]["effect_id"],
+            "capsule_digest": current_input.capsule_digest,
+            "input_sha256": current_input.input_sha256,
+            "instructions": str(target),
+            "before_sha256": plan["basis"]["target_before_sha256"],
+            "after_sha256": plan["after_sha256"],
+            "preview_digest": plan["digest"],
+            "digest": plan["digest"],
+            "required": plan["required"],
+            "limits": plan["basis"]["limits"],
+            "mode": "offline_snapshot",
+            "replayed": False,
+            "reread": {
+                "state": "required",
+                "action": plan["semantic_metadata"]["reread_action"],
+            },
+        }
+
+    if not req.apply:
+        current_input, authority, semantic, current = prepare()
+        return receipt(
+            _bridge_preview(req, target, current, semantic, authority),
+            current_input,
+            "preview",
+        )
+    with _locked(str(target), access):
+        current_input, authority, semantic, current = prepare()
+        replay = _bridge_replay(
+            req,
+            target,
+            current or b"",
+            (_read_bridge_metadata(current) or {}) if current is not None else {},
+            semantic,
+            access,
+            authority,
+        )
+        if replay is not None:
+            return {
+                **replay,
+                "format": req.fmt,
+                "capsule_digest": current_input.capsule_digest,
+                "input_sha256": current_input.input_sha256,
+                "instructions": str(target),
+            }
+        plan = _bridge_preview(req, target, current, semantic, authority)
+        if plan["digest"] != req.expected_digest:
+            raise _Fail("E_VERSION", "effect_digest_conflict")
+        _check_response_budget(req, receipt(plan, current_input, "written"))
+        _commit_bridge(
+            root,
+            named,
+            target,
+            plan["basis"]["target_before_sha256"],
+            plan["replacement"],
+            access,
+            transport,
+        )
+        return receipt(plan, current_input, "written")
+
+
+def _pas_time_seconds(value: object) -> float:
+    from datetime import timedelta, timezone
+
+    if not isinstance(value, str) or not _pas_time(value):
+        raise _Invalid("PAS timestamp")
+    match = _PAS_TIME_RE.fullmatch(value)
+    assert match is not None
+    year, month, day, hour, minute, second = (int(match.group(i)) for i in range(1, 7))
+    offset = match.group(8)
+    zone = UTC
+    if offset[0] in "+-":
+        digits = offset[1:].replace(":", "")
+        minutes = int(digits[:2]) * 60 + int(digits[2:])
+        zone = timezone(timedelta(minutes=minutes if offset[0] == "+" else -minutes))
+    base = datetime(
+        year, month, day, hour, minute, min(second, 59), tzinfo=zone
+    ).timestamp()
+    fraction = float("0." + match.group(7)) if match.group(7) else 0.0
+    return base + (1 if second == 60 else 0) + fraction
+
+
+def read_snapshot(
+    root: Path, path: str | Path, fmt: str, approved_digest: str, max_tokens: int = 2048
+) -> dict[str, Any]:
+    try:
+        if not _hex64(approved_digest):
+            raise _bad(
+                "approved_digest", "approved capsule digest must be 64 lowercase hex"
+            )
+        req = _validate_request(
+            {
+                "action": "preview_import",
+                "format": fmt,
+                "input": str(path),
+                "max_tokens": max_tokens,
+                "max_bytes": 65536,
+            },
+            "cli",
+        )
+        admission = _capsule_admission(req)
+        if admission is not None:
+            return admission
+        parsed = _read_input(root, req, "cli")
+        if parsed.capsule_digest != approved_digest:
+            raise _Fail(
+                "E_VERSION", "capsule_changed", message="approved capsule bytes changed"
+            )
+        continuation = _snapshot_continuation(parsed)
+        result = {
+            "code": "OK",
+            "mode": "offline_snapshot",
+            **continuation,
+            "records": parsed.records,
+            "capsule_digest": parsed.capsule_digest,
+            "input_sha256": parsed.input_sha256,
+            "origin": parsed.origin,
+            "created_at": parsed.created_at,
+            "required": parsed.required,
+            "limitations": parsed.extra,
+            "authority": "imported_unverified",
+        }
+        rendered = canonical_json(result)
+        _check_budget(
+            req,
+            {"bytes": len(rendered), "tokens": _tokens(rendered.decode("utf-8"))},
+            "snapshot_blocked",
+        )
+        return result
+    except _Fail as fail:
+        return fail.result()
+
+
+def _snapshot_continuation(parsed: _Input) -> dict[str, Any]:
+    tasks = [
+        r["content"]["task"]
+        for r in parsed.records
+        if r.get("content", {}).get("kind") == "imported_task"
+    ]
+    if len(tasks) != 1:
+        raise _invalid("snapshot requires one imported task")
+    task = dict(tasks[0])
+    constraints = []
+    for record in parsed.records:
+        content = record.get("content", {})
+        if content.get("kind") == "constraint":
+            constraints.append(
+                {k: content[k] for k in ("constraint_id", "text", "origin_ref")}
+            )
+    task["constraints"] = (
+        constraints  # codec splits these into ordered standalone records
+    )
+    limited = parsed.extra.get("limited") is True
+    if limited:
+        # PAS records have strings and no Rush verification/disproved evidence.
+        for key in ("decisions", "blockers", "discoveries"):
+            task[key] = [
+                {"text": text, "origin_ref": f"/task/{key}/{i}"}
+                for i, text in enumerate(task[key])
+            ]
+        task["failed_approaches"] = None
+        task["last_verified_checkpoint"] = None
+    return {
+        "task": task,
+        "checkpoint": None,
+        "progress_state": "limited_unverified_snapshot"
+        if limited
+        else "unverified_snapshot",
+        "unresolved": task["remaining"],
+        "next_action": {"text": task["next_action"]},
+        "unknown_fields": [
+            *parsed.extra.get("missing_continuation", []),
+            *(["failed_approaches"] if limited else []),
+        ],
+    }
 
 
 def _input_refused(message: str) -> _Fail:
@@ -2710,6 +3447,7 @@ def _read_input(root: Path, req: _Request, transport: str) -> _Input:
             (origin["project_id"], origin["worktree_id"]),
             required,
             {},
+            created_at=float(capsule["created_at"]),
         )
     if os.path.lexists(Path(str(path) + _JOURNAL_SUFFIX)):
         raise _invalid("the PAS pair is incomplete: an export journal is pending")
@@ -2736,6 +3474,7 @@ def _read_input(root: Path, req: _Request, transport: str) -> _Input:
                 None,
                 _measure(req, *parts),
                 {"limited": True, "missing_continuation": missing},
+                created_at=session["created_at"],
             )
         sidecar = _check_sidecar(_strict_loads(side))
         if (
@@ -2755,6 +3494,7 @@ def _read_input(root: Path, req: _Request, transport: str) -> _Input:
         (origin["project_id"], origin["worktree_id"]),
         _measure(req, *parts),
         {},
+        created_at=float(capsule["created_at"]),
     )
 
 
@@ -2859,6 +3599,19 @@ def _seam_apply(
             effect_id=effect_id,
             request_digest=request_digest,
             access=access,
+            result_check=lambda result: _check_response_budget(
+                req,
+                {
+                    "code": "OK",
+                    "action": "import",
+                    "format": req.fmt,
+                    "invocation_id": req.invocation_id,
+                    "effect_id": effect_id,
+                    "capsule_digest": result.get("capsule_digest", inp.capsule_digest),
+                    "mappings": result["mappings"],
+                    "replayed": False,
+                },
+            ),
         )
     except _SEAM_ERRORS as exc:
         raise _seam_failure(exc) from exc
@@ -2921,6 +3674,7 @@ def _import(root: Path, req: _Request, transport: str) -> dict[str, Any]:
     inp = _read_input(root, req, transport)
     owner, origin_match = _origin_owner(root, req, inp.origin)
     access = _resolve(root, req.action, owner=owner, sources=None, legacy=req.legacy)
+    req.access = access
     invocation_id = req.invocation_id or _new_uuid()
     target = str(_storage_root(access) / ".rush" / _STORE_DB)
     effect_id = _effect_id(invocation_id, "import", target)

@@ -121,6 +121,10 @@ def _codex_paths(_os_name: str, home: Path) -> list[Path]:
     return [home / ".codex" / "config.toml"]
 
 
+def _zcode_paths(_os_name: str, home: Path) -> list[Path]:
+    return [home / ".zcode" / "cli" / "config.json"]
+
+
 @dataclass(frozen=True)
 class AgentAdapter:
     """Deterministic detection/config schema for one supported local agent."""
@@ -161,6 +165,9 @@ ADAPTERS: dict[str, AgentAdapter] = {
     "zed": AgentAdapter("zed", "Zed", "jsonc", ("context_servers",), True, _zed_paths),
     "codex": AgentAdapter(
         "codex", "Codex CLI", "toml", ("mcp_servers",), False, _codex_paths
+    ),
+    "zcode": AgentAdapter(
+        "zcode", "ZCode Agent", "json", ("mcp", "servers"), True, _zcode_paths
     ),
 }
 
@@ -2391,7 +2398,7 @@ def _native_plugin_registration(
         or any(row.get("written_sha256") != digest for row in rows)
     ):
         raise AgentConnectionError(f"native plugin ownership conflict: {root}")
-    path = root / "rush" / (".mcp.json" if host == "claude" else "mcp.json")
+    path = root / "rush" / _PLUGIN_MCP_FILES[host]
     original = _read_regular(path)
     if original is None:
         raise AgentConnectionError(f"native plugin MCP file missing: {path}")
@@ -2465,7 +2472,10 @@ def connect_agent(
     The host and project checks run before the binary is resolved, so their
     outcome never depends on where rush itself is installed.
     """
-    _resolve_adapter(agent_id, config_path=None, config_format=None, servers_key=None)
+    if agent_id not in PLUGIN_HOSTS.values():
+        _resolve_adapter(
+            agent_id, config_path=None, config_format=None, servers_key=None
+        )
     if project_root is not None and not Path(project_root).is_dir():
         raise AgentConnectionError(f"project root not found: {project_root}")
     if not session_id:
@@ -2475,6 +2485,9 @@ def connect_agent(
         agent_id, rush_binary, profile, resolved_data_root
     )
     if native is None:
+        _resolve_adapter(
+            agent_id, config_path=None, config_format=None, servers_key=None
+        )
         binary = resolve_rush_binary(rush_binary)
         step = plan_agent_registration(
             agent_id, rush_binary=binary, home=home, profile=profile
@@ -2673,7 +2686,7 @@ def connect_agent(
         )
         probe = AgentStatus(
             agent_id,
-            ADAPTERS[agent_id].display_name,
+            ADAPTERS[agent_id].display_name if agent_id in ADAPTERS else agent_id,
             True,
             step.config_path,
             "registered",
@@ -3123,13 +3136,29 @@ def _disconnect_legacy_registration(
 
 # --- Native host plugin packages (Phase 70 T2) --------------------------------------
 
-# Package host name (also its CLI binary) -> the adapter id its ledger rows use.
-PLUGIN_HOSTS: dict[str, str] = {"claude": "claude-code", "codex": "codex"}
+# Package host name -> the adapter id its ledger rows use.
+PLUGIN_HOSTS: dict[str, str] = {
+    "claude": "claude-code",
+    "codex": "codex",
+    "cursor": "cursor",
+    "antigravity": "antigravity",
+    "zcode": "zcode",
+}
 PLUGIN_MARKETPLACE = "rush-local"
 PLUGIN_ID = f"rush@{PLUGIN_MARKETPLACE}"
-_PLUGIN_MANIFESTS: dict[str, tuple[str, str]] = {
+_PLUGIN_MANIFESTS: dict[str, tuple[str, ...]] = {
     "claude": (".claude-plugin", "plugin.json"),
     "codex": (".codex-plugin", "plugin.json"),
+    "cursor": (".cursor-plugin", "plugin.json"),
+    "antigravity": ("plugin.json",),
+    "zcode": (".zcode-plugin", "plugin.json"),
+}
+_PLUGIN_MCP_FILES = {
+    "claude": ".mcp.json",
+    "codex": "mcp.json",
+    "cursor": "mcp.json",
+    "antigravity": "mcp_config.json",
+    "zcode": "mcp.json",
 }
 # One marketplace manifest serves both hosts: Codex also reads a marketplace
 # root's `.claude-plugin/marketplace.json` (design brief X8, proven locally).
@@ -3154,6 +3183,10 @@ def plugin_uninstall_commands(host: str) -> list[tuple[str, ...]]:
             ("claude", "plugin", "uninstall", PLUGIN_ID, "--scope", "user"),
             ("claude", "plugin", "marketplace", "remove", PLUGIN_MARKETPLACE),
         ]
+    if host == "antigravity":
+        return [("agy", "plugin", "uninstall", "rush")]
+    if host != "codex":
+        raise AgentConnectionError(f"{host}: disable the plugin in the host UI")
     return [
         ("codex", "plugin", "remove", PLUGIN_ID),
         ("codex", "plugin", "marketplace", "remove", PLUGIN_MARKETPLACE),
@@ -3163,7 +3196,11 @@ def plugin_uninstall_commands(host: str) -> list[tuple[str, ...]]:
 def _uninstall_native_plugin(agent_id: str, recorded_path: str) -> str | dict[str, Any]:
     """Disconnect step for a `native_plugin` row: the host's own uninstall."""
     host = next(name for name, aid in PLUGIN_HOSTS.items() if aid == agent_id)
-    if shutil.which(host) is None:
+    if host in ("cursor", "zcode"):
+        return _conflict_row(
+            "native_plugin", recorded_path, None, None, "native_disable_required"
+        )
+    if shutil.which("agy" if host == "antigravity" else host) is None:
         return _conflict_row("native_plugin", recorded_path, None, None, "host_missing")
     for argv in plugin_uninstall_commands(host):
         try:
@@ -3311,7 +3348,8 @@ def _stage_host_root(
             _copy_rendered(
                 src, target / "rush" / src.relative_to(source), substitutions
             )
-    _copy_rendered(marketplace_source, target / _MARKETPLACE_REL, substitutions)
+    if host in ("claude", "codex"):
+        _copy_rendered(marketplace_source, target / _MARKETPLACE_REL, substitutions)
 
 
 def _validate_host_root(host: str, root: Path) -> None:
@@ -3324,14 +3362,17 @@ def _validate_host_root(host: str, root: Path) -> None:
             raise AgentConnectionError(f"invalid plugin JSON {path}: {exc}") from exc
         if _TEMPLATE_MARK in text:
             raise AgentConnectionError(f"unrendered template token in {path}")
-    marketplace = json.loads((root / _MARKETPLACE_REL).read_text(encoding="utf-8"))
-    for plugin in marketplace.get("plugins", []):
-        if not (root / str(plugin.get("source", ""))).is_dir():
-            raise AgentConnectionError(f"marketplace source missing: {plugin!r}")
+    if host in ("claude", "codex"):
+        marketplace = json.loads((root / _MARKETPLACE_REL).read_text(encoding="utf-8"))
+        for plugin in marketplace.get("plugins", []):
+            if not (root / str(plugin.get("source", ""))).is_dir():
+                raise AgentConnectionError(f"marketplace source missing: {plugin!r}")
     plugin_dir = root / "rush"
     manifest_path = plugin_dir.joinpath(*_PLUGIN_MANIFESTS[host])
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if not isinstance(manifest.get("mcpServers"), str):
+    if host in ("claude", "codex", "cursor") and not isinstance(
+        manifest.get("mcpServers"), str
+    ):
         raise AgentConnectionError(f"{manifest_path}: no mcpServers reference")
     for value in manifest.values():
         if (
@@ -3340,7 +3381,8 @@ def _validate_host_root(host: str, root: Path) -> None:
             and not (plugin_dir / value).exists()
         ):
             raise AgentConnectionError(f"{manifest_path}: missing {value}")
-    for required in ("skills/rush/SKILL.md", "hooks/hooks.json"):
+    hook_file = "hooks.json" if host == "antigravity" else "hooks/hooks.json"
+    for required in ("skills/rush/SKILL.md", hook_file, _PLUGIN_MCP_FILES[host]):
         if not (plugin_dir / required).is_file():
             raise AgentConnectionError(f"{plugin_dir}: missing {required}")
 
@@ -3360,7 +3402,7 @@ def materialize_agent_plugins(
     rush_version: str | None = None,
     data_root: Path | None = None,
 ) -> dict[str, Path]:
-    """Write `<data_root>/agent-plugins/<version>/{claude,codex}/` marketplace roots.
+    """Write atomic, owned native packages under `<data_root>/agent-plugins/`.
 
     Each root holds `.claude-plugin/marketplace.json` (marketplace
     `rush-local`) and the `rush/` plugin, with the absolute Rush executable

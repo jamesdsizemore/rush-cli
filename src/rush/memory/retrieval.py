@@ -87,7 +87,13 @@ _MAX_EMBEDDED_TEXTS = 2 * _VECTOR_SCAN_CAP + 1
 # to hybrid. `None` until `docs/reports/phase-72-memory-eval/hybrid-verdict.json` records a
 # global `benefit`; then `{"verdict", "model", "model_digest", "cases_sha256",
 # "verdict_report_sha256"}` from that file and the frozen manifest.
-HYBRID_DEFAULT_VERDICT: dict[str, str] | None = None
+HYBRID_DEFAULT_VERDICT: dict[str, str] | None = {
+    "verdict": "benefit",
+    "model": "nomic-embed-text",
+    "model_digest": "0a109f422b47",
+    "cases_sha256": "e04fcc6d17f873f939ae0d91a4da7055e4a0d6b2df6cdbe16dcf4a9c7e84377b",
+    "verdict_report_sha256": "32eb82ecb9a09889b84d0205458190d57046e75abed1815ce862d44057c9a814",
+}
 
 # 72-T08: the one fixed `hybrid_unavailable_reason` text per labelled-fallback code.
 # Exception text never reaches a page.
@@ -462,7 +468,7 @@ def _required_operations(
         operation == "list"
         or (not apply and operation in _MUTATING_OPERATIONS)
         or (operation == "preference" and (action == "resolve" or not apply))
-        or (operation == "capsule" and action == "preview_import")
+        or (operation == "capsule" and action in {"preview_import", "bridge"})
     ):
         return ("list",)
     if operation == "expand" or (
@@ -1752,53 +1758,63 @@ def _record_memory_event(
     opt_in: bool,
     cache_write: bool,
     access: MemoryAccess | None = None,
+    encoding: str = DEFAULT_ENCODING,
+    artifact_version: int | None = None,
+    offset: int | None = None,
+    payload_hash: str | None = None,
 ) -> None:
-    """No-op unless a caller opts into real cost accounting by passing `telemetry` plus both
-    IDs — existing `recall_page()`/`expand_artifact()` callers that pass none of this see zero
-    behavior change. P69-07 subsection e: `invocation_id` identifies this call, never the
-    content-derived `request_id` — a caller (`tools/memory.py`, out of this fix's reach)
-    passing the same content-derived `request_id` twice for two genuinely distinct calls no
-    longer collides, since `invocation_id` is minted per call by `recall_page()`/
-    `expand_artifact()`/`hybrid_page()`, not reused from `request_id`.
+    """Stage delivery events; retain primitive accounting outside receipt scopes."""
+    from rush.delivery import compact
 
-    M11: `project_id`/`run_id`/`agent_id`/`session_id` are pure caller-supplied attribution
-    (never invented from `store.project_root` -- a path is not a registered project UUID).
-    Omitted dimensions are left unset here so `TelemetryStore.record_memory_event()`'s own
-    `_UNSCOPED` default applies, rather than duplicating that sentinel in two places."""
-    if telemetry is None or not request_id or not event_id:
+    if (
+        telemetry is None
+        or not request_id
+        or not event_id
+        or not (opt_in or cache_write)
+    ):
         return
-    # 72-T02 R1: a factory is resolved only here, when an event is recorded.
+    owner = access.owner_scope if access is not None else None
+    arguments: dict[str, Any] = {
+        "request_id": request_id,
+        "event_id": event_id,
+        "invocation_id": invocation_id,
+        "opt_in": opt_in,
+        "cache_write": cache_write,
+        "owner_scope_kind": owner.kind if owner is not None else None,
+        "owner_scope_id": owner.id if owner is not None else None,
+        "sources_json": json.dumps(sorted(access.sources))
+        if access is not None
+        else None,
+    }
+    arguments.update(
+        {
+            key: value
+            for key, value in (
+                ("project_id", project_id),
+                ("run_id", run_id),
+                ("agent_id", agent_id),
+                ("session_id", session_id),
+            )
+            if value is not None
+        }
+    )
+    frame = compact.RECEIPT_FRAME.get()
+    if kind in {"retrieval", "expansion"} and frame is not None:
+        if frame.pending_memory_events is None or access is None:
+            return
+        arguments.update(
+            artifact_version=artifact_version, offset=offset, payload_hash=payload_hash
+        )
+        frame.pending_memory_events.append(
+            compact.PendingMemoryEvent(telemetry, kind, encoding, access, arguments)
+        )
+        return
     recorder = (
         telemetry()
         if callable(telemetry) and not isinstance(telemetry, TelemetryStore)
         else telemetry
     )
-    attribution = {
-        key: value
-        for key, value in (
-            ("project_id", project_id),
-            ("run_id", run_id),
-            ("agent_id", agent_id),
-            ("session_id", session_id),
-        )
-        if value is not None
-    }
-    # 72-T01 §3.9: the event records the access it was read under, so policy-mode
-    # telemetry readers can scope totals to an owner and its granted sources.
-    owner = access.owner_scope if access is not None else None
-    recorder.record_memory_event(
-        kind,
-        tokens,
-        request_id=request_id,
-        event_id=event_id,
-        invocation_id=invocation_id,
-        opt_in=opt_in,
-        cache_write=cache_write,
-        owner_scope_kind=owner.kind if owner is not None else None,
-        owner_scope_id=owner.id if owner is not None else None,
-        sources_json=json.dumps(sorted(access.sources)) if access is not None else None,
-        **attribution,
-    )
+    recorder.record_memory_event(kind, tokens, **arguments)
 
 
 def _encoder(encoding: str) -> tiktoken.Encoding:
@@ -2911,6 +2927,7 @@ def recall_page(
                 opt_in=opt_in,
                 cache_write=cache_write,
                 access=access,
+                encoding=encoding,
             )
         return page
 
@@ -3577,6 +3594,10 @@ def expand_artifact(
         opt_in=opt_in,
         cache_write=cache_write,
         access=access,
+        encoding=encoding,
+        artifact_version=version,
+        offset=offset,
+        payload_hash=digest,
     )
     return result
 
@@ -4268,6 +4289,7 @@ def hybrid_page(
                 opt_in=opt_in,
                 cache_write=cache_write,
                 access=access,
+                encoding=encoding,
             )
         return page
 

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +34,7 @@ from rush.theme import (
     render_result,
     safe_terminal_text,
 )
+from rush.theme import console as theme_console
 from rush.tools import ALL_TOOLS
 
 
@@ -184,6 +189,62 @@ def export_reports(
         export_html.write_text(html_doc, encoding="utf-8")
 
 
+def _memory_human_bytes(value: Mapping[str, Any]) -> bytes:
+    """Same Console, width and ANSI policy for admission and final presentation."""
+    with theme_console().capture() as capture:
+        render_result(dict(value))
+    return capture.get().replace("\n", os.linesep).encode("utf-8")
+
+
+def _cli_memory_frame(as_json: bool) -> compact.FrameContext:
+    return compact.FrameContext(
+        "cli_json" if as_json else "cli_human",
+        None,
+        emit=None if as_json else _memory_human_bytes,
+        pending_memory_events=[],
+    )
+
+
+def cli_memory_receipts(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        if compact.RECEIPT_FRAME.get() is not None:
+            return fn(*args, **kwargs)
+        values = signature(fn).bind(*args, **kwargs).arguments
+        frame = _cli_memory_frame(bool(values.get("as_json", False)))
+        try:
+            with compact.receipt_frame(frame):
+                return fn(*args, **kwargs)
+        finally:
+            compact.discard_memory_events(frame)
+
+    return wrapped
+
+
+def _echo_memory_json(value: Mapping[str, Any], frame: compact.FrameContext) -> None:
+    body = (json.dumps(value, indent=2, default=str) + os.linesep).encode("utf-8")
+    _emit_memory_bytes(value, frame, body)
+
+
+def _emit_memory_bytes(
+    value: Mapping[str, Any], frame: compact.FrameContext, body: bytes
+) -> None:
+    try:
+        stream = click.get_binary_stream("stdout")
+        if stream.write(body) != len(body):
+            raise OSError("partial memory CLI stdout write")
+        stream.flush()
+    except BaseException:
+        compact.discard_memory_events(frame)
+        raise
+    compact.finalize_memory_events(
+        frame,
+        body,
+        accepted=compact.accepted_memory_result(value),
+        outcome=compact.memory_delivery_outcome(value),
+    )
+
+
 def exit_with_result(
     result: Any,
     as_json: bool = False,
@@ -197,14 +258,21 @@ def exit_with_result(
     export_reports(result, tool_name, export_sarif, export_html)
 
     clean_result = sanitize_value(result).value
+    frame = compact.RECEIPT_FRAME.get()
     if as_json:
-        echo(json.dumps(clean_result, indent=2, default=str))
+        if tool_name == "memory" and frame is not None:
+            _echo_memory_json(clean_result, frame)
+        else:
+            echo(json.dumps(clean_result, indent=2, default=str))
     elif (
         isinstance(clean_result, dict)
         and "tool" in clean_result
         and "status" in clean_result
     ):
-        render_result(clean_result)
+        if tool_name == "memory" and frame is not None:
+            _emit_memory_bytes(clean_result, frame, _memory_human_bytes(clean_result))
+        else:
+            render_result(clean_result)
     elif clean_result is not None and not isinstance(clean_result, int):
         echo(str(clean_result))
 
@@ -343,20 +411,21 @@ def deliver_cli(
             export=export if view.compact else None,
         )
 
-    if tool_name == "memory":
-        # 72-T02 D35: memory pages fit the bytes `exit_with_result` prints.
-        frame = compact.FrameContext("cli_json" if as_json else "in_process", None)
-        with compact.memory_frame(frame):
+    frame = _cli_memory_frame(as_json) if tool_name == "memory" else None
+    scope = compact.memory_frame(frame) if frame is not None else nullcontext()
+    try:
+        with scope:
             result = deliver()
-    else:
-        result = deliver()
-    exit_with_result(
-        result,
-        as_json=as_json,
-        tool_name=tool_name,
-        export_sarif=None if view.compact else export_sarif,
-        export_html=None if view.compact else export_html,
-    )
+            exit_with_result(
+                result,
+                as_json=as_json,
+                tool_name=tool_name,
+                export_sarif=None if view.compact else export_sarif,
+                export_html=None if view.compact else export_html,
+            )
+    finally:
+        if frame is not None:
+            compact.discard_memory_events(frame)
 
 
 def _run_tool(
@@ -396,8 +465,14 @@ def _render_session_result(
     result: Mapping[str, object] | ToolResultV1, as_json: bool
 ) -> None:
     rendered = result.to_dict() if isinstance(result, ToolResultV1) else dict(result)
+    frame = compact.RECEIPT_FRAME.get()
     if as_json:
-        echo(json.dumps(rendered, indent=2, default=str))
+        if rendered.get("tool") == "memory" and frame is not None:
+            _echo_memory_json(rendered, frame)
+        else:
+            echo(json.dumps(rendered, indent=2, default=str))
+    elif rendered.get("tool") == "memory" and frame is not None:
+        _emit_memory_bytes(rendered, frame, _memory_human_bytes(rendered))
     else:
         render_result(rendered)
     from rush.tools.common import exit_code_for as session_exit_code_for

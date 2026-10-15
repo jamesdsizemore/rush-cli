@@ -128,6 +128,12 @@
       "task": "72-T01"
     },
     {
+      "module": "integrations/agent_hooks.py",
+      "function": "_native_checkpoint",
+      "route": "checkpoint_journal",
+      "task": "73-T07"
+    },
+    {
       "module": "mcp_support/tool_registry.py",
       "function": "rush_memory_bridge",
       "route": "mcp_bridge",
@@ -160,6 +166,12 @@
     {
       "module": "memory/capsule.py",
       "function": "_seam_replay",
+      "route": "capsule",
+      "task": "73-T09/CODEC"
+    },
+    {
+      "module": "memory/capsule.py",
+      "function": "_stage_budget_failure",
       "route": "capsule",
       "task": "73-T09/CODEC"
     },
@@ -531,6 +543,12 @@
     },
     {
       "module": "token_economy/telemetry.py",
+      "function": "read_memory_frame_receipts_readonly",
+      "route": "telemetry_readers",
+      "task": "75-T01"
+    },
+    {
+      "module": "token_economy/telemetry.py",
       "function": "read_summary_readonly",
       "route": "telemetry_readers",
       "task": "72-T01"
@@ -564,6 +582,12 @@
       "function": "<module>",
       "route": "dashboard",
       "task": "72-T07"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_bootstrap",
+      "route": "bootstrap",
+      "task": "73-T02/BOOTSTRAP-RUNTIME"
     },
     {
       "module": "tools/memory.py",
@@ -618,6 +642,12 @@
       "function": "_memory_attribution",
       "route": "mutation_view",
       "task": "72-T01"
+    },
+    {
+      "module": "tools/memory.py",
+      "function": "_note_legacy_read",
+      "route": "telemetry_readers",
+      "task": "75-T01"
     },
     {
       "module": "tools/memory.py",
@@ -835,6 +865,11 @@
       "module": "cache.py",
       "function": "stats_readonly",
       "target": ".rush/cache.db"
+    },
+    {
+      "module": "dashboard/state.py",
+      "function": "event_watermark",
+      "target": "<data_root>/dashboard/mutation_ledger.db (event_sequences only)"
     },
     {
       "module": "dashboard/state.py",

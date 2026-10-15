@@ -318,15 +318,7 @@ def test_paste_event_ignored_outside_text_field() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _FakeMsvcrt:
-    def __init__(self, chars: list[str]) -> None:
-        self._chars = list(chars)
-
-    def kbhit(self) -> bool:
-        return bool(self._chars)
-
-    def getwch(self) -> str:
-        return self._chars.pop(0)
+from test_windows_import_safety import _WinConsole, _windows
 
 
 def test_windows_single_char_drain_returns_plain_key(
@@ -335,7 +327,7 @@ def test_windows_single_char_drain_returns_plain_key(
     """Keep-green guard: a single buffered character is a normal key, not
     a paste."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt(["x"]))
+    _windows(monkeypatch, _WinConsole(["x"]))
     reader = terminal_input.WindowsKeyReader()
     assert reader.read_key(timeout=0.2) == "x"
 
@@ -349,7 +341,7 @@ def test_windows_multi_char_drain_returns_paste_event(
     so a 3-character single-drain paste ("abc") is misreported as the
     single key "a"."""
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt(["a", "b", "c"]))
+    _windows(monkeypatch, _WinConsole(["a", "b", "c"]))
     reader = terminal_input.WindowsKeyReader()
     result = reader.read_key(timeout=0.2)
     assert result == "paste:abc", (

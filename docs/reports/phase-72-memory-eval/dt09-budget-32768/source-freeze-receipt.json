@@ -1,0 +1,9 @@
+{
+  "observed_at": "2026-10-15T01:50:09.373151+00:00",
+  "registration_sha256": "3bbbe900289173ab0c1d1730797491e508a4199f1a35f9905b63cb403e2ac1e8",
+  "subject_drift": [],
+  "parent_freeze_path": ".scratch/phase72-final-acceptance/source-freeze-corrected.json",
+  "parent_freeze_sha256": "3f8a6ab0bb821fd448d2f529cc8630238486ae3b66a2b8bfa793367aebecd833",
+  "parent_tree": "975a292ae38b4c49854e09a3778f273b7ee301a1",
+  "parent_subject": "72ff2ef9d635d963cf194b33f68ea23dd3394c5b628c54c058dcbd3bdc7d172e"
+}

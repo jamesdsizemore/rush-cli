@@ -8,23 +8,23 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from html import escape
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
+from html import escape
+from pathlib import Path
 
-from PIL import Image, ImageChops
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.pens.svgPathPen import SVGPathPen
 from fontTools.pens.transformPen import TransformPen
 from fontTools.ttLib import TTFont
-
+from PIL import Image, ImageChops
+from PIL.IcoImagePlugin import IcoImageFile
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[3]
@@ -52,6 +52,7 @@ def pngs(path: Path, widths: tuple[int, ...]) -> None:
 
 def word_paths(font: TTFont, refined: bool = True) -> tuple[str, float, float]:
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
+    assert cmap is not None
     # Optical pairs R/U, U/S, S/H, preserving the established condensed italic.
     offsets = (0, 428, 868, 1268) if refined else (0, 419.43, 848.86, 1231.29)
     shear = 0.08 if refined else 0
@@ -71,7 +72,10 @@ def word_paths(font: TTFont, refined: bool = True) -> tuple[str, float, float]:
 
 
 def render() -> None:
-    subprocess.run([shutil.which("node"), "-e", """
+    node = shutil.which("node")
+    if node is None:
+        raise RuntimeError("Node.js is required to render brand PNGs")
+    subprocess.run([node, "-e", """
 const fs = require('fs');
 const sharp = require(process.argv[1]);
 const jobs = JSON.parse(fs.readFileSync(0, 'utf8'));
@@ -86,7 +90,10 @@ const jobs = JSON.parse(fs.readFileSync(0, 'utf8'));
 def outline_text(font: TTFont, text: str, x: float, y: float, size: float,
                  color: str = INK, tracking: float = 0, anchor: str = "start") -> str:
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
-    scale = size / font["head"].unitsPerEm
+    assert cmap is not None
+    units_per_em = getattr(font["head"], "unitsPerEm", None)
+    assert isinstance(units_per_em, int) and units_per_em > 0
+    scale = size / units_per_em
     width = sum(font["hmtx"][cmap[ord(c)]][0] * scale for c in text) + tracking * (len(text) - 1)
     x -= width / 2 if anchor == "middle" else 0
     paths = []
@@ -186,8 +193,8 @@ def build() -> None:
         pngs(path, (256, 512, 1024))
 
     for name, height in [("rush-app", 800), ("rush-app-maskable", 680)]:
-        width = height * 64 / 84
-        path = svg(f"app/{name}.svg", 1024, 1024, f'<rect width="1024" height="1024" fill="{BG}"/>' + bottle((1024-width)/2, (1024-height)/2, height), "Rush application icon")
+        app_width = height * 64 / 84
+        path = svg(f"app/{name}.svg", 1024, 1024, f'<rect width="1024" height="1024" fill="{BG}"/>' + bottle((1024-app_width)/2, (1024-height)/2, height), "Rush application icon")
         pngs(path, (192, 512) if "maskable" in name else (16, 24, 32, 48, 64, 128, 180, 192, 256, 512, 1024))
     path = svg("web/favicon.svg", 84, 84, bottle(10, 0, 84), "Rush")
     pngs(path, (16, 32, 48))
@@ -239,6 +246,7 @@ def build() -> None:
 
 
 def check() -> None:
+    image: Image.Image
     manifest = json.loads((HERE / "manifest.json").read_text())
     for name, digest in manifest["files"].items():
         assert hashlib.sha256((HERE / name).read_bytes()).hexdigest() == digest, name
@@ -257,12 +265,17 @@ def check() -> None:
         image = Image.open(path.with_name(f"{path.stem}-512.png")).convert("RGBA")
         alpha = image.getchannel("A")
         assert alpha.getpixel((0, 0)) == 0 and alpha.getextrema() == (0,255), path
-        left, top, right, bottom = alpha.getbbox()
+        bbox = alpha.getbbox()
+        assert bbox is not None, path
+        left, top, right, bottom = bbox
         assert left > 0 and top > 0 and right < image.width and bottom < image.height, path
     mono = Image.open(HERE / "wordmark/rush-wordmark-mono-black-512.png").convert("RGBA")
     assert mono.convert("RGB").getextrema() == ((0,0),(0,0),(0,0)), "monochrome must be one ink"
-    assert Image.open(HERE / "web/favicon.ico").ico.sizes() == {(16,16),(32,32),(48,48)}
-    assert Image.open(HERE / "app/rush.ico").ico.sizes() == {(n,n) for n in (16,24,32,48,64,128,256)}
+    for icon_path, sizes in ((HERE / "web/favicon.ico", {(16,16),(32,32),(48,48)}),
+                             (HERE / "app/rush.ico", {(n,n) for n in (16,24,32,48,64,128,256)})):
+        image = Image.open(icon_path)
+        assert isinstance(image, IcoImageFile)
+        assert image.ico.sizes() == sizes
     assert Image.open(HERE / "app/rush.icns").size == (1024,1024)
     maskable = Image.open(HERE / "app/rush-app-maskable-512.png").convert("RGB")
     base = Image.new("RGB", maskable.size, BG)
@@ -270,7 +283,9 @@ def check() -> None:
     for y in range(512):
         for x in range(512):
             if math.hypot(x-256,y-256) > 204.8:
-                assert max(delta.getpixel((x,y))) <= 1, "maskable content outside safe circle"
+                pixel = delta.getpixel((x,y))
+                assert isinstance(pixel, tuple)
+                assert max(pixel) <= 1, "maskable content outside safe circle"
     for name, expected in [("github-preview",(1280,640)),("website-social",(1200,630))]:
         assert Image.open(HERE / f"social/{name}-{expected[0]}.png").size == expected
     wordmark_paths = [e.attrib["d"] for e in ET.parse(HERE / "wordmark/rush-wordmark-light.svg").iter() if "data-letter" in e.attrib]

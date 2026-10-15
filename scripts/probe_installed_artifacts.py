@@ -52,6 +52,19 @@ AGENT_ASSET_MEMBERS = (
     "rush/integrations/agent_assets/codex/mcp.json",
     "rush/integrations/agent_assets/codex/hooks/hooks.json",
     "rush/integrations/agent_assets/codex/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/cursor/.cursor-plugin/plugin.json",
+    "rush/integrations/agent_assets/cursor/mcp.json",
+    "rush/integrations/agent_assets/cursor/hooks/hooks.json",
+    "rush/integrations/agent_assets/cursor/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/antigravity/plugin.json",
+    "rush/integrations/agent_assets/antigravity/mcp_config.json",
+    "rush/integrations/agent_assets/antigravity/hooks.json",
+    "rush/integrations/agent_assets/antigravity/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/zcode/.zcode-plugin/plugin.json",
+    "rush/integrations/agent_assets/zcode/mcp.json",
+    "rush/integrations/agent_assets/zcode/hooks/hooks.json",
+    "rush/integrations/agent_assets/zcode/skills/rush/SKILL.md",
+    "rush/integrations/agent_assets/zcode/AGENTS.md",
 )
 
 _INSTALLED_ASSETS_CODE = (
@@ -270,6 +283,8 @@ def probe_native_artifact(
     else:
         bare_path = "/usr/bin:/bin"
         env = {"PATH": bare_path, "HOME": str(work_dir)}
+    if caller_tmpdir := os.environ.get("TMPDIR"):
+        env["TMPDIR"] = caller_tmpdir
 
     version_probe = subprocess.run(
         [str(binary_path), "--version"],

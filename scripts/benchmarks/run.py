@@ -509,12 +509,30 @@ _VERIFY_CONTRACT_KEYS = frozenset(
 )
 _COMMAND_KEYS = frozenset({"command", "expected_exit_code"})
 _EPISODE_RESPONSE_SCHEMA = {
-    "action": {
-        "kind": "action",
-        "operation": "<one of permitted_actions except submit>",
-        "kwargs": "<object with keys from operations[operation].kwargs>",
-    },
-    "submit": {"kind": "submit", "final": "<any JSON value>"},
+    "oneOf": [
+        {
+            "type": "object",
+            "required": ["kind", "operation", "kwargs"],
+            "properties": {
+                "kind": {"const": "action"},
+                "operation": {
+                    "type": "string",
+                    "description": "One of permitted_actions except submit.",
+                },
+                "kwargs": {
+                    "type": "object",
+                    "description": "Use keys from operations[operation].kwargs.",
+                },
+            },
+            "additionalProperties": False,
+        },
+        {
+            "type": "object",
+            "required": ["kind", "final"],
+            "properties": {"kind": {"const": "submit"}, "final": {}},
+            "additionalProperties": False,
+        },
+    ]
 }
 _ANSWER_RESPONSE_SCHEMA = {"kind": "answer", "text": "<string>"}
 
@@ -1299,6 +1317,14 @@ def _execute_manifest(
             "route_overhead_tokens": preflight.get("route_overhead_tokens"),
             "instruction_files": preflight.get("instruction_files"),
             "preflight": preflight.get("preflight"),
+            **{
+                name: preflight.get(name)
+                for name in (
+                    "decision_protocol_digest",
+                    "decision_instruction_sha256",
+                    "decision_kind_protocol_digests",
+                )
+            },
         }
         if preflight.get("status") == "unavailable":
             available = False
@@ -1368,10 +1394,16 @@ def _execute_manifest(
     if phase72 is not None:
         verdict_rows = (
             _phase72_rows(
-                phase72_results, manifest, arm=args.variant, provider=output.name
+                phase72_results,
+                manifest,
+                arm=args.variant,
+                provider=output.name,
+                route_report=route_report,
             )
             if available
-            else [_unavailable_row(output.name, args.variant)]
+            else [
+                _unavailable_row(output.name, args.variant, route_report=route_report)
+            ]
         )
         payload["verdict_rows"] = verdict_rows
         payload["phase72_summary"] = _phase72_summary(verdict_rows)
@@ -1532,6 +1564,7 @@ def _phase72_rows(
     *,
     arm: str,
     provider: str,
+    route_report: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """72-T08: one verdict row (`reporting.aggregate_hybrid_verdict`'s contract) per
     `p72-` case and seed, scored against the frozen query and corpus sections. The gold
@@ -1563,6 +1596,14 @@ def _phase72_rows(
         rows.append(
             {
                 "provider": provider,
+                **{
+                    name: (route_report or {}).get(name)
+                    for name in (
+                        "decision_protocol_digest",
+                        "decision_instruction_sha256",
+                        "decision_kind_protocol_digests",
+                    )
+                },
                 "arm": arm,
                 "case_id": result.case_id,
                 "seed": seed,
@@ -1596,11 +1637,21 @@ def _phase72_rows(
     return rows
 
 
-def _unavailable_row(provider: str, arm: str) -> dict[str, Any]:
+def _unavailable_row(
+    provider: str, arm: str, *, route_report: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """The one verdict row of an arm whose decision route was unavailable: the verdict
     for that provider is `unavailable`, never absent."""
     return {
         "provider": provider,
+        **{
+            name: (route_report or {}).get(name)
+            for name in (
+                "decision_protocol_digest",
+                "decision_instruction_sha256",
+                "decision_kind_protocol_digests",
+            )
+        },
         "arm": arm,
         "case_id": "route",
         "seed": 0,

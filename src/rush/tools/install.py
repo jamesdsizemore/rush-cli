@@ -266,6 +266,12 @@ def _plugin_install_commands(host: str, plugin_root: Path) -> list[tuple[str, ..
             ("claude", "plugin", "marketplace", "add", root, "--scope", "user"),
             ("claude", "plugin", "install", PLUGIN_ID, "--scope", "user"),
         ]
+    if host == "antigravity":
+        return [("agy", "plugin", "install", str(plugin_root / "rush"))]
+    if host != "codex":
+        raise AgentConnectionError(
+            f"{host}: native plugin installation requires its UI"
+        )
     return [
         ("codex", "plugin", "marketplace", "add", root),
         ("codex", "plugin", "add", PLUGIN_ID),
@@ -282,6 +288,13 @@ def _plugin_upgrade_commands(host: str, plugin_root: Path) -> list[tuple[str, ..
     (removing the marketplace leaves the installed plugin enabled).
     """
     root = str(plugin_root)
+    if host == "antigravity":
+        return [
+            ("agy", "plugin", "uninstall", "rush"),
+            ("agy", "plugin", "install", str(plugin_root / "rush")),
+        ]
+    if host not in ("claude", "codex"):
+        raise AgentConnectionError(f"{host}: native plugin upgrade requires its UI")
     if host == "claude":
         return [
             ("claude", "plugin", "marketplace", "add", root, "--scope", "user"),
@@ -360,13 +373,15 @@ def _host_output(argv: list[str]) -> str | None:
 
 
 def _host_version(host: str) -> str | None:
-    output = _host_output([host, "--version"])
+    output = _host_output(["agy" if host == "antigravity" else host, "--version"])
     return output.strip().splitlines()[0] if output and output.strip() else None
 
 
 def _installed_plugin_version(host: str) -> str | None:
     """The Rush plugin version the host itself reports as installed."""
-    output = _host_output([host, "plugin", "list", "--json"])
+    output = _host_output(
+        ["agy" if host == "antigravity" else host, "plugin", "list", "--json"]
+    )
     try:
         data = json.loads(output or "")
     except ValueError:
@@ -386,11 +401,18 @@ def _check_plugin_host(host: str) -> dict[str, Any] | None:
             "host": host,
             "detail": f"unknown plugin host {host!r}",
         }
-    if shutil.which(host) is None:
+    if host in ("cursor", "zcode"):
+        return {
+            "state": "native_enable_required",
+            "host": host,
+            "detail": "Enable the materialized Rush plugin in the host; restart its session.",
+        }
+    binary = "agy" if host == "antigravity" else host
+    if shutil.which(binary) is None:
         return {
             "state": "host_missing",
             "host": host,
-            "detail": f"{host} executable not found on PATH",
+            "detail": f"{binary} executable not found on PATH",
         }
     return None
 
@@ -797,10 +819,15 @@ class InstallTool(ToolFn):
                 continue
             # The manual-entry config path only; install_native_agent_plugin
             # reads it and reports an unreadable file as a conflict.
-            candidates = ADAPTERS[PLUGIN_HOSTS[host]].config_paths(
-                os_name or platform.system(), home or Path.home()
+            adapter = ADAPTERS.get(PLUGIN_HOSTS[host])
+            candidates = (
+                adapter.config_paths(os_name or platform.system(), home or Path.home())
+                if adapter is not None
+                else []
             )
-            config_path = next((p for p in candidates if p.exists()), candidates[0])
+            config_path = next((p for p in candidates if p.exists()), None)
+            if config_path is None and candidates:
+                config_path = candidates[0]
             reports[host] = install_native_agent_plugin(
                 host=host,
                 plugin_root=root,

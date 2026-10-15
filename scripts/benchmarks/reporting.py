@@ -604,6 +604,9 @@ def _pair_key(row: dict[str, Any]) -> tuple[Any, ...]:
         row["case_id"],
         row["seed"],
         row.get("fixture_revision"),
+        row.get("decision_protocol_digest"),
+        row.get("decision_instruction_sha256"),
+        json.dumps(row.get("decision_kind_protocol_digests"), sort_keys=True),
         json.dumps(row.get("grants"), sort_keys=True),
         json.dumps(row.get("budgets"), sort_keys=True),
     )
@@ -623,6 +626,8 @@ def _provider_verdict(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """The D14a table for one provider's rows, first matching row wins."""
     if any(int(row.get("security_inclusion") or 0) > 0 for row in rows):
         return {"verdict": "unsafe", "reason": "unauthorized or stale inclusion"}
+    if any(not row.get("decision_protocol_digest") for row in rows):
+        return {"verdict": "unavailable", "reason": "missing decision protocol receipt"}
     arms_by_key: dict[tuple[Any, ...], set[str]] = {}
     for row in rows:
         arms_by_key.setdefault(_pair_key(row), set()).add(row["arm"])

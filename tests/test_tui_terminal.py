@@ -28,10 +28,58 @@ from typing import Any
 
 import pytest
 from _process_children import spawn_pty_child
+from test_windows_import_safety import _screen_has, _WinConsole, _windows
 
 pytestmark = pytest.mark.posix_only  # a POSIX pty
 
 _REPO_SRC = str(Path(__file__).resolve().parent.parent / "src")
+
+
+def test_filter_refresh_requires_completed_list_before_delete(tmp_path, monkeypatch):
+    import test_phase70_t28d_review1 as H
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    root = H._root(tmp_path, "filter")
+    row = H._seed(root, "native-lone")
+    state = H._state(tmp_path, root)
+    backend = H._RealMemoryRun()
+    entered, release = threading.Event(), threading.Event()
+    block = [False]
+
+    def memory_run(path, **kwargs):
+        if kwargs.get("operation") == "list" and block[0]:
+            entered.set()
+            assert release.wait(5), "filter fixture never released"
+        return backend(path, **kwargs)
+
+    actions = H._actions(memory_run)
+    H._enter_memory(state, actions)
+    assert H._ids(state) == ["native-lone"]
+    block[0] = True
+    try:
+        H._keys(state, actions, "f", "enter", drain=False)
+        assert entered.wait(2)
+        assert state.memory_request is not None
+        assert state.memory_message == "working: list..."
+        assert H._ids(state) == ["native-lone"]
+        calls = len(backend.calls)
+        H._keys(state, actions, "d", drain=False)
+        assert len(backend.calls) == calls
+        assert state.memory_pending_delete is None
+    finally:
+        release.set()
+        H._drain(state, actions)
+    assert state.memory_request is None
+    assert state.memory_message == "1 result(s)"
+    H._keys(state, actions, "d")
+    assert state.memory_pending_delete["artifact_ids"] == ["native-lone"]
+    H._keys(state, actions, "escape")
+    assert H._row(root, "native-lone")["artifact_version"] == row.artifact_version
+    H._keys(state, actions, "d", "y")
+    assert H._rows(root) == {}
+
 
 # SGR escape carrying a real foreground/background colour parameter (30-38
 # or 90-97, including the 256-colour/truecolor `38;5;N` / `38;2;R;G;B`
@@ -364,12 +412,13 @@ def test_tab_never_switches_project_over_a_real_pty(
 
 
 def test_question_mark_shows_real_current_bindings(
-    tmp_path: Path, capfd: pytest.CaptureFixture
+    tmp_path: Path, capfd: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """P69-06c/U01 fix: a real `?` binding opens a help view rendering the
     actual current `_KEYMAP` bindings, not a hardcoded string -- and this
     now checks the *displayed content*, not just the mode flag, so a
     static/stale help string could not satisfy it."""
+    monkeypatch.setenv("TERM", "xterm-256color")
     with capfd.disabled():
         captured: list[bytes] = []
         pid, master_fd, result_path = _run_pty_harness(tmp_path, capture=captured)
@@ -424,12 +473,15 @@ def test_no_color_env_suppresses_ansi_color_codes(
     this drives that real path over a real PTY and inspects the actual
     rendered bytes, proving NO_COLOR=1 suppresses colour output rather
     than just confirming the env var is read."""
+    monkeypatch.setenv("TERM", "xterm-256color")
+    monkeypatch.delenv("NO_COLOR", raising=False)
     with capfd.disabled():
         colored: list[bytes] = []
         pid, master_fd, result_path = _run_pty_harness(tmp_path, capture=colored)
         _send(master_fd, "q")
         _collect(pid, master_fd, result_path)
     colored_output = b"".join(colored)
+    assert b"Rush Interactive Quality Explorer" in colored_output
     assert _ANSI_COLOR_CODE.search(colored_output), (
         "expected real ANSI colour codes without NO_COLOR"
     )
@@ -443,6 +495,7 @@ def test_no_color_env_suppresses_ansi_color_codes(
         _send(master_fd, "q")
         _collect(pid, master_fd, result_path)
     no_color_output = b"".join(no_color)
+    assert b"Rush Interactive Quality Explorer" in no_color_output
     assert not _ANSI_COLOR_CODE.search(no_color_output), (
         "NO_COLOR=1 should suppress ANSI colour codes"
     )
@@ -711,86 +764,19 @@ def test_posix_selectors_and_sigwinch_handling() -> None:
 def test_windows_f2_f3_shift_tab_decode_to_named_actions_not_escape(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """U01 fix, Windows decode logic: no Windows console is reachable in
-    this POSIX environment, so this verifies `WindowsKeyReader`'s own
-    scan-code mapping (F2 0x3C, F3 0x3D, Shift+Tab 0x0F) via an injected
-    `msvcrt` stub and a monkeypatched `sys.platform` -- a real, executable
-    check of the decode logic itself. It does NOT verify that a real
-    Windows console actually emits these exact scan codes for these exact
-    keys; that empirical claim remains genuinely unverified here (named
-    explicitly in this task's receipt), same as S03's Windows-only lanes
-    elsewhere on this board."""
-    import sys as sys_module
-    import types
-
-    sys.path.insert(0, _REPO_SRC)
+    """Native record modifiers decode independently of CRT scan conventions."""
     from rush.dashboard.terminal_input import WindowsKeyReader
 
-    keys = iter(["\x00", "\x3c", "\x00", "\x3d", "\x00", "\x0f", "\x00", "H"])
-
-    fake_msvcrt = types.ModuleType("msvcrt")
-    fake_msvcrt.kbhit = lambda: True  # type: ignore[attr-defined]
-    fake_msvcrt.getwch = lambda: next(keys)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys_module.modules, "msvcrt", fake_msvcrt)
-    monkeypatch.setattr(sys_module, "platform", "win32")
+    _windows(
+        monkeypatch,
+        _WinConsole(["\x00", "\x3c", "\x00", "\x3d", "\x00", "\x0f", "\x00", "H"]),
+    )
 
     reader = WindowsKeyReader()
     assert reader.read_key(1.0) == "f2"
     assert reader.read_key(1.0) == "f3"
     assert reader.read_key(1.0) == "shift_tab"
     assert reader.read_key(1.0) == "up"  # a plain arrow still decodes too
-
-
-class _WinConsole:
-    """Scripted `msvcrt` (kbhit/getwch) plus the kernel32 console-mode calls
-    `raw_terminal` makes on Windows. `refuse` makes SetConsoleMode fail for
-    that flag; `no_console` makes GetConsoleMode fail (input is not a
-    console)."""
-
-    def __init__(
-        self, chars: list[str], *, refuse: int = 0, no_console: bool = False
-    ) -> None:
-        self.chars = list(chars)
-        self.modes = {-10: 0x01F7, -11: 0x0003}
-        self.refuse = refuse
-        self.no_console = no_console
-
-    def kbhit(self) -> bool:
-        return bool(self.chars)
-
-    def getwch(self) -> str:
-        return self.chars.pop(0)
-
-    def kernel32(self) -> object:
-        import types
-
-        def get_mode(handle: int, mode: Any) -> int:
-            if self.no_console:
-                return 0
-            mode.contents.value = self.modes[handle]
-            return 1
-
-        def set_mode(handle: int, mode: int) -> int:
-            if mode & self.refuse:
-                return 0
-            self.modes[handle] = mode
-            return 1
-
-        return types.SimpleNamespace(
-            GetStdHandle=lambda which: which,
-            GetConsoleMode=get_mode,
-            SetConsoleMode=set_mode,
-        )
-
-
-def _windows(monkeypatch: pytest.MonkeyPatch, console: _WinConsole) -> None:
-    sys.path.insert(0, _REPO_SRC)
-    from rush.dashboard import terminal_input
-
-    monkeypatch.setattr(terminal_input, "_WINDOWS", True)
-    monkeypatch.setattr(terminal_input, "_windows_kernel32", console.kernel32)
-    monkeypatch.setitem(sys.modules, "msvcrt", console)
-    monkeypatch.setattr(sys, "platform", "win32")
 
 
 @pytest.mark.parametrize("error", [None, RuntimeError, KeyboardInterrupt])
@@ -811,7 +797,10 @@ def test_windows_console_vt_mode_saved_and_restored(
 
     def body() -> None:
         with terminal_input.raw_terminal():
-            assert console.modes == {-10: 0x01F7 | 0x0200, -11: 0x0003 | 0x0004}
+            assert console.modes == {
+                -10: (0x01F7 | 0x0200 | 0x0080) & ~0x0047,
+                -11: 0x0007,
+            }
             assert reader.read_key(0.2) == "up"
             if error is not None:
                 raise error
@@ -831,7 +820,7 @@ def test_windows_console_vt_mode_saved_and_restored(
 @pytest.mark.parametrize(
     ("refuse", "no_console"), [(0x0200, False), (0x0004, False), (0, True)]
 )
-def test_windows_console_refusing_vt_falls_back_to_msvcrt_reader(
+def test_windows_console_refusing_vt_falls_back_to_native_records(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
     refuse: int,
@@ -1014,6 +1003,20 @@ class _CtrlCChild:
             f"tail: {self.text()[-800:]!r}"
         )
 
+    def wait_for_screen(self, marker: str, start: int = 0) -> str:
+        snapshot = ""
+
+        def ready() -> bool:
+            nonlocal snapshot
+            candidate = self.text(start)
+            if not _screen_has(marker, candidate):
+                return False
+            snapshot = candidate
+            return True
+
+        self.wait_for(marker, ready)
+        return snapshot
+
     def send(self, data: bytes) -> None:
         os.write(self.master_fd, data)
         if self.native:
@@ -1135,6 +1138,70 @@ def test_native_cleanup_never_signals_group_after_observed_absence(
                 child.wait_group_gone()
                 child.close()
             assert child._closed is True
+        finally:
+            child.close()
+
+
+@pytest.mark.parametrize("redraw", [False, True], ids=["delayed-footer", "snapshot"])
+def test_native_memory_screen_wait_keeps_complete_snapshot(
+    tmp_path: Path,
+    capfd: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    redraw: bool,
+) -> None:
+    header = "Memory detail\nnative-long v1 bytes 418..539 complete\n"
+    footer = "Content:\nBBBBBBBB\nrows 1-5/5\n"
+    frame = header + footer
+    script = (
+        "import os, time, tty\n"
+        "tty.setraw(0)\n"
+        "os.write(1, b'ready\\n')\n"
+        "os.read(0, 1)\n"
+        + (
+            f"os.write(1, {frame.encode()!r})\n"
+            if redraw
+            else f"os.write(1, {header.encode()!r})\ntime.sleep(0.15)\n"
+            f"os.write(1, {footer.encode()!r})\n"
+        )
+        + "os.read(0, 1)\n"
+        + f"os.write(1, {header.encode()!r})\n"
+        + "os.read(0, 1)\n"
+    )
+    with capfd.disabled():
+        child = _CtrlCChild(
+            tmp_path,
+            "run_module('rush.cli', run_name='__main__')",
+            [],
+            controlling=True,
+            native_argv=[sys.executable, "-c", script],
+        )
+        try:
+            child.wait_for("child ready", lambda: "ready" in child.text())
+            start = len(child.output())
+            if redraw:
+                screen_has = _screen_has
+                sent = False
+
+                def redraw_after_match(marker: str, candidate: str) -> bool:
+                    nonlocal sent
+                    accepted = screen_has(marker, candidate)
+                    if accepted and not sent:
+                        sent = True
+                        child.send(b"N")
+                        child.wait_for(
+                            "partial redraw",
+                            lambda: child.text(start).count("Memory detail") == 2,
+                        )
+                    return accepted
+
+                monkeypatch.setattr(
+                    sys.modules[__name__], "_screen_has", redraw_after_match
+                )
+            child.send(b"M")
+            shown = child.wait_for_screen("bytes 418", start)
+            assert shown == frame
+            if redraw:
+                assert child.text(start) == frame + header
         finally:
             child.close()
 
@@ -1291,8 +1358,6 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
         import subprocess
         import tarfile
 
-        from test_windows_import_safety import _screen_has
-
         from rush.setup.provision import default_data_root
         from rush.workflows import projects
         from rush.workflows.project_run import load_run_manifest, load_scan_events
@@ -1420,10 +1485,7 @@ if "RUSH_G8_NATIVE_ARCHIVE" in os.environ:
                         start = len(child.output())
                         last_frame_start = start
                         child.send(keys)
-                        child.wait_for(
-                            marker, lambda: _screen_has(marker, child.text(start))
-                        )
-                        shown = child.text(start)
+                        shown = child.wait_for_screen(marker, start)
                         keys_seen.append(
                             {"keys_hex": keys.hex(), "marker": marker, "output": shown}
                         )

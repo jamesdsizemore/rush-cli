@@ -9,10 +9,11 @@ from __future__ import annotations
 import copy
 import inspect
 import json
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
 
@@ -516,6 +517,41 @@ def missing_explicit_target(context: InvocationContext) -> dict[str, Any] | None
     return None
 
 
+def _in_process_memory_execution(
+    fn: Callable[[Any, InvocationContext], Any],
+) -> Callable[[Any, InvocationContext], Any]:
+    @wraps(fn)
+    def wrapped(self: Any, context: InvocationContext) -> Any:
+        from rush.delivery import compact
+
+        if context.operation_id != "memory" or compact.RECEIPT_FRAME.get() is not None:
+            return fn(self, context)
+        receipt = compact.FrameContext(
+            "in_process",
+            None,
+            context=context,
+            pending_memory_events=[],
+        )
+        try:
+            with compact.receipt_frame(receipt):
+                result = fn(self, context)
+            projection = (
+                result.to_dict() if isinstance(result, ToolResultV1) else result
+            )
+            if isinstance(projection, Mapping):
+                compact.finalize_memory_events(
+                    receipt,
+                    compact.canonical_json(projection),
+                    accepted=compact.accepted_memory_result(projection),
+                    outcome=compact.memory_delivery_outcome(projection),
+                )
+            return result
+        finally:
+            compact.discard_memory_events(receipt)
+
+    return wrapped
+
+
 class InvocationExecutor:
     """Single execution boundary with registration-time signature adaptation and cache gating."""
 
@@ -552,6 +588,7 @@ class InvocationExecutor:
         """Return registered operation by ID if present."""
         return self._registry.get(operation_id)
 
+    @_in_process_memory_execution
     def execute(self, context: InvocationContext) -> Any:
         """Execute registered operation exactly once without retry.
 

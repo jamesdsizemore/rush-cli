@@ -279,5 +279,8 @@ def test_cli_agent_list_never_touches_real_home(
         "windsurf",
         "zed",
         "codex",
+        "zcode",
     }
+    assert len(payload["raw"]["agents"]) == 7
     assert all(agent["status"] == "not_detected" for agent in payload["raw"]["agents"])
+    assert list(fake_home.rglob("*")) == []

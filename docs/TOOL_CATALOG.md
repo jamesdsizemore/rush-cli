@@ -1,3 +1,5 @@
+Current status: Memory exposes 27 operations, including `bootstrap`: a read-only task-context packet requiring `task_id`, `task_kind` (`memory_continuation` or `test_repair`), and `query`, with optional `max_tokens` (default 2048) and an existing consented `session_binding` UUID. Results include scoped items and verified checkpoint progress when available. Missing/ambiguous consent returns `E_PERMISSION`; an absent consented store returns `OK` with empty items. Bootstrap creates no grant, binding, store, or checkpoint and has no legacy allowlist fallback. See [current inputs, outputs, failure/recovery, and CLI/MCP examples](reference/mcp-tool-reference.md#bootstrap-context-packet).
+
 # Tool catalog
 
 ## `continuity` — workflow, real adapter

@@ -1133,7 +1133,7 @@ def test_t07_interactive_disable_without_native_plugin_keeps_guidance_prompt(
 @pytest.mark.parametrize(
     ("agent", "extra", "message"),
     (
-        ("cursor", ["--enable-agent-hooks"], "available for"),
+        ("cursor", ["--enable-agent-hooks"], "--project"),
         ("claude-code", ["--enable-agent-hooks"], "--project"),
         ("claude-code", ["--hook-result-cache"], "--enable-agent-hooks"),
         (

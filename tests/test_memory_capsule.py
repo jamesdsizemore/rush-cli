@@ -718,6 +718,7 @@ def cli_args(
     for key, flag in (
         ("format", "--format"),
         ("input", "--input"),
+        ("instructions", "--instructions"),
         ("output", "--output"),
         ("max_bytes", "--max-bytes"),
         ("max_tokens", "--max-tokens"),
@@ -1324,7 +1325,8 @@ def test_tiny_budget_rejects_without_output(
                     **limits,
                 },
             )
-            assert res.code == "E_BUDGET", (transport, limits, res)
+            assert res.code == "E_INPUT", (transport, limits, res)
+            assert res.data["admission_failure"] is True
             required = res.data["required"]
             assert set(required) == {"bytes", "tokens"}
             assert isinstance(required["bytes"], int) and required["bytes"] > 0
@@ -1347,6 +1349,13 @@ def test_tiny_budget_rejects_without_output(
         "max_bytes": required["bytes"],
         "max_tokens": required["tokens"],
     }
+    preview = call_inproc(env.root, {**base, "action": "preview_export"})
+    assert preview.code == "E_BUDGET", preview
+    assert preview.data["admission_failure"] is False
+    base.update(
+        max_bytes=preview.data["required"]["bytes"],
+        max_tokens=preview.data["required"]["tokens"],
+    )
     preview = call_inproc(env.root, {**base, "action": "preview_export"})
     assert preview.code == "OK", preview
     done = call_inproc(
@@ -1481,6 +1490,7 @@ def test_explicit_budget_increase_and_hard_caps(
                 "invocation_id": new_uuid(),
                 **limits,
             },
+            cache=False,
         )
 
     # Invalid request values (not budgets): zero, negative, bool, string, float.
@@ -1503,11 +1513,14 @@ def test_explicit_budget_increase_and_hard_caps(
     assert preview(max_bytes=1048576, max_tokens=131072).code == "OK"
     # Content above the request limits: E_BUDGET with `required`; the limit never
     # rises on its own, and an explicit larger request succeeds.
-    small = preview(max_bytes=500)
+    below = preview(max_bytes=1)
+    assert below.code == "E_INPUT" and below.data["admission_failure"] is True
+    minimum = below.data["required"]["bytes"]
+    small = preview(max_bytes=minimum)
     assert small.code == "E_BUDGET", small
-    assert small.data["limits"]["max_bytes"] == 500
+    assert small.data["limits"]["max_bytes"] == minimum
     need = small.data["required"]["bytes"]
-    assert need > 500
+    assert need > minimum
     assert preview(max_bytes=need - 1).code == "E_BUDGET"
     assert preview(max_bytes=need).code == "OK"
     assert not out.exists()
@@ -3493,7 +3506,7 @@ def test_capsule_error_codes_are_existing_codes(tmp_path: Path) -> None:
     )
     record(preview(gone), "E_PERMISSION", "revoked")
     # budget, version and input faults
-    record(preview(max_bytes=100), "E_BUDGET")
+    record(preview(max_bytes=100), "E_INPUT")
     record(
         call_inproc(
             env.root, {**base, "action": "export", "expected_digest": "b" * 64}
@@ -3519,9 +3532,7 @@ def test_capsule_error_codes_are_existing_codes(tmp_path: Path) -> None:
         "E_INPUT",
         "capsule_invalid",
     )
-    record(
-        call_inproc(env.root, {"action": "bridge"}), "E_INPUT", "bridge_not_available"
-    )
+    record(call_inproc(env.root, {"action": "bridge"}), "E_INPUT", field="input")
     ok = record(preview(), "OK")
     assert ok.status == "ok"
     for res in results:
@@ -3537,7 +3548,9 @@ def test_bridge_action_refused_in_codec(tmp_path: Path) -> None:
         for extra in ({}, {"input": str(cap)}, {"format": "pas_v1", "input": str(cap)}):
             res = call(transport, env.root, {"action": "bridge", **extra})
             assert res.code == "E_INPUT", (transport, extra, res)
-            assert res.reason == "bridge_not_available", (transport, extra, res)
+            assert res.data["field"] == (
+                "instructions" if "input" in extra else "input"
+            ), (transport, extra, res)
     assert env.effects() == before
 
 
@@ -3858,9 +3871,16 @@ def test_capsule_transport_not_request_settable(
         *,
         permissions: Any,
         transport: Literal["cli", "mcp"] = "cli",
+        frame_bytes: Any = None,
     ) -> Any:
         seen.append(transport)
-        return real(root, request, permissions=permissions, transport=transport)
+        return real(
+            root,
+            request,
+            permissions=permissions,
+            transport=transport,
+            frame_bytes=frame_bytes,
+        )
 
     monkeypatch.setattr(capsule, "run_capsule", spy)
     base = {
@@ -4110,7 +4130,20 @@ def test_cli_mcp_capsule_parity(
         "preview_export selectors",
     )
     # handler-level errors
-    both({**base, "action": "preview_export", "max_bytes": 100}, "budget")
+    budget_request = {**base, "action": "preview_export", "max_bytes": 100}
+    mcp_budget = call_mcp(env.root, budget_request)
+    cli_budget = call_cli(env.root, budget_request)
+    for result in (mcp_budget, cli_budget):
+        assert_denied(result, "E_INPUT", "budget_below_minimum")
+        assert result.data["admission_failure"] is True
+        assert set(result.data["required"]) == {"bytes", "tokens"}
+        assert result.data["required"]["bytes"] > 100
+        assert result.data["required"]["tokens"] > 0
+    # Each transport reserves its actual wrapper; wire-floor tests measure both.
+    assert {**mcp_budget.raw, "data": {**mcp_budget.data, "required": None}} == {
+        **cli_budget.raw,
+        "data": {**cli_budget.data, "required": None},
+    }
     both({**base, "action": "preview_export", "max_bytes": 1048577}, "hard cap")
     both(
         {**base, "action": "preview_export", "selectors": {"sources": ["nope"]}},
@@ -5265,7 +5298,7 @@ def _h_bridge(c: Cell, tmp_path: Path) -> None:
         res = R(json.loads(result.stdout))
     else:
         res = call(c.transport, env.root, request)
-    assert res.code == "E_INPUT" and res.reason == "bridge_not_available", (c.id, res)
+    assert res.code == "E_INPUT" and res.data["field"] == "input", (c.id, res)
     assert env.effects() == before
 
 

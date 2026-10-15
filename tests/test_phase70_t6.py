@@ -229,17 +229,28 @@ MEMORY_OPERATIONS: list[tuple[str, dict[str, Any], str | None]] = [
         {"request": {"action": "preview_import", "input": "c.json"}},
         "request",
     ),
+    (
+        "bootstrap",
+        {
+            "request": {
+                "task_id": "phase70-bootstrap",
+                "task_kind": "memory_continuation",
+                "query": "continue task",
+            }
+        },
+        "request",
+    ),
 ]
-assert len(MEMORY_OPERATIONS) == 26
+assert len(MEMORY_OPERATIONS) == 27
 
 
 def test_t06_memory_operations_table_matches_valid_operations():
     """72-T05 D11: the table covers exactly the `VALID_OPERATIONS`, `preference`
-    included (26 with 72-T06's `history` and `explain` and 73-T09/CODEC's
-    `capsule`). A test, not a module assert,
+    included (27 with 72-T06's `history` and `explain` and 73-T09/CODEC's
+    `capsule` and `bootstrap`). A test, not a module assert,
     so a missing operation fails this id and leaves every other id of the file
     collectable."""
-    assert len(_MEMORY_VALID_OPERATIONS) == 26
+    assert len(_MEMORY_VALID_OPERATIONS) == 27
     assert {op for op, _, _ in MEMORY_OPERATIONS} == _MEMORY_VALID_OPERATIONS
 
 

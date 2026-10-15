@@ -60,7 +60,9 @@ At baseline `997b56e`, live `build_server().list_tools()` returns 74 registered 
 - `rush_get_patch`: Returns unified diff for a finding.
 - `rush_apply_fix`: Applies validated unified diffs through the current patch path. Invocation-owned restoration remains required by [P64-04](../phase-plans/phase-64-runtime-correctness-and-safe-execution-plan.md#p64-04--real-isolated-patch-application-f05-f2425-f43); do not treat current broad cleanup as safe promotion evidence.
 - `rush_session_context`: Retrieves multi-turn evaluation history framed in `<rush_session_memory>` XML tags.
-- `rush_memory` (Phase 61): `MemoryTool` operations over the unified `TypedArtifactStore`, 26 in all: `ask`, `recall`, `list`, `expand`, `history`, `explain`, `related`, `write`, `promote`, `edit`, `archive`, `delete`, `link`, `consolidate`, `maintain`, `preference`, `intent`, `recipe`, `plan_checks`, `last_success_diagnose`, `prepare`, `resume`, `verify_attempt`, `handoff`, `receive`, `capsule`. It returns `ToolResultV1`, the same registration path (`ALL_TOOLS`/`TOOL_SPECS`) as every other tool. In a project with a memory grant every operation resolves through the grant: `session_allowlist` only narrows what the grant approves, and a revoked grant, an expired grant or an invalid policy returns `E_PERMISSION` with a `next_action`. A project that was never enrolled keeps the legacy rule: a read needs a non-empty `session_allowlist`, and without one it returns `status="skipped"` and reads nothing, matching the `rush_session_context` precedent. Writes and other mutations need `allow_cache_write`. Grants are written only by `rush memory grant`, `rush memory revoke` and `rush memory bind-store`; no MCP operation writes one.
+- `rush_memory` (Phase 61): `MemoryTool` operations over the unified `TypedArtifactStore`, 27 in all: `ask`, `recall`, `list`, `expand`, `history`, `explain`, `related`, `write`, `promote`, `edit`, `archive`, `delete`, `link`, `consolidate`, `maintain`, `preference`, `intent`, `recipe`, `plan_checks`, `last_success_diagnose`, `prepare`, `resume`, `verify_attempt`, `handoff`, `receive`, `capsule`, `bootstrap`. It returns `ToolResultV1`, the same registration path (`ALL_TOOLS`/`TOOL_SPECS`) as every other tool. In a project with a memory grant every operation resolves through the grant: `session_allowlist` only narrows what the grant approves, and a revoked grant, an expired grant or an invalid policy returns `E_PERMISSION` with a `next_action`. A project that was never enrolled keeps the legacy rule: a read needs a non-empty `session_allowlist`, and without one it returns `status="skipped"` and reads nothing, matching the `rush_session_context` precedent. Writes and other mutations need `allow_cache_write`. Grants are written only by `rush memory grant`, `rush memory revoke` and `rush memory bind-store`; no MCP operation writes one.
+  `bootstrap` takes `request` with `task_id`, `task_kind` (`memory_continuation` or `test_repair`), and `query`; optional `max_tokens` defaults to 2048 and `session_binding` selects an existing consented UUID. It returns scoped items and verified checkpoint progress, creates no grant/binding/store/checkpoint, and has no legacy allowlist fallback. Missing consent returns `E_PERMISSION`; an absent consented store returns `OK` with empty items. See [complete bootstrap contract and CLI/MCP examples](#bootstrap-context-packet).
+
 - `rush_project`, `rush_scan`, `rush_memory` publish a strict top-level object schema (`additionalProperties: false`, a full `operation` enum, exact per-field types/bounds). `rush_project`/`rush_scan` accept the legacy `{"request": {...}}` envelope or named top-level fields, never both; a call mixing the two forms, sending an unknown key, an explicit `null` on a field that forbids it, a non-boolean grant, or a `schema_version` other than the integer `1` is rejected before any project resolution, reservation, lock, or write — `rush_project`/`rush_scan` as `error.code: "INVALID_REQUEST"`, `rush_memory` as `code: "E_INPUT"`. On `rush_memory`, an empty `session_allowlist` on `ask`/`recall`/`list` is rejected the same way. The CLI, TUI, and dashboard enforce the same strict checks against the same request models.
 - `rush_guard`: Validates shell command safety and confines path traversal.
 - `rush_token`: Fast BPE token counting and AST outline compression.
@@ -107,3 +109,23 @@ Runs air-gapped local ONNX review model at `<path>`.
 
 ### `rush_benchmark`
 Compares performance samples against baseline thresholds at `<path>`.
+
+## Bootstrap context packet
+
+`operation: "bootstrap"` reads bounded context for one task through an existing consented memory binding. Its `request` requires non-empty `task_id`, `task_kind` (`"memory_continuation"` or `"test_repair"`), and `query`; optional `max_tokens` is a positive integer (default `2048`), and `session_binding` is an existing binding UUID. Omit the binding only when Rush can resolve exactly one valid binding for the project's grant. Bootstrap has no legacy session-allowlist fallback and creates no grant, binding, store, or checkpoint; it needs no cache-write flag.
+
+Call `tools/call` with:
+
+```json
+{"name":"rush_memory","arguments":{"path":".","operation":"bootstrap","request":{"task_id":"phase72","task_kind":"memory_continuation","query":"remaining memory acceptance checks","max_tokens":2048}}}
+```
+
+CLI equivalent:
+
+```sh
+rush memory bootstrap --project . --task-id phase72 --task-kind memory_continuation --query "remaining memory acceptance checks" --max-tokens 2048 --json
+```
+
+Both return a memory envelope with `code` and `data`; a successful packet includes scoped `items`, task intent, `scope`, `task`, `checkpoint`, `progress_state`, `unresolved`, and `next_action`. A matching verified checkpoint supplies progress and its exact artifact version; no checkpoint returns `progress_state: "no_verified_checkpoint"`, never invented progress. After consent resolves, an absent store returns `code: "OK"`, `data.state: "empty"`, and `items: []` without creating the database. Stale-only context reports `stale_only` without exposing excluded content.
+
+Missing or ambiguous consent returns `E_PERMISSION` with `scope_required`; revoked authority is denied. Select an existing consented binding or preview local memory setup before retrying. Invalid inputs or a budget below admission minimum return `E_INPUT`; a packet that cannot fit returns `E_BUDGET`. Scope/store changes can return `E_RESTART`; migration, corruption, and busy-store failures remain explicit. Bootstrap neither grants write consent nor proves another agent received context.

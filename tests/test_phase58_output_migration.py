@@ -41,12 +41,19 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
-    """T-58.21 (R-011 Governance Test): Probes all 153 operations from public-operations.toml with malformed payloads."""
+    """T-58.21 (R-011): Every public manifest boundary rejects malformed output."""
     registry = get_operation_registry()
     assert isinstance(registry, OperationRegistry)
+    with (PROJECT_ROOT / "governance" / "public-operations.toml").open("rb") as handle:
+        manifest = tomllib.load(handle)
+    declared_ids = [operation["id"] for operation in manifest["operations"]]
+    assert len(declared_ids) == len(set(declared_ids)) == 208
+    assert manifest["manifest"]["total_operations"] == 208
+    assert set(registry._adapters) == set(declared_ids)
+    assert registry._adapters["tool.memory_bootstrap"].kind == "tool"
     # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
     # 73-T02/BOOTSTRAP-CONSENT: +3 admin cli-only (memory grant, revoke, bind-store).
-    assert len(registry._adapters) == 207
+    assert len(registry._adapters) == 208
 
     # Verify adapter registration and boundary validation across all operations
     tool_count = 0
@@ -151,12 +158,12 @@ def test_every_eligible_manifest_boundary_rejects_malformed_output() -> None:
                 registry.validate_output(op_id, sample_valid_tool_result)
 
     # Phase 70 T17: tool 79->80, admin 95->94 (rush_check added; finding 13).
-    assert tool_count == 81
+    assert tool_count == 82
     # 72-T05 memory preference, 72-T06 history and explain, 73-T09/CODEC +7 capsule,
     # 73-T02/BOOTSTRAP-CONSENT +3 (memory grant, revoke, bind-store)
     assert admin_count == 108
     assert service_count == 18
-    assert tool_count + admin_count + service_count == 207
+    assert tool_count + admin_count + service_count == 208
 
 
 # ---------------------------------------------------------------------------

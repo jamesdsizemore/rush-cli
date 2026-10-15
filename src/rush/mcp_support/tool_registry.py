@@ -254,12 +254,35 @@ def _memory_frame(
             structured = converted(value).structuredContent
             return compact.canonical_json(dict(structured or {}))
 
-        return compact.FrameContext("in_process", None, emit=emit_in_process)
+        return compact.FrameContext(
+            "in_process", None, emit=emit_in_process, pending_memory_events=[]
+        )
 
     def emit(value: Mapping[str, Any]) -> bytes:
         return compact.mcp_frame_bytes(converted(value), rid)
 
-    return compact.FrameContext("mcp_stdio", rid, emit=emit)
+    frame = compact.FrameContext("mcp_stdio", rid, emit=emit, pending_memory_events=[])
+    compact.register_mcp_receipt_frame(frame)
+    return frame
+
+
+def _deliver_memory_frame(
+    frame: compact.FrameContext, deliver: Callable[[], Any]
+) -> Any:
+    try:
+        with compact.memory_frame(frame):
+            result = deliver()
+        if frame.transport == "in_process":
+            compact.finalize_memory_events(
+                frame,
+                compact.frame_bytes(frame, result),
+                accepted=compact.accepted_memory_result(result),
+                outcome=compact.memory_delivery_outcome(result),
+            )
+        return result
+    except BaseException:
+        compact.invalidate_mcp_receipt_frame(frame)
+        raise
 
 
 def _cached(make: Callable[[], Any]) -> Callable[[], Any]:
@@ -281,10 +304,26 @@ def _call_in_bridge_frame(
 ) -> Any:
     """72-T02 D35: inside an MCP request the bridge's own emitted line (it returns
     `result["raw"]`) is the frame; a direct handler call keeps payload measurement."""
-    if compact.current_request_id() is None:
-        return entry(**kwargs)
-    with compact.memory_frame(_memory_frame(convert, lambda value: value["raw"])):
-        return entry(**kwargs)
+    frame = _memory_frame(convert, lambda value: value["raw"])
+    scope = (
+        compact.receipt_frame
+        if frame.transport == "in_process"
+        else compact.memory_frame
+    )
+    try:
+        with scope(frame):
+            result = entry(**kwargs)
+        if frame.transport == "in_process":
+            compact.finalize_memory_events(
+                frame,
+                compact.frame_bytes(frame, result),
+                accepted=compact.accepted_memory_result(result),
+                outcome=compact.memory_delivery_outcome(result),
+            )
+        return result
+    except BaseException:
+        compact.invalidate_mcp_receipt_frame(frame)
+        raise
 
 
 def _declared_root(value: Any, anchor: Path, index: Mapping[str, str]) -> Path | None:
@@ -476,8 +515,7 @@ def make_tool_wrapper(
         if tool.name != "memory":
             return deliver()
         # 72-T02 D35: memory pages are measured on the bytes this wrapper emits.
-        with compact.memory_frame(_memory_frame(convert, dict)):
-            return deliver()
+        return _deliver_memory_frame(_memory_frame(convert, dict), deliver)
 
     tool_mcp_wrapper.__dict__["__self__"] = tool
     tool_mcp_wrapper.__dict__["__signature__"] = public_sig

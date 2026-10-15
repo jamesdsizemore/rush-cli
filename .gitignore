@@ -62,3 +62,6 @@ graft/
 
 # scratch clone/checkout area
 /repos/
+
+# Local scratch output (large archives here were being snapshotted into .git)
+/.scratch/

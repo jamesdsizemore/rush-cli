@@ -26,6 +26,465 @@ from _process_children import spawn_child
 from test_subprocess_contract import _wait_until
 
 
+class _WinConsole:
+    """Scripted kernel32 console input and mode calls
+    `raw_terminal` makes on Windows. `refuse` makes SetConsoleMode fail for
+    that flag; `no_console` makes GetConsoleMode fail (input is not a
+    console)."""
+
+    def __init__(
+        self, chars: list[str], *, refuse: int = 0, no_console: bool = False
+    ) -> None:
+        self.chars = list(chars)
+        self.modes = {-10: 0x01F7, -11: 0x0003}
+        self.refuse = refuse
+        self.no_console = no_console
+
+    def kernel32(self) -> object:
+        import ctypes
+        import types
+
+        def fill(record, count, *, consume=False):
+            if not self.chars:
+                count._obj.value = 0
+                return 1
+            chars = self.chars
+            char = chars[0]
+            if isinstance(char, dict):
+                record._obj.kind = char.get("kind", 1)
+                key = record._obj.event.key
+                for field in ("down", "repeat", "virtual", "scan", "char", "control"):
+                    setattr(
+                        key,
+                        field,
+                        char.get(field, 1 if field in {"down", "repeat"} else 0),
+                    )
+                count._obj.value = 1
+                if consume:
+                    del chars[0]
+                return 1
+            record._obj.kind = 1
+            key = record._obj.event.key
+            key.down, key.repeat = 1, 1
+            if char in ("\x00", "\xe0"):
+                code = chars[1]
+                key.virtual = {
+                    "H": 0x26,
+                    "P": 0x28,
+                    "K": 0x25,
+                    "M": 0x27,
+                    "\x3c": 0x71,
+                    "\x3d": 0x72,
+                    "\x0f": 9,
+                }[code]
+                key.scan = ord(code)
+                key.control = 0x10 if code == "\x0f" else 0
+                length = 2
+            else:
+                key.virtual, key.char = 0, ord(char)
+                length = 1
+            count._obj.value = 1
+            if consume:
+                del chars[:length]
+            return 1
+
+        def read_console(handle, text, size, count, reserved):
+            text[0] = self.chars.pop(0)
+            count._obj.value = 1
+            return 1
+
+        def get_mode(handle: int, mode: Any) -> int:
+            if self.no_console:
+                return 0
+            ctypes.cast(
+                mode, ctypes.POINTER(ctypes.c_uint32)
+            ).contents.value = self.modes[handle]
+            return 1
+
+        def set_mode(handle: int, mode: int) -> int:
+            refused_handle = -10 if self.refuse == 0x0200 else -11
+            if handle == refused_handle and mode & self.refuse:
+                return 0
+            self.modes[handle] = mode
+            return 1
+
+        return types.SimpleNamespace(
+            GetStdHandle=lambda which: which,
+            GetConsoleMode=get_mode,
+            SetConsoleMode=set_mode,
+            WaitForSingleObject=lambda handle, timeout: 0 if self.chars else 0x102,
+            PeekConsoleInputW=lambda handle, record, size, count: fill(record, count),
+            ReadConsoleInputW=lambda handle, record, size, count: fill(
+                record, count, consume=True
+            ),
+            ReadConsoleW=read_console,
+        )
+
+
+def _windows(monkeypatch: pytest.MonkeyPatch, console: _WinConsole) -> None:
+    from rush.dashboard import terminal_input
+
+    monkeypatch.setattr(terminal_input, "_WINDOWS", True)
+    monkeypatch.setattr(terminal_input, "_windows_kernel32", console.kernel32)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+
+def test_windows_native_records_modifiers_repeat_nonkeys_and_surrogates(monkeypatch):
+    import ctypes
+
+    from rush.dashboard import terminal_input as T
+
+    assert ctypes.sizeof(T._WindowsKeyEvent) == 16
+    assert ctypes.sizeof(T._WindowsInputRecord) == 20
+    console = _WinConsole(
+        [
+            {"kind": 4},
+            {"down": 0, "char": ord("x")},
+            {"virtual": 0x10},
+            {"virtual": 0x09, "scan": 0x0F, "char": 9, "control": 0x10},
+            {"virtual": 0x09, "scan": 0x0F, "char": 9},
+            {"virtual": 0x71, "scan": 0x3C, "repeat": 3},
+            {"char": 0xD83D},
+        ]
+    )
+    _windows(monkeypatch, console)
+    reader = T.WindowsKeyReader()
+    assert [reader.read_key(0) for _ in range(5)] == [
+        "shift_tab",
+        "tab",
+        "f2",
+        "f2",
+        "f2",
+    ]
+    assert reader.read_key(0) is None
+    console.chars.append({"char": 0xDE00})
+    assert reader.read_key(0) == "😀"
+    assert reader.read_key(0) is None
+
+
+def test_windows_native_paste_bound_keeps_extended_key_atomic(monkeypatch):
+    from rush.dashboard import terminal_input as T
+
+    console = _WinConsole([*"qqqqqq", "\x00", "\x3c", "\r"])
+    _windows(monkeypatch, console)
+    monkeypatch.setattr(T, "_PASTE_MAX", 4)
+    reader = T.WindowsKeyReader()
+    assert [reader.read_key(0) for _ in range(4)] == [
+        "paste:qqqq",
+        "paste:qq",
+        "f2",
+        "enter",
+    ]
+
+
+def test_windows_native_paired_records_remain_literal_paste_then_keys(monkeypatch):
+    from rush.dashboard import terminal_input as T
+
+    console = _WinConsole(
+        [
+            {"char": ord("q")},
+            {"char": ord("q"), "down": 0},
+            {"char": ord("q")},
+            {"char": ord("q"), "down": 0},
+            {"virtual": 0x71, "scan": 0x3C},
+            {"virtual": 0x71, "scan": 0x3C, "down": 0},
+            {"char": 13, "virtual": 13, "scan": 0x1C},
+        ]
+    )
+    _windows(monkeypatch, console)
+    reader = T.WindowsKeyReader()
+    assert [reader.read_key(0) for _ in range(4)] == ["paste:qq", "f2", "enter", None]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["PeekConsoleInputW", "ReadConsoleInputW", "ReadConsoleW", "WaitForSingleObject"],
+)
+def test_windows_native_reader_error_restores_modes(monkeypatch, operation):
+    from rush.dashboard import terminal_input as T
+
+    console = _WinConsole(["x"])
+    if operation == "ReadConsoleInputW":
+        console.chars.insert(0, {"kind": 4})
+    kernel = console.kernel32()
+    setattr(
+        kernel,
+        operation,
+        lambda *args: 0xFFFFFFFF if operation == "WaitForSingleObject" else 0,
+    )
+    _windows(monkeypatch, console)
+    monkeypatch.setattr(T, "_windows_kernel32", lambda: kernel)
+    monkeypatch.setattr(T.ctypes, "get_last_error", lambda: 5, raising=False)
+    before = dict(console.modes)
+    reader = T.WindowsKeyReader()
+    with pytest.raises(OSError, match=operation), T.raw_terminal():
+        reader.read_key(0)
+    assert console.modes == before and T._WINDOWS_VT_INPUT == [False]
+
+
+def test_windows_job_handle_width_all_runtime_entrypoints(monkeypatch):
+    import ctypes
+    from types import SimpleNamespace
+
+    from rush.runtime import subprocesses as R
+
+    high = 0x100000001
+    calls = []
+
+    def function(name):
+        def invoke(*args):
+            calls.append((name, args))
+            if name in {"CreateJobObjectW", "OpenJobObjectW", "OpenProcess"}:
+                return high
+            return 1
+
+        return invoke
+
+    names = (
+        "CreateJobObjectW",
+        "OpenJobObjectW",
+        "OpenProcess",
+        "SetInformationJobObject",
+        "QueryInformationJobObject",
+        "AssignProcessToJobObject",
+        "TerminateJobObject",
+        "CloseHandle",
+    )
+    kernel = SimpleNamespace(**{name: function(name) for name in names})
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: kernel, raising=False)
+    assert R._create_kill_on_close_job("owned") == high
+    assert R._assign_process_to_job(high, 123)
+    assert R._windows_job_has_zero_processes(high)
+    assert R._windows_confirm_terminated({"windows_job_name": "owned", "pgid": 123})
+    for name in names:
+        fn = getattr(kernel, name)
+        assert fn.argtypes[0] is (
+            ctypes.c_uint32
+            if name in {"OpenProcess", "OpenJobObjectW"}
+            else ctypes.c_void_p
+        )
+        assert fn.restype is (
+            ctypes.c_void_p
+            if name in {"CreateJobObjectW", "OpenProcess", "OpenJobObjectW"}
+            else ctypes.c_int32
+        )
+    assert [
+        (name, args[0])
+        for name, args in calls
+        if name
+        in {
+            "SetInformationJobObject",
+            "QueryInformationJobObject",
+            "AssignProcessToJobObject",
+            "TerminateJobObject",
+            "CloseHandle",
+        }
+    ] == [
+        ("SetInformationJobObject", high),
+        ("AssignProcessToJobObject", high),
+        ("CloseHandle", high),
+        ("QueryInformationJobObject", high),
+        ("TerminateJobObject", high),
+        ("QueryInformationJobObject", high),
+        ("CloseHandle", high),
+    ]
+
+
+def test_windows_vt_split_surrogate_survives_timeout(monkeypatch):
+    from rush.dashboard import terminal_input as T
+
+    console = _WinConsole(["\ud83d"])
+    _windows(monkeypatch, console)
+    reader = T.WindowsKeyReader()
+    with T.raw_terminal():
+        assert reader.read_key(0) is None
+        console.chars.append("\ude00")
+        assert reader.read_key(0) == "😀"
+
+
+def test_tui_supplied_console_is_not_reconstructed(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from rush import tui
+
+    console = object()
+
+    def forbidden(**kwargs):
+        pytest.fail("caller supplied Console must be reused")
+
+    monkeypatch.setattr(tui, "Console", forbidden)
+    monkeypatch.setattr(tui, "raw_terminal", nullcontext)
+    tui.run_interactive_tui(
+        [],
+        console=console,
+        actions=object(),
+        key_reader=SimpleNamespace(get_size=lambda: (80, 24)),
+        max_ticks=0,
+        use_live=False,
+    )
+
+
+def test_windows_child_cleanup_survives_launcher_timeout(tmp_path, monkeypatch):
+    import ctypes
+    from types import SimpleNamespace
+
+    from rush.dashboard import terminal_input
+    from rush.runtime import subprocesses as runtime
+
+    calls = []
+    dimensions = [80, 24]
+    launched = []
+    primary = RuntimeError("primary launch failure")
+
+    def api(name):
+        def invoke(*args):
+            calls.append((name, args))
+            if name == "CreateFileW":
+                return 17 if args[0] == "CONIN$" else 18
+            if name == "GetStdHandle":
+                return 100 + args[0]
+            if name == "GetConsoleMode":
+                args[1]._obj.value = 3
+            if name == "SetConsoleScreenBufferSize":
+                dimensions[:] = [args[1].x, args[1].y]
+            if name == "GetConsoleScreenBufferInfo":
+                info = args[1]._obj
+                info.window.right, info.window.bottom = (
+                    dimensions[0] - 1,
+                    dimensions[1] - 1,
+                )
+            if name == "GetConsoleCursorInfo":
+                args[1]._obj.size, args[1]._obj.visible = 25, 1
+            if name == "WriteConsoleOutputCharacterW":
+                args[-1]._obj.value = args[2]
+            if name == "ReadConsoleOutputCharacterW" and launched:
+                raise primary
+            return 1
+
+        return invoke
+
+    class Kernel:
+        def __getattr__(self, name):
+            fn = api(name)
+            setattr(self, name, fn)
+            return fn
+
+    kernel = Kernel()
+
+    def wait(timeout):
+        raise subprocess.TimeoutExpired("owned launcher", timeout)
+
+    proc = SimpleNamespace(pid=123, poll=lambda: None, wait=wait)
+
+    def popen(*args, **kwargs):
+        launched.append(True)
+        return proc
+
+    terminated = []
+    monkeypatch.setattr(terminal_input, "_windows_kernel32", lambda: kernel)
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, raising=False)
+    monkeypatch.setattr(os, "set_handle_inheritable", lambda *args: None, raising=False)
+    monkeypatch.setattr(
+        subprocess, "STARTUPINFO", lambda: SimpleNamespace(dwFlags=0), raising=False
+    )
+    monkeypatch.setattr(subprocess, "STARTF_USESTDHANDLES", 0x100, raising=False)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(runtime, "_terminate_owned_group", terminated.append)
+    release, result = tmp_path / "release", tmp_path / "result.json"
+    release.touch()
+    with pytest.raises(RuntimeError) as raised:
+        _windows_installed_tui_child(
+            "owned.exe",
+            [str(tmp_path / "alpha"), str(tmp_path / "bravo")],
+            "0.0",
+            str(result),
+            str(tmp_path),
+            str(tmp_path),
+            str(tmp_path),
+            str(release),
+        )
+    assert raised.value is primary
+    assert terminated == [proc]
+    receipt = json.loads(result.read_text())
+    assert receipt["failure"] == "RuntimeError('primary launch failure')"
+    assert (
+        len(receipt["cleanup_failures"]) == 1
+        and "TimeoutExpired" in receipt["cleanup_failures"][0]
+    )
+    assert [(args[0], args[1]) for name, args in calls if name == "SetStdHandle"][
+        -3:
+    ] == [(-10, 90), (-11, 89), (-12, 88)]
+    assert {args[0] for name, args in calls if name == "CloseHandle"} >= {17, 18}
+    assert calls[-1][0] == "FreeConsole"
+
+
+@pytest.mark.parametrize(
+    "failure", ["raw", "console", "live_constructor", "start", "start_and_stop"]
+)
+def test_tui_startup_failure_restores_sigint_and_preserves_primary(
+    monkeypatch, failure
+):
+    import signal
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    import rich.live
+
+    from rush import tui
+
+    active = []
+    old = signal.getsignal(signal.SIGINT)
+    primary = RuntimeError("startup failure")
+
+    @contextmanager
+    def raw():
+        if failure == "raw":
+            raise primary
+        active.append(True)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    def console(**kwargs):
+        assert active, "Console must inspect modes inside raw context"
+        if failure == "console":
+            raise primary
+        return object()
+
+    class Live:
+        def __init__(self, *args, **kwargs):
+            if failure == "live_constructor":
+                raise primary
+
+        def start(self):
+            raise primary
+
+        def stop(self):
+            if failure == "start_and_stop":
+                raise ValueError("secondary cleanup")
+
+    monkeypatch.setattr(tui, "raw_terminal", raw)
+    monkeypatch.setattr(tui, "Console", console)
+    monkeypatch.setattr(rich.live, "Live", Live)
+    monkeypatch.setattr(tui, "render_app", lambda state: None)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            tui.run_interactive_tui(
+                [],
+                actions=object(),
+                key_reader=SimpleNamespace(get_size=lambda: (80, 24)),
+            )
+        assert raised.value is primary
+        assert signal.getsignal(signal.SIGINT) is old
+        assert not active
+        if failure == "start_and_stop":
+            assert primary.__notes__ == ["Live.stop failed: ValueError"]
+    finally:
+        signal.signal(signal.SIGINT, old)
+
+
 def _nn[T](value: T | None) -> T:
     assert value is not None
     return value
@@ -38,7 +497,23 @@ def _screen_has(marker: str, text: str) -> bool:
     def squash(value: str) -> str:
         return re.sub(r"[\s│]+", " ", value)
 
+    if marker.startswith(("bytes ", "rows ")) and "Memory detail" in text:
+        current = squash(text.rsplit("Memory detail", 1)[1])
+        return (
+            squash(marker) in current
+            and re.search(r"\brows \d+-\d+/\d+\b", current) is not None
+        )
     return squash(marker) in squash(text)
+
+
+def test_memory_page_marker_requires_current_frame_footer() -> None:
+    previous = "Memory detail\nnative-long v1 bytes 0..158 [x] next page\nrows 1-5/5\n"
+    current = "Memory detail\nnative-long v1 bytes 418..539 complete\n"
+    assert not _screen_has("bytes 418", previous + current)
+    complete = previous + current + "rows 1-5/5\n"
+    assert _screen_has("bytes 418", complete)
+    assert not _screen_has("bytes 0..", complete)
+    assert _screen_has("rows 1-", complete)
 
 
 POSIX_ONLY = ("fcntl", "termios", "tty", "pwd", "grp", "resource")
@@ -1378,11 +1853,13 @@ def _exercise_native_memory_actions(root: Path, entries: dict, press) -> dict:
     press(b"a", "archive preview:")
     press(b"y", "archived native-lone")
     assert _nn(store.get_current("native-lone")).archived_at is not None
-    press(b"f\t\t\ttrue\r", "> native-lone")
+    press(b"f", "> trust:")
+    press(b"\t\t\ttrue\r", "1 result(s)")
     press(b"a", "restore preview:")
     press(b"y", "restored native-lone")
     assert _nn(store.get_current("native-lone")).archived_at is None
-    press(b"f\t\t\t" + b"\x7f" * 4 + b"\r", "> native-lone")
+    press(b"f", "> trust:")
+    press(b"\t\t\t" + b"\x7f" * 4 + b"\r", "1 result(s)")
     press(b"d", "preview: 1 record(s) selected")
     press(b"n", "delete cancelled")
     assert store.get_current("native-lone") is not None
@@ -2375,22 +2852,56 @@ def _windows_installed_tui_child(
         transcript["failure"] = SecretRedactor.redact_text(repr(exc))
         raise
     finally:
-        if proc is not None and proc.poll() is None:
-            proc.kill()
-            proc.wait(timeout=5)
+        import sys
+
+        from rush.runtime.subprocesses import _terminate_owned_group
+
+        primary_error = sys.exception()
+        cleanup_errors = []
+
+        def cleanup(action, *, must_succeed=False):
+            try:
+                outcome = action()
+                if must_succeed and not outcome:
+                    raise OSError("Windows console cleanup API returned false")
+            except BaseException as cleanup_error:  # noqa: BLE001 -- attempt every owned cleanup
+                cleanup_errors.append(cleanup_error)
+
+        def reap_launcher():
+            if proc is not None and proc.poll() is None:
+                _terminate_owned_group(proc)
+                proc.wait(timeout=5)
+
+        cleanup(reap_launcher)
         if worker_handle is not None:
-            assert kernel.CloseHandle(worker_handle)
+            cleanup(lambda: kernel.CloseHandle(worker_handle), must_succeed=True)
         if controller_handler is not None:
-            kernel.SetConsoleCtrlHandler(controller_handler, False)
+            cleanup(
+                lambda: kernel.SetConsoleCtrlHandler(controller_handler, False),
+                must_succeed=True,
+            )
         if standard_handles is not None:
             for which, handle in zip((-10, -11, -12), standard_handles, strict=True):
-                kernel.SetStdHandle(which, handle)
+                cleanup(
+                    lambda which=which, handle=handle: kernel.SetStdHandle(
+                        which, handle
+                    ),
+                    must_succeed=True,
+                )
         if input_handle not in (None, ctypes.c_void_p(-1).value):
-            assert kernel.CloseHandle(input_handle)
+            cleanup(lambda: kernel.CloseHandle(input_handle), must_succeed=True)
         if output_handle not in (None, ctypes.c_void_p(-1).value):
-            assert kernel.CloseHandle(output_handle)
-        kernel.FreeConsole()
-        Path(result).write_text(json.dumps(transcript), encoding="utf-8")
+            cleanup(lambda: kernel.CloseHandle(output_handle), must_succeed=True)
+        cleanup(kernel.FreeConsole, must_succeed=True)
+        if cleanup_errors:
+            transcript["cleanup_failures"] = [
+                SecretRedactor.redact_text(repr(error)) for error in cleanup_errors
+            ]
+        cleanup(
+            lambda: Path(result).write_text(json.dumps(transcript), encoding="utf-8")
+        )
+        if cleanup_errors and primary_error is None:
+            raise cleanup_errors[0]
 
 
 @pytest.mark.windows_only
@@ -2542,13 +3053,17 @@ def test_windows_installed_tui_real_console_journey(tmp_path, windows_kernel) ->
         assert runtime_subprocesses._assign_process_to_job(job, child.pid)
         release.write_text("launch", encoding="utf-8")
         exit_code = child.wait(timeout=180)
+        observations = (
+            json.loads(child_result.read_text(encoding="utf-8"))
+            if child_result.is_file()
+            else {"failure": "child result absent", "exit_code": exit_code}
+        )
+        assert exit_code == 0, observations.get("failure", observations)
         natural_zero_processes = _wait_until(
             lambda: runtime_subprocesses._windows_job_has_zero_processes(job)
         )
-        assert natural_zero_processes, "installed TUI left child processes after exit"
-        assert child_result.is_file()
-        observations = json.loads(child_result.read_text(encoding="utf-8"))
-        assert exit_code == 0, observations.get("failure", observations)
+        assert natural_zero_processes, observations
+        assert child_result.is_file(), observations
         assert observations["sizes"] == [
             [80, 24],
             [120, 40],

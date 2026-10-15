@@ -142,10 +142,8 @@ LANES = (
     "phase70-t28d-g5-g8",
     "phase71-p07",
 )
-R5B_BLOCKER = "Phase 75 75-T01 frame columns not landed"
 PORTABLE_BLOCKER = (
-    "Phase 73 73-T09 final release (75-T01 receipts, 75-T03/T04 budget and "
-    "recovery) not landed"
+    "Different-machine offline recipient acceptance has not executed on current source"
 )
 SOURCE_HASH_PATTERNS = (
     r"freeze_commit: [0-9a-f]{40}",
@@ -396,6 +394,7 @@ ROUTE_KEYS = [
     "explain",
     "preference",
     "capsule",
+    "bootstrap",
     "import",
     "cli_memory",
     "cli_other_readers",
@@ -454,6 +453,7 @@ MATRIX_NODE_IDS = (
     "tests/test_phase72_memory_ui.py::test_t07_route_mode_matrix",
     "tests/test_phase72_memory_hybrid.py::test_t08_route_mode_matrix",
     "tests/test_memory_capsule.py::test_codec_route_mode_matrix",
+    "tests/test_memory_activation_lifecycle.py::test_bootstrap_route_mode_matrix",
 )
 
 # --- R10: published operation docs -----------------------------------------
@@ -2512,17 +2512,33 @@ def test_t09_receipt_matches_delivery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """R5a / C06: with cache_write each delivered page writes exactly one
-    receipt whose tokens equal the page's `data.tokens`; without cache_write,
+    receipt whose tokens count the actual returned frame; without cache_write,
     for a denied, admission-failed or stale-version request, and for a retry of
     the same invocation, no row is added. The legacy request form and the public
     schema-2 form (admitted frame within its caps, cursor pages one receipt
     each, admission refusal naming the cap) are both held to it."""
+    from rush.delivery import compact
     from rush.token_economy.telemetry import read_artifact_expansion_receipts_readonly
+
+    returned_frames: list[tuple[bytes, dict[str, Any]]] = []
+    finalize = compact.finalize_memory_events
+
+    def capture_frame(
+        frame: Any, emitted: bytes, *, accepted: bool, outcome: Any = None
+    ) -> None:
+        finalize(frame, emitted, accepted=accepted, outcome=outcome)
+        returned_frames.append((emitted, dict(frame.delivery_usage)))
+
+    monkeypatch.setattr(compact, "finalize_memory_events", capture_frame)
 
     data_root = _isolate(tmp_path, monkeypatch)
     for form in _FORMS:
         _receipt_scenario(
-            form, tmp_path, data_root, read_artifact_expansion_receipts_readonly
+            form,
+            tmp_path,
+            data_root,
+            read_artifact_expansion_receipts_readonly,
+            returned_frames,
         )
 
 
@@ -2531,10 +2547,39 @@ def _receipt_scenario(
     tmp_path: Path,
     data_root: Path,
     read_receipts: Callable[[Path, str, int], list[dict[str, Any]]],
+    returned_frames: list[tuple[bytes, dict[str, Any]]],
 ) -> None:
+    from rush.memory.retrieval import _count_tokens
+    from rush.token_economy.telemetry import read_memory_frame_receipts_readonly
+
     where = f"[{form}]"
     root, _grant_row = _receipt_project(tmp_path, data_root, f"{form}-delivered")
     delivered = 0
+
+    def delivered_tokens(event: tuple[str, str, str, int], kind: str) -> int:
+        emitted, usage = returned_frames[-1]
+        tokens = _count_tokens(emitted.decode("utf-8"), "cl100k_base")
+        expected = {
+            "tokens": tokens,
+            "frame_bytes": len(emitted),
+            "frame_sha256": hashlib.sha256(emitted).hexdigest(),
+            "transport": "in_process",
+            "count_basis": "transport_frame:cl100k_base",
+        }
+        assert usage["outcome"] == "returned_frame", (where, usage)
+        assert usage["persisted"] is True, (where, usage)
+        assert usage["context_inserted"] is False, (where, usage)
+        assert {key: usage[key] for key in expected} == expected, (where, usage)
+        rows = [
+            row
+            for row in read_memory_frame_receipts_readonly(root)
+            if (row["invocation_id"], row["event_id"]) == event[:2]
+        ]
+        assert len(rows) == 1, (where, event, rows)
+        assert rows[0]["kind"] == kind == event[2], (where, rows)
+        assert {key: rows[0][key] for key in expected} == expected, (where, rows)
+        assert event[3] == tokens, (where, event, expected)
+        return tokens
 
     for operation in ("ask", "recall", "list"):
         before = _events(root) or []
@@ -2548,12 +2593,7 @@ def _receipt_scenario(
         )
         _inv, _event, kind, tokens = after[-1]
         assert kind == "retrieval", (where, operation, after[-1])
-        assert tokens == raw["data"]["tokens"], (
-            where,
-            operation,
-            after[-1],
-            raw["data"],
-        )
+        assert tokens == delivered_tokens(after[-1], "retrieval")
         delivered += 1
 
     if form == "v2":
@@ -2578,11 +2618,7 @@ def _receipt_scenario(
             after = _events(root)
             assert after is not None and len(after) == len(before) + 1, (where, after)
             assert after[-1][2] == "retrieval", (where, after[-1])
-            assert after[-1][3] == raw["data"]["tokens"], (
-                where,
-                after[-1],
-                raw["data"],
-            )
+            delivered_tokens(after[-1], "retrieval")
             seen.extend(_refs(_form_items(form, raw)))
             delivered += 1
             cursor = raw.get("next_cursor")
@@ -2604,7 +2640,7 @@ def _receipt_scenario(
     assert _form_items(form, hybrid), (where, "the lexical fallback delivered no page")
     after = _events(root)
     assert after is not None and len(after) == len(before) + 1, (where, after)
-    assert after[-1][3] == hybrid["data"]["tokens"], (where, after[-1], hybrid["data"])
+    delivered_tokens(after[-1], "retrieval")
     delivered += 1
 
     # expansion, both representations: one `expansion` row each, readable back
@@ -2624,8 +2660,10 @@ def _receipt_scenario(
         after = _events(root)
         assert after is not None and len(after) == len(before) + 1, (where, after)
         assert after[-1][2] == "expansion", (where, after[-1])
-        assert after[-1][3] == raw["data"]["tokens"], (where, after[-1], raw["data"])
-        expansions[invocation] = (representation, int(raw["data"]["tokens"]))
+        expansions[invocation] = (
+            representation,
+            delivered_tokens(after[-1], "expansion"),
+        )
         delivered += 1
     receipts = read_receipts(root, "rc-0", 1)
     assert {(r["id"], r["tokens"]) for r in receipts} == {
@@ -2640,9 +2678,11 @@ def _receipt_scenario(
     delivered += 1
     mid = _events(root)
     assert mid is not None and len(mid) == len(before) + 1, (where, mid)
+    delivered_tokens(mid[-1], "retrieval")
     again = _deliver_form(form, root, "ask", cache_write=True, invocation_id=retry_id)
     assert again.get("code") == "OK", (where, again)
     assert _events(root) == mid, where
+    assert returned_frames[-1][1]["persisted"] is False, (where, returned_frames[-1])
 
     total = _events(root)
     assert total is not None and len(total) == delivered, (
@@ -2842,8 +2882,8 @@ def test_t09_report_schema() -> None:
             problems.append(f"{row['lane']}: evidence is empty")
     fixed = by_id.get("r5b-frame-receipts")
     if fixed is not None and (
-        (fixed["implementation_gate"], fixed["live_acceptance"]) != ("open", "open")
-        or fixed["blocker"] != R5B_BLOCKER
+        (fixed["implementation_gate"], fixed["live_acceptance"]) != ("passed", "passed")
+        or fixed["blocker"] != "—"
         or "tests/test_phase75_usage.py::test_memory_event_frame_receipt_columns"
         not in fixed["evidence"]
     ):
@@ -3470,7 +3510,7 @@ def test_t09_matrix_cell_grammar() -> None:
         "dashboard_readers",
         [("row_state", "tampered")],
     )
-    assert len(ROUTE_KEYS) == 59 and len(set(ROUTE_KEYS)) == 59
+    assert len(ROUTE_KEYS) == 60 and len(set(ROUTE_KEYS)) == 60
     assert sum(len(values) for values in DIMENSIONS.values()) == 33
     every = [
         f"inproc.{route}-{dimension}-{value}"
@@ -3478,16 +3518,16 @@ def test_t09_matrix_cell_grammar() -> None:
         for dimension, values in DIMENSIONS.items()
         for value in values
     ]
-    assert len(every) == 1947 and _uncovered_pairs(every) == []
+    assert len(every) == 1980 and _uncovered_pairs(every) == []
     assert _uncovered_pairs(every[1:]) == [("ask", "access", "policy")]
-    assert len(_uncovered_pairs([])) == 1947
+    assert len(_uncovered_pairs([])) == 1980
 
 
 @pytest.mark.slow
 def test_t09_route_mode_matrix_complete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """R8 / G2a: the ten matrices collect and pass in a subprocess, carry no
+    """R8 / G2a: the eleven matrices collect and pass in a subprocess, carry no
     `-producer-` id, and together cover every (route, dimension, value)."""
     _isolate(tmp_path, monkeypatch)
     collect = _pytest_children(["--collect-only", "-q", *MATRIX_NODE_IDS], timeout=900)
@@ -3523,7 +3563,7 @@ def test_t09_route_mode_matrix_complete(
     )
     stray = sorted({p["route"] for p in inventory["pairs"]} - set(ROUTE_KEYS))
     if stray:
-        problems.append(f"route inventory uses routes outside the 59 keys: {stray}")
+        problems.append(f"route inventory uses routes outside the 60 keys: {stray}")
     assert not problems, "\n".join(problems)
 
     # One process takes over an hour for every cell, so the collected cells run
@@ -5425,24 +5465,215 @@ def test_t09_freeze_fixture_rows(
     assert frozenset(_freeze_findings(repo, recorded)) == found
 
 
+def _parse_current_freeze(source: str) -> dict[tuple[str, str], str]:
+    marker = "```phase72-current-freeze-v1"
+    assert source.count(marker) == 1, "expected one current freeze block"
+    blocks = re.findall(rf"^{marker}\n(.*?)^```$", source, re.MULTILINE | re.DOTALL)
+    assert len(blocks) == 1, "malformed current freeze block"
+    patterns = {
+        "inventory_path": r"\.scratch/phase72-final-acceptance/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.json",
+        "inventory_tree": r"[0-9a-f]{40}",
+        "inventory_subject_sha256": r"[0-9a-f]{64}",
+    }
+    for view in ("head", "staged", "worktree"):
+        for directory in FREEZE_DIRS:
+            patterns[f"{view}.{directory}"] = (
+                r"[0-9a-f]{40}" if view == "head" else r"[0-9a-f]{64}"
+            )
+    fields = {}
+    for line in blocks[0].splitlines():
+        key, separator, value = line.partition(": ")
+        assert separator, f"malformed current freeze entry: {line!r}"
+        assert key in patterns, f"foreign current freeze field: {key}"
+        assert key not in fields, f"duplicate current freeze field: {key}"
+        assert re.fullmatch(patterns[key], value), (
+            f"malformed current freeze field: {key}"
+        )
+        fields[key] = value
+    assert fields.keys() == patterns.keys(), "missing current freeze fields"
+    return {
+        (view, directory): fields[f"{view}.{directory}"]
+        for view in ("head", "staged", "worktree")
+        for directory in FREEZE_DIRS
+    }
+
+
+def _current_freeze_fixture_source(snapshot: Mapping[tuple[str, str], str]) -> str:
+    historical = [
+        f"tree.{directory}: {snapshot['head', directory]}" for directory in FREEZE_DIRS
+    ]
+    views = [
+        f"{view}.{directory}: {digest}"
+        for (view, directory), digest in snapshot.items()
+    ]
+    return "\n".join(
+        [
+            "## Source hash",
+            "",
+            "```text",
+            *historical,
+            "```",
+            "",
+            "```phase72-current-freeze-v1",
+            "inventory_path: .scratch/phase72-final-acceptance/source-freeze-fixture.json",
+            f"inventory_tree: {snapshot['head', 'src']}",
+            f"inventory_subject_sha256: {_sha(chr(10).join(views))}",
+            *views,
+            "```",
+            "",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "fault"),
+    [
+        ("worktree.src", "missing"),
+        ("worktree.src", "duplicate"),
+        ("worktree.src", "foreign"),
+        ("head.src", "bad-digest"),
+        ("staged.src", "bad-digest"),
+        ("worktree.src", "bad-digest"),
+        ("inventory_tree", "bad-digest"),
+        ("inventory_subject_sha256", "bad-digest"),
+        ("inventory_path", "bad-path"),
+        ("worktree.src", "bad-line"),
+        ("worktree.src", "duplicate-block"),
+        ("worktree.src", "missing-block"),
+    ],
+)
+def test_t09_current_freeze_parser_rejects_invalid_entries(
+    field: str, fault: str
+) -> None:
+    snapshot = {
+        (view, directory): "a" * (40 if view == "head" else 64)
+        for view in ("head", "staged", "worktree")
+        for directory in FREEZE_DIRS
+    }
+    source = _current_freeze_fixture_source(snapshot)
+    assert _parse_current_freeze(source) == snapshot
+    line = next(line for line in source.splitlines() if line.startswith(f"{field}: "))
+    replacements = {
+        "missing": "",
+        "duplicate": line + "\n" + line + "\n",
+        "foreign": line.replace(field, "worktree.docs", 1) + "\n",
+        "bad-digest": f"{field}: not-a-digest\n",
+        "bad-path": f"{field}: ../foreign.json\n",
+        "bad-line": line.replace(": ", "=") + "\n",
+    }
+    if fault == "duplicate-block":
+        source += source[source.index("```phase72-current-freeze-v1") :]
+    elif fault == "missing-block":
+        source = source[: source.index("```phase72-current-freeze-v1")]
+    else:
+        source = source.replace(line + "\n", replacements[fault], 1)
+    with pytest.raises(AssertionError):
+        _parse_current_freeze(source)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "changed"),
+    [
+        pytest.param(
+            _mutate_worktree_changed("src/a.py"), _only("worktree"), id="bytes"
+        ),
+        pytest.param(
+            _mutate_chmod_worktree,
+            _only("worktree"),
+            marks=pytest.mark.posix_only,
+            id="mode",
+        ),
+        pytest.param(
+            _mutate_symlink_worktree,
+            _only("worktree"),
+            marks=pytest.mark.posix_only,
+            id="symlink",
+        ),
+        pytest.param(_mutate_duplicated, _only("worktree"), id="untracked"),
+        pytest.param(_mutate_staged_changed, _only("staged"), id="staged"),
+        pytest.param(
+            _mutate_committed,
+            frozenset({("head", "src"), ("staged", "src"), ("worktree", "src")}),
+            id="head",
+        ),
+    ],
+)
+def test_t09_current_freeze_accepts_dirty_baseline_and_detects_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate: Callable[[Path], None],
+    changed: frozenset[tuple[str, str]],
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    repo = _freeze_fixture(tmp_path)
+    _write(repo, "src/a.py", "authorized working-tree change\n")
+    _stage_then_restore(repo, "src/b.py", "authorized staged change\n")
+    _write(repo, "src/authorized.py", "AUTHORIZED = True\n")
+    before = _freeze_snapshot(repo)
+    assert _freeze_findings(repo, _freeze_trees(repo)) == [
+        ("staged", "src"),
+        ("worktree", "src"),
+    ]
+    report = repo / "report.md"
+    report.write_text(_current_freeze_fixture_source(before), encoding="utf-8")
+    monkeypatch.setitem(globals(), "REPO", repo)
+    monkeypatch.setitem(globals(), "REPORT", report)
+    test_t09_freeze_source_views()
+    mutate(repo)
+    with pytest.raises(AssertionError) as caught:
+        test_t09_freeze_source_views()
+    ordered = [key for key in before if key in changed]
+    assert _current_freeze_failure_message(caught.value, ordered) == "\n".join(
+        f"{view} view of {directory} differs from the freeze"
+        for view, directory in before
+        if (view, directory) in changed
+    )
+
+
+def test_t09_current_freeze_rejects_wrong_recorded_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _isolate(tmp_path, monkeypatch)
+    repo = _freeze_fixture(tmp_path)
+    recorded = _freeze_snapshot(repo)
+    recorded["staged", "src"] = "0" * 64
+    report = repo / "report.md"
+    report.write_text(_current_freeze_fixture_source(recorded), encoding="utf-8")
+    monkeypatch.setitem(globals(), "REPO", repo)
+    monkeypatch.setitem(globals(), "REPORT", report)
+    with pytest.raises(AssertionError) as caught:
+        test_t09_freeze_source_views()
+    assert (
+        _current_freeze_failure_message(caught.value, [("staged", "src")])
+        == "staged view of src differs from the freeze"
+    )
+
+
 def test_t09_freeze_source_views() -> None:
-    """RB-1: the trees the report records for `src`, `tests`, `scripts` and
-    `.github` are the trees at HEAD, and the index and the working tree equal
-    HEAD for those directories (all three views, not HEAD alone)."""
+    """RB-1: compare every current recorded view independently, allowing the
+    explicitly authorized dirty baseline without weakening later drift checks."""
     assert REPORT.is_file(), f"{REPORT.relative_to(REPO)} does not exist"
     source = _sections(REPORT.read_text(encoding="utf-8")).get("## Source hash", "")
-    recorded = {}
-    for directory in FREEZE_DIRS:
-        match = re.search(
-            rf"^tree\.{re.escape(directory)}: ([0-9a-f]{{40}})$", source, re.MULTILINE
-        )
-        assert match, f"## Source hash has no tree.{directory} line"
-        recorded[directory] = match.group(1)
-    findings = _freeze_findings(REPO, recorded)
+    recorded = _parse_current_freeze(source)
+    actual = _freeze_snapshot(REPO)
+    findings = [key for key in actual if actual[key] != recorded[key]]
     assert not findings, "\n".join(
         f"{view} view of {directory} differs from the freeze"
         for view, directory in findings
     )
+
+
+def _current_freeze_failure_message(
+    error: AssertionError, views: Sequence[tuple[str, str]]
+) -> str:
+    text = str(error)
+    domain, marker, detail = text.rpartition("\nassert not ")
+    if not marker:
+        return text
+    assert detail == repr(list(views))
+    lines = domain.split("\n")
+    assert all(line.startswith("  ") for line in lines[1:])
+    return "\n".join([lines[0], *(line[2:] for line in lines[1:])])
 
 
 # ---------------------------------------------------------------------------
@@ -5755,10 +5986,24 @@ class _PtyTerminal:
 
 
 def _terminal_step(
-    term: Any, receipts: list[dict[str, Any]], label: str, expected: str, *tokens: str
+    term: Any,
+    receipts: list[dict[str, Any]],
+    label: str,
+    expected: str,
+    *tokens: str,
+    until: Callable[[str], bool] | None = None,
 ) -> str:
     term.press(*tokens)
+    deadline = time.monotonic() + 20.0
     text = term.observe()
+    while until is not None and not until(text):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or term.exited(timeout=0):
+            break
+        chunk = term.observe(limit=remaining)
+        if not chunk:
+            break
+        text += chunk
     receipts.append(
         {
             "step": label,
@@ -5773,6 +6018,54 @@ def _terminal_step(
         }
     )
     return text
+
+
+@pytest.mark.skipif(os.name == "nt", reason="requires a POSIX pseudo-terminal")
+@pytest.mark.parametrize(
+    "complete", [True, False], ids=["delayed-result", "child-exit"]
+)
+def test_terminal_step_waits_for_semantic_result(
+    tmp_path: Path, complete: bool
+) -> None:
+    code = (
+        "import os, sys, time, tty\n"
+        "tty.setraw(0)\n"
+        "print('ready', flush=True)\n"
+        "os.read(0, 1)\n"
+        "print('working: list...', flush=True)\n"
+        "if sys.argv[1] == 'complete':\n"
+        "    time.sleep(1.6)\n"
+        "    print('expired: expired -- review grant', flush=True)\n"
+        "    os.read(0, 1)\n"
+    )
+    argv = [sys.executable, "-c", code, "complete" if complete else "exit"]
+    with _PtyTerminal(argv, os.environ, tmp_path) as term:
+        assert "ready" in term.observe(quiet=0.1, limit=5.0)
+        receipts: list[dict[str, Any]] = []
+        started = time.monotonic()
+        try:
+            text = _terminal_step(
+                term,
+                receipts,
+                "expired",
+                "expired state shown",
+                "M",
+                until=lambda observed: "expired" in observed.lower(),
+            )
+            elapsed = time.monotonic() - started
+            assert elapsed < 20.0
+            assert "working: list..." in text
+            if complete:
+                assert "expired: expired -- review grant" in text
+                assert not term.exited(timeout=0)
+            else:
+                assert "expired" not in text
+                assert term.exited(timeout=1)
+            assert receipts[0]["transcript_sha256"] == _sha(text)
+        finally:
+            if not term.exited(timeout=0):
+                term.press("q")
+                assert term.exited(timeout=3)
 
 
 def _run_terminal_script(
@@ -5938,7 +6231,14 @@ def _run_terminal_script(
     time.sleep(5)
     with make_term(expiring) as term:
         term.observe(quiet=2.0, limit=60.0)  # first frame
-        text = _terminal_step(term, receipts, "expired", "expired state shown", "M")
+        text = _terminal_step(
+            term,
+            receipts,
+            "expired",
+            "expired state shown",
+            "M",
+            until=lambda observed: "expired" in observed.lower(),
+        )
         assert "expired" in text.lower(), text[-800:]
         term.press("q")
         term.observe()

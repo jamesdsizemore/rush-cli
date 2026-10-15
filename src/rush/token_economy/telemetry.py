@@ -11,7 +11,15 @@ from typing import Any
 # wired producer yet (no embedding call site exists in this codebase) — it's a valid kind so
 # the ledger doesn't need a schema change the day one shows up.
 _MEMORY_EVENT_KINDS = frozenset(
-    {"retrieval", "expansion", "packing", "handoff", "embedding"}
+    {
+        "retrieval",
+        "expansion",
+        "packing",
+        "handoff",
+        "embedding",
+        "admission_failure",
+        "budget_failure",
+    }
 )
 
 # P69-07 subsections d/e: real, non-NULL attribution sentinel for identity columns whose
@@ -62,6 +70,7 @@ class TelemetryStore:
     def _init_db(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS token_events (
@@ -98,7 +107,22 @@ class TelemetryStore:
             self._migrate_token_events(conn)
             self._migrate_memory_events(conn)
             self._migrate_memory_event_access(conn)
+            self._migrate_memory_event_frames(conn)
             conn.commit()
+
+    def _migrate_memory_event_frames(self, conn: sqlite3.Connection) -> None:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        for name, sql_type in (
+            ("frame_bytes", "INTEGER"),
+            ("frame_sha256", "TEXT"),
+            ("transport", "TEXT"),
+            ("artifact_version", "INTEGER"),
+            ("offset", "INTEGER"),
+            ("payload_hash", "TEXT"),
+            ("count_basis", "TEXT"),
+        ):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE memory_events ADD COLUMN {name} {sql_type}")
 
     def _migrate_token_events(self, conn: sqlite3.Connection) -> None:
         """P69-07 subsection d: additive migration for a pre-P69-07 `token_events` table
@@ -182,6 +206,13 @@ class TelemetryStore:
         owner_scope_kind: str | None = None,
         owner_scope_id: str | None = None,
         sources_json: str | None = None,
+        frame_bytes: int | None = None,
+        frame_sha256: str | None = None,
+        transport: str | None = None,
+        artifact_version: int | None = None,
+        offset: int | None = None,
+        payload_hash: str | None = None,
+        count_basis: str | None = None,
     ) -> bool:
         """MC04 §9.0 / P69-07 subsection e: persist one real retrieval/expansion/packing/
         handoff/embedding cost, deduplicated by `(invocation_id, event_id)` so a genuine
@@ -203,16 +234,24 @@ class TelemetryStore:
             raise ValueError(f"unknown memory event kind: {kind!r}")
         if not (opt_in or cache_write):
             return False
+        _validate_memory_frame_receipt(
+            frame_bytes,
+            frame_sha256,
+            transport,
+            artifact_version,
+            offset,
+            payload_hash,
+            count_basis,
+        )
         real_invocation_id = invocation_id if invocation_id is not None else request_id
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             cur = conn.execute(
-                """
-                INSERT OR IGNORE INTO memory_events
-                    (invocation_id, event_id, kind, tokens, timestamp, request_id,
-                     project_id, run_id, agent_id, session_id,
-                     owner_scope_kind, owner_scope_id, sources_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+                """INSERT OR IGNORE INTO memory_events
+                (invocation_id,event_id,kind,tokens,timestamp,request_id,
+                 project_id,run_id,agent_id,session_id,owner_scope_kind,
+                 owner_scope_id,sources_json,frame_bytes,frame_sha256,transport,
+                 artifact_version,offset,payload_hash,count_basis)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     real_invocation_id,
                     event_id,
@@ -227,6 +266,13 @@ class TelemetryStore:
                     owner_scope_kind,
                     owner_scope_id,
                     sources_json,
+                    frame_bytes,
+                    frame_sha256,
+                    transport,
+                    artifact_version,
+                    offset,
+                    payload_hash,
+                    count_basis,
                 ),
             )
             conn.commit()
@@ -452,11 +498,16 @@ def read_artifact_expansion_receipts_readonly(
                 return []
             clause, scope_params = access_event_predicate(access)
             scope = f" AND {clause}"
+        receipt_columns = MEMORY_FRAME_RECEIPT_COLUMNS
+        receipt_projection = ", ".join(
+            name if name in columns else "NULL AS " + name for name in receipt_columns
+        )
         rows = conn.execute(
-            "SELECT invocation_id, kind, tokens, timestamp FROM memory_events "
-            "WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ?"
+            "SELECT invocation_id,kind,tokens,timestamp,"
+            + receipt_projection
+            + " FROM memory_events WHERE kind = 'expansion' AND substr(request_id, 1, length(?)) = ?"
             + scope
-            + " ORDER BY timestamp DESC, invocation_id LIMIT ?",
+            + " ORDER BY timestamp DESC,invocation_id LIMIT ?",
             (prefix, prefix, *scope_params, max(1, min(limit, 32))),
         ).fetchall()
         return [
@@ -467,6 +518,18 @@ def read_artifact_expansion_receipts_readonly(
                 "origin": "telemetry",
                 "timestamp": row["timestamp"],
                 "tokens": row["tokens"],
+                "frame_receipt": {name: row[name] for name in receipt_columns},
+                "frame_receipt_state": "measured"
+                if all(
+                    row[name] is not None
+                    for name in (
+                        "frame_bytes",
+                        "frame_sha256",
+                        "transport",
+                        "count_basis",
+                    )
+                )
+                else "unavailable",
             }
             for row in rows
         ]
@@ -533,3 +596,193 @@ def read_summary_readonly(
             "path": str(db_path),
         }
     return {**_summary_payload(*row), "available": True, "path": str(db_path)}
+
+
+def _validate_memory_frame_receipt(
+    frame_bytes: int | None,
+    frame_sha256: str | None,
+    transport: str | None,
+    artifact_version: int | None,
+    offset: int | None,
+    payload_hash: str | None,
+    count_basis: str | None,
+) -> None:
+    frame = (frame_bytes, frame_sha256, transport, count_basis)
+    metadata = (artifact_version, offset, payload_hash)
+    if all(value is None for value in frame):
+        if any(value is not None for value in metadata):
+            raise ValueError("artifact metadata without delivery receipt")
+        return
+    if any(value is None for value in frame):
+        raise ValueError("incomplete delivery receipt")
+    if type(frame_bytes) is not int or frame_bytes < 0:
+        raise ValueError("invalid frame_bytes")
+    if (
+        not isinstance(frame_sha256, str)
+        or len(frame_sha256) != 64
+        or any(c not in "0123456789abcdef" for c in frame_sha256)
+    ):
+        raise ValueError("invalid frame_sha256")
+    if transport not in {
+        "cli_json",
+        "cli_human",
+        "mcp_stdio",
+        "dashboard",
+        "in_process",
+    }:
+        raise ValueError("invalid transport")
+    if not isinstance(count_basis, str) or not count_basis.startswith(
+        "transport_frame:"
+    ):
+        raise ValueError("invalid count_basis")
+    import tiktoken
+
+    tiktoken.get_encoding(count_basis.removeprefix("transport_frame:"))
+    if any(value is not None for value in metadata):
+        if type(artifact_version) is not int or artifact_version < 1:
+            raise ValueError("invalid artifact_version")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("invalid offset")
+        if (
+            not isinstance(payload_hash, str)
+            or len(payload_hash) != 64
+            or any(c not in "0123456789abcdef" for c in payload_hash)
+        ):
+            raise ValueError("invalid payload_hash")
+
+
+MEMORY_FRAME_RECEIPT_COLUMNS = (
+    "frame_bytes",
+    "frame_sha256",
+    "transport",
+    "artifact_version",
+    "offset",
+    "payload_hash",
+    "count_basis",
+)
+
+
+def read_memory_frame_receipts_readonly(
+    project_root: Path,
+    *,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    session_id: str | None = None,
+    access: Any = None,
+) -> list[dict[str, Any]]:
+    from rush.memory.store import read_sqlite_readonly, sqlite_has_table
+
+    db = Path(project_root) / ".rush/telemetry/tokens.db"
+    names = (
+        "invocation_id",
+        "event_id",
+        "kind",
+        "tokens",
+        "timestamp",
+        "request_id",
+        "project_id",
+        "run_id",
+        "agent_id",
+        "session_id",
+        "owner_scope_kind",
+        "owner_scope_id",
+        "sources_json",
+        *MEMORY_FRAME_RECEIPT_COLUMNS,
+    )
+    filters = {
+        key: value
+        for key, value in (
+            ("project_id", project_id),
+            ("run_id", run_id),
+            ("agent_id", agent_id),
+            ("session_id", session_id),
+        )
+        if value is not None
+    }
+
+    def read(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        if not sqlite_has_table(conn, "memory_events"):
+            return []
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(memory_events)")}
+        required = {
+            "invocation_id",
+            "event_id",
+            "kind",
+            "tokens",
+            "timestamp",
+            "request_id",
+        }
+        if not required <= columns or not set(filters) <= columns:
+            return []
+        clauses = ["kind IN (?, ?, ?, ?)"] + [name + " = ?" for name in filters]
+        params: list[Any] = [
+            "retrieval",
+            "expansion",
+            "admission_failure",
+            "budget_failure",
+            *filters.values(),
+        ]
+        if _policy_access(access):
+            if not set(_ACCESS_COLUMNS) <= columns:
+                return []
+            clause, extra = access_event_predicate(access)
+            clauses.append(clause)
+            params.extend(extra)
+        projection = ", ".join(
+            name if name in columns else "NULL AS " + name for name in names
+        )
+        rows = conn.execute(
+            "SELECT "
+            + projection
+            + " FROM memory_events WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY timestamp, invocation_id, event_id",
+            params,
+        ).fetchall()
+        return [{name: row[name] for name in names} for row in rows]
+
+    return read_sqlite_readonly(db, read) or []
+
+
+def memory_frame_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    groups: dict[str, dict[str, int]] = {}
+    failures: dict[str, dict[str, dict[str, int]]] = {}
+    unmeasured = 0
+    invalid = 0
+    for row in rows:
+        if any(
+            row.get(name) is None
+            for name in ("frame_bytes", "frame_sha256", "transport", "count_basis")
+        ):
+            unmeasured += 1
+            continue
+        try:
+            _validate_memory_frame_receipt(
+                *(row.get(name) for name in MEMORY_FRAME_RECEIPT_COLUMNS)
+            )
+            if type(row.get("tokens")) is not int or row["tokens"] < 0:
+                raise ValueError("invalid frame tokens")
+        except (ValueError, TypeError):
+            invalid += 1
+            continue
+        group = groups.setdefault(
+            row["count_basis"], {"events": 0, "tokens": 0, "bytes": 0}
+        )
+        group["events"] += 1
+        group["tokens"] += row["tokens"]
+        group["bytes"] += row["frame_bytes"]
+        if row.get("kind") in {"admission_failure", "budget_failure"}:
+            failure = failures.setdefault(row["count_basis"], {}).setdefault(
+                row["kind"], {"events": 0, "tokens": 0, "bytes": 0}
+            )
+            failure["events"] += 1
+            failure["tokens"] += row["tokens"]
+            failure["bytes"] += row["frame_bytes"]
+    return {
+        "available": bool(groups),
+        "by_count_basis": groups,
+        "unmeasured_events": unmeasured,
+        "invalid_events": invalid,
+        **({"failures_by_count_basis": failures} if failures else {}),
+    }

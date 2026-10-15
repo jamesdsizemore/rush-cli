@@ -185,7 +185,7 @@ def test_cli_mcp_signature_error_is_equivalent() -> None:
 
 
 def test_transport_contracts_reconcile_with_operation_manifest() -> None:
-    """T-57.10 (R-004): Asserts all 153 operations in public-operations.toml reconcile with registry and executor."""
+    """T-57.10 (R-004): Every public operation reconciles with registry and executor."""
     import tomllib
 
     from rush.contracts.operations import (
@@ -203,8 +203,24 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
     operations = manifest_data.get("operations", [])
     # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only).
     # 73-T02/BOOTSTRAP-CONSENT: +3 admin cli-only (memory grant, revoke, bind-store).
-    assert len(operations) == 207
-    assert manifest_data.get("manifest", {}).get("total_operations") == 207
+    # 73-T02: +1 read-only tool leaf, `memory bootstrap` (CLI-only).
+    assert len(operations) == 208
+    assert manifest_data.get("manifest", {}).get("total_operations") == 208
+
+    by_id = {op["id"]: op for op in operations}
+    assert by_id["tool.memory_bootstrap"] == {
+        "id": "tool.memory_bootstrap",
+        "kind": "tool",
+        "canonical_impl": "rush.tools.memory:MemoryTool",
+        "cli_command": "memory bootstrap",
+        "input_contract": "ToolInputOptions",
+        "output_contract": "ToolResult",
+        "effect_class": "read-only",
+        "safe_probe": "rush memory bootstrap --help",
+    }
+    assert [op["id"] for op in operations if op.get("mcp_tool") == "rush_memory"] == [
+        "tool.memory_ask"
+    ]
 
     # 1. Assert all operations are valid and have declared transport modes
     declared_transports: dict[str, str] = {}
@@ -243,18 +259,18 @@ def test_transport_contracts_reconcile_with_operation_manifest() -> None:
     # `memory preference`; Phase 72 T06 adds the cli-only admin `memory history` and
     # `memory explain`; 73-T09/CODEC adds the 7 cli-only admin `memory capsule`
     # leaves; 73-T02/BOOTSTRAP-CONSENT adds the 3 cli-only admin `memory grant`,
-    # `memory revoke` and `memory bind-store`. Total 207: 63 dual-transport,
-    # 126 cli-only, 18 mcp-only.
-    assert len(declared_transports) == 207
+    # `memory revoke` and `memory bind-store`; bootstrap adds one CLI-only tool.
+    # Total 208: 63 dual-transport, 127 cli-only, 18 mcp-only.
+    assert len(declared_transports) == 208
     assert sum(1 for t in declared_transports.values() if t == "both") == 63
-    assert sum(1 for t in declared_transports.values() if t == "cli") == 126
+    assert sum(1 for t in declared_transports.values() if t == "cli") == 127
     assert sum(1 for t in declared_transports.values() if t == "mcp") == 18
 
     # 2. Reconcile with OperationRegistry
     registry = get_operation_registry()
     report = registry.reconcile_manifest(manifest_path)
-    assert report["total"] == 207
-    assert report["tool_count"] == 81
+    assert report["total"] == 208
+    assert report["tool_count"] == 82
     assert report["admin_count"] == 108
     assert report["service_count"] == 18
     assert len(report["unmapped"]) == 0
@@ -536,7 +552,9 @@ def test_unprobed_route_is_not_advertised() -> None:
     # 73-T09/CODEC: +7 `memory capsule` leaves (admin, cli-only). 179->186 (the
     # non-invokable `memory capsule` groups are not routes).
     # 73-T02/BOOTSTRAP-CONSENT: 186->189 (memory grant, revoke, bind-store).
-    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 189
+    # 73-T02: 189->190 (memory bootstrap, CLI-only).
+    assert len(advertised_cli_commands) == len(manifest_cli_commands) == 190
+    assert manifest_cli_commands["memory bootstrap"] == "tool.memory_bootstrap"
     # Phase 70 T17: MCP tools 79->80 (rush_check added; finding 13).
     assert len(advertised_mcp_tools) == len(manifest_mcp_tools) == 81
 
