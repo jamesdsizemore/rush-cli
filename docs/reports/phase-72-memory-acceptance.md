@@ -4,6 +4,8 @@ Historical acceptance: frozen and live-checked on `b25628e`. Seven of 15 lanes p
 
 ## Source hash
 
+Commit bookkeeping, 2026-10-15: Phase72 implementation and required Phase73/75 dependencies committed as `b85dc56a61984bf10ac988dfdf7814c47cacb861`; dashboard work remains uncommitted and byte-preserved. Selective commit tree passed182 targeted checks plus lint/format. Earlier acceptance and red/blue receipts retain their pre-commit full-working-tree subjects; they are not relabeled as clean selective-commit execution. Current Git-view fields below are refreshed after the authorized commit; implementation source bytes remain unchanged. No push or new CI execution.
+
 Historical freeze carries body `72-T09 freeze`. Committed `dce8f5399423716ff0373462fd9ee6c2602d377f` remained source-equivalent; current authorized remediation changes source/tests/assets. New source inventory and matching behavior receipts are required for current acceptance.
 
 Current corrected source inventory: tree `064e7ea35cb099026967ceab1ebcd610a1aa0e0d`, subject SHA256 `38f917a2fa154c52ce2b477f4f779e33de185f863df311cd5401eb17aa5da1bc`, 1090 paths in `.scratch/phase72-final-acceptance/source-freeze-public-schema.json`. Required runtime acceptance covers34044 unique primary cases through eight passing full-group executions (34045 actual selections with one declared native-origin complement), zero failed/error/skipped/unexecuted required outcomes and exit0 for every accepted job. LOCAL4/7 each freshly passed4250 on PUBLIC_SCHEMA; retained LOCAL0/3/6 ASSET_KEY, LOCAL2/5 OVERLAY and historical LOCAL1+affected-input chain preserve actual original source subjects. This is qualified component acceptance, not a fresh single-tree run or CI reproduction. Strict four actual-engine workloads passed. Current ASSET_KEY macOS origin/version/clean-PATH/external-CWD/MCP/assets and18 exact native/wheel/sdist skill comparisons passed; all533 production paths match PUBLIC_SCHEMA. Retained sdist contains old privacy-test bytes, so entire-sdist byte equivalence is not claimed. Older native5, real-home G6 and bootstrap6 keep their executed binary/skill subjects; new model consumption is not asserted. Benchmark522 results remain288 PASS/234 FAIL,54 original failed episodes/one provider error, and separate two-provider positive protocol correction. Mutation19 remains a qualified mixed-subject composite. Exactly three approved backlogs:Linux native,Windows native,different-machine offline recipient. No dashboard overhaul. Exact final document gates, source applicability, commands, selections, outcomes and hashes reside in `.scratch/phase72-final-acceptance/acceptance.json`; handoff additionally requires `final-red-review.json` and `final-blue-review.json` sidecars bound to its immutable digest and current document hashes. Historical rows, failures and protected task bodies below retain their original subjects. CI not executed; changes remain uncommitted.
@@ -20,14 +22,14 @@ Prior execution chronology (superseded current-status statements retained as his
 inventory_path: .scratch/phase72-final-acceptance/source-freeze-public-schema.json
 inventory_tree: 064e7ea35cb099026967ceab1ebcd610a1aa0e0d
 inventory_subject_sha256: 38f917a2fa154c52ce2b477f4f779e33de185f863df311cd5401eb17aa5da1bc
-head.src: 72d931518ebdd5822f1725d083788f75d4a33763
-staged.src: f6df7016ed66494f2c556e97c5253f62811e3f29bf9bc40d073ab716f2b2b0bc
+head.src: 1dd0c7fcf17a5b6a1ed079d4f7883b6d9057f45c
+staged.src: c95ef888ff9f67d35af7d679ebd80fa7abd819769d46aee54f73031608348a98
 worktree.src: 2b8a9602d00ebc0f0c4946ec7d022df8f09f620a2f378058933aac239daccb1e
-head.tests: 7454f4b6b234f6868f27b6dcc44abbc9fd0d36b9
-staged.tests: 5feb29b54058a2959ee8c2c715d477fad71b9d166eaddad93c442b7083740601
+head.tests: aabfe191c6ef552f7be6595995b88e922dc1ad95
+staged.tests: 93fa771d983e1e731de7d288141f5de507bd64fec226530b6e0ddfa552335ce9
 worktree.tests: ca0e4d0dc23d116d43a6291027cb6793e64d5f637dadfe81a3dd26f621bfdb5f
-head.scripts: c176153adc60cd5ce3f4d5e0082ca358a370e4be
-staged.scripts: 4473673bc3236ccbfc2f345c5bb46f343e7ac1e840cdaca43887cebc2cf0195d
+head.scripts: 69d56bcbd29dc1157668dbaa3a8fdc7d56e2a7ed
+staged.scripts: 2ccd37820fd13574b4792860f603d3457986a0920cdc9b339c48625bc09054af
 worktree.scripts: 2ccd37820fd13574b4792860f603d3457986a0920cdc9b339c48625bc09054af
 head..github: b2d6c8a12c1b37710ced105c03a7113a6b22cc94
 staged..github: 8805d7a61c11e4803f44dc412709e141171ec9f65e08f48dcebb92122c73929d
