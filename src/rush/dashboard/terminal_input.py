@@ -2,7 +2,7 @@
 persistent interactive TUI (P66-03, F36).
 
 Every function here is bounded to real terminal I/O primitives (`termios`,
-`tty`, `msvcrt`, `shutil.get_terminal_size`) -- never a subprocess or shell
+`tty`, Windows console APIs, `shutil.get_terminal_size`) -- never a subprocess or shell
 command. `raw_terminal()` is the single seam responsible for restoring the
 caller's terminal to its original state, on a clean exit AND on any
 exception propagating out of the `with` block.
@@ -10,13 +10,16 @@ exception propagating out of the `with` block.
 
 from __future__ import annotations
 
-import importlib
+import codecs
+import ctypes
+import math
 import os
 import shutil
 import sys
+from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
-from typing import Any, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Protocol
 
 # Logical key names the TUI event loop understands. Anything else read from
 # the terminal is passed through as the literal single character typed.
@@ -34,7 +37,7 @@ BACKSPACE = "backspace"
 # logical key so the event loop can react instead of polling a dead fd.
 EOF = "eof"
 # A bracketed paste (`ESC[200~ ... ESC[201~` from a POSIX tty or a Windows
-# console in VT input mode) or a multi-character burst on the Windows msvcrt
+# console in VT input mode) or a multi-character burst on the Windows native-record
 # fallback arrives as ONE event: this prefix plus the pasted text, literal
 # and uninterpreted -- never a sequence of individual keys.
 PASTE_PREFIX = "paste:"
@@ -194,21 +197,59 @@ def raw_terminal(stream: int | _HasFileno | None = None) -> Iterator[None]:
         termios.tcsetattr(fd, termios.TCSANOW, original)
 
 
-def _windows_kernel32() -> Any:
-    """The kernel32 console-mode API with pointer-sized handle types. Raises
-    `OSError` off Windows; tests inject a fake."""
-    if sys.platform != "win32":  # pragma: no cover - Windows-only path
-        raise OSError("the console API exists only on Windows")
-    import ctypes
+class _WindowsKeyEvent(ctypes.Structure):
+    _fields_ = [
+        ("down", ctypes.c_int32),
+        ("repeat", ctypes.c_uint16),
+        ("virtual", ctypes.c_uint16),
+        ("scan", ctypes.c_uint16),
+        ("char", ctypes.c_uint16),
+        ("control", ctypes.c_uint32),
+    ]
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.GetStdHandle.restype = ctypes.c_void_p
-    kernel32.GetConsoleMode.argtypes = (
+
+class _WindowsInputEvent(ctypes.Union):
+    _fields_: ClassVar = [("key", _WindowsKeyEvent), ("padding", ctypes.c_byte * 16)]
+
+
+class _WindowsInputRecord(ctypes.Structure):
+    _fields_ = [("kind", ctypes.c_uint16), ("event", _WindowsInputEvent)]
+
+
+def _windows_kernel32() -> Any:
+    if sys.platform != "win32":
+        raise OSError("the console API exists only on Windows")
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetStdHandle.argtypes = (ctypes.c_uint32,)
+    kernel.GetStdHandle.restype = ctypes.c_void_p
+    kernel.GetConsoleMode.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32))
+    kernel.SetConsoleMode.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+    record_args = (
         ctypes.c_void_p,
+        ctypes.POINTER(_WindowsInputRecord),
+        ctypes.c_uint32,
         ctypes.POINTER(ctypes.c_uint32),
     )
-    kernel32.SetConsoleMode.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
-    return kernel32
+    kernel.PeekConsoleInputW.argtypes = record_args
+    kernel.ReadConsoleInputW.argtypes = record_args
+    kernel.ReadConsoleW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.c_void_p,
+    )
+    kernel.WaitForSingleObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+    kernel.WaitForSingleObject.restype = ctypes.c_uint32
+    for name in (
+        "GetConsoleMode",
+        "SetConsoleMode",
+        "PeekConsoleInputW",
+        "ReadConsoleInputW",
+        "ReadConsoleW",
+    ):
+        getattr(kernel, name).restype = ctypes.c_int32
+    return kernel
 
 
 @contextmanager
@@ -220,7 +261,7 @@ def _windows_vt_console() -> Iterator[None]:
     modes are restored and bracketed paste turned off in `finally` -- on a
     clean exit AND on any exception or interrupt. A console that refuses
     either mode (or input that is not a console) keeps its original modes,
-    and `WindowsKeyReader` uses its msvcrt fallback."""
+    and `WindowsKeyReader` uses its native-record fallback."""
     import ctypes
 
     try:
@@ -239,7 +280,12 @@ def _windows_vt_console() -> Iterator[None]:
             if not kernel32.GetConsoleMode(handle, ctypes.pointer(mode)):
                 break
             saved.append((handle, mode.value))
-            if not kernel32.SetConsoleMode(handle, mode.value | flag):
+            desired = (
+                (mode.value | flag | 0x0080) & ~(0x0001 | 0x0002 | 0x0004 | 0x0040)
+                if which == _STD_INPUT_HANDLE
+                else mode.value | flag | 0x0001
+            )
+            if not kernel32.SetConsoleMode(handle, desired):
                 break
         else:
             _WINDOWS_VT_INPUT[0] = True
@@ -536,34 +582,7 @@ def _terminator_start(data: bytes) -> int:
     )
 
 
-class _Console(Protocol):
-    """The two `msvcrt` calls the Windows reader uses."""
-
-    def kbhit(self) -> bool: ...
-
-    def getwch(self) -> str: ...
-
-
-def _msvcrt() -> _Console:
-    return cast(_Console, importlib.import_module("msvcrt"))
-
-
 class WindowsKeyReader(PosixKeyReader):
-    """Reads one logical key from the Windows console via `msvcrt`, which
-    returns one character at a time without echo or line buffering.
-
-    While `raw_terminal` holds the console in VT input mode, keys and
-    bracketed paste arrive as the escape sequences a POSIX tty sends, so the
-    inherited `PosixKeyReader` parser decodes them from the console's
-    characters (as UTF-8 bytes): a bracketed paste is one literal event and
-    buffered key repeat stays keys. Only when the console refused VT input
-    does the scan-code fallback below run."""
-
-    # BIOS/console extended scan codes (the byte following a `\x00`/`\xe0`
-    # prefix from `getwch()`): arrows, plus F2 (0x3C), F3 (0x3D), and
-    # Shift+Tab (0x0F) -- U01 fix, per the documented DOS/Windows console
-    # scan-code table (real Windows console behavior unverified in this
-    # environment; see this packet's own receipt for that named gap).
     _ARROW: ClassVar[dict[str, str]] = {
         "H": UP,
         "P": DOWN,
@@ -573,19 +592,115 @@ class WindowsKeyReader(PosixKeyReader):
         "\x3d": "f3",
         "\x0f": SHIFT_TAB,
     }
+    _EXTENDED: ClassVar[dict[int, str]] = {
+        0x26: "\x00H",
+        0x28: "\x00P",
+        0x25: "\x00K",
+        0x27: "\x00M",
+        0x71: "\x00\x3c",
+        0x72: "\x00\x3d",
+    }
+    _MODIFIERS: ClassVar[set[int]] = {0x10, 0x11, 0x12, 0x14, 0x5B, 0x5C, 0x90, 0x91}
+    _VT_KEYS: ClassVar[set[int]] = {
+        0x08,
+        0x09,
+        0x0D,
+        0x1B,
+        0x21,
+        0x22,
+        0x23,
+        0x24,
+        0x25,
+        0x26,
+        0x27,
+        0x28,
+        0x2D,
+        0x2E,
+        *range(0x70, 0x7C),
+    }
 
     def __init__(self) -> None:
         super().__init__(0)
-        # Fallback: characters drained from the console that belong to
-        # later keys (Enter, controls, extended keys after a paste).
-        self._pending: list[str] = []
-        # VT mode: UTF-8 bytes of a console character not yet parsed.
+        self._kernel = _windows_kernel32()
+        self._handle = self._kernel.GetStdHandle(_STD_INPUT_HANDLE)
+        if self._handle in (None, ctypes.c_void_p(-1).value):
+            raise OSError("Windows console input handle unavailable")
         self._bytes = b""
+        self._pending: list[str] = []
+        self._native_chars: deque[str] = deque()
+        self._native_repeat: tuple[str, int, bool] | None = None
+        self._fallback_continuation = False
+        decoder = codecs.getincrementaldecoder("utf-16-le")
+        self._vt_utf16 = decoder(errors="replace")
+        self._fallback_utf16 = decoder(errors="replace")
+
+    @staticmethod
+    def _failed(operation: str) -> None:
+        raise OSError(
+            ctypes.get_last_error(),  # type: ignore[attr-defined]
+            f"{operation} failed",
+        )
+
+    def _next_key_record(
+        self, timeout: float, *, consume: bool
+    ) -> _WindowsInputRecord | None:
+        import time
+
+        deadline = time.monotonic() + max(0.0, timeout)
+        for attempt in range(64):
+            remaining = deadline - time.monotonic()
+            if attempt and timeout > 0 and remaining <= 0:
+                return None
+            result = self._kernel.WaitForSingleObject(
+                self._handle, max(0, math.ceil(remaining * 1000))
+            )
+            if result == 0x102:
+                return None
+            if result == 0xFFFFFFFF:
+                self._failed("WaitForSingleObject")
+            if result != 0:
+                raise OSError(f"unexpected console wait result: {result}")
+            record, count = _WindowsInputRecord(), ctypes.c_uint32()
+            if not self._kernel.PeekConsoleInputW(
+                self._handle, ctypes.byref(record), 1, ctypes.byref(count)
+            ):
+                self._failed("PeekConsoleInputW")
+            if count.value != 1:
+                return None
+            key = record.event.key
+            eligible = (
+                record.kind == 1
+                and bool(key.down)
+                and bool(key.repeat)
+                and key.virtual not in self._MODIFIERS
+                and (
+                    bool(key.char)
+                    or (
+                        key.virtual in self._VT_KEYS
+                        if _WINDOWS_VT_INPUT[0]
+                        else bool(key.scan)
+                    )
+                )
+            )
+            if eligible and not consume:
+                return record
+            removed, read = _WindowsInputRecord(), ctypes.c_uint32()
+            if not self._kernel.ReadConsoleInputW(
+                self._handle, ctypes.byref(removed), 1, ctypes.byref(read)
+            ):
+                self._failed("ReadConsoleInputW")
+            if read.value != 1:
+                return None
+            if eligible:
+                return removed
+        return None
 
     def read_key(self, timeout: float) -> str | None:
-        if _WINDOWS_VT_INPUT[0]:
-            return super().read_key(timeout)
-        return self._read_key_fallback(timeout)
+        return (
+            super().read_key(timeout)
+            if _WINDOWS_VT_INPUT[0]
+            else self._read_key_fallback(timeout)
+        )
 
     def _wait_for_input(self, fd: int, timeout: float) -> bool:
         return self._ready(fd, timeout)
@@ -593,82 +708,124 @@ class WindowsKeyReader(PosixKeyReader):
     def _ready(self, fd: int, timeout: float) -> bool:
         import time
 
-        console = _msvcrt()
-        deadline = time.monotonic() + timeout
-        while not (self._bytes or console.kbhit()):
+        if self._bytes:
+            return True
+        if not _WINDOWS_VT_INPUT[0]:
+            return self._fallback_ready(timeout)
+        deadline = time.monotonic() + max(0.0, timeout)
+        for attempt in range(64):
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            if attempt and timeout > 0 and remaining <= 0:
                 return False
-            time.sleep(min(0.01, remaining))
-        return True
+            record = self._next_key_record(max(0.0, remaining), consume=False)
+            if record is None:
+                return False
+            mode = ctypes.c_uint32()
+            if not self._kernel.GetConsoleMode(self._handle, ctypes.byref(mode)):
+                self._failed("GetConsoleMode")
+            if mode.value & (0x0001 | 0x0002 | 0x0004):
+                raise OSError("VT console input is still processed or cooked")
+            if not mode.value & _ENABLE_VIRTUAL_TERMINAL_INPUT:
+                raise OSError("VT console input mode was lost")
+            text, count = ctypes.create_unicode_buffer(64), ctypes.c_uint32()
+            if not self._kernel.ReadConsoleW(
+                self._handle, text, 64, ctypes.byref(count), None
+            ):
+                self._failed("ReadConsoleW")
+            if not 0 <= count.value <= 64:
+                raise OSError("ReadConsoleW returned invalid character count")
+            if count.value == 0:
+                return False
+            units = "".join(text[: count.value])
+            decoded = self._vt_utf16.decode(
+                units.encode("utf-16-le", "surrogatepass"), final=False
+            )
+            self._bytes += decoded.encode("utf-8")
+            if self._bytes:
+                return True
+        return False
 
     def _read(self, fd: int, count: int) -> bytes:
-        if not self._bytes:
-            console = _msvcrt()
-            text = console.getwch()
-            if "\ud800" <= text <= "\udbff" and console.kbhit():
-                text += console.getwch()  # the low half of a surrogate pair
-            self._bytes = (
-                text.encode("utf-16-le", "surrogatepass")
-                .decode("utf-16-le", "replace")
-                .encode()
-            )
         got, self._bytes = self._bytes[:count], self._bytes[count:]
         return got
 
-    def _read_key_fallback(self, timeout: float) -> str | None:
+    def _fill_native_chars(self, timeout: float) -> bool:
         import time
 
-        # `msvcrt` only exists on win32; typeshed gates its whole stub
-        # behind this exact check, so mypy treats the body as unreachable
-        # (and skips checking it) on every other `--python-platform`,
-        # including this dev machine's darwin. This class is only ever
-        # constructed by `make_key_reader()` on `os.name == "nt"`.
-        if sys.platform != "win32":  # pragma: no cover - Windows-only path
-            return None
-        import msvcrt
-
-        deadline = time.monotonic() + timeout
-        while True:
-            if self._pending or msvcrt.kbhit():
-                ch = self._pending.pop(0) if self._pending else msvcrt.getwch()
-                if ch in ("\x00", "\xe0"):
-                    code = self._pending.pop(0) if self._pending else msvcrt.getwch()
-                    return self._ARROW.get(code, ESCAPE)
-                if _plain(ch):
-                    # Drain everything already available (at most
-                    # `_PASTE_MAX` characters kept, the rest still consumed).
-                    while msvcrt.kbhit():
-                        extra = msvcrt.getwch()
-                        if len(self._pending) < _PASTE_MAX:
-                            self._pending.append(extra)
-                    # Without VT input a burst of printable characters
-                    # cannot be told from a paste (key repeat piled up
-                    # behind a slow tick looks the same), so any run of more
-                    # than one is literal paste text, never keys -- a pasted
-                    # "qq" never quits. Enter, controls and extended keys
-                    # after it stay keys.
-                    run = [ch]
-                    while self._pending and _plain(self._pending[0]):
-                        run.append(self._pending.pop(0))
-                    if len(run) > 1:
-                        return PASTE_PREFIX + "".join(run)
-                    return ch
-                if ch == "\r":
-                    return ENTER
-                if ch == "\t":
-                    return TAB
-                if ch == "\x1b":
-                    return ESCAPE
-                if ch == "\x03":
-                    return CTRL_C
-                if ch == "\x08":
-                    return BACKSPACE
-                return ch
+        deadline = time.monotonic() + max(0.0, timeout)
+        for attempt in range(64):
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return None
-            time.sleep(min(0.01, remaining))
+            if attempt and timeout > 0 and remaining <= 0:
+                return False
+            if self._native_repeat is None:
+                record = self._next_key_record(max(0.0, remaining), consume=True)
+                if record is None:
+                    return False
+                key = record.event.key
+                if key.virtual == 0x09 and key.control & 0x10:
+                    chars, is_unicode = "\x00\x0f", False
+                elif key.virtual in self._EXTENDED:
+                    chars, is_unicode = self._EXTENDED[key.virtual], False
+                elif key.char:
+                    chars, is_unicode = chr(key.char), True
+                else:
+                    chars, is_unicode = "\x00" + chr(key.scan & 0xFF), False
+                self._native_repeat = (chars, int(key.repeat), is_unicode)
+            chars, repeats, is_unicode = self._native_repeat
+            self._native_repeat = (
+                (chars, repeats - 1, is_unicode) if repeats > 1 else None
+            )
+            if is_unicode:
+                text = self._fallback_utf16.decode(
+                    chars.encode("utf-16-le", "surrogatepass"), final=False
+                )
+            else:
+                text = self._fallback_utf16.decode(b"", final=True) + chars
+                self._fallback_utf16.reset()
+            if text:
+                self._native_chars.extend(text)
+                return True
+        return False
+
+    def _fallback_ready(self, timeout: float) -> bool:
+        return bool(self._native_chars) or self._fill_native_chars(timeout)
+
+    def _fallback_character(self) -> str:
+        if not self._native_chars:
+            raise OSError("native key buffer unexpectedly empty")
+        return self._native_chars.popleft()
+
+    def _read_key_fallback(self, timeout: float) -> str | None:
+        if not self._pending and not self._fallback_ready(timeout):
+            self._fallback_continuation = False
+            return None
+        ch = self._pending.pop(0) if self._pending else self._fallback_character()
+        if ch in ("\x00", "\xe0"):
+            self._fallback_continuation = False
+            code = self._pending.pop(0) if self._pending else self._fallback_character()
+            return self._ARROW.get(code, ESCAPE)
+        if _plain(ch):
+            continuation, ended = self._fallback_continuation, False
+            for _ in range(max(0, _PASTE_MAX - len(self._pending))):
+                if not self._fallback_ready(0):
+                    ended = True
+                    break
+                self._pending.append(self._fallback_character())
+            run = [ch]
+            while self._pending and _plain(self._pending[0]) and len(run) < _PASTE_MAX:
+                run.append(self._pending.pop(0))
+            self._fallback_continuation = (
+                bool(self._pending and _plain(self._pending[0])) or not ended
+            )
+            return PASTE_PREFIX + "".join(run) if continuation or len(run) > 1 else ch
+        self._fallback_continuation = False
+        return {
+            "\r": ENTER,
+            "\t": TAB,
+            "\x1b": ESCAPE,
+            "\x03": CTRL_C,
+            "\x08": BACKSPACE,
+        }.get(ch, ch)
 
 
 def _plain(ch: str) -> bool:

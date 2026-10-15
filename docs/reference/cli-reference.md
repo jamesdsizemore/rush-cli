@@ -1,3 +1,5 @@
+Current status: Memory has 36 CLI leaves. `rush memory bootstrap --project . --task-id phase72 --task-kind memory_continuation --query "remaining memory acceptance checks" --max-tokens 2048 --json` reads a scoped task-context packet through an existing consented binding. `--task-kind test_repair` selects repair context; optional `--session-binding UUID` selects an existing binding. Bootstrap creates no grant, binding, store, or checkpoint. Missing or ambiguous consent returns recovery guidance; a consented absent store returns empty items. See [bootstrap inputs, output and recovery](mcp-tool-reference.md#bootstrap-context-packet).
+
 # CLI reference
 
 Current authority: generated Click metadata from `uv run rush --help` and `uv run rush COMMAND --help` at source baseline `997b56e`. Examples assume the editable source checkout and therefore use `uv run rush`. Phase 65 owns standalone installation and the integrated beginner workflow; Phase 66 owns the persistent TUI and complete web workflow.

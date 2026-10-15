@@ -2157,7 +2157,9 @@ def verdict_row(
 ) -> dict[str, Any]:
     """One arm/case/seed observation, the row `reporting.aggregate_hybrid_verdict` takes.
 
-    Pairing key: `(provider, case_id, seed, fixture_revision, grants, budgets)` across the
+    Synthetic protocol receipts exercise pairing, not live provider certification.
+    Pairing key includes protocol, instruction and per-kind digests alongside
+    `(provider, case_id, seed, fixture_revision, grants, budgets)` across the
     three arms (`current`, `hybrid`, `metadata`). `split` is `literal` / `paraphrase` for a
     `p72-` case and `None` for a baseline case (which has no relevant ids, so it counts only
     toward unsafe inclusion, availability and passes). `recall_at_8` / `chance_recall` are the
@@ -2171,6 +2173,18 @@ def verdict_row(
         "case_id": case_id,
         "seed": seed,
         "fixture_revision": fixture_revision,
+        "decision_protocol_digest": hashlib.sha256(
+            f"synthetic-protocol:{provider}".encode()
+        ).hexdigest(),
+        "decision_instruction_sha256": hashlib.sha256(
+            b"synthetic-instructions"
+        ).hexdigest(),
+        "decision_kind_protocol_digests": {
+            kind: hashlib.sha256(
+                f"synthetic-protocol:{provider}:{kind}".encode()
+            ).hexdigest()
+            for kind in ("dataset_answer", "episode")
+        },
         "grants": ["cache_write", "network"],
         "budgets": dict(BUDGETS),
         "split": split,
@@ -2525,38 +2539,41 @@ def _default_switch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _committed_constant(constant: dict[str, Any] | None) -> None:
-    """`HYBRID_DEFAULT_VERDICT` is `None` until the committed verdict JSON says `benefit`;
-    then it equals that file and the frozen manifest's embedding identity. `constant` is
-    the production value, read before any test patched it."""
+    """The production pin binds the ratified budget-specific report and manifest."""
+    from scripts.benchmarks.memory import cases_digest
+
     repo = Path(__file__).resolve().parents[1]
     verdict_path = (
-        repo / "docs" / "reports" / "phase-72-memory-eval" / "hybrid-verdict.json"
+        repo
+        / "docs"
+        / "reports"
+        / "phase-72-memory-eval"
+        / "dt09-budget-32768"
+        / "hybrid-verdict.json"
     )
-    if not verdict_path.is_file():
-        assert constant is None
-        return
     payload = json.loads(verdict_path.read_text(encoding="utf-8"))
-    global_verdict = verdict_name(payload["global"])
-    if global_verdict != "benefit":
-        assert constant is None, global_verdict
-        return
-    assert constant is not None
-    assert constant["verdict"] == "benefit"
-    assert (
-        constant["verdict_report_sha256"]
-        == hashlib.sha256(verdict_path.read_bytes()).hexdigest()
-    )
-    assert (
-        constant["cases_sha256"] == CASES_SHA256 or len(constant["cases_sha256"]) == 64
+    assert verdict_name(payload["global"]) == "benefit"
+    assert set(payload["per_provider"]) == set(PROVIDERS)
+    assert all(
+        verdict_name(provider) == "benefit"
+        for provider in payload["per_provider"].values()
     )
     manifest = json.loads(
-        (repo / "tests" / "fixtures" / "phase75" / "task_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            repo / "tests" / "fixtures" / "phase75" / "task_manifest_dt09_budget.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert manifest["phase72_cases_sha256"] == cases_digest(
+        [case for case in manifest["cases"] if case["id"].startswith("p72-")]
     )
     embedding = manifest["phase72_embedding"]
-    assert constant["model"] == embedding["model"]
-    assert constant["model_digest"] == embedding["model_digest"]
+    assert constant == {
+        "verdict": "benefit",
+        "model": embedding["model"],
+        "model_digest": embedding["model_digest"],
+        "cases_sha256": manifest["phase72_cases_sha256"],
+        "verdict_report_sha256": hashlib.sha256(verdict_path.read_bytes()).hexdigest(),
+    }
 
 
 def test_t08_hybrid_default_rule(
@@ -2567,9 +2584,23 @@ def test_t08_hybrid_default_rule(
     from rush.memory import retrieval
 
     committed = retrieval.HYBRID_DEFAULT_VERDICT
+    _committed_constant(committed)
+    assert committed is not None
+    env = make_env(tmp_path / "committed", monkeypatch)
+    write_config(env.root, model=committed["model"], digest=committed["model_digest"])
+    env.tags = {
+        "models": [
+            {
+                "name": committed["model"],
+                "digest": committed["model_digest"].ljust(64, "0"),
+            }
+        ]
+    }
+    configured = tool_call(env, "recall", request=lex())
+    assert configured.code == "OK" and configured.data["retrieval"] == "hybrid"
+    assert env.tags_calls == [ENDPOINT] and env.embed_calls
     _verdict_table()
     _default_switch(tmp_path, monkeypatch)
-    _committed_constant(committed)
 
 
 # --- R15 ---------------------------------------------------------------------------------
@@ -3322,6 +3353,58 @@ def test_t08_verdict_aggregation(scenario: str) -> None:
             hybrid_pass=lambda qid, split: split == "literal" or qid in TWO_IMPROVED,
         ) + verdict_rows(b, seeds=(1,))
         assert aggregate(single)[0][a] == "no_benefit"
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "decision_protocol_digest",
+        "decision_instruction_sha256",
+        "decision_kind_protocol_digests",
+    ],
+)
+def test_t08_mixed_protocol_receipts_are_unavailable(field: str) -> None:
+    from scripts.benchmarks.reporting import aggregate_hybrid_verdict
+
+    a, b = PROVIDERS
+
+    def old_protocol(row: dict[str, Any]) -> None:
+        if row["arm"] == "hybrid":
+            row[field] = (
+                {"dataset_answer": "old"} if field.endswith("digests") else "old"
+            )
+
+    verdict = aggregate_hybrid_verdict(
+        verdict_rows(a, mutate=old_protocol) + verdict_rows(b)
+    )
+    assert verdict["per_provider"][a] == {
+        "verdict": "unavailable",
+        "reason": "missing pair",
+    }
+    assert verdict["per_provider"][b]["verdict"] == "benefit"
+    assert verdict["global"] == {"verdict": "unavailable"}
+
+
+def test_t08_missing_protocol_receipt_preserves_unsafe_priority() -> None:
+    from scripts.benchmarks.reporting import aggregate_hybrid_verdict
+
+    a, b = PROVIDERS
+    rows = verdict_rows(a) + verdict_rows(b)
+    rows[0].pop("decision_protocol_digest")
+    verdict = aggregate_hybrid_verdict(rows)
+    assert verdict["per_provider"][a] == {
+        "verdict": "unavailable",
+        "reason": "missing decision protocol receipt",
+    }
+    assert verdict["per_provider"][b]["verdict"] == "benefit"
+    assert verdict["global"] == {"verdict": "unavailable"}
+    rows[0]["security_inclusion"] = 1
+    verdict = aggregate_hybrid_verdict(rows)
+    assert verdict["per_provider"][a] == {
+        "verdict": "unsafe",
+        "reason": "unauthorized or stale inclusion",
+    }
+    assert verdict["global"] == {"verdict": "unsafe"}
 
 
 def test_t08_nonretrieval_baseline_does_not_fail_hybrid_availability() -> None:

@@ -39,6 +39,134 @@ from typing import Any
 import pytest
 
 from rush.delivery.compact import canonical_json
+
+
+@pytest.mark.parametrize("layout", ["source", "installed"])
+def test_codex_decision_instruction_pinned_and_kind_scoped(
+    tmp_path, monkeypatch, layout
+):
+    import tomllib
+
+    from scripts.benchmarks import providers
+
+    route = providers.resolve_decision_route(
+        "openai-codex-oauth-cli-live",
+        allow_live_route="openai-codex-oauth-cli-live",
+        provider_executable=sys.executable,
+    )
+    original = Path(providers.__file__).resolve().parents[2]
+    root = tmp_path / 'source😀"\\path'
+    fixture = root / (
+        "tests/fixtures/benchmarks/codex_decision_instructions.md"
+        if layout == "source"
+        else "scripts/benchmarks/fixtures/codex_decision_instructions.md"
+    )
+    fixture.parent.mkdir(parents=True)
+    fixture.write_bytes(
+        (
+            original / "tests/fixtures/benchmarks/codex_decision_instructions.md"
+        ).read_bytes()
+    )
+    monkeypatch.setattr(
+        providers, "__file__", str(root / "scripts/benchmarks/providers.py")
+    )
+    monkeypatch.setattr(providers, "FIXTURE_ROOT", fixture.parent, raising=False)
+    monkeypatch.chdir(tmp_path)
+    prompt = '{"kind":"dataset_answer","task":"unchanged"}'
+    dataset = providers.decision_argv(route, "dataset_answer", prompt)
+    episode = providers.decision_argv(route, "episode", prompt)
+    config = next(x for x in dataset if x.startswith("model_instructions_file="))
+    assert tomllib.loads(config)["model_instructions_file"] == str(fixture.resolve())
+    assert dataset[-1] == episode[-1] == prompt
+    assert "shell_tool" in dataset and "shell_tool" not in episode
+    assert "unified_exec" in dataset and "unified_exec" not in episode
+    assert route.protocol["instruction_files"] == ["$CODEX_HOME/AGENTS.md"]
+    digest, instruction = providers.decision_protocol_digest(route)
+    assert len(digest) == 64
+    assert (
+        instruction
+        == "5b73465f7986c3d56a2c895523b3e8969e7eee5762ac0eeb1b5876e69a384df1"
+    )
+    fixture.write_bytes(b"tampered\n")
+    with pytest.raises(ValueError, match="decision instructions changed"):
+        providers.decision_argv(route, "dataset_answer", prompt)
+
+
+def test_codex_instruction_override_rejects_unpinned_runtime(tmp_path, monkeypatch):
+    from scripts.benchmarks import providers
+
+    route = providers.resolve_decision_route(
+        "openai-codex-oauth-cli-live",
+        allow_live_route="openai-codex-oauth-cli-live",
+        provider_executable=sys.executable,
+    )
+
+    def probe(argv, *args):
+        if argv[-1] == "--version":
+            return ("codex 0.161.0\n", "")
+        return (" ".join(route.protocol["argv"]["dataset_answer"]), "")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("unsupported runtime spawned a decision")
+
+    monkeypatch.setattr(providers, "_probe_output", probe)
+    monkeypatch.setattr(providers, "run_memory_decision", forbidden)
+    report = providers.preflight_decision_route(
+        route, workspace_root=tmp_path, case_budgets=[(16000, 1024)]
+    )
+    assert report["status"] == "unavailable"
+    assert report["reason"] == "decision_instruction_runtime_unsupported"
+    assert (
+        report["decision_instruction_sha256"]
+        == "5b73465f7986c3d56a2c895523b3e8969e7eee5762ac0eeb1b5876e69a384df1"
+    )
+
+
+def test_hybrid_verdict_requires_matching_decision_protocol():
+    from scripts.benchmarks.reporting import aggregate_hybrid_verdict
+
+    rows = [
+        {
+            "provider": "codex",
+            "arm": arm,
+            "case_id": "literal",
+            "seed": 1,
+            "fixture_revision": "fixed",
+            "grants": [],
+            "budgets": {},
+            "split": "literal",
+            "security_inclusion": 0,
+            "route_available": True,
+            "retrieval_required": False,
+            "passed": True,
+            "recall_at_8": 1.0,
+            "chance_recall": 0.0,
+            "case_tokens": 10,
+            "case_ms": 2,
+            "decision_protocol_digest": "a" * 64,
+            "decision_instruction_sha256": "b" * 64,
+            "decision_kind_protocol_digests": {
+                "dataset_answer": "c" * 64,
+                "episode": "d" * 64,
+            },
+        }
+        for arm in ("current", "hybrid", "metadata")
+    ]
+    assert aggregate_hybrid_verdict(rows)["global"]["verdict"] == "no_benefit"
+    rows[-1]["decision_kind_protocol_digests"]["episode"] = "e" * 64
+    assert aggregate_hybrid_verdict(rows)["per_provider"]["codex"] == {
+        "verdict": "unavailable",
+        "reason": "missing pair",
+    }
+    rows[0].pop("decision_protocol_digest")
+    assert aggregate_hybrid_verdict(rows)["per_provider"]["codex"] == {
+        "verdict": "unavailable",
+        "reason": "missing decision protocol receipt",
+    }
+    rows[0]["security_inclusion"] = 1
+    assert aggregate_hybrid_verdict(rows)["global"]["verdict"] == "unsafe"
+
+
 from rush.permissions import ExecutionPermissions
 from rush.tools.memory import MemoryTool
 from scripts.benchmarks import memory as bm
@@ -354,7 +482,8 @@ IS_CODEX = ARGS[:1] == ["exec"]
 CLAUDE_FLAGS = ["-p", "--tools", "--output-format", "--permission-mode", "--safe-mode",
                 "--strict-mcp-config", "--no-session-persistence"]
 CODEX_FLAGS = ["--ephemeral", "--json", "--sandbox", "--skip-git-repo-check",
-               "--ignore-user-config", "--ignore-rules"]
+               "--ignore-user-config", "--ignore-rules", "--strict-config",
+               "--enable", "--disable", "-c"]
 
 
 def log(entry):
@@ -371,7 +500,7 @@ if "--help" in ARGS:
     sys.exit(0)
 if ARGS == ["--version"]:
     log({"kind": "version", "argv": ARGS})
-    print("fake 1.0")
+    print(PLAN.get("version", "fake 1.0"))
     print("build 123")
     sys.exit(0)
 
@@ -604,6 +733,7 @@ def _plan(
 ) -> dict[str, Any]:
     return {
         "answers": dict(_ANSWERS if answers is None else answers),
+        "version": "codex 0.162.1" if fmt == "codex" else "fake 1.0",
         "usage_raw": _usage(fmt) if usage is _UNSET else usage,
         "preflight_usage_raw": _usage(fmt, 40, 5) if preflight is _UNSET else preflight,
         "omit_flag": omit_flag,
@@ -3404,6 +3534,31 @@ _ROUTE_ARGV = {
             "--skip-git-repo-check",
             "--ignore-user-config",
             "--ignore-rules",
+            "--strict-config",
+            "--enable",
+            "skip_host_skill_discovery",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+            "--disable",
+            "skill_search",
+            "-c",
+            "skills.max_context_tokens=1",
+            "-c",
+            "skills.include_instructions=false",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "unified_exec",
+            "--disable",
+            "code_mode_host",
+            "--disable",
+            "tool_suggest",
+            "--disable",
+            "sleep_tool",
+            "-c",
+            "model_instructions_file={decision_instructions}",
         ],
     ),
     "codex_episode": (
@@ -3418,6 +3573,21 @@ _ROUTE_ARGV = {
             "--skip-git-repo-check",
             "--ignore-user-config",
             "--ignore-rules",
+            "--strict-config",
+            "--enable",
+            "skip_host_skill_discovery",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+            "--disable",
+            "skill_search",
+            "-c",
+            "skills.max_context_tokens=1",
+            "-c",
+            "skills.include_instructions=false",
+            "-c",
+            "model_instructions_file={decision_instructions}",
         ],
     ),
 }
@@ -3438,7 +3608,20 @@ def test_live_decision_argv_hermetic(
         if (kind == "dataset_answer") != wants_dataset:
             continue
         seen += 1
-        assert argv == [exe, *flags, argv[-1]], argv[:-1]
+        resolved_flags = [
+            x.replace(
+                "{decision_instructions}",
+                json.dumps(
+                    str(
+                        Path(__file__).resolve().parent
+                        / "fixtures/benchmarks/codex_decision_instructions.md"
+                    ),
+                    ensure_ascii=False,
+                ),
+            )
+            for x in flags
+        ]
+        assert argv == [exe, *resolved_flags, argv[-1]], argv[:-1]
         assert "--max-turns" not in argv
         _assert_spawn_contract(spawn)
     assert seen >= 1
@@ -3464,7 +3647,7 @@ def test_live_report_shape_and_labels(happy_runs: dict[str, RunResult]) -> None:
         route = report["decision_route"]
         assert route["status"] != "unavailable"
         assert route["route_overhead_tokens"] == 45
-        assert route["version"] == "fake 1.0"
+        assert route["version"] == ("fake 1.0" if key == "claude" else "codex 0.162.1")
         assert route["format"] == (
             "claude_print_json" if key == "claude" else "codex_exec_jsonl"
         )
@@ -3551,7 +3734,7 @@ def test_episode_decision_request_shows_acceptance(
             "response_schema",
         }
         assert request["schema_version"] == 1
-        assert set(request["response_schema"]) == {"action", "submit"}
+        assert set(request["response_schema"]) == {"oneOf"}
         acceptance = request["acceptance"]
         assert set(acceptance) == {"behavior_ids", "required_commands", "handoff"}
         assert acceptance["behavior_ids"] == case["acceptance"]["behavior_ids"]
@@ -3614,14 +3797,55 @@ def test_python_token_expanded_and_interpreter_recorded(
         assert record["passed"] is True and record["reason"] is None
 
 
+def test_episode_operation_schema_preserves_nested_wire_types() -> None:
+    """A model copying the advertised nested request reaches strict action validation."""
+    schemas = json.loads(json.dumps(bm.OPERATION_SCHEMAS))
+    assert isinstance(schemas["write"]["kwargs"]["content"], dict)
+    for operation, schema in schemas.items():
+        if operation != "write":
+            assert isinstance(schema["kwargs"]["request"], dict), operation
+    case = next(c for c in _baseline_cases() if c["id"] == "upload-repair")
+    kwargs = copy.deepcopy(schemas["verify_attempt"]["kwargs"])
+    kwargs["request"].update(
+        attempt_id="schema-request",
+        behavior_ids=case["acceptance"]["behavior_ids"],
+        patch=_PATCH_BOTH,
+    )
+    kwargs["request"]["contract"]["required_commands"] = case["acceptance"][
+        "required_commands"
+    ]
+    reason, action = bench_run._validate_episode_action(
+        case, {"kind": "action", "operation": "verify_attempt", "kwargs": kwargs}
+    )
+    assert reason is None and action is not None
+    assert action.kwargs["request"]["attempt_id"] == "schema-request"
+
+
 def test_source_aware_agent_patch_from_fixture(
     tmp_path: Path, happy_runs: dict[str, RunResult]
 ) -> None:
+    from jsonschema import Draft202012Validator
+
     for res in happy_runs.values():
         res.ran()
         call = res.kit.decisions_for("upload-repair")[0]
         assert {"upload.py", "check_upload.py"} <= set(call["listdir"])
         verifies = [c for c in res.kit.tool_calls if c.operation == "verify_attempt"]
+        schema = call["request"]["response_schema"]
+        Draft202012Validator.check_schema(schema)
+        validator = Draft202012Validator(schema)
+        action = {
+            "kind": "action",
+            "operation": "verify_attempt",
+            "kwargs": {"request": verifies[0].kwargs["request"]},
+        }
+        validator.validate(action)
+        parsed, reason = providers.parse_decision_text(json.dumps(action), "episode")
+        assert reason is None and parsed == action
+        assert not validator.is_valid({"action": action})
+        assert not validator.is_valid({**action, "final": None})
+        assert validator.is_valid({"kind": "submit", "final": None})
+        assert not validator.is_valid({"kind": "submit"})
         assert verifies[0].kwargs["request"]["patch"] == _PATCH_BOTH
         assert verifies[0].result["raw"]["outcome"] == "completed"
         assert res.record("upload-repair")["passed"] is True
@@ -3980,6 +4204,28 @@ def test_memory_cost_not_double_counted(tmp_path: Path) -> None:
     assert [i["usage"] for i in record["invocations"]] == [usage, usage]
 
 
+def test_ingestion_budget_refuses_before_decider(tmp_path: Path) -> None:
+    from scripts.benchmarks.memory_datasets import (
+        load_dataset_section,
+        run_longmemeval_case,
+    )
+
+    _manifest, records = load_dataset_section("longmemeval")
+
+    def forbidden_decider(*args: Any) -> str:
+        pytest.fail("ingestion exhausted approved budget before decider")
+
+    result = run_longmemeval_case(
+        records[0],
+        decide_fn=forbidden_decider,
+        max_total_tokens=1,
+        workspace_root=tmp_path,
+    )
+    assert result.outcome == "budget_exhausted"
+    assert result.prediction is None
+    assert result.total_tokens > 1
+
+
 def test_post_decision_budget_exhaustion(tmp_path: Path) -> None:
     rules = _only(
         "guest-handoff",
@@ -4094,7 +4340,7 @@ def test_route_preflight_overhead_gate(cell: str, tmp_path: Path) -> None:
         decision_route = res.report["decision_route"]
         assert decision_route["status"] != "unavailable"
         assert decision_route["route_overhead_tokens"] == 45
-        assert decision_route["version"] == "fake 1.0"
+        assert decision_route["version"] == "codex 0.162.1"
         files = decision_route["instruction_files"]
         assert len(files) == 1
         entry = files[0]
@@ -4112,7 +4358,7 @@ def test_route_preflight_overhead_gate(cell: str, tmp_path: Path) -> None:
             "task": 'Reply with the JSON object {"kind": "answer", "text": "ok"}.',
             "response_schema": {"kind": "answer", "text": "<string>"},
         }
-        assert preflights[0]["argv"][:-1] == [
+        assert preflights[0]["argv"][:8] == [
             "exec",
             "--ephemeral",
             "--json",
@@ -4122,6 +4368,14 @@ def test_route_preflight_overhead_gate(cell: str, tmp_path: Path) -> None:
             "--ignore-user-config",
             "--ignore-rules",
         ]
+        assert preflights[0]["argv"][8:11] == [
+            "--strict-config",
+            "--enable",
+            "skip_host_skill_discovery",
+        ]
+        assert "shell_tool" in preflights[0]["argv"]
+        assert "unified_exec" in preflights[0]["argv"]
+        assert preflights[0]["argv"][-2].startswith("model_instructions_file=")
         assert Path(preflights[0]["cwd"]).name == "decision-cwd"
         assert preflights[0]["listdir"] == []
         return
@@ -4143,7 +4397,7 @@ def test_route_preflight_overhead_gate(cell: str, tmp_path: Path) -> None:
     )
     if cell == "overhead_15000_unavailable":
         assert decision_route["route_overhead_tokens"] == 15000
-        assert decision_route["version"] == "fake 1.0"
+        assert decision_route["version"] == "codex 0.162.1"
         assert len(preflight_calls) == 1
         files = decision_route["instruction_files"]
         assert files[0]["sha256"] == hashlib.sha256(agents.encode("utf-8")).hexdigest()
@@ -4159,6 +4413,74 @@ def test_route_preflight_overhead_gate(cell: str, tmp_path: Path) -> None:
         assert "nonzero_exit" in json.dumps(decision_route)
     else:
         assert "provider_usage_unavailable" in json.dumps(decision_route)
+
+
+def test_dt09_registered_budget_preserves_cases_and_preflight_guard(
+    tmp_path: Path,
+) -> None:
+    original = json.loads(_SHIPPED_MANIFEST.read_text(encoding="utf-8"))
+    registered = json.loads(
+        _SHIPPED_MANIFEST.with_name("task_manifest_dt09_budget.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    restored = copy.deepcopy(registered)
+    for before, after, restore in zip(
+        original["cases"], registered["cases"], restored["cases"], strict=True
+    ):
+        assert after["budget"]["max_total_tokens"] == 32768 * (
+            after["budget"]["max_steps"] if after["kind"] == "episode" else 1
+        )
+        restore["budget"]["max_total_tokens"] = before["budget"]["max_total_tokens"]
+    restored["phase72_cases_sha256"] = original["phase72_cases_sha256"]
+    assert restored == original
+    for field, value in (
+        ("family", "changed task"),
+        ("grants", []),
+        ("budget", {**registered["cases"][0]["budget"], "max_total_tokens": 32769}),
+        ("budget", {**registered["cases"][0]["budget"], "output_reserve_tokens": 1025}),
+    ):
+        altered = copy.deepcopy(registered)
+        altered["cases"][0][field] = value
+        with pytest.raises(FixtureError, match="baseline_altered"):
+            bm.load_task_manifest(_write_manifest(tmp_path / f"{field}.json", altered))
+
+    # Reproduce measured overhead through the existing subprocess provider, not arithmetic.
+    for name, manifest, cli_cap, available in (
+        ("original", original, 16000, False),
+        ("cli_only", original, 393216, False),
+        ("registered", registered, 393216, True),
+        ("cli_capped", registered, 16000, False),
+    ):
+        result = _live(
+            tmp_path / name,
+            _CODEX_ROUTE,
+            manifest_obj=manifest,
+            max_total=cli_cap,
+            plan=_plan("codex", preflight=_usage("codex", 13993, 13)),
+        )
+        assert result.error is None, repr(result.error)
+        route = result.report["decision_route"]
+        assert route["route_overhead_tokens"] == 14006
+        if available:
+            assert route["status"] == "available"
+            assert len(result.report["case_results"]) == len(registered["cases"])
+            for case in registered["cases"]:
+                assert (
+                    result.record(case["id"])["budget"]["max_total_tokens"]
+                    == (case["budget"]["max_total_tokens"])
+                )
+            assert any(
+                call["decision_kind"] != "preflight" for call in result.kit.decisions
+            )
+        else:
+            assert result.exit_code == 1
+            assert route["status"] == "unavailable"
+            assert route["reason"] == "route_overhead_exceeds_budget"
+            assert result.report["case_results"] == []
+            assert all(
+                call["decision_kind"] == "preflight" for call in result.kit.decisions
+            )
 
 
 def test_route_preflight_gate_uses_each_cases_reserve(tmp_path: Path) -> None:
@@ -4210,20 +4532,72 @@ def test_route_loader_decision_protocol_strict(
         rid for rid, route in routes.items() if route.decision_protocol is not None
     )
     assert with_protocol == sorted([_CLAUDE_ROUTE, _CODEX_ROUTE])
-    codex_args = [
-        "exec",
-        "--ephemeral",
-        "--json",
-        "--sandbox",
-        "read-only",
-        "--skip-git-repo-check",
-        "--ignore-user-config",
-        "--ignore-rules",
-    ]
+    codex_args = {
+        "dataset_answer": [
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--strict-config",
+            "--enable",
+            "skip_host_skill_discovery",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+            "--disable",
+            "skill_search",
+            "-c",
+            "skills.max_context_tokens=1",
+            "-c",
+            "skills.include_instructions=false",
+            "--disable",
+            "shell_tool",
+            "--disable",
+            "unified_exec",
+            "--disable",
+            "code_mode_host",
+            "--disable",
+            "tool_suggest",
+            "--disable",
+            "sleep_tool",
+            "-c",
+            "model_instructions_file={decision_instructions}",
+        ],
+        "episode": [
+            "exec",
+            "--ephemeral",
+            "--json",
+            "--sandbox",
+            "read-only",
+            "--skip-git-repo-check",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--strict-config",
+            "--enable",
+            "skip_host_skill_discovery",
+            "--disable",
+            "plugins",
+            "--disable",
+            "apps",
+            "--disable",
+            "skill_search",
+            "-c",
+            "skills.max_context_tokens=1",
+            "-c",
+            "skills.include_instructions=false",
+            "-c",
+            "model_instructions_file={decision_instructions}",
+        ],
+    }
     assert routes[_CODEX_ROUTE].decision_protocol == {
         "format": "codex_exec_jsonl",
         "help_args": ["exec", "--help"],
-        "argv": {"dataset_answer": codex_args, "episode": codex_args},
+        "argv": codex_args,
         "instruction_files": ["$CODEX_HOME/AGENTS.md"],
     }
     claude_common = [

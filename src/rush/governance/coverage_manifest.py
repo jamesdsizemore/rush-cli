@@ -47,6 +47,12 @@ EXCLUDED_DIRS = {
     ".repowise",
     ".repowise-workspace",
     ".vscode",
+    "repos",
+    "graphify-out",
+    ".playwright-mcp",
+    ".codex",
+    ".kiro",
+    ".impeccable",
     "%SystemDrive%",
 }
 

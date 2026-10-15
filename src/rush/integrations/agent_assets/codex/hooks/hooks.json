@@ -11,6 +11,60 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex --event PostToolUse",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex --event SessionStart",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex --event PreCompact",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex --event PostToolUseFailure",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "@RUSH_BINARY_SH@ agent hook codex --event Stop",
+            "timeout": 10
+          }
+        ]
       }
     ]
   }

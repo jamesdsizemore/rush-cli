@@ -1,0 +1,5 @@
+{
+  "name": "rush",
+  "version": "@RUSH_VERSION@",
+  "description": "Rush memory, context and control with explicitly authorized continuity."
+}

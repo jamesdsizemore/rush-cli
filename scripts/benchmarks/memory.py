@@ -1138,45 +1138,75 @@ OPERATION_SCHEMAS: dict[str, dict[str, Any]] = {
     "write": {
         "kwargs": {
             "subject": "acceptance.handoff.subject",
-            "content": '{"text": <string>}',
+            "content": {"text": "<string>"},
             "source": "acceptance.handoff.source",
         }
     },
     "handoff": {
         "kwargs": {
-            "request": '{"action": "prepare", "receiver_namespace": '
-            "acceptance.handoff.source, "
-            '"receiver_audience": <string>, "goal": <string>, "selected_refs": '
-            '[{"id": <write result raw.id>, "version": <write result '
-            "raw.artifact_version>}]}"
+            "request": {
+                "action": "prepare",
+                "receiver_namespace": "acceptance.handoff.source",
+                "receiver_audience": "<string>",
+                "goal": "<string>",
+                "selected_refs": [{"id": "<write result raw.id>", "version": 1}],
+            }
         }
     },
     "receive": {
         "kwargs": {
-            "request": '{"session_id": <handoff result raw.data.handoff_id>, '
-            '"capability": <handoff result raw.data.capability>}, then the same '
-            'plus "ack": [{"id", "version", "digest": sha256 hex of the '
-            "base64-decoded expand raw.data.content_base64}]"
-        }
+            "request": {
+                "session_id": "<handoff result raw.data.handoff_id>",
+                "capability": "<handoff result raw.data.capability>",
+            }
+        },
+        "after_expand": {
+            "operation": "receive",
+            "kwargs": {
+                "request": {
+                    "session_id": "<handoff result raw.data.handoff_id>",
+                    "capability": "<handoff result raw.data.capability>",
+                    "ack": [
+                        {
+                            "id": "<receive result raw.data.changes[i].id>",
+                            "version": 1,
+                            "digest": "<sha256 hex of base64-decoded expand content>",
+                        }
+                    ],
+                }
+            },
+        },
     },
     "expand": {
         "kwargs": {
-            "session_allowlist": "[acceptance.handoff.source]",
-            "request": '{"id": <receive result raw.data.changes[i].id>, '
-            '"version": <receive result raw.data.changes[i].version>}',
+            "session_allowlist": ["acceptance.handoff.source"],
+            "request": {"id": "<receive result raw.data.changes[i].id>", "version": 1},
         }
     },
     "last_success_diagnose": {
-        "kwargs": {"request": '{"behavior_id": <string>, "conditions": <object>}'}
+        "kwargs": {"request": {"behavior_id": "<string>", "conditions": {}}}
     },
     "verify_attempt": {
         "kwargs": {
-            "request": '{"attempt_id": <string>, "behavior_ids": '
-            'acceptance.behavior_ids, "contract": {"required_commands": '
-            'acceptance.required_commands, "patch_content_digest": <string>, '
-            '"config_digest": <string>, "review_class": "standard", '
-            '"base_commit": <optional string>, "base_tree_digest": <optional '
-            'string>}, "patch": <unified diff touching only editable_paths>}'
+            "request": {
+                "attempt_id": "<string>",
+                "behavior_ids": ["<from acceptance.behavior_ids>"],
+                "contract": {
+                    "required_commands": [
+                        {
+                            "command": [
+                                "{python}",
+                                "<from acceptance.required_commands>",
+                            ],
+                            "expected_exit_code": 0,
+                        }
+                    ],
+                    "patch_content_digest": "<string>",
+                    "config_digest": "<string>",
+                    "review_class": "standard",
+                },
+                "patch": "<unified diff touching only editable_paths>",
+            }
         }
     },
 }
@@ -1531,7 +1561,11 @@ def load_task_manifest(path: Path) -> dict[str, Any]:
     ):
         raise _manifest_error("invalid_value", "phase72_cases_sha256")
     baseline = [c for c in cases if not c["id"].startswith("p72-")]
-    if cases_digest(baseline) != BASELINE_CASES_SHA256:
+    if cases_digest(baseline) not in {
+        BASELINE_CASES_SHA256,
+        # DT09: same frozen cases, 32768 per answer / 12-decision episode allowance.
+        "d3a27549026a73b398bcd77cac31c651c4cce1bd6f1e841249675328fddfab9d",
+    }:
         raise _manifest_error("baseline_altered", "the five baseline cases changed")
     phase72 = [c for c in cases if c["id"].startswith("p72-")]
     if phase72 and "phase72_cases_sha256" not in top:

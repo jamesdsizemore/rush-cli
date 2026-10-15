@@ -948,8 +948,14 @@ def test_artifact_tests_never_read_the_repo_dist_dir() -> None:
 
 
 def test_release_artifacts_are_built_from_current_source(
-    distribution_artifacts: tuple[Path, Path], native_release_archive: Path
+    distribution_artifacts: tuple[Path, Path],
+    native_release_archive: Path,
+    tmp_path: Path,
 ) -> None:
+    import importlib.util
+    import subprocess
+    import tarfile
+
     import rush
     from scripts.probe_installed_artifacts import (
         AGENT_ASSET_MEMBERS,
@@ -968,3 +974,50 @@ def test_release_artifacts_are_built_from_current_source(
     assert set(AGENT_ASSET_MEMBERS) <= members
     assert f"Version: {rush.__version__}".encode() in metadata
     assert verify_archive_checksum(native_release_archive, checksums)
+
+    skill_members = [
+        "rush/integrations/agent_assets/skills/rush/SKILL.md",
+        *[
+            f"rush/integrations/agent_assets/{host}/skills/rush/SKILL.md"
+            for host in ("claude", "codex", "cursor", "antigravity", "zcode")
+        ],
+    ]
+    with zipfile.ZipFile(wheel) as zf, tarfile.open(sdist, "r:gz") as tf:
+        for member in skill_members:
+            expected = (PROJECT_ROOT / "src" / member).read_bytes()
+            assert zf.read(member) == expected, (wheel, member)
+            packaged = tf.extractfile(f"rush_cli-{rush.__version__}/src/{member}")
+            assert packaged is not None, (sdist, member)
+            assert packaged.read() == expected, (sdist, member)
+
+    extracted = tmp_path / "native-skills"
+    shutil.unpack_archive(native_release_archive, extracted)
+    binary = extracted / ("rush.exe" if os.name == "nt" else "rush")
+    reader_python = [sys.executable]
+    if importlib.util.find_spec("PyInstaller") is None:
+        uv = shutil.which("uv")
+        assert uv is not None, "reading the native archive needs PyInstaller or uv"
+        reader_python = [uv, "run", "--no-sync", "--with", "pyinstaller", "python"]
+    result = subprocess.run(
+        [
+            *reader_python,
+            "-c",
+            (
+                "from pathlib import Path; import sys; "
+                "from PyInstaller.archive.readers import CArchiveReader; "
+                "archive = CArchiveReader(sys.argv[1]); "
+                "root = Path(sys.argv[2]); "
+                "assert all(archive.extract(member if member in archive.toc else "
+                "member.replace('/', chr(92))) == (root / 'src' / member).read_bytes() "
+                "for member in sys.argv[3:]), 'embedded native skill bytes differ from source'"
+            ),
+            str(binary),
+            str(PROJECT_ROOT),
+            *skill_members,
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

@@ -1,0 +1,15 @@
+{
+  "global": {
+    "verdict": "benefit"
+  },
+  "per_provider": {
+    "anthropic-claude-code-live": {
+      "reason": "paraphrase recall rose above chance",
+      "verdict": "benefit"
+    },
+    "openai-codex-oauth-cli-live": {
+      "reason": "paraphrase recall rose above chance",
+      "verdict": "benefit"
+    }
+  }
+}

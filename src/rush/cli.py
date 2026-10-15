@@ -46,6 +46,7 @@ from .cli_support.rendering import (
     _render_session_result,
     _run_tool,
     cli_invocation_context,
+    cli_memory_receipts,
     collection_route,
     echo,
     echo_json,
@@ -3457,6 +3458,7 @@ def memory_group(
     help="Task context (72-T05): task-bound memory is usable only under its own task.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
 def memory_ask_cmd(
     subject: MemorySubject,
     query: str,
@@ -3494,6 +3496,7 @@ def memory_ask_cmd(
     help="Task context (72-T05): task-bound memory is usable only under its own task.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
 def memory_recall_cmd(
     subject: MemorySubject,
     query: str,
@@ -3564,6 +3567,7 @@ _MEMORY_OWNER_KINDS = ("user", "project", "session", "agent")
     help="Task context (72-T05): task-bound memory is usable only under its own task.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
 def memory_list_cmd(
     subject: MemorySubject | None,
     query: str | None,
@@ -3618,6 +3622,7 @@ def memory_list_cmd(
     _render_session_result(dict(result), as_json)
 
 
+@cli_memory_receipts
 def _run_memory_v2(
     operation: Literal["history", "explain"],
     request: dict[str, Any],
@@ -3631,6 +3636,58 @@ def _run_memory_v2(
     extra: dict[str, Any] = {} if task_id is None else {"task_id": task_id}
     result = MemoryTool().run(
         _memory_logical_root(), operation=operation, request=request, **extra
+    )
+    _render_session_result(dict(result), as_json)
+
+
+@memory_group.command(name="bootstrap")
+@click.option(
+    "--project",
+    type=click.Path(path_type=Path),
+    default=Path("."),
+    help="Project whose consented memory binding is used.",
+)
+@click.option("--task-id", required=True, help="Task identity to continue.")
+@click.option(
+    "--task-kind",
+    type=click.Choice(["memory_continuation", "test_repair"]),
+    required=True,
+)
+@click.option("--query", required=True, help="Explicit context query.")
+@click.option(
+    "--max-tokens", type=click.IntRange(min=1), default=2048, show_default=True
+)
+@click.option(
+    "--session-binding", default=None, help="Existing consented memory binding UUID."
+)
+@click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
+def memory_bootstrap_cmd(
+    project: Path,
+    task_id: str,
+    task_kind: str,
+    query: str,
+    max_tokens: int,
+    session_binding: str | None,
+    as_json: bool,
+) -> None:
+    """Continue one task from scoped current memory without creating a binding or store."""
+    from .delivery import compact
+    from .tools.memory import MemoryTool
+
+    request: dict[str, Any] = {
+        "task_id": task_id,
+        "task_kind": task_kind,
+        "query": query,
+        "max_tokens": max_tokens,
+    }
+    if session_binding is not None:
+        request["session_binding"] = session_binding
+    result = MemoryTool().run(
+        _capsule_root(project),
+        operation="bootstrap",
+        request=request,
+        frame=compact.RECEIPT_FRAME.get(),
     )
     _render_session_result(dict(result), as_json)
 
@@ -3689,6 +3746,7 @@ def memory_explain_cmd(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
 def memory_write_cmd(
     subject: MemorySubject,
     source: str,
@@ -3776,6 +3834,7 @@ def _parse_candidate_refs(
 )
 @permission_options
 @click.option("--json", "as_json", is_flag=True, help="Print raw ToolResult JSON.")
+@cli_memory_receipts
 def memory_promote_cmd(
     subject: MemorySubject,
     source: str,
@@ -3870,6 +3929,7 @@ def memory_promote_cmd(
     default=None,
     help="Explicit owner_scope id. Required together with --owner-kind.",
 )
+@cli_memory_receipts
 def memory_maintain_cmd(
     task: MaintenanceTask,
     batch_size: int,
@@ -5039,7 +5099,10 @@ _CAPSULE_LEAVES: dict[str, tuple[str, str]] = {
             "--expected-store-revision). Requires --allow-cache-write."
         ),
     ),
-    "bridge": ("bridge", "Reserved capsule bridge action; not available."),
+    "bridge": (
+        "bridge",
+        "Preview or apply a capsule instruction block (--instructions; --apply requires --allow-artifact-write).",
+    ),
 }
 
 
@@ -5066,9 +5129,11 @@ def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
     """One `rush memory capsule <leaf>`: builds the same `request` an MCP call sends
     (omitted options stay absent) and runs `MemoryTool` operation `capsule`."""
 
+    @cli_memory_receipts
     def _cmd(
         project: Path,
         input_path: str | None,
+        instructions_path: str | None,
         output_path: str | None,
         capsule_format: str | None,
         max_bytes: int | None,
@@ -5092,12 +5157,19 @@ def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
         allow_browser: bool,
         as_json: bool,
     ) -> None:
+        from .delivery import compact
         from .tools.memory import MemoryTool
 
         request: dict[str, Any] = {"action": action}
         for key, value in (
             ("format", capsule_format),
             ("input", None if input_path is None else os.path.abspath(input_path)),
+            (
+                "instructions",
+                None
+                if instructions_path is None
+                else os.path.abspath(instructions_path),
+            ),
             ("output", None if output_path is None else os.path.abspath(output_path)),
             ("max_bytes", max_bytes),
             ("max_tokens", max_tokens),
@@ -5119,6 +5191,7 @@ def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
             _capsule_root(project),
             operation="capsule",
             request=request,
+            frame=compact.RECEIPT_FRAME.get(),
             permissions=_extract_permissions(
                 allow_network=allow_network,
                 allow_download=allow_download,
@@ -5202,6 +5275,12 @@ def _build_capsule_command(action: str, help_text: str) -> Callable[..., None]:
         ),
         click.option(
             "--input", "input_path", default=None, help="Import: capsule file."
+        ),
+        click.option(
+            "--instructions",
+            "instructions_path",
+            default=None,
+            help="Bridge: reviewed agent instruction file.",
         ),
         click.option(
             "--project",
@@ -6877,8 +6956,15 @@ def agent_disconnect_cmd(
 
 
 @agent_group.command(name="hook")
-@click.argument("host", type=click.Choice(["claude", "codex"]))
-def agent_hook_cmd(host: str) -> None:
+@click.argument(
+    "host", type=click.Choice(["claude", "codex", "cursor", "antigravity", "zcode"])
+)
+@click.option(
+    "--event",
+    default=None,
+    help="Explicit native package event; omitted preserves post-edit hook behavior.",
+)
+def agent_hook_cmd(host: str, event: str | None) -> None:
     """Post-edit hook entrypoint the Rush Claude Code/Codex plugins run.
 
     Reads the host's JSON event on stdin. Prints nothing and runs no check
@@ -6892,8 +6978,9 @@ def agent_hook_cmd(host: str) -> None:
     # the stream this event arrived with.
     stdin = click.get_binary_stream("stdin")
     stdout = click.get_text_stream("stdout")
-    payload = b"" if stdin.isatty() else stdin.read(MAX_PAYLOAD_BYTES + 1)
-    if len(payload) > MAX_PAYLOAD_BYTES:
+    maximum = 65536 if event is not None else MAX_PAYLOAD_BYTES
+    payload = b"" if stdin.isatty() else stdin.read(maximum + 1)
+    if len(payload) > maximum:
         while stdin.read(65536):  # drain, so the host's write never fails
             pass
     # Unless a log level was asked for, stderr carries only the hook's own
@@ -6904,6 +6991,19 @@ def agent_hook_cmd(host: str) -> None:
         if source == click.core.ParameterSource.DEFAULT
         else nullcontext()
     ):
+        if event is not None:
+            from .integrations.agent_hooks import run_native_agent_hook
+
+            binary_stdout = click.get_binary_stream("stdout")
+
+            def emit_native(data: bytes) -> None:
+                written = binary_stdout.write(data)
+                if written is not None and written != len(data):
+                    raise OSError("short native hook stdout write")
+                binary_stdout.flush()
+
+            run_native_agent_hook(host, payload, event=event, emit=emit_native)
+            return
         output = run_agent_hook(host, payload)
     if output:
         echo(output, file=stdout)

@@ -96,15 +96,7 @@ def test_slow_bracketed_paste_stays_one_literal_event() -> None:
 # ---------------------------------------------------------------------------
 
 
-class _FakeMsvcrt:
-    def __init__(self, chars: list[str]) -> None:
-        self._chars = list(chars)
-
-    def kbhit(self) -> bool:
-        return bool(self._chars)
-
-    def getwch(self) -> str:
-        return self._chars.pop(0)
+from test_windows_import_safety import _WinConsole, _windows
 
 
 @pytest.mark.parametrize(
@@ -126,7 +118,7 @@ def test_windows_extended_keys_after_a_key_are_keys_not_paste(
     monkeypatch: pytest.MonkeyPatch, chars: list[str], expected: list[str]
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt(chars))
+    _windows(monkeypatch, _WinConsole(chars))
     reader = terminal_input.WindowsKeyReader()
     keys: list[str] = []
     for _ in range(len(chars) + 1):
@@ -141,7 +133,7 @@ def test_windows_search_paste_then_enter_keeps_enter_a_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt(["a", "b", "\r"]))
+    _windows(monkeypatch, _WinConsole(["a", "b", "\r"]))
     reader = terminal_input.WindowsKeyReader()
     project = tui.ProjectState(name="p", root=Path("/tmp/rush-t28f-r1-search"))
     state = tui.TuiState(projects=[project])
@@ -242,13 +234,6 @@ def _fake_kernel32(modes: dict[int, int]) -> SimpleNamespace:
 def test_windows_vt_input_bracketed_paste_is_literal_and_repeat_is_keys(
     monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    modes = {-10: 0x01F7, -11: 0x0003}
-    original = dict(modes)
-    monkeypatch.setattr(terminal_input, "_WINDOWS", True)
-    monkeypatch.setattr(
-        terminal_input, "_windows_kernel32", lambda: _fake_kernel32(modes)
-    )
-    monkeypatch.setattr(sys, "platform", "win32")
     chars = [
         *"\x1b[200~qq\rj\xe9\x1b[201~",  # a paste of q, q, Enter, j, e-acute
         *"jjj",  # key repeat outside brackets
@@ -257,10 +242,13 @@ def test_windows_vt_input_bracketed_paste_is_literal_and_repeat_is_keys(
         "\ud83d",  # a character outside the BMP arrives as two UTF-16 units
         "\ude00",
     ]
-    monkeypatch.setitem(sys.modules, "msvcrt", _FakeMsvcrt(chars))
+    console = _WinConsole(chars)
+    modes = console.modes
+    original = dict(modes)
+    _windows(monkeypatch, console)
     reader = terminal_input.WindowsKeyReader()
     with terminal_input.raw_terminal():
-        assert modes[-10] == original[-10] | _VT_INPUT
+        assert modes[-10] == (original[-10] | _VT_INPUT | 0x0080) & ~0x0047
         assert modes[-11] == original[-11] | _VT_PROCESSING
         keys: list[str] = []
         for _ in range(len(chars)):

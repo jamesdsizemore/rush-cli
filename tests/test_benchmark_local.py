@@ -194,15 +194,30 @@ def test_local_candidate_metadata_never_passes_as_a_benchmark(tmp_path: Path):
     assert (tmp_path / "hardware-profile.json").exists()
 
 
+@pytest.mark.parametrize(
+    "corrupt_bytes",
+    [b"unverified model bytes", b"", b"bad model"],
+    ids=["wrong-size", "empty", "wrong-digest"],
+)
 def test_unverified_cached_model_is_rejected_before_runtime_execution(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt_bytes: bytes
 ):
     candidate = load_local_candidates()[0]
     cache = tmp_path / "external-cache"
     model_dir = cache / candidate["candidate_id"]
     model_dir.mkdir(parents=True)
-    (model_dir / candidate["weight_file"]).write_bytes(b"unverified model bytes")
+    import hashlib
+
+    candidate = candidate | {
+        "expected_size_bytes": len(b"good data"),
+        "sha256": hashlib.sha256(b"good data").hexdigest(),
+    }
+    monkeypatch.setattr(
+        "scripts.benchmarks.local.load_local_candidates", lambda: [candidate]
+    )
+    (model_dir / candidate["weight_file"]).write_bytes(corrupt_bytes)
     monkeypatch.setattr("shutil.which", lambda _name: "mock-onnxruntime_perf_test")
+    monkeypatch.setattr("platform.processor", lambda: "fixture CPU")
 
     def runtime_must_not_run(*_args: object, **_kwargs: object) -> None:
         raise AssertionError(
@@ -210,6 +225,7 @@ def test_unverified_cached_model_is_rejected_before_runtime_execution(
         )
 
     monkeypatch.setattr("subprocess.run", runtime_must_not_run)
+    monkeypatch.setattr("urllib.request.urlopen", runtime_must_not_run)
     result = run_local_probe(
         Scenario(
             scenario_id="local-unverified-cache",

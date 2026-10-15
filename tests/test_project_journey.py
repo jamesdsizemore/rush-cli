@@ -61,6 +61,7 @@ def test_install_produces_a_verified_binary_and_activates_memory(
         "windsurf",
         "zed",
         "codex",
+        "zcode",
     }
     assert all(a["state"] == "unsupported" for a in install["raw"]["agents"])
     assert all(a["detected"] is False for a in install["raw"]["agents"])

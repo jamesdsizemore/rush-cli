@@ -162,6 +162,91 @@ def test_windows_and_posix_jobs_cover_both_artifacts() -> None:
     )
 
 
+@pytest.mark.parametrize("tmpdir", [None, "", "provided"])
+def test_native_probe_preserves_only_nonempty_caller_tmpdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmpdir: str | None
+) -> None:
+    import io
+    import json
+    import os
+    import platform
+    import subprocess
+    import sys
+    from unittest.mock import Mock
+
+    from scripts.probe_installed_artifacts import (
+        AGENT_ASSET_MEMBERS,
+        build_release_archive,
+    )
+
+    binary = tmp_path / "rush"
+    binary.write_bytes(b"\n".join(member.encode() for member in AGENT_ASSET_MEMBERS))
+    archive = build_release_archive(
+        binary,
+        tmp_path / "native-artifacts",
+        select_platform_asset(platform.system(), platform.machine()),
+        "0.3.0",
+    )
+    selected_tmpdir = str(tmp_path / "t") if tmpdir == "provided" else tmpdir
+    if selected_tmpdir is None:
+        monkeypatch.delenv("TMPDIR", raising=False)
+    else:
+        monkeypatch.setenv("TMPDIR", selected_tmpdir)
+    for key in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "RUNNER_TEMP", "PRIVATE"):
+        monkeypatch.setenv(key, "must-not-reach-native-child")
+
+    calls: list[tuple[list[str], dict[str, str]]] = []
+    mcp = Mock()
+    mcp.stdin = io.StringIO()
+    mcp.stdout = io.StringIO(json.dumps({"id": 1, "result": {"serverInfo": {}}}) + "\n")
+    mcp.communicate.return_value = ("", "")
+
+    def version(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        calls.append((argv, dict(env)))
+        return subprocess.CompletedProcess(argv, 0, stdout="0.3.0\n", stderr="")
+
+    def start_mcp(argv: list[str], **kwargs: object) -> Mock:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        calls.append((argv, dict(env)))
+        return mcp
+
+    monkeypatch.setattr(subprocess, "run", version)
+    monkeypatch.setattr(subprocess, "Popen", start_mcp)
+    work = tmp_path / "probe"
+    result = probe_native_artifact(archive, PROJECT_ROOT, work)
+
+    if sys.platform == "win32":
+        expected = {
+            "PATH": "C:\\Windows\\System32",
+            "USERPROFILE": str(work),
+            "SystemRoot": os.environ.get("SystemRoot", "C:\\Windows"),
+            "windir": os.environ.get("SystemRoot", "C:\\Windows"),
+        }
+    else:
+        expected = {"PATH": "/usr/bin:/bin", "HOME": str(work)}
+    if selected_tmpdir:
+        expected["TMPDIR"] = selected_tmpdir
+    extracted = str(
+        (
+            work / "extracted" / ("rush.exe" if sys.platform == "win32" else "rush")
+        ).resolve()
+    )
+    assert calls == [
+        ([extracted, "--version"], expected),
+        ([extracted, "mcp", "serve"], expected),
+    ]
+    assert json.loads(mcp.stdin.getvalue())["method"] == "initialize"
+    mcp.terminate.assert_called_once_with()
+    mcp.communicate.assert_called_once_with(timeout=5)
+    assert result.status == "passed"
+    assert result.origin_verified is True
+    assert result.mcp_initialized is True
+    assert result.stdout == "0.3.0\n"
+
+
 def test_native_artifact_needs_no_checkout_python_or_uv(
     tmp_path: Path, native_release_archive: Path
 ) -> None:

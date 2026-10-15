@@ -783,6 +783,16 @@ _REQUEST_MODELS: dict[str, Any] = {
     "archive": _model(
         "MemoryArchiveRequest", {**_MUTATION, "archived": (StrictBool, _OPTIONAL)}
     ),
+    "bootstrap": _model(
+        "MemoryBootstrapRequest",
+        {
+            "task_id": (NonEmptyStr, _REQUIRED),
+            "task_kind": (Literal["memory_continuation", "test_repair"], _REQUIRED),
+            "query": (NonEmptyStr, _REQUIRED),
+            "max_tokens": (Annotated[StrictInt, Field(gt=0)], _OPTIONAL),
+            "session_binding": (_CapsuleUuid, _OPTIONAL),
+        },
+    ),
     # 73-T09/CODEC: key set equals `rush.tools.memory._CAPSULE_REQUEST_KEYS`.
     "capsule": _model(
         "MemoryCapsuleRequest",
@@ -795,6 +805,7 @@ _REQUEST_MODELS: dict[str, Any] = {
             ),
             "format": (Literal["rush_v1", "pas_v1"], _OPTIONAL),
             "input": (NonEmptyStr, _OPTIONAL),
+            "instructions": (NonEmptyStr, _OPTIONAL),
             "output": (NonEmptyStr, _OPTIONAL),
             "max_bytes": (_CapsuleLimit, _OPTIONAL),
             "max_tokens": (_CapsuleLimit, _OPTIONAL),
@@ -1049,6 +1060,15 @@ class MemoryV2WriteRequest(_V2Mutation):
     source: MemorySource
     symbol_ref: StrictStr = _absent()
     source_kind: SourceKind = "local_tool"
+    expected_basis: MemoryV2VersionRef = _absent()
+
+    @model_validator(mode="after")
+    def _basis_checkpoint(self) -> MemoryV2WriteRequest:
+        if self.expected_basis is not None and (
+            self.subject != "episodic" or self.content.get("kind") != "checkpoint"
+        ):
+            raise ValueError("expected_basis requires an episodic checkpoint")
+        return self
 
 
 class MemoryEditCorrection(BaseModel):
@@ -1305,6 +1325,7 @@ MEMORY_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
     },
     # 73-T09/CODEC: no `session_allowlist`; authority comes from the policy only.
     "capsule": ("capsule", _request_field("capsule")),
+    "bootstrap": ("bootstrap", _request_field("bootstrap")),
     # 72-T06: the schema_version 2 form of each v2 operation (`history` and
     # `explain` have no other form). Top-level `limit`/`max_bytes` and every legacy
     # field are absent, so a mixed form is `extra_forbidden`.

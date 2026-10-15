@@ -320,11 +320,18 @@ def test_project_snapshot_has_overview_runs_memory_tokens_git_and_artifacts(
     }
     assert set(snapshot["tokens"]) == {
         "provider_reported",
+        "memory_frame_usage",
         "tokenizer_counted",
         "cache_hits",
         "estimated_avoided",
         "unscoped",
         "interval",
+    }
+    assert snapshot["tokens"]["memory_frame_usage"] == {
+        "available": False,
+        "by_count_basis": {},
+        "unmeasured_events": 0,
+        "invalid_events": 0,
     }
     assert set(snapshot["tokens"]["unscoped"]) >= {
         "event_count",

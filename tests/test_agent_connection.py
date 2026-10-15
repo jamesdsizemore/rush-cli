@@ -279,6 +279,7 @@ def test_discover_agents_reports_exact_per_agent_status(tmp_path: Path) -> None:
         "windsurf": "not_detected",
         "zed": "misconfigured",
         "codex": "detected",
+        "zcode": "not_detected",
     }
     assert statuses["claude-code"].error is not None
     # A config failure for one agent never marks another as failed or connected.

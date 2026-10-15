@@ -5549,7 +5549,12 @@ class _T2Stdio:
         self, name: str, arguments: dict[str, Any], request_id: int | str | None = None
     ) -> tuple[bytes, dict[str, Any]]:
         rid = self.request_id if request_id is None else request_id
-        return self.rpc("tools/call", {"name": name, "arguments": arguments}, rid)
+        line, parsed = self.rpc(
+            "tools/call", {"name": name, "arguments": arguments}, rid
+        )
+        _, settled = self.rpc("ping", {}, f"t02-receipt-{uuid.uuid4().hex}")
+        assert settled.get("result") == {}, settled
+        return line, parsed
 
     def call(
         self, route: str, request: dict[str, Any], *, cache_write: bool = False
@@ -7662,6 +7667,7 @@ class _MDashboard(_MDriver):
         self.kind = "expand" if route == "expand" else "compact"
         self.op = "expand" if route == "expand" else "ask"
         self.server: Any = None
+        self._response_finished = threading.Event()
 
     def prepare(self, env: _MEnv, monkeypatch: pytest.MonkeyPatch) -> None:
         from rush.dashboard import server as server_module
@@ -7720,8 +7726,22 @@ class _MDashboard(_MDriver):
                 "session_allowlist": ["source-a"],
                 **request,
             }
-        response = self.post(env, self.route, arguments)
-        frame = response.read()
+        self._response_finished.clear()
+        handler_class = self.server.RequestHandlerClass
+        send_json = handler_class._send_json
+
+        def send_and_finalize(handler: Any, *args: Any, **kwargs: Any) -> None:
+            send_json(handler, *args, **kwargs)
+            self._response_finished.set()
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(handler_class, "_send_json", send_and_finalize)
+            response = self.post(env, self.route, arguments)
+            frame = response.read()
+            # Content-Length bytes arrive before the server commits delivery receipts.
+            assert self._response_finished.wait(5), (
+                "dashboard response did not finalize"
+            )
         parsed = json.loads(frame)
         data = parsed.get("data")
         if isinstance(data, dict) and isinstance(data.get("raw"), dict):
@@ -7734,6 +7754,131 @@ class _MDashboard(_MDriver):
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()
+
+
+@pytest.mark.parametrize("route", ["expand", "ask"])
+def test_t02_dashboard_driver_waits_for_delivery_receipt(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rush.delivery import compact
+
+    drv = _MDashboard(route)
+    env = _m_build(
+        tmp_path, monkeypatch, {**M_BASE, "cache_write": "on"}, drv.kind, op=drv.op
+    )
+    drv.prepare(env, monkeypatch)
+    entered = threading.Event()
+    release = threading.Event()
+    wait = drv._response_finished.wait
+    finalize = compact.finalize_memory_events
+    observed_pending: list[bool] = []
+
+    def delayed_finalize(*args: Any, **kwargs: Any) -> None:
+        entered.set()
+        assert release.wait(5), "client never waited for receipt finalization"
+        finalize(*args, **kwargs)
+
+    def wait_after_body(timeout: float | None = None) -> bool:
+        assert entered.wait(5), "HTTP body delivery never reached finalization"
+        assert not _t2_tokens_db(env.root).exists()
+        observed_pending.append(True)
+        release.set()
+        return wait(timeout)
+
+    monkeypatch.setattr(compact, "finalize_memory_events", delayed_finalize)
+    monkeypatch.setattr(drv._response_finished, "wait", wait_after_body)
+    try:
+        res = drv.run(env, {})
+        assert observed_pending == [True], "driver returned before receipt completion"
+        _m_expect_ok(drv, env, res)
+        kind = "expansion" if route == "expand" else "retrieval"
+        assert _t02_events(env.root, kind) == 1
+    finally:
+        release.set()
+        drv.close()
+
+
+@pytest.mark.parametrize("route", ["expand", "ask"])
+def test_t02_stdio_driver_waits_for_delivery_receipt(
+    route: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+
+    from mcp.types import CallToolResult
+
+    from rush.delivery import compact
+
+    drv = _MStdio(route)
+    env = _m_build(
+        tmp_path, monkeypatch, {**M_BASE, "cache_write": "on"}, drv.kind, op=drv.op
+    )
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+        barrier = textwrap.dedent(
+            f"""
+            import socket
+            from rush.delivery import compact
+            finalize = compact.finalize_memory_events
+            def delayed_finalize(frame, emitted, **kwargs):
+                if frame.transport == "mcp_stdio" and frame.pending_memory_events:
+                    with socket.create_connection({listener.getsockname()!r}, timeout=5) as gate:
+                        assert gate.recv(1) == b"1", "client never waited for receipt"
+                return finalize(frame, emitted, **kwargs)
+            compact.finalize_memory_events = delayed_finalize
+            """
+        )
+        monkeypatch.setitem(globals(), "T2_CHILD", barrier + T2_CHILD)
+        drv.prepare(env, monkeypatch)
+        send = drv.server._send
+        observed_pending: list[bool] = []
+
+        def release() -> None:
+            with listener.accept()[0] as gate:
+                assert not _t2_tokens_db(env.root).exists()
+                gate.sendall(b"1")
+
+        def send_and_release(message: dict[str, Any]) -> None:
+            send(message)
+            if message.get("method") == "ping":
+                release()
+                observed_pending.append(True)
+
+        monkeypatch.setattr(drv.server, "_send", send_and_release)
+        try:
+            res = drv.run(env, {})
+            _m_expect_ok(drv, env, res)
+            assert res.frame is not None
+            parsed = json.loads(res.frame)
+            result = CallToolResult.model_validate(parsed["result"])
+            assert parsed["id"] == drv.server.request_id
+            assert res.frame == compact.mcp_frame_bytes(result, parsed["id"])
+            assert observed_pending == [True], (
+                "driver returned before receipt completion"
+            )
+            db = _t2_tokens_db(env.root)
+            assert db.exists(), "stdio cache_write recorded nothing"
+            with contextlib.closing(sqlite3.connect(db)) as conn:
+                rows = conn.execute(
+                    "SELECT kind, frame_bytes, frame_sha256, transport, count_basis "
+                    "FROM memory_events"
+                ).fetchall()
+            assert rows == [
+                (
+                    "expansion" if route == "expand" else "retrieval",
+                    len(res.frame),
+                    hashlib.sha256(res.frame).hexdigest(),
+                    "mcp_stdio",
+                    "transport_frame:cl100k_base",
+                )
+            ]
+        finally:
+            try:
+                if not observed_pending:
+                    release()
+            finally:
+                drv.close()
 
 
 def _m_telemetry(env: _MEnv) -> Any:
@@ -9630,7 +9775,7 @@ def test_t02_fix3_admission_precedes_access_view_and_telemetry(
         memory_module.TypedArtifactStore, "open_readonly_view", classmethod(view)
     )
     monkeypatch.setattr(memory_module, "TelemetryStore", telemetry)
-    monkeypatch.setattr(memory_module.MemoryTool, "_read_access", access)
+    monkeypatch.setattr(memory_module.MemoryTool, "_read_access", staticmethod(access))
     before = _t02_fix3_tree(tmp_path)
     if kind == "compact":
         result = MemoryTool().run(
@@ -11797,6 +11942,9 @@ TASK_IDS = frozenset(
         "72-T06",
         "73-T09/CODEC",
         "73-T02/BOOTSTRAP-CONSENT",
+        "73-T02/BOOTSTRAP-RUNTIME",
+        "73-T07",
+        "75-T01",
         "72-T07",
         "75-T02/EVALUATOR",
         "72-T08",

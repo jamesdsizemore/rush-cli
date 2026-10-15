@@ -2682,6 +2682,7 @@ _FAMILY_EXPECTED: dict[str, str] = {
             "last_success_diagnose",
             "preference",
             "capsule",
+            "bootstrap",
         ),
         "memory_inspection",
     ),
@@ -2719,13 +2720,54 @@ def _captured_render(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any]) ->
     return buffer.getvalue()
 
 
+@pytest.mark.parametrize("state", ["checkpoint", "empty", "revoked"])
+def test_t07_bootstrap_human_projection_preserves_task_and_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    from test_memory_activation_lifecycle import bootstrap, bootstrap_world
+    from test_memory_capsule import COMMIT
+
+    env, request = bootstrap_world(tmp_path, create_store=state != "empty")
+    if state == "revoked":
+        auth.revoke_memory_scope(
+            grant_id=env.grant["grant_id"],
+            expected_policy_revision=auth.load_policy_readonly()["policy_revision"],
+            consent=True,
+        )
+    result = bootstrap(env, request)
+    assert result["raw"]["code"] == ("E_PERMISSION" if state == "revoked" else "OK")
+    data = result["raw"]["data"]
+    text = _captured_render(monkeypatch, result)
+    assert "task-1" in text
+    assert data["next_action"]["text"] in text
+    if state == "checkpoint":
+        assert data["checkpoint"]["reference"]["artifact_id"] == "cp1"
+        for expected in (
+            "checkpoint_available",
+            "cp1",
+            "Portable capsule work",
+            "wire the CLI flag",
+            "tests/x.py",
+            COMMIT,
+        ):
+            assert expected in text, text
+    else:
+        assert data["task"] is None and data["checkpoint"] is None
+        assert "cp1" not in text and "Portable capsule work" not in text
+        assert "wire the CLI flag" not in text and COMMIT not in text
+        if state == "empty":
+            assert "no_verified_checkpoint" in text
+        else:
+            assert "state:" in text and "action:" in text, text
+
+
 def test_t07_memory_families_cover_every_operation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from rush import theme
     from rush.tools.memory import VALID_OPERATIONS
 
-    assert len(_FAMILY_EXPECTED) == 27
+    assert len(_FAMILY_EXPECTED) == 28
     actual = {
         op: family
         for (tool, op), family in theme.FAMILIES.items()
@@ -2735,8 +2777,7 @@ def test_t07_memory_families_cover_every_operation(
     assert set(VALID_OPERATIONS) | {"overview"} <= set(actual), (
         "an operation is unmapped"
     )
-    # The 26 operations at T07 start (22 at HEAD plus preference from T05, history and
-    # explain from T06, capsule from CODEC) are exactly the mapped ones: a producer
+    # The 27 producer operations (including Phase 73 bootstrap) are mapped: a producer
     # operation missing from VALID_OPERATIONS, or a mapping with no operation behind
     # it, is a drifted family table.
     assert set(VALID_OPERATIONS) == set(_FAMILY_EXPECTED) - {"overview"}, sorted(
@@ -3525,12 +3566,17 @@ def test_t07_g4_trust_boundary_inputs(
     assert "data_root_unavailable" in broken.memory_view_state["reason"]
     variant = _world(tmp_path, name="CaseVariant")
     state, actions, _ = _tui(variant)
-    state.projects[0].root = Path(str(variant.root).swapcase())
+    variant_path = Path(str(variant.root).swapcase())
+    variant_existed = variant_path.exists()
+    state.projects[0].root = variant_path
     before_variant = _inventory(variant)
     _open_memory(state, actions)
     assert state.memory_view_state is not None
-    assert state.memory_view_state["state"] == "denied", state.memory_view_state
+    assert state.memory_view_state["state"] == (
+        "denied" if variant_existed else "absent"
+    )
     assert _inventory(variant) == before_variant
+    assert variant_path.exists() == variant_existed
 
     # ---------------- dashboard GET ----------------
     dash = _dashboard(world)

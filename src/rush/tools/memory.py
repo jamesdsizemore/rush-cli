@@ -149,6 +149,7 @@ MemoryOperation = Literal[
     "history",
     "explain",
     "capsule",
+    "bootstrap",
 ]
 SourceKind = Literal["local_tool", "cross_tool_handoff", "human_derived"]
 
@@ -179,6 +180,7 @@ VALID_OPERATIONS = {
     "history",
     "explain",
     "capsule",
+    "bootstrap",
 }
 # 72-T05 §3.11: the task context of the `run` in progress. Every access a handler
 # builds reads it (`task_id=_TASK_ID.get()`); `run` sets and resets it.
@@ -193,6 +195,7 @@ _CAPSULE_REQUEST_KEYS = frozenset(
         "action",
         "format",
         "input",
+        "instructions",
         "output",
         "max_bytes",
         "max_tokens",
@@ -858,6 +861,136 @@ class _V2Call:
         )
 
 
+def _validate_bootstrap_request(value: object) -> dict[str, Any]:
+    from ..mcp_support.request_models import _REQUEST_MODELS
+
+    request: dict[str, Any] = (
+        _REQUEST_MODELS["bootstrap"]
+        .model_validate(value)
+        .model_dump(exclude_unset=True)
+    )
+    for field in ("task_id", "task_kind", "query"):
+        text = request[field]
+        try:
+            text.encode("utf-8", "strict")
+        except UnicodeError as exc:
+            raise ValueError(field) from exc
+        if not text.strip() or any(
+            unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in text
+        ):
+            raise ValueError(field)
+    request.setdefault("max_tokens", 2048)
+    return request
+
+
+def _bootstrap_access(
+    root: Path,
+    request: Mapping[str, Any],
+    data_root: Path | None = None,
+) -> tuple[MemoryAccess | None, str]:
+    from ..memory import authorization as auth
+
+    binding = request.get("session_binding")
+    initial = auth.resolve_memory_scope(
+        project_root=root,
+        operation="bootstrap",
+        session_binding=binding,
+        data_root=data_root,
+    )
+    if initial["access"] != "read":
+        return None, str(initial["reason"])
+    if binding is None:
+        policy = auth.load_policy_readonly(data_root=data_root)
+        if policy["state"] != "ok":
+            return None, str(policy["reason"])
+        valid = []
+        for binding_id, row in policy["bindings"].items():
+            if row["revoked"] or row["grant_id"] != initial["grant_id"]:
+                continue
+            checked = auth.resolve_memory_scope(
+                project_root=root,
+                operation="bootstrap",
+                session_binding=binding_id,
+                data_root=data_root,
+            )
+            if checked["access"] == "read":
+                valid.append(binding_id)
+        if len(valid) != 1:
+            return None, "scope_required"
+        binding = valid[0]
+    access, reason = MemoryAccess.resolve_with_reason(
+        root,
+        operation="bootstrap",
+        session_binding=binding,
+        data_root=data_root,
+        task_id=request["task_id"],
+    )
+    if access is not None and access.owner_scope is None:
+        return None, "scope_required"
+    return access, reason
+
+
+def _bootstrap_task(
+    store: TypedArtifactStore, access: MemoryAccess, request: Mapping[str, Any]
+) -> dict[str, Any]:
+    from ..memory.capsule import _checkpoint, _Fail, _project_task
+
+    newest: tuple[tuple[float, str], Any, Any] | None = None
+    offset = 0
+    while True:
+        rows = store.scope_artifacts(
+            "episodic",
+            source_allowlist=access.sources,
+            owner_scope=access.owner_scope,
+            scan_offset=offset,
+            scan_limit=64,
+            include_archived=False,
+            include_expired=False,
+        )
+        for row in rows:
+            content = _checkpoint(store, row, access)
+            if content is None or content["task_id"] != request["task_id"]:
+                continue
+            key = (float(row["created_at"]), row["id"])
+            if newest is None or key > newest[0]:
+                newest = (key, row, content)
+        offset += len(rows)
+        if len(rows) < 64:
+            break
+    if newest is None:
+        return {
+            "task": None,
+            "checkpoint": None,
+            "progress_state": "no_verified_checkpoint",
+            "unresolved": None,
+        }
+    _, row, content = newest
+    try:
+        task = _project_task(content)
+    except _Fail:
+        return {
+            "task": None,
+            "checkpoint": None,
+            "progress_state": "invalid_checkpoint",
+            "unresolved": None,
+        }
+    return {
+        "task": task,
+        "progress_state": "checkpoint_available",
+        "unresolved": task["remaining"],
+        "next_action": {"text": task["next_action"]},
+        "checkpoint": {
+            "reference": {
+                "artifact_id": row["id"],
+                "artifact_version": row["artifact_version"],
+                "source": row["source"],
+            },
+            "checks": content["checks"],
+            "source": content["source"],
+        },
+    }
+
+
 class MemoryTool(ToolFn):
     """Query, write, and promote cross-LLM memory artifacts through one result contract."""
 
@@ -878,6 +1011,7 @@ class MemoryTool(ToolFn):
 
         return TOOL_SPECS["memory"].mcp_description
 
+    @compact.in_process_memory_receipts
     def __call__(
         self,
         path: Path,
@@ -961,6 +1095,7 @@ class MemoryTool(ToolFn):
             transport=transport,
         )
 
+    @compact.in_process_memory_receipts
     def run(
         self,
         path: Path,
@@ -1255,6 +1390,16 @@ class MemoryTool(ToolFn):
                 started, operation, RouteDenial("E_PERMISSION", "operation_not_granted")
             )
 
+        receipt_options: dict[str, Any] = {
+            "receipt_permissions": granted,
+            "receipt_attribution": {
+                "invocation_id": real_invocation_id,
+                "project_id": project_id,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+            },
+        }
         dispatch_table = {
             "ask": lambda: (
                 self._compact_query(
@@ -1283,6 +1428,7 @@ class MemoryTool(ToolFn):
                     session_allowlist,
                     "ask",
                     owner_scope=owner_scope,
+                    **receipt_options,
                 )
             ),
             "recall": lambda: (
@@ -1312,6 +1458,7 @@ class MemoryTool(ToolFn):
                     session_allowlist,
                     "recall",
                     owner_scope=owner_scope,
+                    **receipt_options,
                 )
             ),
             "list": lambda: (
@@ -1345,6 +1492,7 @@ class MemoryTool(ToolFn):
                     freshness_filter=freshness_filter,
                     archived_filter=archived_filter,
                     owner_filter=owner_filter,
+                    **receipt_options,
                 )
                 # T28-D: an unqueried list browses every live row of `subject`.
                 if not query
@@ -1358,6 +1506,7 @@ class MemoryTool(ToolFn):
                     "list",
                     include_archived=include_archived,
                     owner_scope=owner_scope,
+                    **receipt_options,
                 )
             ),
             "expand": lambda: self._expand(
@@ -1464,8 +1613,9 @@ class MemoryTool(ToolFn):
                 started, root, granted, request, session_allowlist
             ),
             "capsule": lambda: self._capsule(
-                started, root, granted, request, transport
+                started, root, granted, request, transport, frame=frame
             ),
+            "bootstrap": lambda: self._bootstrap(started, root, request, frame=frame),
         }
         token = _TASK_ID.set(task_id)
         try:
@@ -1852,6 +2002,48 @@ class MemoryTool(ToolFn):
                 )
         return None
 
+    def _note_legacy_read(
+        self,
+        result: ToolResult,
+        access: MemoryAccess,
+        granted: ExecutionPermissions | None,
+        attribution: dict[str, Any] | None,
+        operation: str,
+        encoding: str = DEFAULT_ENCODING,
+    ) -> ToolResult:
+        receipt = compact.RECEIPT_FRAME.get()
+        if receipt is None or receipt.pending_memory_events is None:
+            return result
+        if (
+            granted is None
+            or not granted.cache_write
+            or not compact.accepted_memory_result(result)
+        ):
+            return result
+        from ..memory.retrieval import _record_memory_event
+
+        values = attribution or {}
+        _record_memory_event(
+            cast(
+                TelemetryStore,
+                _LazyTelemetry(lambda: TelemetryStore(access.storage_root)),
+            ),
+            "retrieval",
+            0,
+            request_id="legacy:" + operation,
+            event_id="retrieval",
+            invocation_id=values.get("invocation_id") or str(uuid.uuid4()),
+            project_id=values.get("project_id"),
+            run_id=values.get("run_id"),
+            agent_id=values.get("agent_id"),
+            session_id=values.get("session_id"),
+            opt_in=False,
+            cache_write=True,
+            access=access,
+            encoding=encoding,
+        )
+        return result
+
     def _v2_note_read(
         self, call: _V2Call, access: MemoryAccess, raw: dict[str, Any]
     ) -> None:
@@ -1879,6 +2071,7 @@ class MemoryTool(ToolFn):
             opt_in=False,
             cache_write=True,
             access=access,
+            encoding=call.req.encoding,
         )
 
     def _v2_telemetry(self, call: _V2Call, root: Path) -> TelemetryStore | None:
@@ -1945,7 +2138,7 @@ class MemoryTool(ToolFn):
                     "embedded_texts": 0,
                 }
             size = _measure_page([], None, True, req.encoding, labels)
-            return self._v2_out(
+            result = self._v2_out(
                 call,
                 "OK",
                 complete=True,
@@ -1956,6 +2149,9 @@ class MemoryTool(ToolFn):
                     **(labels or {}),
                 },
             )
+            if compact.accepted_memory_result(result):
+                self._v2_note_read(call, access, cast(dict[str, Any], result["raw"]))
+            return result
         mode = (
             "historical"
             if req.archive_mode == "historical"
@@ -2481,6 +2677,26 @@ class MemoryTool(ToolFn):
                 return self._v2_out(
                     call, lock_refused.code, data={"reason": lock_refused.reason}
                 )
+            if call.operation == "write" and req.expected_basis is not None:
+                view = self._v2_view(call, access)
+                if isinstance(view, dict):
+                    return cast(ToolResult, view)
+                if view is None:
+                    return self._v2_out(
+                        call, "E_NOT_VISIBLE", data={"reason": "not_visible"}
+                    )
+                try:
+                    replay = self._v2_replay(call, view, access, digest)
+                    if replay is not None:
+                        return replay
+                    view._check_checkpoint_basis(
+                        view._connect(),
+                        req.content,
+                        req.expected_basis.model_dump(),
+                        access,
+                    )
+                finally:
+                    view.close()
             store = TypedArtifactStore(_storage_root(access))
             replay = self._v2_replay(call, store, access, digest)
             if replay is not None:
@@ -2563,7 +2779,15 @@ class MemoryTool(ToolFn):
                     task_id=task_binding[2],
                 )
             result = store.write(
-                artifact, access=access, receipt_writer=writer, commit_check=check
+                artifact,
+                access=access,
+                receipt_writer=writer,
+                commit_check=check,
+                expected_basis=(
+                    req.expected_basis.model_dump()
+                    if req.expected_basis is not None
+                    else None
+                ),
             )
         elif op == "edit" and req.correction is not None:
             result = self._v2_correction(call, store, access, writer)
@@ -2932,6 +3156,8 @@ class MemoryTool(ToolFn):
         freshness_filter: str | None,
         archived_filter: bool | None,
         owner_filter: str | None = None,
+        receipt_permissions: ExecutionPermissions | None = None,
+        receipt_attribution: dict[str, Any] | None = None,
     ) -> ToolResult:
         """T28-D reviewable `list`: exactly the `subject` rows matching every set filter,
         read through `open_readonly_view()` (never creates `.rush/` or a DB).
@@ -2978,8 +3204,15 @@ class MemoryTool(ToolFn):
                 started, "error", readonly_view_reason(state), operation="list"
             )
         if view is None:
-            return self._result(
+            result = self._result(
                 started, "ok", "Found 0 memory artifact(s).", operation="list", raw=[]
+            )
+            return self._note_legacy_read(
+                result,
+                access,
+                receipt_permissions,
+                receipt_attribution,
+                "list",
             )
         policy = access.kind == "policy"
         mode: Literal["inspect", "historical"] = (
@@ -3088,7 +3321,7 @@ class MemoryTool(ToolFn):
                 _recheck_denial(access) or RouteDenial("E_RESTART", "access_changed"),
             )
         # 72-T01 F3: the same additive `freshness` key as the queried list.
-        return self._result(
+        result = self._result(
             started,
             "ok",
             f"Found {len(artifacts)} memory artifact(s).",
@@ -3099,6 +3332,13 @@ class MemoryTool(ToolFn):
                 )
                 for a, freshness in artifacts
             ],
+        )
+        return self._note_legacy_read(
+            result,
+            access,
+            receipt_permissions,
+            receipt_attribution,
+            "list",
         )
 
     @staticmethod
@@ -3164,6 +3404,8 @@ class MemoryTool(ToolFn):
         *,
         include_archived: bool = False,
         owner_scope: dict[str, str] | OwnerScope | None = None,
+        receipt_permissions: ExecutionPermissions | None = None,
+        receipt_attribution: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Legacy (`request=None`) `ask`/`recall`/queried `list`. 72-T01: reads through
         `open_readonly_view()` (a missing store is an empty result and creates nothing)
@@ -3208,12 +3450,19 @@ class MemoryTool(ToolFn):
                 started, "error", readonly_view_reason(state), operation=operation
             )
         if view is None:
-            return self._result(
+            result = self._result(
                 started,
                 "ok",
                 f"Found 0 memory artifact(s) for '{query}'.",
                 operation=operation,
                 raw=[],
+            )
+            return self._note_legacy_read(
+                result,
+                access,
+                receipt_permissions,
+                receipt_attribution,
+                operation,
             )
         mode: Literal["ordinary", "inspect", "historical"] = (
             "ordinary"
@@ -3239,12 +3488,19 @@ class MemoryTool(ToolFn):
                 operation=operation,
                 raw={"code": code, "message": message},
             )
-        return self._result(
+        result = self._result(
             started,
             "ok",
             f"Found {len(artifacts)} memory artifact(s) for '{query}'.",
             operation=operation,
             raw=[self._artifact_dict(a, with_freshness=True) for a in artifacts],
+        )
+        return self._note_legacy_read(
+            result,
+            access,
+            receipt_permissions,
+            receipt_attribution,
+            operation,
         )
 
     def _compact_query(
@@ -4878,6 +5134,351 @@ class MemoryTool(ToolFn):
             started, "preference", str(result.get("code", "OK")), data
         )
 
+    def _bootstrap(
+        self,
+        started: float,
+        root: Path,
+        request: object,
+        *,
+        frame: compact.FrameContext | None = None,
+        data_root: Path | None = None,
+    ) -> ToolResult:
+        import sqlite3
+        from typing import get_args
+
+        from pydantic import ValidationError
+
+        from rush.memory.retrieval import (
+            DEFAULT_ENCODING,
+            _count_tokens,
+            _emit_current,
+            evaluate_artifact_visibility,
+            recall_admission,
+            recall_page,
+            recheck_failure,
+        )
+        from rush.memory.store import TypedArtifactStore, readonly_view_reason
+
+        compact.prepare_memory_delivery("cl100k_base")
+        frozen = _frozen_duration(started)
+
+        def emit(code: str, data: dict[str, Any]) -> ToolResult:
+            return self._envelope_result(
+                started, "bootstrap", code, data, duration_ms=frozen, frame=frame
+            )
+
+        frame_fit = self._frame_fit(root, "bootstrap", frozen, frame)
+
+        def fit(code: str, data: dict[str, Any]) -> bytes:
+            if frame_fit is not None:
+                return frame_fit(code, data)
+            result = emit(code, data)
+            final = attach_memory_attribution(
+                result, _memory_attribution(root, "bootstrap", result, [])
+            )
+            return compact.canonical_json(final)
+
+        try:
+            req = _validate_bootstrap_request(request)
+        except ValidationError as exc:
+            location = exc.errors()[0].get("loc", ("request",))
+            return emit(
+                "E_INPUT", {"state": "invalid", "field": str(location[0]), "items": []}
+            )
+        except (TypeError, ValueError) as exc:
+            return emit(
+                "E_INPUT",
+                {"state": "invalid", "field": str(exc) or "request", "items": []},
+            )
+        metadata: dict[str, Any] = {
+            "task_id": req["task_id"],
+            "task_kind": req["task_kind"],
+            "intent": {
+                "task_id": req["task_id"],
+                "task_kind": req["task_kind"],
+                "query": req["query"],
+            },
+            "task": None,
+            "checkpoint": None,
+            "progress_state": "no_verified_checkpoint",
+            "unresolved": None,
+            "scope": None,
+            "state": "ready",
+            "next_action": {
+                "text": "Inspect exact-version context; checkpoint only through an explicitly granted write."
+            },
+        }
+
+        def budget_data(
+            required: dict[str, int], *, admission_failure: bool = False
+        ) -> dict[str, Any]:
+            return {
+                "state": "invalid" if admission_failure else "budget_too_small",
+                "items": [],
+                "reason": "budget_below_minimum"
+                if admission_failure
+                else "budget_too_small",
+                "admission_failure": admission_failure,
+                "required": required,
+                "limits": {"max_tokens": req["max_tokens"], "max_bytes": 65536},
+                "next_action": {
+                    "text": "Approve required limits and retry the same complete content."
+                },
+            }
+
+        def admission_frame(code: str, _data: dict[str, Any]) -> bytes:
+            data = budget_data({"max_tokens": 2**63 - 1, "max_bytes": 2**63 - 1})
+            data["reason"] = "budget_below_minimum"
+            data["limits"] = {
+                "max_tokens": max(2**63 - 1, req["max_tokens"]),
+                "max_bytes": 2**63 - 1,
+            }
+            return fit(code, data)
+
+        admission = recall_admission(
+            limit=32,
+            max_bytes=65536,
+            max_tokens=req["max_tokens"],
+            encoding=DEFAULT_ENCODING,
+            frame_bytes=admission_frame,
+        )
+        if admission is not None:
+            return emit(
+                "E_INPUT", budget_data(admission["required"], admission_failure=True)
+            )
+
+        def bounded(code: str, data: dict[str, Any]) -> ToolResult:
+            raw = fit(code, data)
+            tokens = _count_tokens(raw.decode("utf-8"), DEFAULT_ENCODING)
+            if tokens <= req["max_tokens"] and len(raw) <= 65536:
+                return emit(code, data)
+            return emit(
+                "E_BUDGET",
+                budget_data({"max_tokens": tokens, "max_bytes": len(raw)}),
+            )
+
+        access, reason = _bootstrap_access(root, req, data_root)
+        if access is None or access.owner_scope is None:
+            state = (
+                "scope_required"
+                if reason
+                in {"scope_required", "no_grant", "policy_missing", "owner_required"}
+                else "denied"
+            )
+            return bounded(
+                "E_PERMISSION",
+                {
+                    **metadata,
+                    "state": state,
+                    "reason": reason,
+                    "items": [],
+                    "next_action": {
+                        "text": "Select an existing consented binding or preview local memory setup."
+                    },
+                },
+            )
+        metadata["scope"] = {
+            "project_root": str(access.project_root),
+            "project_id": access.project_id,
+            "worktree_id": access.worktree_id,
+            "owner_scope": access.owner_scope.as_dict(),
+            "grant_id": access.grant_id,
+            "policy_revision": access.policy_revision,
+            "session_binding": access.session_binding,
+        }
+
+        def changed() -> ToolResult | None:
+            failure = recheck_failure(access)
+            if failure is None:
+                return None
+            code, why = failure
+            return bounded(
+                code,
+                {
+                    **metadata,
+                    "scope": None,
+                    "items": [],
+                    "task": None,
+                    "checkpoint": None,
+                    "unresolved": None,
+                    "progress_state": "authority_unavailable",
+                    "next_action": {
+                        "text": "Reauthorize the same scope before requesting context."
+                    },
+                    "state": "restart" if code == "E_RESTART" else "denied",
+                    "reason": why,
+                },
+            )
+
+        denied = changed()
+        if denied is not None:
+            return denied
+        store = None
+        try:
+            store, store_state = TypedArtifactStore.open_readonly_view(
+                access.storage_root
+            )
+            if store_state is not None:
+                denied = changed()
+                if denied is not None:
+                    return denied
+                code = {
+                    "migration_required": "E_MIGRATION",
+                    "corrupt": "E_STORE_CORRUPT",
+                }.get(store_state, "E_STORE_BUSY")
+                return bounded(
+                    code,
+                    {
+                        **metadata,
+                        "state": store_state,
+                        "items": [],
+                        "scope": None,
+                        "task": None,
+                        "checkpoint": None,
+                        "unresolved": None,
+                        "reason": readonly_view_reason(store_state),
+                    },
+                )
+            if store is None:
+                denied = changed()
+                return (
+                    denied
+                    if denied is not None
+                    else bounded(
+                        "OK",
+                        {
+                            **metadata,
+                            "state": "empty",
+                            "items": [],
+                            "complete": True,
+                            "next_cursor": None,
+                        },
+                    )
+                )
+            bootstrap_generation = store.current_generation()
+            metadata.update(_bootstrap_task(store, access, req))
+            subjects = tuple(get_args(MemorySubject))
+            page = recall_page(
+                store,
+                query=req["query"],
+                subjects=subjects,
+                access=access,
+                limit=32,
+                max_tokens=req["max_tokens"],
+                max_bytes=65536,
+                encoding=DEFAULT_ENCODING,
+                v2_items=True,
+                telemetry=None,
+                opt_in=False,
+                cache_write=False,
+                extra=metadata,
+                frame_bytes=fit,
+            )
+            code = page.pop("code")
+            if code == "E_INPUT" and "required" in page:
+                return bounded(
+                    "E_BUDGET", {**page, "items": [], "state": "budget_too_small"}
+                )
+            if code != "OK":
+                return bounded(
+                    code,
+                    {
+                        **page,
+                        "scope": None,
+                        "items": [],
+                        "task": None,
+                        "checkpoint": None,
+                        "unresolved": None,
+                        "progress_state": "authority_unavailable",
+                        "next_action": {
+                            "text": "Review the recorded failure before requesting context."
+                        },
+                        "state": "restart" if code == "E_RESTART" else "denied",
+                    },
+                )
+            page["state"] = "ready" if page.get("items") else "empty"
+            if not page.get("items"):
+                offset = 0
+                while True:
+                    rows = store.search_candidates(
+                        subjects,
+                        req["query"],
+                        source_allowlist=access.sources,
+                        owner_scope=access.owner_scope,
+                        scan_offset=offset,
+                        scan_limit=64,
+                        include_archived=False,
+                        include_expired=False,
+                    )
+                    if not rows:
+                        break
+                    for row in rows:
+                        decision = evaluate_artifact_visibility(
+                            store, row, access=access, mode="inspect"
+                        )
+                        if decision.visible and decision.freshness == "stale":
+                            page["state"] = "stale_only"
+                    offset += len(rows)
+                    if len(rows) < 64:
+                        break
+                # Diagnostics expose one state, never excluded candidate IDs/counts.
+            denied = changed()
+            if denied is not None:
+                return denied
+            checkpoint = metadata["checkpoint"]
+            checkpoint_items = (
+                []
+                if checkpoint is None
+                else [
+                    {
+                        "id": checkpoint["reference"]["artifact_id"],
+                        "version": checkpoint["reference"]["artifact_version"],
+                    }
+                ]
+            )
+            if not _emit_current(
+                store, bootstrap_generation, checkpoint_items, access, None
+            ):
+                return bounded(
+                    "E_RESTART",
+                    {
+                        **metadata,
+                        "state": "restart",
+                        "reason": "store_changed",
+                        "scope": None,
+                        "task": None,
+                        "checkpoint": None,
+                        "items": [],
+                        "unresolved": None,
+                        "progress_state": "restart",
+                        "next_action": {
+                            "text": "Reload current task context and retry bootstrap."
+                        },
+                    },
+                )
+            return bounded("OK", page)
+        except (sqlite3.Error, OSError, RuntimeError, ValueError) as exc:
+            return bounded(
+                "E_STORE_CORRUPT",
+                {
+                    **metadata,
+                    "scope": None,
+                    "task": None,
+                    "checkpoint": None,
+                    "unresolved": None,
+                    "progress_state": "authority_unavailable",
+                    "next_action": {
+                        "text": "Resolve the recorded store failure before requesting context."
+                    },
+                    "state": "error",
+                    "items": [],
+                    "reason": type(exc).__name__,
+                },
+            )
+        finally:
+            if store is not None:
+                store.close()
+
     def _capsule(
         self,
         started: float,
@@ -4885,9 +5486,38 @@ class MemoryTool(ToolFn):
         granted: ExecutionPermissions,
         request: dict[str, Any] | None,
         transport: Literal["cli", "mcp"],
+        *,
+        frame: compact.FrameContext | None = None,
     ) -> ToolResult:
         """73-T09/CODEC: portable capsule export/import (`rush.memory.capsule`)."""
         from ..memory import capsule
+
+        compact.prepare_memory_delivery("cl100k_base")
+        frozen = _frozen_duration(started)
+
+        def frame_bytes(code: str, data: dict[str, Any]) -> bytes:
+            result = self._envelope_result(
+                started, "capsule", code, data, duration_ms=frozen, frame=frame
+            )
+            pending = []
+            if data.get("action") == "import" and data.get("replayed") is False:
+                pending = [
+                    {
+                        "id": item["artifact_id"],
+                        "revision": item["artifact_version"],
+                        "source": "capsule:import",
+                        "kind": "write",
+                    }
+                    for item in data.get("mappings", [])
+                ]
+            final = attach_memory_attribution(
+                result, _memory_attribution(root, "capsule", result, pending)
+            )
+            return (
+                compact.frame_bytes(frame, final)
+                if frame is not None
+                else compact.canonical_json(final)
+            )
 
         if request is None:
             return self._envelope_result(
@@ -4918,7 +5548,11 @@ class MemoryTool(ToolFn):
                 },
             )
         outcome = capsule.run_capsule(
-            root, request, permissions=granted, transport=transport
+            root,
+            request,
+            permissions=granted,
+            transport=transport,
+            frame_bytes=frame_bytes,
         )
         if outcome.get("skipped"):
             action = str(outcome["action"])
@@ -4944,7 +5578,9 @@ class MemoryTool(ToolFn):
             )
             cast(dict[str, Any], result["raw"])["data"].update(data)
             return result
-        return self._envelope_result(started, "capsule", code, data)
+        return self._envelope_result(
+            started, "capsule", code, data, duration_ms=frozen, frame=frame
+        )
 
     def _envelope_result(
         self,
@@ -8147,10 +8783,13 @@ def _v2_budget_floor(operation: str, encoding: str) -> tuple[int, int]:
 
 def _v2_request_digest(operation: str, access: MemoryAccess, req: Any) -> str:
     """D29: the reviewed request (receipt ids excluded) bound to its store."""
+    excluded = {"invocation_id", "effect_id"}
+    if operation == "write" and req.expected_basis is None:
+        excluded.add("expected_basis")
     body = {
         "operation": operation,
         "root": str(_storage_root(access)),
-        "request": req.model_dump(mode="json", exclude={"invocation_id", "effect_id"}),
+        "request": req.model_dump(mode="json", exclude=excluded),
     }
     # ASCII escapes: content may legally hold a lone surrogate.
     text = json.dumps(body, sort_keys=True, separators=(",", ":"))

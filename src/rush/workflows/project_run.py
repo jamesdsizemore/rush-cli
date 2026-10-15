@@ -96,7 +96,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, cast, get_args
 
 import tiktoken
 
@@ -115,6 +115,7 @@ from rush.engines.staging import (
 from rush.invocation import InvocationExecutor, resolve_invocation
 from rush.invocation.models import InvocationError
 from rush.invocation.targets import registered_root_index, select_member
+from rush.io.physical_paths import ContainmentError, PhysicalRoot
 from rush.memory.handoff import (
     HandoffError,
     prepare_handoff,
@@ -141,7 +142,7 @@ from rush.tools.routing import (
     memory_attribution_of,
     union_memory_attribution,
 )
-from rush.workflows.projects import ProjectError, resolve_project
+from rush.workflows.projects import ProjectError, open_contained_file, resolve_project
 from rush.workflows.suites import memory_summary_clause
 
 Disposition = Literal[
@@ -656,6 +657,38 @@ def load_scan_plan(root: Path, plan_id: str) -> ScanPlan | None:
     return ScanPlan.from_dict(payload)
 
 
+def _valid_attempt_identity(value: str) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value not in {".", ".."}
+        and not any(char in value for char in "/\\:\0")
+    )
+
+
+def _read_attempt_metadata(
+    root: Path, run_id: str, attempt_id: str, filename: str
+) -> dict[str, Any] | None:
+    """Read one contained metadata snapshot, bound to its directory identities."""
+    if not _valid_attempt_identity(run_id) or not _valid_attempt_identity(attempt_id):
+        return None
+    try:
+        fd = open_contained_file(
+            root, f".rush/runs/{run_id}/attempts/{attempt_id}/{filename}"
+        )
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            payload = json.load(stream)
+    except (ContainmentError, OSError, ValueError, RuntimeError):
+        return None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("run_id") != run_id
+        or payload.get("attempt_id") != attempt_id
+    ):
+        return None
+    return payload
+
+
 def load_run_manifest(
     root: Path, run_id: str, *, attempt_id: str | None = None
 ) -> dict[str, Any] | None:
@@ -664,21 +697,37 @@ def load_run_manifest(
     §6.4/P69-02m, mirroring `load_scan_events()`'s existing `attempt_id`
     parameter). `None` if it never ran, or the requested attempt never
     reached a terminal manifest."""
-    if attempt_id is not None:
-        manifest_path = (
-            root / ".rush" / "runs" / run_id / "attempts" / attempt_id / "manifest.json"
-        )
-    else:
+    if attempt_id is None:
         selected = _highest_generation_attempt_dir(root, run_id)
         if selected is None:
             return None
-        manifest_path = selected / "manifest.json"
-    if not manifest_path.is_file():
+        attempt_id = selected.name
+    payload = _read_attempt_metadata(root, run_id, attempt_id, "manifest.json")
+    if payload is None:
         return None
-    try:
-        return json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    if "run_state" in payload and payload["run_state"] not in get_args(RunState):
         return None
+    for name in ("totals", "aggregate"):
+        if name in payload and not isinstance(payload[name], dict):
+            return None
+    aggregate = payload.get("aggregate", {})
+    for value in (
+        payload.get("scheduled", []),
+        payload.get("candidates", []),
+        aggregate.get("findings", []),
+    ):
+        if not isinstance(value, list) or any(
+            not isinstance(item, dict) for item in value
+        ):
+            return None
+    if any(
+        not isinstance(item.get("candidate_id"), str)
+        or not item["candidate_id"]
+        or item.get("outcome") not in get_args(ExecutionOutcome)
+        for item in payload.get("scheduled", [])
+    ):
+        return None
+    return payload
 
 
 def _finding_id(tool: str, engine: str | None, finding: Finding) -> str:
@@ -1470,21 +1519,48 @@ def _highest_generation_attempt_dir(root: Path, run_id: str) -> Path | None:
     final deterministic tie-break -- enumeration-order-independent, though it
     does not recover true chronology between two equal-timestamp legacy
     attempts."""
-    attempts_dir = root / ".rush" / "runs" / run_id / "attempts"
-    if not attempts_dir.is_dir():
+    if not _valid_attempt_identity(run_id):
         return None
-    attempt_dirs = [p for p in attempts_dir.iterdir() if p.is_dir()]
-    if not attempt_dirs:
+    try:
+        physical = PhysicalRoot(root)
+        attempts_dir = physical.open_contained(f".rush/runs/{run_id}/attempts")
+        if not attempts_dir.is_dir():
+            return None
+        attempts = []
+        for path in attempts_dir.iterdir():
+            if path.is_symlink() or not path.is_dir():
+                continue
+            header = _load_attempt_header(path, root=physical.root_path)
+            if header is None:
+                try:
+                    header_path = physical.open_contained(
+                        f".rush/runs/{run_id}/attempts/{path.name}/attempt.json"
+                    )
+                    if (
+                        header_path.exists()
+                        or load_run_manifest(
+                            physical.root_path, run_id, attempt_id=path.name
+                        )
+                        is None
+                    ):
+                        continue
+                except (ContainmentError, OSError, ValueError, RuntimeError):
+                    continue
+                header = {}
+            attempts.append((path, header))
+    except (ContainmentError, OSError, ValueError, RuntimeError):
+        return None
+    if not attempts:
         return None
 
-    def _sort_key(attempt_dir: Path) -> tuple[bool, Any, str]:
-        header = _load_attempt_header(attempt_dir) or {}
+    def _sort_key(attempt: tuple[Path, dict[str, Any]]) -> tuple[bool, Any, str]:
+        attempt_dir, header = attempt
         generation = header.get("attempt_generation")
-        if isinstance(generation, int):
+        if type(generation) is int:
             return (True, generation, attempt_dir.name)
         return (False, str(header.get("started_at", "")), attempt_dir.name)
 
-    return max(attempt_dirs, key=_sort_key)
+    return max(attempts, key=_sort_key)[0]
 
 
 def _write_attempt_header(
@@ -1515,15 +1591,24 @@ def _write_attempt_header(
     )
 
 
-def _load_attempt_header(attempt_dir: Path) -> dict[str, Any] | None:
-    path = attempt_dir / "attempt.json"
-    if not path.is_file():
-        return None
+def _load_attempt_header(attempt_dir: Path, *, root: Path) -> dict[str, Any] | None:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        parts = attempt_dir.relative_to(root).parts
+    except ValueError:
         return None
-    return payload if isinstance(payload, dict) else None
+    if len(parts) != 5 or parts[:2] != (".rush", "runs") or parts[3] != "attempts":
+        return None
+    payload = _read_attempt_metadata(root, parts[2], parts[4], "attempt.json")
+    if payload is None:
+        return None
+    generation = payload.get("attempt_generation")
+    if "attempt_generation" in payload and (
+        type(generation) is not int or generation < 1
+    ):
+        return None
+    if not isinstance(payload.get("started_at", ""), str):
+        return None
+    return payload
 
 
 def _candidate_evidence_relative(
@@ -1811,7 +1896,7 @@ def resume_scan_run(
                 f"run {run_id}'s latest attempt changed since dispatch "
                 f"(expected {expected_attempt_id}, now {current_attempt_id})"
             )
-        header = _load_attempt_header(latest_attempt)
+        header = _load_attempt_header(latest_attempt, root=root)
         if header is None:
             raise ScanInvalidRequestError(
                 f"run {run_id} has no recoverable attempt state to resume"

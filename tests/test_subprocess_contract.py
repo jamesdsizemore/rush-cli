@@ -1138,7 +1138,15 @@ def _mock_windows_identity_kernel(monkeypatch, fault: str):
     def close_handle(handle):
         closed.append(handle)
 
+    def unexpected_job_api(*_args):
+        raise AssertionError("identity fallback must not call job lifecycle APIs")
+
     kernel = SimpleNamespace(
+        CreateJobObjectW=unexpected_job_api,
+        SetInformationJobObject=unexpected_job_api,
+        QueryInformationJobObject=unexpected_job_api,
+        AssignProcessToJobObject=unexpected_job_api,
+        TerminateJobObject=unexpected_job_api,
         OpenProcess=open_process,
         GetProcessTimes=get_process_times,
         OpenJobObjectW=open_job,

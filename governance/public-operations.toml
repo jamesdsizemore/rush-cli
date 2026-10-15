@@ -2,7 +2,7 @@
 # Generated deterministically by rush.governance.public_operations
 
 [manifest]
-total_operations = 207
+total_operations = 208
 
 [[operations]]
 id = "admin.agent_connect"
@@ -1767,6 +1767,16 @@ input_contract = "ToolInputOptions"
 output_contract = "ToolResult"
 effect_class = "read-only"
 safe_probe = "rush memory ask --help"
+
+[[operations]]
+id = "tool.memory_bootstrap"
+kind = "tool"
+canonical_impl = "rush.tools.memory:MemoryTool"
+cli_command = "memory bootstrap"
+input_contract = "ToolInputOptions"
+output_contract = "ToolResult"
+effect_class = "read-only"
+safe_probe = "rush memory bootstrap --help"
 
 [[operations]]
 id = "tool.memory_list"

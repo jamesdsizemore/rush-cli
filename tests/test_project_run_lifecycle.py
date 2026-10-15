@@ -1439,3 +1439,149 @@ def test_literal_message_or_fix_text_containing_a_path_like_substring_is_never_r
 
     assert raw["findings"][0]["text"] == literal_message
     assert raw["parsed"][0]["warnings"][0]["text"] == literal_message
+
+
+@pytest.mark.parametrize("boundary", ["manifest", "header", "attempt", "run"])
+def test_p04_shared_manifest_loader_rejects_external_links(
+    tmp_path, monkeypatch, boundary
+):
+    import io
+
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    run = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    root = Path(plan.root)
+    attempt = Path(run.manifest_path).parent
+    run_dir = attempt.parent.parent
+    outside = tmp_path / "outside-run-metadata"
+    outside.mkdir()
+    if boundary in {"manifest", "header"}:
+        path = attempt / ("manifest.json" if boundary == "manifest" else "attempt.json")
+        target = outside / path.name
+        target.write_bytes(path.read_bytes())
+        path.unlink()
+        path.symlink_to(target)
+    elif boundary == "attempt":
+        target = outside / "attempt"
+        attempt.rename(target)
+        attempt.symlink_to(target, target_is_directory=True)
+    else:
+        target = outside / "run"
+        run_dir.rename(target)
+        run_dir.symlink_to(target, target_is_directory=True)
+    original_open = io.open
+    outside_reads = []
+
+    def confined_open(file, *args, **kwargs):
+        if isinstance(file, (str, Path)) and Path(file).resolve().is_relative_to(
+            outside
+        ):
+            outside_reads.append(str(file))
+            raise AssertionError(
+                "shared attempt reader must reject outside metadata before opening"
+            )
+        return original_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(io, "open", confined_open)
+    if boundary != "header":
+        assert (
+            project_run.load_run_manifest(root, run.run_id, attempt_id=run.attempt_id)
+            is None
+        )
+    assert project_run.load_run_manifest(root, run.run_id) is None
+    assert outside_reads == []
+
+
+def test_p04_shared_selector_keeps_legacy_and_incomplete_attempts(tmp_path):
+    root = _fixture_root(tmp_path)
+    run_id = "legacy-portable-run"
+    _write_legacy_attempt_header(
+        root, run_id, "old", started_at="2020-01-01T00:00:00+00:00"
+    )
+    _write_legacy_attempt_header(
+        root, run_id, "incomplete", started_at="2021-01-01T00:00:00+00:00"
+    )
+    selected = project_run._highest_generation_attempt_dir(root, run_id)
+    assert selected == root / ".rush/runs" / run_id / "attempts/incomplete"
+    assert project_run.load_run_manifest(root, run_id) is None
+    assert project_run.load_run_manifest(root, run_id, attempt_id="incomplete") is None
+
+
+@pytest.mark.parametrize(
+    "scheduled",
+    [
+        [{}],
+        [{"candidate_id": "only-check"}],
+        [{"candidate_id": [], "outcome": "executed"}],
+        [{"candidate_id": "only-check", "outcome": []}],
+        [{"candidate_id": "only-check", "outcome": "unknown"}],
+    ],
+)
+def test_p04_compare_rejects_malformed_scheduled_entries(
+    tmp_path, monkeypatch, scheduled
+):
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(project_run, "ALL_TOOLS", [_InstantTool("only-check")])
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    baseline = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    current = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    path = Path(current.manifest_path)
+    payload = json.loads(path.read_bytes())
+    payload["scheduled"] = scheduled
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    with pytest.raises(
+        ScanInvalidRequestError, match=f"^unknown run_id: {current.run_id}$"
+    ):
+        compare_runs(project_id, baseline.run_id, current.run_id, data_root=data_root)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_p04_compare_preserves_headerless_legacy_manifest_omissions(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(project_run, "ENGINE_SPECS", {})
+    monkeypatch.setattr(
+        project_run,
+        "ALL_TOOLS",
+        [
+            _InstantTool(
+                "only-check",
+                [
+                    {
+                        "path": "app.py",
+                        "line": 1,
+                        "rule": "legacy",
+                        "severity": "warn",
+                        "message": "retained finding",
+                    }
+                ],
+            )
+        ],
+    )
+    project_id, data_root = _register(tmp_path)
+    plan = plan_scan(project_id, data_root=data_root)
+    baseline = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    current = execute_scan(plan, permissions=_WRITE_PERMISSIONS, data_root=data_root)
+    path = Path(current.manifest_path)
+    payload = json.loads(path.read_bytes())
+    del payload["run_state"], payload["scheduled"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    (path.parent / "attempt.json").unlink()
+    assert project_run.load_run_manifest(Path(plan.root), current.run_id) == payload
+    finding_ids = sorted(f["finding_id"] for f in baseline.aggregate["findings"])
+    assert len(finding_ids) == 1
+    assert compare_runs(
+        project_id, baseline.run_id, current.run_id, data_root=data_root
+    ) == {
+        "baseline_run_id": baseline.run_id,
+        "current_run_id": current.run_id,
+        "verdicts": {finding_ids[0]: "unverified"},
+        "resolved": [],
+        "persisting": [],
+        "new": [],
+        "unverified": finding_ids,
+    }

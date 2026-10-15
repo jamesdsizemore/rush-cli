@@ -79,7 +79,9 @@ from rush.runtime.filesystem import atomic_write_bytes
 from rush.setup import provision as provision_service
 from rush.setup.engine_packages import ENGINE_PACKAGES
 from rush.token_economy.telemetry import (
+    memory_frame_usage,
     read_memory_event_totals_readonly,
+    read_memory_frame_receipts_readonly,
     read_summary_readonly,
 )
 from rush.tools import setup_wizard as setup_service
@@ -3651,7 +3653,7 @@ def _refresh_project_memories(
     it approves (every row in `legacy` mode); a denied route republishes nothing."""
     from rush.memory.retrieval import RouteDenial, route_access
 
-    access = route_access(root, "list")
+    access = route_access(root, "list", data_root=ctx.data_root)
     if isinstance(access, RouteDenial):
         return
     # List authority reads only: a query-only view never creates `.rush/`, a
@@ -4953,6 +4955,9 @@ def _build_tokens_section(
     by_kind = read_memory_event_totals_readonly(
         root, _MEMORY_EVENT_KINDS, access=memory_access, **filters
     )
+    frame_usage = memory_frame_usage(
+        read_memory_frame_receipts_readonly(root, access=memory_access, **filters)
+    )
     # R20.G8: read-only view; never creates or migrates memory.db.
     store, _store_state = TypedArtifactStore.open_readonly_view(root)
     cache_fill_count = 0
@@ -4999,6 +5004,8 @@ def _build_tokens_section(
             "sent_tokens": summary["total_compressed_tokens"],
             "events_count": summary["events_count"],
             "by_memory_event_kind": by_kind,
+            "memory_frame_usage": frame_usage,
+            "memory_work_count_basis": None,
         },
         "estimated_avoided": {
             "tokens_saved": summary["net_tokens_saved"],
@@ -5201,6 +5208,7 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             body: bytes,
             *,
             extra_headers: dict[str, str] | None = None,
+            receipt_frame: compact.FrameContext | None = None,
         ) -> None:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -5210,7 +5218,30 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
             for key, value in (extra_headers or {}).items():
                 self.send_header(key, value)
             self.end_headers()
-            self.wfile.write(body)
+            try:
+                written = self.wfile.write(body)
+                if written != len(body):
+                    raise OSError("partial dashboard body write")
+                self.wfile.flush()
+            except BaseException:
+                if receipt_frame is not None:
+                    compact.discard_memory_events(receipt_frame)
+                raise
+            if receipt_frame is not None:
+                payload = json.loads(body)
+                data = payload.get("data") if isinstance(payload, dict) else None
+                compact.finalize_memory_events(
+                    receipt_frame,
+                    body,
+                    accepted=200 <= status < 300
+                    and isinstance(data, dict)
+                    and compact.accepted_memory_result(data),
+                    outcome=(
+                        compact.memory_delivery_outcome(data)
+                        if isinstance(data, dict)
+                        else None
+                    ),
+                )
 
         def _send_html(self, status: int, body: bytes) -> None:
             self.send_response(status)
@@ -6696,6 +6727,12 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 json.dumps(payload, sort_keys=True).encode("utf-8")
             ).hexdigest()
 
+            receipt = compact.FrameContext(
+                "dashboard",
+                request_id,
+                pending_memory_events=[],
+            )
+
             def _build(operation_id: str) -> tuple[int, bytes]:
                 # P69-02.2f: every minted operation_id is already scoped to
                 # its project by the durable ledger row `reserve()` inserted,
@@ -6738,11 +6775,17 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                     # 72-T02 D35: a memory read is measured on the exact bytes this
                     # handler sends (`_success_body`, envelope included).
                     frame_scope: Any = nullcontext()
-                    if operation in ("memory_query", "memory_expand"):
+                    if operation in (
+                        "memory_query",
+                        "memory_expand",
+                        "memory_history",
+                        "memory_explain",
+                    ):
                         frame_scope = compact.memory_frame(
                             compact.FrameContext(
                                 "dashboard",
                                 request_id,
+                                pending_memory_events=receipt.pending_memory_events,
                                 emit=lambda value: _success_body(
                                     request_id,
                                     project_id,
@@ -6801,35 +6844,40 @@ def _make_handler(ctx: DashboardContext) -> type[BaseHTTPRequestHandler]:
                 _s04_effect_ids(operation, arguments, project_id) if mutating else {}
             )
             try:
-                (status_code, body), conflict = ctx.mutations.commit(
-                    project_id,
-                    mutation_id,
-                    body_hash,
-                    _build,
-                    operation_type=operation,
-                    mutating=mutating,
-                    validated_arguments=arguments,
-                    effect_ids=effect_ids,
-                )
-            except (TypeError, ValueError):
-                self._send_error(
-                    500,
-                    "serialization_error",
-                    "failed to serialize result",
-                    request_id,
-                    project_id,
-                )
-                return
-            if conflict:
-                self._send_error(
-                    409,
-                    "conflict",
-                    "request_id reused with a different body",
-                    request_id,
-                    project_id,
-                )
-                return
-            self._send_json(status_code, body)
+                with compact.receipt_frame(receipt):
+                    try:
+                        (status_code, body), conflict = ctx.mutations.commit(
+                            project_id,
+                            mutation_id,
+                            body_hash,
+                            _build,
+                            operation_type=operation,
+                            mutating=mutating,
+                            validated_arguments=arguments,
+                            effect_ids=effect_ids,
+                        )
+                    except (TypeError, ValueError):
+                        self._send_error(
+                            500,
+                            "serialization_error",
+                            "failed to serialize result",
+                            request_id,
+                            project_id,
+                        )
+                        return
+                    if conflict:
+                        self._send_error(
+                            409,
+                            "conflict",
+                            "request_id reused with a different body",
+                            request_id,
+                            project_id,
+                        )
+                        return
+                    self._send_json(status_code, body, receipt_frame=receipt)
+
+            finally:
+                compact.discard_memory_events(receipt)
 
     return _CanonicalHandler
 

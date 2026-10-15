@@ -223,21 +223,15 @@ def _send(master_fd: int, text: str) -> None:
     os.write(master_fd, text.encode("utf-8"))
 
 
-def _reap(
-    pid: int, master_fd: int, *, timeout: float = 5.0, capture: bool = False
-) -> str:
-    """Wait for the forked child to exit, draining its pty output the whole
-    time, and return everything it wrote when `capture` is set (real
-    rendered output, not pytest's own stdout capture -- `capfd` never sees
-    pty writes).
-
-    Draining is unconditional: a macOS pty holds only 1024 bytes of unread
-    output, so a child printing a full preview would otherwise block on
-    write before it ever reads the answer."""
+def _reap(pid: int, master_fd: int, *, answer: str, timeout: float = 30.0) -> str:
+    """Answer the real consent prompt; drain PTY and require a clean child exit."""
     import select
 
     deadline = time.monotonic() + timeout
     chunks: list[bytes] = []
+    status: int | None = None
+    timed_out = False
+    pending_answer: str | None = answer
     while time.monotonic() < deadline:
         ready, _, _ = select.select([master_fd], [], [], 0.05)
         if ready:
@@ -247,27 +241,43 @@ def _reap(
                 chunk = b""
             if chunk:
                 chunks.append(chunk)
-        done_pid, _ = os.waitpid(pid, os.WNOHANG)
+        if (
+            pending_answer is not None
+            and b"Write this Rush instruction block? [y/N]: " in b"".join(chunks)
+        ):
+            _send(master_fd, pending_answer)
+            pending_answer = None
+            deadline = time.monotonic() + 5.0
+        done_pid, status = os.waitpid(pid, os.WNOHANG)
         if done_pid == pid:
             break
     else:
+        timed_out = True
         os.kill(pid, 9)
-        os.waitpid(pid, 0)
-    if capture:
-        # Drain whatever is left buffered after exit.
-        while True:
-            ready, _, _ = select.select([master_fd], [], [], 0.05)
-            if not ready:
-                break
-            try:
-                chunk = os.read(master_fd, 65536)
-            except OSError:
-                break
-            if not chunk:
-                break
-            chunks.append(chunk)
+        _, status = os.waitpid(pid, 0)
+    while True:
+        ready, _, _ = select.select([master_fd], [], [], 0.05)
+        if not ready:
+            break
+        try:
+            chunk = os.read(master_fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
     os.close(master_fd)
-    return b"".join(chunks).decode("utf-8", errors="replace")
+    output = b"".join(chunks).decode("utf-8", errors="replace")
+    assert not timed_out, (
+        f"consent child timed out (awaiting_prompt={pending_answer is not None}): {output}"
+    )
+    assert status is not None and os.waitstatus_to_exitcode(status) == 0, (
+        status,
+        output,
+    )
+    assert pending_answer is None, f"consent prompt never appeared: {output}"
+    assert "harness child failed:" not in output, output
+    return output
 
 
 def test_t03_consent_interactive_accept_writes_instruction_block(
@@ -276,12 +286,12 @@ def test_t03_consent_interactive_accept_writes_instruction_block(
     """A real TTY prompts `[y/N]`; `y` applies the instruction block."""
     with capfd.disabled():
         pid, master_fd = _fork_interactive_connect(project_root)
-        time.sleep(0.3)
-        _send(master_fd, "y\n")
-        _reap(pid, master_fd)
+        output = _reap(pid, master_fd, answer="y\n")
 
     target = project_root / "CLAUDE.md"
-    assert target.exists(), "interactive accept must write the instruction block"
+    assert target.exists(), (
+        f"interactive accept must write the instruction block: {output}"
+    )
     assert "<!-- rush:begin" in target.read_text(encoding="utf-8")
 
 
@@ -292,9 +302,7 @@ def test_t03_consent_interactive_decline_leaves_file_absent(
     guidance state is `declined` (design item 3), never a silent no-op."""
     with capfd.disabled():
         pid, master_fd = _fork_interactive_connect(project_root)
-        time.sleep(0.3)
-        _send(master_fd, "n\n")
-        output = _reap(pid, master_fd, capture=True)
+        output = _reap(pid, master_fd, answer="n\n")
 
     assert not (project_root / "CLAUDE.md").exists()
     assert "declined" in output.lower(), output
@@ -307,9 +315,7 @@ def test_t03_consent_interactive_eof_declines(
     applies, and is reported as `declined` the same way an explicit `n` is."""
     with capfd.disabled():
         pid, master_fd = _fork_interactive_connect(project_root)
-        time.sleep(0.3)
-        _send(master_fd, "\x04")  # Ctrl-D: real terminal EOF, not fd close
-        output = _reap(pid, master_fd, capture=True)
+        output = _reap(pid, master_fd, answer="\x04")
 
     assert not (project_root / "CLAUDE.md").exists()
     assert "declined" in output.lower(), output

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{"command": "@RUSH_BINARY_SH@ agent hook cursor --event sessionStart"}],
+    "postToolUse": [{"command": "@RUSH_BINARY_SH@ agent hook cursor --event postToolUse"}],
+    "postToolUseFailure": [{"command": "@RUSH_BINARY_SH@ agent hook cursor --event postToolUseFailure"}],
+    "preCompact": [{"command": "@RUSH_BINARY_SH@ agent hook cursor --event preCompact"}],
+    "stop": [{"command": "@RUSH_BINARY_SH@ agent hook cursor --event stop"}]
+  }
+}

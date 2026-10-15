@@ -207,7 +207,7 @@ def test_t02_materialize_creates_versioned_layout_for_both_hosts(tmp_path: Path)
     result = materialize_agent_plugins(
         data_root=data_root, rush_version="9.9.9", rush_binary="/usr/local/bin/rush"
     )
-    assert set(result) == {"claude", "codex"}
+    assert set(result) == {"claude", "codex", "cursor", "antigravity", "zcode"}
     for host, root in result.items():
         root = Path(root)
         assert root == data_root / "agent-plugins" / "9.9.9" / host

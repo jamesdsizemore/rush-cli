@@ -1,0 +1,8 @@
+{
+  "name": "rush",
+  "version": "@RUSH_VERSION@",
+  "description": "Rush memory, context and control with explicitly authorized continuity.",
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./mcp.json"
+}

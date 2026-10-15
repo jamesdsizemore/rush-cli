@@ -5146,7 +5146,7 @@ def test_consent_approve_needs_cache_write(
     assert _c_state(root) == before
 
 
-def test_no_mcp_dashboard_tui_grant_route() -> None:
+def test_no_mcp_dashboard_tui_grant_route(tmp_path, monkeypatch) -> None:
     """A8.1: the only callers of the four consent writers are in `cli.py`; no MCP
     tool, request-model tag or memory operation names a grant, revoke or binding."""
     import ast
@@ -5190,7 +5190,47 @@ def test_no_mcp_dashboard_tui_grant_route() -> None:
     assert "memory_binding" not in json.dumps(connection.inputSchema)
     for tag in memory_model_tags() | set(VALID_OPERATIONS):
         assert not any(word in str(tag) for word in forbidden), tag
-    assert "bootstrap" not in VALID_OPERATIONS
+    assert "bootstrap" in VALID_OPERATIONS
+
+    from rush.memory import authorization as auth
+    from rush.memory.store import TypedArtifactStore
+    from rush.setup import provision
+    from rush.tools.memory import MemoryTool
+
+    root = tmp_path / "project"
+    root.mkdir()
+    data_root = tmp_path / "data"
+    monkeypatch.setattr(provision, "default_data_root", lambda: data_root)
+
+    def forbidden_writer(*args, **kwargs):
+        raise AssertionError("bootstrap must not create consent or bind a store")
+
+    for name in (
+        "grant_memory_scope",
+        "revoke_memory_scope",
+        "register_memory_binding",
+    ):
+        monkeypatch.setattr(auth, name, forbidden_writer)
+    monkeypatch.setattr(TypedArtifactStore, "bind_store", forbidden_writer)
+    request = {
+        "task_id": "task-1",
+        "task_kind": "test_repair",
+        "query": "Repair the failing test",
+        "max_tokens": 16384,
+    }
+    before = _snapshot(root, data_root)
+    refused = MemoryTool().run(root, operation="bootstrap", request=request)
+    assert refused["raw"]["code"] == "E_PERMISSION", refused
+    assert refused["raw"]["data"]["state"] == "scope_required"
+    assert refused["raw"]["data"]["reason"] == "policy_missing"
+    assert refused["raw"]["data"]["items"] == []
+    forged = MemoryTool().run(
+        root, operation="bootstrap", request={**request, "consent": True}
+    )
+    assert forged["raw"]["code"] == "E_INPUT", forged
+    assert forged["raw"]["data"]["field"] == "consent"
+    assert _snapshot(root, data_root) == before
+    assert not data_root.exists()
 
     # The three consent writers are governed as CLI-only admin operations.
     from rush.governance.public_operations import build_operations_inventory

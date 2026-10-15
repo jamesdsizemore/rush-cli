@@ -7053,21 +7053,33 @@ def test_t06_g4_path_and_input_rows(
     }
     moved.rename(env.root)
 
-    # A case-variant spelling of the root is never the registered root.
+    # Case-fold aliases and absent case-sensitive spellings have distinct denials.
     variant = env.root.parent / env.root.name.swapcase()
     assert variant != env.root
+    variant_existed = variant.exists()
     respelled = MemoryTool().run(
         variant, operation="list", request=r_list(), permissions=PERM_NONE
     )
     assert code(respelled) == "E_PERMISSION"
-    # 72-T01: the registered root is compared by its exact spelling, so on a
-    # case-folding file system the variant is simply not the registered project.
-    assert reason(respelled) in {
-        "relinked",
-        "project_missing",
-        "worktree_mismatch",
-        "project_not_registered",
-    }
+    assert reason(respelled) == (
+        "project_not_registered" if variant_existed else "policy_missing"
+    )
+    assert variant.exists() == variant_existed
+
+    # On a case-sensitive filesystem an independently marked sibling gets no grant.
+    if not variant_existed:
+        variant.mkdir()
+        register_project(variant, data_root=env.data_root)
+        before_sibling = digest_tree(variant)
+        before_policy = _auth().policy_path(data_root=env.data_root).read_bytes()
+        sibling = MemoryTool().run(
+            variant, operation="list", request=r_list(), permissions=PERM_NONE
+        )
+        assert code(sibling) == "E_PERMISSION" and reason(sibling) == "no_grant"
+        assert digest_tree(variant) == before_sibling
+        assert (
+            _auth().policy_path(data_root=env.data_root).read_bytes() == before_policy
+        )
 
     # A lone surrogate inside stored content is the JSON escape and returned identically.
     sur = apply_call(

@@ -149,6 +149,47 @@ def _windows_job_name(root_pid: int) -> str:
     return f"Local\\RushJob-{root_pid}-{uuid.uuid4().hex}"
 
 
+def _windows_job_kernel32() -> Any:
+    import ctypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p)
+    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32.OpenJobObjectW.argtypes = (
+        ctypes.c_uint32,
+        ctypes.c_int32,
+        ctypes.c_wchar_p,
+    )
+    kernel32.OpenJobObjectW.restype = ctypes.c_void_p
+    kernel32.SetInformationJobObject.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+    )
+    kernel32.QueryInformationJobObject.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+    )
+    kernel32.AssignProcessToJobObject.argtypes = (ctypes.c_void_p, ctypes.c_void_p)
+    kernel32.TerminateJobObject.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.OpenProcess.argtypes = (ctypes.c_uint32, ctypes.c_int32, ctypes.c_uint32)
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    for name in (
+        "SetInformationJobObject",
+        "QueryInformationJobObject",
+        "AssignProcessToJobObject",
+        "TerminateJobObject",
+        "CloseHandle",
+    ):
+        getattr(kernel32, name).restype = ctypes.c_int32
+    return kernel32
+
+
 def _create_kill_on_close_job(job_name: str) -> int | None:  # pragma: no cover
     # -- Windows-only; no runner reachable in this environment. Implemented
     # per S03's own spec; see the review doc's own named (platform-gated)
@@ -192,8 +233,7 @@ def _create_kill_on_close_job(job_name: str) -> int | None:  # pragma: no cover
             ("PeakJobMemoryUsed", ctypes.c_size_t),
         ]
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+    kernel32 = _windows_job_kernel32()
     job_handle = kernel32.CreateJobObjectW(None, job_name)
     if not job_handle:
         return None
@@ -215,10 +255,8 @@ def _assign_process_to_job(job_handle: int, pid: int) -> bool:  # pragma: no cov
     # -- Windows-only; no runner reachable in this environment.
     """`AssignProcessToJobObject` requires `PROCESS_TERMINATE |
     PROCESS_SET_QUOTA` on the target process handle."""
-    import ctypes
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32 = _windows_job_kernel32()
     proc_handle = kernel32.OpenProcess(
         _PROCESS_TERMINATE | _PROCESS_SET_QUOTA, False, pid
     )
@@ -296,7 +334,7 @@ def _windows_job_has_zero_processes(job_handle: int) -> bool:  # pragma: no cove
             ("ProcessIdList", ctypes.c_size_t * 64),
         ]
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = _windows_job_kernel32()
     info = _BasicProcessIdList()
     ok = kernel32.QueryInformationJobObject(
         job_handle,
@@ -326,15 +364,13 @@ def _windows_confirm_terminated(record: dict[str, Any]) -> bool:  # pragma: no c
     recorded successful *and* the exact recorded root process (matched by
     creation time, never by pid alone) is provably gone.
     """
-    import ctypes
 
     job_name = record.get("windows_job_name")
     root_pid = record.get("pgid")
     creation_time = record.get("windows_creation_time")
     assigned = bool(record.get("windows_job_assigned"))
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    kernel32.OpenJobObjectW.restype = ctypes.c_void_p
+    kernel32 = _windows_job_kernel32()
     job_handle = None
     if job_name:
         job_handle = kernel32.OpenJobObjectW(

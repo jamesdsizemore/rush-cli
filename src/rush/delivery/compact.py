@@ -21,11 +21,14 @@ import json
 import os
 import re
 import sqlite3
+import sys
+from _thread import LockType
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -37,6 +40,9 @@ from rush.token_economy.ccr_store import CCRStore
 
 if TYPE_CHECKING:
     from mcp.types import CallToolResult
+
+    from rush.memory.retrieval import MemoryAccess
+    from rush.token_economy.telemetry import TelemetryStore
 
 DEFAULT_LIMIT = 50
 DEFAULT_MAX_BYTES = 32_768
@@ -201,7 +207,17 @@ def cli_size(value: dict[str, Any]) -> int:
     return len(json.dumps(value, indent=2, default=str).encode("utf-8")) + 1
 
 
-TransportName = Literal["mcp_stdio", "cli_json", "dashboard", "in_process"]
+TransportName = Literal["mcp_stdio", "cli_json", "cli_human", "dashboard", "in_process"]
+MemoryDeliveryOutcome = Literal["admission_failure", "budget_failure"]
+
+
+@dataclass(frozen=True)
+class PendingMemoryEvent:
+    telemetry: TelemetryStore | Callable[[], TelemetryStore]
+    kind: str
+    encoding: str
+    access: MemoryAccess
+    arguments: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -214,6 +230,9 @@ class FrameContext:
     request_id: int | str | None
     context: Any = None
     emit: Callable[[Mapping[str, Any]], bytes] | None = None
+    pending_memory_events: list[PendingMemoryEvent] | None = None
+    # Transient transport-owner receipt; never evidence of model insertion.
+    delivery_usage: dict[str, Any] = field(default_factory=dict, compare=False)
 
 
 MEMORY_FRAME: ContextVar[FrameContext | None] = ContextVar(
@@ -221,14 +240,242 @@ MEMORY_FRAME: ContextVar[FrameContext | None] = ContextVar(
 )
 
 
+RECEIPT_FRAME: ContextVar[FrameContext | None] = ContextVar(
+    "rush_memory_receipt_frame", default=None
+)
+
+
 @contextmanager
-def memory_frame(frame: FrameContext) -> Iterator[None]:
-    """Publish `frame` to `MemoryTool` for the duration of one memory call."""
-    token = MEMORY_FRAME.set(frame)
+def receipt_frame(frame: FrameContext) -> Iterator[None]:
+    token = RECEIPT_FRAME.set(frame)
     try:
         yield
     finally:
+        RECEIPT_FRAME.reset(token)
+
+
+# Full replacement of existing memory_frame; original budget context preserved.
+@contextmanager
+def memory_frame(frame: FrameContext) -> Iterator[None]:
+    token = MEMORY_FRAME.set(frame)
+    try:
+        with receipt_frame(frame):
+            yield
+    finally:
         MEMORY_FRAME.reset(token)
+
+
+def accepted_memory_result(value: Mapping[str, Any]) -> bool:
+    raw = value.get("raw", value)
+    code = raw.get("code") if isinstance(raw, Mapping) else None
+    if code is not None:
+        return code in {"OK", "E_EMBEDDING_UNAVAILABLE"}
+    return value.get("tool") == "memory" and value.get("status") == "ok"
+
+
+def memory_delivery_outcome(
+    value: Mapping[str, Any],
+) -> MemoryDeliveryOutcome | None:
+    """Account explicit C05 rejections without admitting them as context."""
+    raw = value.get("raw", value)
+    if not isinstance(raw, Mapping):
+        return None
+    data = raw.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    if raw.get("code") == "E_INPUT" and data.get("admission_failure") is True:
+        return "admission_failure"
+    if raw.get("code") == "E_BUDGET" and data.get("admission_failure") is False:
+        return "budget_failure"
+    return None
+
+
+def prepare_memory_delivery(encoding: str) -> None:
+    """Retain only tokenizer choice before emission; no authority or DB effects."""
+    frame = RECEIPT_FRAME.get()
+    if frame is not None and not frame.delivery_usage:
+        frame.delivery_usage["encoding"] = encoding
+
+
+def discard_memory_events(frame: FrameContext) -> None:
+    if frame.pending_memory_events is not None:
+        frame.pending_memory_events.clear()
+    if "frame_sha256" not in frame.delivery_usage:
+        frame.delivery_usage.clear()
+
+
+def finalize_memory_events(
+    frame: FrameContext,
+    emitted: bytes,
+    *,
+    accepted: bool,
+    outcome: MemoryDeliveryOutcome | None = None,
+) -> None:
+    if "frame_sha256" in frame.delivery_usage:
+        return  # One actual response per invocation, including grantless rejects.
+    pending = tuple(frame.pending_memory_events or ())
+    encoding = frame.delivery_usage.get("encoding") or (
+        pending[0].encoding if pending else "cl100k_base"
+    )
+    discard_memory_events(frame)  # consume once, even on DB failure
+    if not accepted and outcome is None:
+        return
+    from rush.memory.authorization import hold_policy_lock
+    from rush.memory.retrieval import _count_tokens, recheck_failure
+
+    try:
+        frame.delivery_usage.update(
+            outcome=outcome or "returned_frame",
+            tokens=_count_tokens(emitted.decode("utf-8"), encoding),
+            frame_bytes=len(emitted),
+            frame_sha256=hashlib.sha256(emitted).hexdigest(),
+            transport=frame.transport,
+            count_basis="transport_frame:" + encoding,
+            persisted=False,
+            context_inserted=False,
+        )
+    except Exception as exc:  # noqa: BLE001 -- delivered bytes cannot be recalled
+        print(
+            "rush: delivery receipt unavailable: " + type(exc).__name__, file=sys.stderr
+        )
+        return
+    for event in pending:
+        try:
+            arguments = dict(event.arguments)
+            if not (arguments.get("opt_in") or arguments.get("cache_write")):
+                continue
+            with hold_policy_lock(data_root=event.access.data_root):
+                if recheck_failure(event.access) is not None:
+                    continue
+                recorder = (
+                    event.telemetry() if callable(event.telemetry) else event.telemetry
+                )
+                written = recorder.record_memory_event(
+                    outcome or event.kind,
+                    _count_tokens(emitted.decode("utf-8"), event.encoding),
+                    **arguments,
+                    frame_bytes=len(emitted),
+                    frame_sha256=hashlib.sha256(emitted).hexdigest(),
+                    transport=frame.transport,
+                    count_basis="transport_frame:" + event.encoding,
+                )
+                frame.delivery_usage["persisted"] |= bool(written)
+        except Exception as exc:  # noqa: BLE001 -- receipt failure cannot change delivery
+            print(
+                "rush: delivery receipt unavailable: " + type(exc).__name__,
+                file=sys.stderr,
+            )
+
+
+def in_process_memory_receipts[**P, R: Mapping[str, Any]](
+    fn: Callable[P, R],
+) -> Callable[P, R]:
+    @wraps(fn)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        if RECEIPT_FRAME.get() is not None:
+            return fn(*args, **kwargs)
+        supplied = kwargs.get("frame")
+        if isinstance(supplied, FrameContext):
+            # Explicit emitter owns finalization. Publish EXACT supplied context;
+            # do not replace its buffer, alter kwargs, or finalize its prediction.
+            with receipt_frame(supplied):
+                return fn(*args, **kwargs)
+        receipt = FrameContext("in_process", None, pending_memory_events=[])
+        try:
+            with receipt_frame(receipt):
+                result = fn(*args, **kwargs)
+            finalize_memory_events(
+                receipt,
+                canonical_json(result),
+                accepted=accepted_memory_result(result),
+                outcome=memory_delivery_outcome(result),
+            )
+            return result
+        finally:
+            discard_memory_events(receipt)
+
+    return wrapped
+
+
+MCPReceiptKey = tuple[type, int | str]
+
+
+@dataclass
+class MCPReceiptSlot:
+    frame: FrameContext | None = None
+    outstanding: int = 1
+    queued: int = 0
+    invalid: bool = False
+
+
+MCPReceiptState = tuple[dict[MCPReceiptKey, MCPReceiptSlot], LockType]
+MCP_PENDING_FRAMES: ContextVar[MCPReceiptState | None] = ContextVar(
+    "rush_memory_stdio_receipts", default=None
+)
+
+
+def reserve_mcp_request(request_id: int | str) -> None:
+    state = MCP_PENDING_FRAMES.get()
+    if state is None or type(request_id) not in (int, str):
+        return
+    key = (type(request_id), request_id)
+    frames, lock = state
+    with lock:
+        slot = frames.get(key)
+        if slot is None:
+            frames[key] = MCPReceiptSlot()
+        else:
+            if slot.frame is not None:
+                discard_memory_events(slot.frame)
+            slot.frame = None
+            slot.invalid = True
+            slot.outstanding += 1
+
+
+def register_mcp_receipt_frame(frame: FrameContext) -> None:
+    state = MCP_PENDING_FRAMES.get()
+    if (
+        state is None
+        or frame.request_id is None
+        or type(frame.request_id) not in (int, str)
+    ):
+        discard_memory_events(frame)
+        return
+    frames, lock = state
+    key = (type(frame.request_id), frame.request_id)
+    with lock:
+        slot = frames.get(key)
+        if slot is None or slot.invalid:
+            discard_memory_events(frame)
+            return
+        if slot.frame is frame:
+            return
+        if slot.frame is not None or slot.queued:
+            if slot.frame is not None:
+                discard_memory_events(slot.frame)
+            discard_memory_events(frame)
+            slot.frame = None
+            slot.invalid = True
+            return
+        slot.frame = frame  # attach; never increment request reservation count
+
+
+def invalidate_mcp_receipt_frame(frame: FrameContext) -> None:
+    discard_memory_events(frame)
+    state = MCP_PENDING_FRAMES.get()
+    if (
+        state is None
+        or frame.request_id is None
+        or type(frame.request_id) not in (int, str)
+    ):
+        return
+    frames, lock = state
+    key = (type(frame.request_id), frame.request_id)
+    with lock:
+        slot = frames.get(key)
+        if slot is not None and slot.frame is frame:
+            slot.frame = None
+            slot.invalid = True
 
 
 def current_request_id() -> int | str | None:

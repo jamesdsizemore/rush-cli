@@ -142,7 +142,7 @@ TOOL_SPECS: dict[str, ToolSpec] = {
     "memory": ToolSpec(
         name="memory",
         category="workflow",
-        description="Query, write, or promote cross-tool memory artifacts.",
+        description="Bootstrap scoped task context; query, write, or promote cross-tool memory artifacts.",
         mcp_description=(
             "Recall or record memory at <path>. Reads use policy grants; legacy "
             "needs non-empty session_allowlist. Mutations need the allow_cache_write "
